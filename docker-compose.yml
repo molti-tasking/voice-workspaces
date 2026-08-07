@@ -7,6 +7,10 @@ services:
   postgres:
     # pgvector is unused today, but installing the extension now means adding
     # retrieval over transcripts later needs no migration dance.
+    #
+    # Keep this major version in step with the Coolify database resource in
+    # production (PGVector 17) — matching majors keeps pg_dump/restore of the
+    # study data between prod and a laptop a non-event.
     image: pgvector/pgvector:pg17
     container_name: voicemural-postgres
     restart: unless-stopped
@@ -18,7 +22,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    # No initdb hook: extensions and the pgboss schema are applied by
+    # `pnpm db:migrate` (packages/db/src/init-db.ts), which is the same path
+    # production uses. An initdb mount would only fire on first cluster
+    # creation, so dev and prod would diverge on exactly the setup step that is
+    # hardest to notice is missing.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U voicemural -d voicemural"]
       interval: 5s

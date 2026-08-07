@@ -202,7 +202,14 @@ export async function seedStarterRepertoire(userId: string): Promise<number> {
 async function main() {
   // Only when run as a script; the web app already has env loaded by Next.
   const { config } = await import("dotenv");
-  config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true });
+  const { dirname, resolve } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  // Built from runtime values, not a `new URL("../../../.env", import.meta.url)`
+  // literal: this module is reachable from the web app's import graph, and
+  // Turbopack resolves that literal as a module reference — failing the
+  // production build, where no .env file exists.
+  const envPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", ".env");
+  config({ path: envPath, quiet: true });
 
   const db = getDb();
   const users = await db.select({ id: user.id, email: user.email }).from(user);

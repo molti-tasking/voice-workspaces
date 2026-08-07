@@ -155,7 +155,7 @@ constraint, not a feature to add later.
 | `pnpm typecheck` | all packages |
 | `pnpm test` | unit tests (offset arithmetic especially) |
 | `pnpm db:generate` | generate a migration from schema changes |
-| `pnpm db:migrate` | apply migrations |
+| `pnpm db:migrate` | apply `sql/init.sql` (extensions, pgboss schema), then migrations |
 | `pnpm db:studio` | Drizzle Studio |
 | `pnpm db:seed` | re-install starter repertoire for all users |
 | `pnpm db:fixtures` | seed a demo session with synthesised audio + transcript |
@@ -164,16 +164,36 @@ constraint, not a feature to add later.
 
 ## Deployment (Coolify)
 
-Add the repo as a **Docker Compose** resource, set the compose file to
-`docker-compose.prod.yml`, and connect via the **GitHub App** — every push to
-`main` then redeploys with no webhook config. Traefik terminates TLS and supplies
-the public HTTPS domain, which the recorder needs anyway.
+**Postgres is a separate Coolify database resource, not part of the compose
+file.** Coolify's scheduled backups only cover managed database resources, and
+this database *is* the study's measurement apparatus — the growth curve cannot be
+rebuilt after the fact, so an unbacked-up container volume is the largest risk in
+the whole deployment.
 
-Set in Coolify's environment: `POSTGRES_USER`, `POSTGRES_PASSWORD`,
-`POSTGRES_DB`, `BETTER_AUTH_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
-`LITELLM_BASE_URL`, `LITELLM_API_KEY`, and the three `MODEL_*` roles.
+1. Create a **PGVector (17)** database resource. Match the major version to
+   `docker-compose.yml`, so `pg_dump`/restore between prod and a laptop stays a
+   non-event. Enable scheduled backups now, not later.
+2. Add the repo as a **Docker Compose** resource, set the compose file to
+   `docker-compose.prod.yml`, and connect via the **GitHub App** — every push to
+   `main` then redeploys with no webhook config. Traefik terminates TLS and
+   supplies the public HTTPS domain, which the recorder needs anyway.
+3. Enable **Connect To Predefined Network** on that resource, or the services
+   cannot resolve the database by its internal hostname.
+4. Set in Coolify's environment: `DATABASE_URL` (the database's *internal* URL),
+   `BETTER_AUTH_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
+   `LITELLM_BASE_URL`, `LITELLM_API_KEY`, and the three `MODEL_*` roles.
+   Optionally `KEEP_AUDIO=true`.
+5. Register a **second** GitHub OAuth app for the deployed domain, callback
+   `https://<domain>/api/auth/callback/github`. One app cannot serve both.
 
-The `migrate` service runs to completion before `web` and `worker` start.
+The `migrate` service runs to completion before `web` and `worker` start. It
+applies `packages/db/sql/init.sql` — extensions and the pgboss schema — before
+the migrations, so a fresh database needs no manual setup step. Every statement
+there is `IF NOT EXISTS` and it runs on every deploy.
+
+Read the worker's log after the first deploy: it reports on startup whether
+LiteLLM is reachable and whether `MODEL_TRANSCRIBE` exists on that instance.
+Getting either wrong is otherwise invisible — chunks just accumulate as `stored`.
 
 ---
 

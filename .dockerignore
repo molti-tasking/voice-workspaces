@@ -1,0 +1,26 @@
+# Keep the build context matching a clean git checkout, which is what Coolify
+# builds from. Without this, local node_modules and .env leak into the image —
+# and, worse, mask build failures that only appear on the server.
+node_modules
+**/node_modules
+.next
+**/.next
+.turbo
+**/.turbo
+*.tsbuildinfo
+
+# Never bake secrets into an image. Coolify injects env vars directly.
+.env
+.env.local
+.env.*.local
+
+# Locally captured audio. Production audio lives on a mounted volume, and
+# db:fixtures synthesises its own.
+storage
+*.webm
+*.m4a
+
+.git
+.claude
+coverage
+.DS_Store

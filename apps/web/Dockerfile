@@ -1,6 +1,9 @@
 # Build from the repo root:  docker build -f apps/web/Dockerfile .
 FROM node:22-alpine AS base
-RUN corepack enable
+# `prepare` bakes pnpm into the image. With only `corepack enable`, every
+# container start fetches pnpm from npmjs.org, so booting the app depends on the
+# registry being reachable.
+RUN corepack enable && corepack prepare pnpm@10.20.0 --activate
 WORKDIR /app
 
 # --- deps -------------------------------------------------------------------

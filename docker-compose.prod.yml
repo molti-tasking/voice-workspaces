@@ -4,20 +4,34 @@
 # `docker-compose.prod.yml`, connect via the GitHub App, and every push to main
 # redeploys. Traefik terminates TLS and supplies the public HTTPS domain —
 # which the recorder needs anyway, since getUserMedia requires a secure context.
+#
+# POSTGRES IS NOT HERE ON PURPOSE. It is a separate Coolify database resource
+# (PGVector 17), because Coolify's scheduled backups only cover managed database
+# resources — not a Postgres container buried in a compose file. The database is
+# the study's measurement apparatus and the growth curve cannot be rebuilt after
+# the fact, so an unbacked-up volume is the biggest risk in this deployment.
+#
+# Two things this requires in Coolify:
+#   1. Enable "Connect To Predefined Network" on this resource, so these
+#      services share a network with the database and can resolve it by its
+#      internal hostname.
+#   2. Set DATABASE_URL to the database's *internal* connection URL.
 services:
   migrate:
     build:
       context: .
       dockerfile: apps/worker/Dockerfile
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-    # Migrations must land before web or worker start, or the first request
-    # after a schema change hits missing columns.
+      - DATABASE_URL=${DATABASE_URL}
+    # Applies sql/init.sql (extensions, pgboss schema) and then the migrations.
+    # Must land before web or worker start, or the first request after a schema
+    # change hits missing columns.
     command: ["pnpm", "--filter", "@voicemural/db", "migrate"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: "no"
+    # There is no `depends_on: postgres` to gate on any more, so retry instead:
+    # the managed database is normally already up, but a redeploy that races it
+    # should recover on its own. Bounded, so a genuinely broken migration fails
+    # the deploy instead of looping forever.
+    restart: on-failure:5
 
   web:
     build:
@@ -26,7 +40,7 @@ services:
     environment:
       # Coolify substitutes the domain it assigns to this service.
       - SERVICE_FQDN_WEB_3000
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - DATABASE_URL=${DATABASE_URL}
       - BETTER_AUTH_URL=${SERVICE_FQDN_WEB_3000}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
@@ -55,37 +69,25 @@ services:
       context: .
       dockerfile: apps/worker/Dockerfile
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - DATABASE_URL=${DATABASE_URL}
       - LITELLM_BASE_URL=${LITELLM_BASE_URL}
       - LITELLM_API_KEY=${LITELLM_API_KEY}
       - MODEL_TRANSCRIBE=${MODEL_TRANSCRIBE}
       - MODEL_FAST=${MODEL_FAST}
       - MODEL_REASONING=${MODEL_REASONING}
+      # Audio is transient by default: a chunk is deleted once its transcript is
+      # committed. Set to true BEFORE changing CHUNK_MS or MODEL_TRANSCRIBE —
+      # once audio is gone the corpus cannot be re-derived.
+      - KEEP_AUDIO=${KEEP_AUDIO:-false}
       - STORAGE_DIR=/data/storage
     volumes:
       # Same volume as web: the web app writes chunks, the worker reads them.
+      # Both images run as uid 1001, which is what makes the shared mount work.
       - audio-data:/data/storage
     depends_on:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
 
-  postgres:
-    image: pgvector/pgvector:pg17
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
 volumes:
-  postgres-data:
   audio-data:
