@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { desc, eq, getDb, sql } from "@voicemural/db";
-import { audioChunk, captureSession, utterance } from "@voicemural/db/schema";
+import { listSessionsWithStats } from "@voicemural/db/sessions";
 import { formatOffset } from "@voicemural/shared";
 import { githubConfigured } from "@/lib/auth";
 import { currentUser } from "@/lib/session";
@@ -15,38 +14,8 @@ export default async function HomePage() {
   // `isAnonymous` is added to the user model by the anonymous plugin.
   const isGuest = (user as { isAnonymous?: boolean | null }).isAnonymous === true;
   const canUpgrade = isGuest && githubConfigured();
-  const db = getDb();
 
-  // Correlated subqueries rather than joins: joining chunks AND utterances in
-  // one pass produces a cartesian product, which would silently multiply the
-  // recorded-time sum by the utterance count.
-  const sessions = await db
-    .select({
-      id: captureSession.id,
-      startedAt: captureSession.startedAt,
-      endedAt: captureSession.endedAt,
-      chunkCount: sql<number>`(
-        select count(*)::int from ${audioChunk}
-        where ${audioChunk.captureSessionId} = ${captureSession.id}
-      )`,
-      recordedMs: sql<number>`(
-        select coalesce(sum(${audioChunk.durationMs}), 0)::int from ${audioChunk}
-        where ${audioChunk.captureSessionId} = ${captureSession.id}
-      )`,
-      utteranceCount: sql<number>`(
-        select count(*)::int from ${utterance}
-        where ${utterance.captureSessionId} = ${captureSession.id}
-      )`,
-      pendingChunks: sql<number>`(
-        select count(*)::int from ${audioChunk}
-        where ${audioChunk.captureSessionId} = ${captureSession.id}
-          and ${audioChunk.status} <> 'transcribed'
-      )`,
-    })
-    .from(captureSession)
-    .where(eq(captureSession.userId, user.id))
-    .orderBy(desc(captureSession.startedAt))
-    .limit(60);
+  const sessions = await listSessionsWithStats(user.id);
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">

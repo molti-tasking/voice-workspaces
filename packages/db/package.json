@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./schema": "./src/schema.ts",
     "./seed": "./src/seed.ts",
-    "./link-guest": "./src/link-guest.ts"
+    "./link-guest": "./src/link-guest.ts",
+    "./sessions": "./src/sessions.ts"
   },
   "scripts": {
     "generate": "drizzle-kit generate",

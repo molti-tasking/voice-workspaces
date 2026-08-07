@@ -4,7 +4,21 @@ import * as schema from "./schema";
 
 export * from "./schema";
 export { schema };
-export { and, asc, desc, eq, gte, inArray, isNull, lt, lte, sql } from "drizzle-orm";
+export {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  sql,
+  sum,
+} from "drizzle-orm";
 
 function connectionString(): string {
   const url = process.env.DATABASE_URL;
