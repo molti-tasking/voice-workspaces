@@ -12,6 +12,36 @@ function required(name: string): string {
 }
 
 /**
+ * The public origin this app is served from.
+ *
+ * Treats empty as unset on purpose: `docker-compose.prod.yml` passes
+ * `BETTER_AUTH_URL=${BETTER_AUTH_URL}`, so a variable that is simply absent from
+ * the deployment environment arrives as `""`. `??` would accept that, leaving
+ * Better Auth with no origin to compare against and failing every sign-in — and
+ * every guest creation — with a bare "Invalid origin" that says nothing about
+ * the actual cause. Cost us a deploy to work out once already.
+ *
+ * Only production throws. Dev keeps working with no configuration at all, which
+ * is what makes a fresh clone runnable with nothing but a database.
+ */
+function baseUrl(): string {
+  const raw = process.env.BETTER_AUTH_URL?.trim();
+  if (raw) {
+    // A trailing slash yields `https://host//api/auth/callback/github`, which
+    // will not match the callback registered on the GitHub OAuth app.
+    return raw.replace(/\/+$/, "");
+  }
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "BETTER_AUTH_URL is not set. Set it to the public origin — " +
+        "e.g. https://voice.example.com — with no port and no trailing slash. " +
+        "It must match the callback registered on the GitHub OAuth app.",
+    );
+  }
+  return "http://localhost:3000";
+}
+
+/**
  * GitHub sign-in is optional.
  *
  * Guests can record without any provider configured, so a fresh clone runs with
@@ -37,7 +67,7 @@ function buildAuth() {
       },
     }),
     secret: required("BETTER_AUTH_SECRET"),
-    baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
+    baseURL: baseUrl(),
     // The recorder and Workspace share an origin, and a driving session can
     // outlast a short cookie, so keep sessions long and refresh them lazily.
     session: {
