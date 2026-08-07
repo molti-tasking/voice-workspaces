@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.next/
+.turbo/
+*.tsbuildinfo
+
+.env
+.env.local
+.env.*.local
+
+# Locally captured audio — never commit recordings
+storage/
+*.webm
+*.m4a
+!packages/db/fixtures/*.webm
+!packages/db/fixtures/*.m4a
+
+.DS_Store
+coverage/

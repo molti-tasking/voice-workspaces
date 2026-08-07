@@ -1,0 +1,33 @@
+{
+  "name": "@voicemural/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start --port 3000",
+    "typecheck": "tsc --noEmit",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@voicemural/db": "workspace:*",
+    "@voicemural/llm": "workspace:*",
+    "@voicemural/shared": "workspace:*",
+    "better-auth": "1.6.25",
+    "drizzle-orm": "0.45.2",
+    "next": "16.3.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.4",
+    "dotenv": "^17.4.2",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3"
+  }
+}

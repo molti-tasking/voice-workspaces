@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #0f1115;
+  --color-ink-soft: #1a1d24;
+  --color-line: #2a2f3a;
+  --color-paper: #f7f7f5;
+  --color-accent: #e5484d;
+  --color-accent-soft: #3b1d20;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: var(--color-ink);
+  color: var(--color-paper);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+}
+
+/* The recorder is used in a car cradle: never let a stray long-press start a
+   text selection or a pull-to-refresh mid-drive. */
+.no-touch-fuss {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  overscroll-behavior: none;
+}

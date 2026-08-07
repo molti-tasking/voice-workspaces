@@ -1,0 +1,22 @@
+{
+  "name": "@voicemural/llm",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@voicemural/shared": "workspace:*",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "vitest": "4.1.10",
+    "typescript": "5.9.3",
+    "@types/node": "24.10.1"
+  }
+}

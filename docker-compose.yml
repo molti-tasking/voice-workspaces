@@ -1,0 +1,29 @@
+# Local development.
+#
+# Only Postgres runs in Docker; web and worker run via `pnpm dev` so you get
+# hot reload. pg-boss lives in the same database (schema: pgboss), so there is
+# no Redis and nothing else to start.
+services:
+  postgres:
+    # pgvector is unused today, but installing the extension now means adding
+    # retrieval over transcripts later needs no migration dance.
+    image: pgvector/pgvector:pg17
+    container_name: voicemural-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: voicemural
+      POSTGRES_PASSWORD: voicemural
+      POSTGRES_DB: voicemural
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voicemural -d voicemural"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:

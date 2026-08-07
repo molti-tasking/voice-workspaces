@@ -1,0 +1,29 @@
+{
+  "name": "voicemural",
+  "private": true,
+  "packageManager": "pnpm@10.20.0",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "db:generate": "pnpm --filter @voicemural/db generate",
+    "db:migrate": "pnpm --filter @voicemural/db migrate",
+    "db:studio": "pnpm --filter @voicemural/db studio",
+    "db:seed": "pnpm --filter @voicemural/db seed",
+    "db:fixtures": "pnpm --filter @voicemural/db fixtures",
+    "tunnel": "cloudflared tunnel --url http://localhost:3000"
+  },
+  "devDependencies": {
+    "turbo": "2.10.8",
+    "typescript": "5.9.3",
+    "@types/node": "24.10.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}
