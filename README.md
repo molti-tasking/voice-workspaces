@@ -117,6 +117,16 @@ Chunks are written to IndexedDB **first** and deleted only once the server
 acknowledges them. A commute goes through tunnels; without the local queue,
 losing signal loses the recording.
 
+**Audio is transient.** A chunk survives only until its transcript is committed,
+then the file is deleted and `storage_key` is nulled. The transcript is the
+record; the audio is scaffolding. It cannot be dropped at upload time, because
+audio has to outlive a LiteLLM outage — the recorder discards its own copy as
+soon as the server acks.
+
+Set `KEEP_AUDIO=true` to retain it. Do that before changing `CHUNK_MS` or
+`MODEL_TRANSCRIBE`: once audio is gone the corpus cannot be re-derived, and the
+transcript is all you will ever be able to analyse.
+
 ---
 
 ## Data model

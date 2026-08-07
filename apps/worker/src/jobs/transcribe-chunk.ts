@@ -9,6 +9,16 @@ import { log } from "../logger";
 export class RetryableJobError extends Error {}
 
 /**
+ * Retain audio after transcription. Off by default — only the transcript is
+ * the record of interest.
+ *
+ * Turn this on before changing chunk length or the transcription model: once
+ * audio is gone, a corpus cannot be re-derived, and the transcript becomes the
+ * only thing you can ever analyse.
+ */
+const KEEP_AUDIO = process.env.KEEP_AUDIO === "true";
+
+/**
  * Transcribe one chunk and append the resulting utterances.
  *
  * Idempotent: if utterances already exist for the chunk it returns early, so a
@@ -43,13 +53,26 @@ export async function handleTranscribeChunk(chunkId: string): Promise<void> {
     return;
   }
 
+  if (!chunk.storageKey) {
+    // Audio discarded without a transcript. Unrecoverable, so mark it rather
+    // than retrying forever against a file that will never come back.
+    await db
+      .update(audioChunk)
+      .set({ status: "failed", failureReason: "audio discarded before transcription" })
+      .where(eq(audioChunk.id, chunkId));
+    log.error("chunk has no audio and no transcript", { chunkId, seq: chunk.seq });
+    return;
+  }
+
   await db
     .update(audioChunk)
     .set({ status: "transcribing", transcribeStartedAt: new Date() })
     .where(eq(audioChunk.id, chunkId));
 
+  const storageKey = chunk.storageKey;
+
   try {
-    const audio = await getStorage().get(chunk.storageKey);
+    const audio = await getStorage().get(storageKey);
 
     // Feed the tail of the previous chunk as a prompt. Whisper uses it for
     // context, which measurably improves continuity across the boundary —
@@ -87,15 +110,38 @@ export async function handleTranscribeChunk(chunkId: string): Promise<void> {
       );
     }
 
+    // Discard the audio now that the transcript is committed. Doing it here,
+    // after the utterance insert, means a crash mid-job can only ever leave
+    // audio behind — never a chunk with neither audio nor transcript.
+    let discarded = false;
+    if (!KEEP_AUDIO) {
+      try {
+        await getStorage().delete(storageKey);
+        discarded = true;
+      } catch (err) {
+        // Not fatal: the sweep retries orphaned files.
+        log.warn("could not delete audio", {
+          chunkId,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     await db
       .update(audioChunk)
-      .set({ status: "transcribed", transcribedAt: new Date(), failureReason: null })
+      .set({
+        status: "transcribed",
+        transcribedAt: new Date(),
+        failureReason: null,
+        ...(discarded ? { storageKey: null, audioDiscardedAt: new Date() } : {}),
+      })
       .where(eq(audioChunk.id, chunk.id));
 
     log.info("transcribed chunk", {
       chunkId,
       seq: chunk.seq,
       utterances: segments.length,
+      audioDiscarded: discarded,
     });
   } catch (err) {
     const retryable = err instanceof LiteLLMError ? err.retryable : true;

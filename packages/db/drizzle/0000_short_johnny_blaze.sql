@@ -38,10 +38,12 @@ CREATE TABLE "audio_chunk" (
 	"mime_type" text NOT NULL,
 	"byte_size" integer NOT NULL,
 	"checksum" text NOT NULL,
-	"storage_key" text NOT NULL,
+	"storage_key" text,
+	"audio_discarded_at" timestamp with time zone,
 	"status" "chunk_status" DEFAULT 'stored' NOT NULL,
 	"failure_reason" text,
 	"uploaded_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"transcribe_started_at" timestamp with time zone,
 	"transcribed_at" timestamp with time zone
 );
 --> statement-breakpoint
@@ -136,6 +138,7 @@ CREATE TABLE "user" (
 	"email" text NOT NULL,
 	"email_verified" boolean DEFAULT false NOT NULL,
 	"image" text,
+	"is_anonymous" boolean DEFAULT false NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "user_email_unique" UNIQUE("email")

@@ -6,7 +6,11 @@
     "node": ">=20.9.0"
   },
   "scripts": {
-    "dev": "turbo run dev",
+    "setup": "node scripts/setup.mjs",
+    "dev": "node scripts/check-dev.mjs && turbo run dev",
+    "dev:unchecked": "turbo run dev",
+    "stop": "docker compose down",
+    "reset": "docker compose down -v && node scripts/setup.mjs",
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",

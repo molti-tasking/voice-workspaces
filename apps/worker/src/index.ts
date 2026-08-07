@@ -11,7 +11,11 @@ import {
   findUntranscribedChunks,
   handleTranscribeChunk,
 } from "./jobs/transcribe-chunk";
-import { closeIdleSessions, requeueStuckChunks } from "./jobs/sweep";
+import {
+  closeIdleSessions,
+  discardTranscribedAudio,
+  requeueStuckChunks,
+} from "./jobs/sweep";
 import { preflightLiteLLM } from "./preflight";
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -99,6 +103,7 @@ async function main() {
     try {
       await requeueStuckChunks();
       await closeIdleSessions();
+      await discardTranscribedAudio();
 
       const chunkIds = await findUntranscribedChunks(50);
       for (const chunkId of chunkIds) {

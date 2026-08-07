@@ -1,6 +1,11 @@
 import { and, eq, getDb, isNull, lt, sql } from "@voicemural/db";
 import { audioChunk, captureSession } from "@voicemural/db/schema";
+import { getStorage } from "@voicemural/shared/storage";
+import { isNotNull } from "drizzle-orm";
 import { log } from "../logger";
+
+/** See transcribe-chunk.ts — audio is transient unless this is set. */
+const KEEP_AUDIO = process.env.KEEP_AUDIO === "true";
 
 /**
  * A chunk left in `transcribing` for this long is assumed orphaned and returned
@@ -43,6 +48,49 @@ export async function requeueStuckChunks(): Promise<number> {
 
   if (rows.length > 0) log.warn("requeued stuck chunks", { count: rows.length });
   return rows.length;
+}
+
+/**
+ * Delete audio belonging to chunks that already have a transcript.
+ *
+ * The transcribe job discards audio inline, so this is a backstop: it catches
+ * chunks transcribed before audio became transient, and any delete that failed
+ * at the time. Without it, a corpus recorded under the old behaviour would keep
+ * its audio forever with nothing ever revisiting it.
+ */
+export async function discardTranscribedAudio(limit = 200): Promise<number> {
+  if (KEEP_AUDIO) return 0;
+
+  const db = getDb();
+  const storage = getStorage();
+
+  const rows = await db
+    .select({ id: audioChunk.id, storageKey: audioChunk.storageKey })
+    .from(audioChunk)
+    .where(and(eq(audioChunk.status, "transcribed"), isNotNull(audioChunk.storageKey)))
+    .limit(limit);
+
+  let deleted = 0;
+  for (const row of rows) {
+    if (!row.storageKey) continue;
+    try {
+      await storage.delete(row.storageKey);
+    } catch (err) {
+      // Missing file is fine — the row still needs clearing either way.
+      log.warn("audio delete failed", {
+        chunkId: row.id,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+    await db
+      .update(audioChunk)
+      .set({ storageKey: null, audioDiscardedAt: new Date() })
+      .where(eq(audioChunk.id, row.id));
+    deleted += 1;
+  }
+
+  if (deleted > 0) log.info("discarded transcribed audio", { chunks: deleted });
+  return deleted;
 }
 
 /**

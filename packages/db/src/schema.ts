@@ -162,7 +162,16 @@ export const audioChunk = pgTable(
     byteSize: integer("byte_size").notNull(),
     /** sha256 of the payload, for detecting a corrupted re-upload. */
     checksum: text("checksum").notNull(),
-    storageKey: text("storage_key").notNull(),
+    /**
+     * Where the audio lives — NULL once it has been discarded.
+     *
+     * Audio is transient by design: it exists only until its transcript is
+     * committed, then it is deleted (unless KEEP_AUDIO=true). The transcript is
+     * the durable record.
+     */
+    storageKey: text("storage_key"),
+    /** When the audio was deleted. Distinguishes "discarded" from "never stored". */
+    audioDiscardedAt: timestamp("audio_discarded_at", { withTimezone: true }),
     status: chunkStatusEnum("status").notNull().default("stored"),
     failureReason: text("failure_reason"),
     uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),

@@ -61,6 +61,25 @@ export function RecorderClient() {
       </div>
 
       <footer className="w-full max-w-md space-y-3 text-sm">
+        {rec.lastSessionId && !isRecording && (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
+            <p className="mb-1 font-medium text-emerald-100">
+              Saved {formatOffset(rec.lastSessionMs)}
+            </p>
+            <p className="mb-3 text-white/60">
+              {rec.pendingUploads > 0
+                ? `${rec.pendingUploads} chunk${rec.pendingUploads === 1 ? "" : "s"} still uploading. The transcript fills in as they land.`
+                : "Transcription runs in the background; the transcript fills in as it goes."}
+            </p>
+            <Link
+              href={`/sessions/${rec.lastSessionId}`}
+              className="inline-block rounded bg-white px-3 py-1.5 font-medium text-[var(--color-ink)] hover:bg-white/90"
+            >
+              View transcript
+            </Link>
+          </div>
+        )}
+
         {rec.error && (
           <Notice tone="error" title="Recording stopped">
             {rec.error}

@@ -1,1 +1,0 @@
-ALTER TABLE "audio_chunk" ADD COLUMN "transcribe_started_at" timestamp with time zone;

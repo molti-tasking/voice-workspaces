@@ -5,58 +5,22 @@
  * and without a configured LiteLLM key: it writes chunks already marked
  * `transcribed` plus the utterances that would have come from them.
  *
- * The audio is a synthesised tone rather than speech, so playback and offset
- * seeking are exercisable end to end even though the words are fabricated.
+ * No audio, because a finished session has none — it is discarded once the
+ * transcript is committed.
  *
  *   pnpm db:fixtures
  */
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
-import { chunkKey, fingerprint, getStorage } from "@voicemural/shared/storage";
 import { closeDb, getDb } from "./index";
 import { audioChunk, captureSession, user, utterance } from "./schema";
 
 const CHUNK_MS = 10_000;
-const SAMPLE_RATE = 16_000;
 const MIME = "audio/wav";
 
 /** A fixed, deterministic session id so re-running replaces rather than piles up. */
 const FIXTURE_SESSION_ID = "00000000-0000-4000-8000-00000000f1a7";
-
-/**
- * Minimal 16-bit mono PCM WAV. Written by hand so the fixture needs no ffmpeg
- * and no binary committed to the repo.
- */
-function synthesiseWav(durationMs: number, frequencyHz: number): Uint8Array {
-  const samples = Math.floor((SAMPLE_RATE * durationMs) / 1000);
-  const dataBytes = samples * 2;
-  const buffer = Buffer.alloc(44 + dataBytes);
-
-  buffer.write("RIFF", 0);
-  buffer.writeUInt32LE(36 + dataBytes, 4);
-  buffer.write("WAVE", 8);
-  buffer.write("fmt ", 12);
-  buffer.writeUInt32LE(16, 16); // PCM header size
-  buffer.writeUInt16LE(1, 20); // format = PCM
-  buffer.writeUInt16LE(1, 22); // channels
-  buffer.writeUInt32LE(SAMPLE_RATE, 24);
-  buffer.writeUInt32LE(SAMPLE_RATE * 2, 28); // byte rate
-  buffer.writeUInt16LE(2, 32); // block align
-  buffer.writeUInt16LE(16, 34); // bits per sample
-  buffer.write("data", 36);
-  buffer.writeUInt32LE(dataBytes, 40);
-
-  for (let i = 0; i < samples; i += 1) {
-    // Quiet, and faded at the edges so scrubbing between chunks is not jarring.
-    const t = i / SAMPLE_RATE;
-    const fade = Math.min(1, Math.min(t, durationMs / 1000 - t) * 4);
-    const value = Math.sin(2 * Math.PI * frequencyHz * t) * 0.15 * Math.max(0, fade);
-    buffer.writeInt16LE(Math.round(value * 32767), 44 + i * 2);
-  }
-
-  return new Uint8Array(buffer);
-}
 
 /** Plausible commute monologue, mixing content with the occasional directive. */
 const SCRIPT: { text: string; kind: "content" | "directive" | "unclassified" }[] = [
@@ -76,7 +40,6 @@ const SCRIPT: { text: string; kind: "content" | "directive" | "unclassified" }[]
 
 export async function seedFixtureSession(userId: string): Promise<void> {
   const db = getDb();
-  const storage = getStorage();
 
   // Replace any prior fixture so re-running is idempotent. Chunks, utterances
   // and artefacts cascade from the session.
@@ -94,11 +57,9 @@ export async function seedFixtureSession(userId: string): Promise<void> {
 
   for (const [index, line] of SCRIPT.entries()) {
     const startOffsetMs = index * CHUNK_MS;
-    // Vary the pitch per chunk so it is audible which chunk is playing.
-    const audio = synthesiseWav(CHUNK_MS, 220 + index * 20);
-    const key = chunkKey(FIXTURE_SESSION_ID, index, "wav");
-    await storage.put(key, audio);
 
+    // No audio: it is discarded once transcribed, so a fixture that mimics a
+    // finished session has none either.
     const [chunk] = await db
       .insert(audioChunk)
       .values({
@@ -107,11 +68,12 @@ export async function seedFixtureSession(userId: string): Promise<void> {
         startOffsetMs,
         durationMs: CHUNK_MS,
         mimeType: MIME,
-        byteSize: audio.byteLength,
-        checksum: fingerprint(audio),
-        storageKey: key,
+        byteSize: 0,
+        checksum: "fixture",
+        storageKey: null,
         status: "transcribed",
         transcribedAt: new Date(),
+        audioDiscardedAt: new Date(),
       })
       .returning({ id: audioChunk.id });
 
@@ -147,7 +109,7 @@ async function main() {
   await seedFixtureSession(firstUser.id);
   console.log(
     `Fixture session seeded for ${firstUser.email}: ` +
-      `${SCRIPT.length} chunks, ${SCRIPT.length} utterances, synthesised audio.`,
+      `${SCRIPT.length} chunks, ${SCRIPT.length} utterances.`,
   );
 }
 

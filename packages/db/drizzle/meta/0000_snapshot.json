@@ -1,5 +1,5 @@
 {
-  "id": "6c95e3f3-03fd-459b-8f70-07b3942a8d0d",
+  "id": "1d405488-8d40-4006-b60f-775ec8790d35",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -291,7 +291,13 @@
           "name": "storage_key",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
+        },
+        "audio_discarded_at": {
+          "name": "audio_discarded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "status": {
           "name": "status",
@@ -313,6 +319,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "transcribe_started_at": {
+          "name": "transcribe_started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "transcribed_at": {
           "name": "transcribed_at",
@@ -1277,6 +1289,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "is_anonymous": {
+          "name": "is_anonymous",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "created_at": {
           "name": "created_at",

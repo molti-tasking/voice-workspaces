@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   clearOpenSession,
@@ -48,6 +49,10 @@ export interface RecorderState {
   uploading: boolean;
   lastUploadError: string | null;
   resumable: OpenSessionMeta | null;
+  /** The session just finished, so the UI can link straight to its transcript. */
+  lastSessionId: string | null;
+  /** Recorded length of that session, for the confirmation line. */
+  lastSessionMs: number;
 }
 
 /**
@@ -118,6 +123,7 @@ function recordChunk(
 }
 
 export function useRecorder() {
+  const router = useRouter();
   const [state, setState] = useState<RecorderState>({
     status: "idle",
     elapsedMs: 0,
@@ -127,6 +133,8 @@ export function useRecorder() {
     uploading: false,
     lastUploadError: null,
     resumable: null,
+    lastSessionId: null,
+    lastSessionMs: 0,
   });
 
   const runningRef = useRef(false);
@@ -307,7 +315,7 @@ export function useRecorder() {
     }
 
     runningRef.current = true;
-    patch({ status: "recording", elapsedMs: 0, resumable: null });
+    patch({ status: "recording", elapsedMs: 0, resumable: null, lastSessionId: null });
     await acquireWakeLock();
     void runLoop(stream, meta);
   }, [acquireWakeLock, patch, runLoop]);
@@ -340,9 +348,21 @@ export function useRecorder() {
     }
 
     metaRef.current = null;
-    patch({ status: "idle" });
+    // Hold on to what was just recorded so the UI can offer a direct link to
+    // its transcript. Ending a drive and landing on an undifferentiated list
+    // gives no sense that anything was captured at all.
+    patch({
+      status: "idle",
+      lastSessionId: meta?.captureSessionId ?? null,
+      lastSessionMs: meta?.elapsedMs ?? 0,
+    });
     kickUploader();
-  }, [patch, releaseWakeLock]);
+
+    // The Workspace is a server component and Next caches RSC payloads for
+    // client navigations, so without this the sessions list renders the copy
+    // fetched before this recording existed — and the drive looks lost.
+    router.refresh();
+  }, [patch, releaseWakeLock, router]);
 
   /** Discard a recovered session's marker. Queued chunks still upload. */
   const dismissResumable = useCallback(async () => {

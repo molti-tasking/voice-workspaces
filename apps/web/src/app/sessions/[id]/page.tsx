@@ -4,6 +4,7 @@ import { and, asc, eq, getDb } from "@voicemural/db";
 import { audioChunk, captureSession, utterance } from "@voicemural/db/schema";
 import { findCoverageGaps, formatOffset } from "@voicemural/shared";
 import { currentUser } from "@/lib/session";
+import { AutoRefresh } from "./auto-refresh";
 import { Transcript, type TranscriptRow } from "./transcript";
 
 export const dynamic = "force-dynamic";
@@ -40,10 +41,9 @@ export default async function SessionPage({
     .where(eq(audioChunk.captureSessionId, id))
     .orderBy(asc(audioChunk.seq));
 
-  const utterances = await db
+  const rows: TranscriptRow[] = await db
     .select({
       id: utterance.id,
-      chunkId: utterance.chunkId,
       startOffsetMs: utterance.startOffsetMs,
       endOffsetMs: utterance.endOffsetMs,
       text: utterance.text,
@@ -53,12 +53,6 @@ export default async function SessionPage({
     .from(utterance)
     .where(eq(utterance.captureSessionId, id))
     .orderBy(asc(utterance.startOffsetMs));
-
-  const chunkStarts = new Map(chunks.map((c) => [c.id, c.startOffsetMs]));
-  const rows: TranscriptRow[] = utterances.map((u) => ({
-    ...u,
-    chunkStartOffsetMs: chunkStarts.get(u.chunkId) ?? 0,
-  }));
 
   // Surface lost audio explicitly. A session with holes must never be mistaken
   // for a complete one when the corpus is analysed.
@@ -71,6 +65,8 @@ export default async function SessionPage({
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
+      <AutoRefresh pending={untranscribed.length} />
+
       <Link href="/" className="text-sm text-white/40 underline-offset-4 hover:underline">
         ← Sessions
       </Link>
@@ -84,7 +80,7 @@ export default async function SessionPage({
         </h1>
         <p className="mt-1 text-sm text-white/40">
           {formatOffset(recordedMs)} recorded · {chunks.length} chunks ·{" "}
-          {utterances.length} utterances
+          {rows.length} utterances
           {meta.endedAt === null && " · still open"}
         </p>
       </header>
