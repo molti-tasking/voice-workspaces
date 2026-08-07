@@ -38,10 +38,18 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
     environment:
-      # Coolify substitutes the domain it assigns to this service.
+      # Declared so Coolify wires Traefik to this service on port 3000.
       - SERVICE_FQDN_WEB_3000
       - DATABASE_URL=${DATABASE_URL}
-      - BETTER_AUTH_URL=${SERVICE_FQDN_WEB_3000}
+      # Set this explicitly to the public origin — e.g. https://voice.example.com
+      # — with NO port and no trailing slash.
+      #
+      # Deliberately not derived from SERVICE_FQDN_WEB_3000: Coolify renders that
+      # with the container port appended (`https://host:3000`), and Better Auth
+      # builds the OAuth callback and validates request origins from this value.
+      # A port here that browsers do not use breaks sign-in with an origin
+      # mismatch, which looks like a GitHub misconfiguration rather than ours.
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}

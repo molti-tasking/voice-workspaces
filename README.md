@@ -179,12 +179,19 @@ the whole deployment.
    supplies the public HTTPS domain, which the recorder needs anyway.
 3. Enable **Connect To Predefined Network** on that resource, or the services
    cannot resolve the database by its internal hostname.
-4. Set in Coolify's environment: `DATABASE_URL` (the database's *internal* URL),
-   `BETTER_AUTH_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
-   `LITELLM_BASE_URL`, `LITELLM_API_KEY`, and the three `MODEL_*` roles.
-   Optionally `KEEP_AUDIO=true`.
-5. Register a **second** GitHub OAuth app for the deployed domain, callback
-   `https://<domain>/api/auth/callback/github`. One app cannot serve both.
+4. Point a DNS `A` record at the Coolify host and set the domain on the `web`
+   service. Then set `BETTER_AUTH_URL` to that origin — `https://voice.example.com`,
+   **no port, no trailing slash**. It is set by hand rather than derived from
+   Coolify's `SERVICE_FQDN_WEB_3000`, which renders as `https://host:3000`; Better
+   Auth builds its OAuth callback and validates origins from this value, so a port
+   browsers never use breaks sign-in in a way that looks like GitHub's fault.
+5. Set the rest in Coolify's environment: `DATABASE_URL` (the database's
+   *internal* URL), `BETTER_AUTH_SECRET`, `GITHUB_CLIENT_ID`,
+   `GITHUB_CLIENT_SECRET`, `LITELLM_BASE_URL`, `LITELLM_API_KEY`, and the three
+   `MODEL_*` roles. Optionally `KEEP_AUDIO=true`.
+6. Register a **second** GitHub OAuth app for the deployed domain, callback
+   `https://<domain>/api/auth/callback/github` — it must match `BETTER_AUTH_URL`
+   exactly. One app cannot serve both localhost and prod.
 
 The `migrate` service runs to completion before `web` and `worker` start. It
 applies `packages/db/sql/init.sql` — extensions and the pgboss schema — before
