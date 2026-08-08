@@ -37,6 +37,11 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      # NEXT_PUBLIC_ vars are inlined into the client bundle at build time, so
+      # they must be passed as build args, not just container environment.
+      args:
+        - NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN}
+        - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
     environment:
       # Declared so Coolify wires Traefik to this service on port 3000.
       - SERVICE_FQDN_WEB_3000
