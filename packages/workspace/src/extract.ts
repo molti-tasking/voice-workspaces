@@ -17,7 +17,7 @@ import {
  * subtly wrong. `prompt-version.test.ts` fails if the prompt text drifts
  * without the version moving.
  */
-export const PROMPT_VERSION = "2";
+export const PROMPT_VERSION = "3";
 
 /** Fixed seed sent with every request, so a forced re-run is as stable as the backend allows. */
 export const EXTRACTION_SEED = 7;
@@ -94,14 +94,38 @@ return to them across days.
 - If two existing topics turn out to be the same thing, merge them.
 
 ## Block kinds
-- "claim"    — the substance. An assertion, idea, decision or conclusion.
-- "context"  — background that supports a claim without being one
-               ("Right now I live in Denmark").
+- "fact"     — a hard attribute of the subject: a duration, a date, a budget, a
+               place, a constraint, a requirement. PREFER THIS over "context"
+               whenever the content is a value rather than a sentence, because
+               facts render as a table and read far denser than prose.
+               Needs a short "label" (1-2 words) and a short "text" value.
+- "claim"    — the substance. An assertion, idea, decision or conclusion the
+               speaker holds.
+- "question" — an unresolved uncertainty they still owe themselves
+               ("I don't know where I want to go yet").
+- "context"  — background that is genuinely a sentence and does NOT fit a
+               label/value pair. Use sparingly; most context is really a fact.
 - "meta"     — the speaker commenting on their own content rather than adding to
                it ("that is the abstract", "this is the interesting bit",
                "mark that", "remind me to write this up").
-- "question" — an unresolved uncertainty they still owe themselves
-               ("I don't know where I want to go yet").
+
+### Facts, because this is the one most often got wrong
+"The research stay has to be at least three and at most six months long" is not
+a sentence worth keeping — it is a duration.
+
+  bad:  {"kind":"context","text":"The research stay must last three to six months."}
+  good: {"kind":"fact","label":"Duration","text":"3-6 months"}
+
+  bad:  {"kind":"context","text":"I'm partly funded from my own job here in Aarhus."}
+  good: {"kind":"fact","label":"Funding","text":"Own job salary in Aarhus"}
+
+  bad:  {"kind":"context","text":"Right now I live in Denmark, in Aarhus."}
+  good: {"kind":"fact","label":"Based in","text":"Aarhus, Denmark"}
+
+Labels should be reusable across a topic — "Duration", "Funding", "Based in",
+"Field", "Deadline", "Budget" — so the table reads as one coherent set of
+attributes rather than a list of one-off headings. Values stay short: a few
+words, not a clause.
 
 ## Writing block text
 Short. One clause, at most about fifteen words. No preamble, no hedging, no
@@ -127,6 +151,7 @@ given to you. For a NEW topic, invent a handle of the form "new:slug".
 {"type":"rename_topic","topic":"<topicId>","title":"Better title","icon":"Compass"}
 {"type":"merge_topics","from":"<topicId>","into":"<topicId>"}
 {"type":"add_block","topic":"<topicId|new:handle>","kind":"claim","text":"...","sources":["<utteranceId>"]}
+{"type":"add_block","topic":"<topicId|new:handle>","kind":"fact","label":"Duration","text":"3-6 months","sources":["<utteranceId>"]}
 {"type":"revise_block","supersedes":"<blockId>","topic":"<topicId|new:handle>","kind":"claim","text":"...","sources":["<utteranceId>"]}
 {"type":"retire_block","block":"<blockId>"}
 {"type":"move_block","block":"<blockId>","topic":"<topicId>"}
@@ -160,7 +185,8 @@ export function renderState(state: WorkspaceState): string {
     const recent = blocks.slice(-MAX_BLOCKS_PER_TOPIC_IN_PROMPT);
     if (recent.length === 0) lines.push("  (no blocks yet)");
     for (const block of recent) {
-      lines.push(`  - (${block.kind}) ${block.text}  [id: ${block.id}]`);
+      const shown = block.label ? `${block.label}: ${block.text}` : block.text;
+      lines.push(`  - (${block.kind}) ${shown}  [id: ${block.id}]`);
     }
     lines.push("");
   }
@@ -309,6 +335,7 @@ interface WireOp {
   topic?: unknown;
   title?: unknown;
   icon?: unknown;
+  label?: unknown;
   from?: unknown;
   into?: unknown;
   kind?: unknown;
@@ -430,6 +457,7 @@ export function parseExtractionResponse(
             blockId: deterministicId(opts.idSeed, "block", String(counter), text),
             topicId,
             kind: kind.data,
+            ...labelFor(kind.data, w.label),
             text,
             spans: toSpans(w.sources),
           });
@@ -451,6 +479,7 @@ export function parseExtractionResponse(
             supersedesBlockId,
             topicId,
             kind: kind.data,
+            ...labelFor(kind.data, w.label),
             text,
             spans: toSpans(w.sources),
           });
@@ -482,6 +511,18 @@ export function parseExtractionResponse(
   }
 
   return { ops, warnings };
+}
+
+/**
+ * A label, but only where one means anything.
+ *
+ * Kept off non-fact blocks entirely: a stray label on a claim would otherwise
+ * change its op payload and therefore its identity, for no visible effect.
+ */
+function labelFor(kind: string, value: unknown): { label?: string } {
+  if (kind !== "fact") return {};
+  const label = str(value);
+  return label ? { label: label.slice(0, 40) } : {};
 }
 
 function str(value: unknown): string | undefined {

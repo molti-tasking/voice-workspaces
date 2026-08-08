@@ -13,8 +13,13 @@ const topic: Topic = {
   lastTouchedAt: T,
 };
 
-function block(kind: Block["kind"], text: string, id = text.slice(0, 8)): Block {
-  return { id, topicId: topic.id, kind, text, spans: [], occurredAt: T };
+function block(
+  kind: Block["kind"],
+  text: string,
+  label?: string,
+  id = `${kind}-${text.slice(0, 8)}`,
+): Block {
+  return { id, topicId: topic.id, kind, label, text, spans: [], occurredAt: T };
 }
 
 const blocks: Block[] = [
@@ -97,6 +102,44 @@ describe("workspaceToMarkdown", () => {
   it("notes the instant it was taken, since the workspace is time-indexed", () => {
     const md = workspaceToMarkdown([topic], new Map([[topic.id, []]]), { asOf: T });
     expect(md).toContain("as of 2026-08-08T09:00:00.000Z");
+  });
+});
+
+describe("facts as a table", () => {
+  const withFacts = [
+    block("claim", "Wants somewhere warm."),
+    block("fact", "3-6 months", "Duration"),
+    block("fact", "Own job salary", "Funding"),
+  ];
+
+  it("renders a real Markdown table", () => {
+    const md = topicToMarkdown(topic, withFacts);
+
+    expect(md).toContain("## Details");
+    expect(md).toContain("| :-- | :-- |");
+    expect(md).toContain("| **Duration** | 3-6 months |");
+    expect(md).toContain("| **Funding** | Own job salary |");
+  });
+
+  it("keeps facts together above the prose", () => {
+    const md = topicToMarkdown(topic, withFacts);
+    expect(md.indexOf("## Details")).toBeLessThan(md.indexOf("Wants somewhere warm."));
+  });
+
+  it("omits the table when there are no facts", () => {
+    expect(topicToMarkdown(topic, [block("claim", "Only prose.")])).not.toContain(
+      "## Details",
+    );
+  });
+
+  it("escapes a pipe so it cannot split the row into extra columns", () => {
+    const md = topicToMarkdown(topic, [block("fact", "a | b", "Odd")]);
+    expect(md).toContain("| **Odd** | a \\| b |");
+  });
+
+  it("falls back to a dash for a fact with no label", () => {
+    const md = topicToMarkdown(topic, [block("fact", "unlabelled")]);
+    expect(md).toContain("| **—** | unlabelled |");
   });
 });
 

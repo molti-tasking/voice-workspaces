@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Link } from "@/components/nav-link";
 import { ArrowUpRight, CircleDot } from "lucide-react";
 import { formatOffset } from "@voicemural/shared";
 import type {
