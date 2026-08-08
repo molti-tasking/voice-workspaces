@@ -1,33 +1,26 @@
-import { topicFilename, topicToMarkdown, type Block, type BlockKind, type Topic } from "@voicemural/workspace";
+import {
+  topicFilename,
+  topicToMarkdown,
+  type Block,
+  type Topic,
+} from "@voicemural/workspace";
 import { ExportButton } from "./export-button";
-import { BLOCK_ICONS, topicIcon } from "./icons";
+import { topicIcon } from "./icons";
 
 /**
- * Blocks shown before the card collapses the rest.
+ * One topic as a small structured document.
  *
- * Three, not five. The card has to be readable at a glance across a dozen
- * topics; anything longer and the grid stops being a summary and becomes a
- * document you have to read.
- */
-const VISIBLE_BLOCKS = 3;
-
-const KIND_STYLE: Record<BlockKind, string> = {
-  // The substance. Everything else is quieter than this.
-  claim: "text-white",
-  // Unresolved — what is still owed, so it gets the loudest colour.
-  question: "text-amber-300",
-  // Supports a claim without being one.
-  context: "text-white/45 text-[13px]",
-  // The speaker commenting on their own content: the Midas-touch category,
-  // made visible here rather than hidden as it is in the transcript.
-  meta: "text-sky-300/80 italic",
-};
-
-/**
- * One topic as a small document.
+ * Nothing collapses. Hiding blocks behind a toggle made the card look complete
+ * while withholding the point, and whichever blocks happened to be first were
+ * rarely the interesting ones. Density comes from the extraction being
+ * restrained and from facts becoming a table, not from hiding what was
+ * extracted.
  *
- * A server component throughout except the download button: expansion uses
- * <details>, so a workspace of fifty topics ships almost no JavaScript.
+ * Blocks are grouped by kind rather than left in the order they were spoken, so
+ * a card reads as a document: what is still open, then what is thought, then
+ * the attributes, then the asides.
+ *
+ * A pure server component apart from the download button.
  */
 export function TopicCard({
   topic,
@@ -38,21 +31,17 @@ export function TopicCard({
   topic: Topic;
   blocks: Block[];
   allBlocks: Map<string, Block>;
-  /** Blocks a `?since=` diff added or revised, dimmed against otherwise. */
+  /** Blocks a `?since=` diff touched; everything else recedes. */
   highlight?: Set<string>;
 }) {
   const Icon = topicIcon(topic.icon);
 
-  // Open questions first regardless of when they were said — an unanswered
-  // question buried under later chatter is exactly what a glanceable summary
-  // must not do. Everything else stays chronological.
-  const ordered = [
-    ...blocks.filter((b) => b.kind === "question"),
-    ...blocks.filter((b) => b.kind !== "question"),
-  ];
+  const questions = blocks.filter((b) => b.kind === "question");
+  const claims = blocks.filter((b) => b.kind === "claim");
+  const facts = blocks.filter((b) => b.kind === "fact");
+  const asides = blocks.filter((b) => b.kind === "context" || b.kind === "meta");
 
-  const head = ordered.slice(0, VISIBLE_BLOCKS);
-  const tail = ordered.slice(VISIBLE_BLOCKS);
+  const faded = (b: Block) => highlight !== undefined && !highlight.has(b.id);
 
   return (
     <section className="rounded-xl border border-[var(--color-line)] bg-[var(--color-ink-soft)]/40 p-4">
@@ -65,105 +54,111 @@ export function TopicCard({
         />
       </header>
 
-      <ul className="space-y-2">
-        {head.map((block) => (
-          <BlockRow
-            key={block.id}
-            block={block}
-            allBlocks={allBlocks}
-            highlight={highlight}
-          />
-        ))}
-      </ul>
-
-      {tail.length > 0 && (
-        <details className="mt-2">
-          <summary className="cursor-pointer list-none text-xs text-white/30 hover:text-white/60">
-            +{tail.length} more
-          </summary>
-          <ul className="mt-2 space-y-2">
-            {tail.map((block) => (
-              <BlockRow
-                key={block.id}
-                block={block}
-                allBlocks={allBlocks}
-                highlight={highlight}
-              />
+      <div className="space-y-3">
+        {/* What is still owed. Loudest, and always first. */}
+        {questions.length > 0 && (
+          <ul className="space-y-1.5">
+            {questions.map((b) => (
+              <li
+                key={b.id}
+                className={`flex gap-2 text-sm leading-snug text-amber-300 ${faded(b) ? "opacity-30" : ""}`}
+              >
+                <span aria-hidden className="shrink-0 font-mono text-xs opacity-60">
+                  ?
+                </span>
+                <span>{b.text}</span>
+              </li>
             ))}
           </ul>
-        </details>
-      )}
+        )}
 
-      <footer className="mt-3 flex items-center justify-between text-[10px] text-white/20">
-        <span>
-          {blocks.length} block{blocks.length === 1 ? "" : "s"}
-        </span>
-        <span>
-          {topic.lastTouchedAt.toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
-          })}
-        </span>
-      </footer>
+        {/* The substance. */}
+        {claims.length > 0 && (
+          <ul className="space-y-1.5">
+            {claims.map((b) => (
+              <li
+                key={b.id}
+                className={`text-sm leading-snug ${faded(b) ? "opacity-30" : ""}`}
+              >
+                {b.text}
+                <RevisionNote block={b} allBlocks={allBlocks} />
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {/* Attributes, as a table. Three sentences of prose become three short
+            rows, which is most of where the card's density comes from. */}
+        {facts.length > 0 && (
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 border-t border-[var(--color-line)] pt-2.5 text-[13px]">
+            {facts.map((b) => (
+              <div key={b.id} className={`contents ${faded(b) ? "opacity-30" : ""}`}>
+                <dt className="text-white/30">{b.label ?? "—"}</dt>
+                <dd className="text-white/70">{b.text}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+
+        {/* Prose context and the speaker's own asides. */}
+        {asides.length > 0 && (
+          <ul className="space-y-1 border-t border-[var(--color-line)] pt-2.5">
+            {asides.map((b) => (
+              <li
+                key={b.id}
+                className={[
+                  "text-[13px] leading-snug",
+                  b.kind === "meta" ? "text-sky-300/70 italic" : "text-white/40",
+                  faded(b) ? "opacity-30" : "",
+                ].join(" ")}
+              >
+                {b.text}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </section>
   );
 }
 
-function BlockRow({
+/**
+ * What this block replaced.
+ *
+ * Still a `<details>`, because a superseded thought genuinely is secondary —
+ * this is the balance sheet showing the balance, not every entry behind it.
+ * The card no longer hides current content, only history.
+ */
+function RevisionNote({
   block,
   allBlocks,
-  highlight,
 }: {
   block: Block;
   allBlocks: Map<string, Block>;
-  highlight?: Set<string>;
 }) {
   const history = revisionChain(block, allBlocks);
-  const Icon = BLOCK_ICONS[block.kind];
-  // In diff mode everything untouched recedes, so the change reads at a glance
-  // without hiding the context it landed in.
-  const faded = highlight !== undefined && !highlight.has(block.id);
+  if (history.length === 0) return null;
 
   return (
-    <li className={`text-sm leading-snug ${faded ? "opacity-30" : ""}`}>
-      <div className="flex gap-2">
-        {Icon ? (
-          <Icon
-            size={13}
-            aria-hidden
-            className={`mt-0.5 shrink-0 ${KIND_STYLE[block.kind]} opacity-70`}
-          />
-        ) : (
-          <span aria-hidden className="mt-1.5 size-1 shrink-0 rounded-full bg-white/30" />
-        )}
-        <span className={KIND_STYLE[block.kind]}>{block.text}</span>
-      </div>
-
-      {history.length > 0 && (
-        // Current state by default, history one click away — the balance sheet
-        // shows the balance, not every entry that produced it.
-        <details className="mt-1 ml-5">
-          <summary className="cursor-pointer list-none text-[10px] text-white/25 hover:text-white/50">
-            revised · {history.length} earlier
-          </summary>
-          <ol className="mt-1 space-y-1 border-l border-[var(--color-line)] pl-3">
-            {history.map((old) => (
-              <li key={old.id} className="text-xs text-white/30 line-through">
-                {old.text}
-              </li>
-            ))}
-          </ol>
-        </details>
-      )}
-    </li>
+    <details className="mt-0.5">
+      <summary className="cursor-pointer list-none text-[10px] text-white/20 hover:text-white/50">
+        revised · {history.length} earlier
+      </summary>
+      <ol className="mt-1 space-y-1 border-l border-[var(--color-line)] pl-2.5">
+        {history.map((old) => (
+          <li key={old.id} className="text-xs text-white/25 line-through">
+            {old.text}
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }
 
 /**
- * Walk back through what this block replaced, newest first.
+ * Walk back through what a block replaced, newest first.
  *
- * Bounded: the chain is built from model output, and a cycle would otherwise
- * hang rendering.
+ * Bounded: the chain comes from model output, and a cycle would hang rendering.
  */
 function revisionChain(block: Block, allBlocks: Map<string, Block>): Block[] {
   const chain: Block[] = [];

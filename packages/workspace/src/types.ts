@@ -48,7 +48,7 @@ export interface TranscriptSegment {
  * stream. This one asks "what role does this play in the derived document?".
  * Conflating them would collapse two genuinely different questions.
  */
-export const BlockKind = z.enum(["claim", "context", "meta", "question"]);
+export const BlockKind = z.enum(["claim", "context", "meta", "question", "fact"]);
 export type BlockKind = z.infer<typeof BlockKind>;
 
 /** A span of derived text traced back to the utterance it came from. */
@@ -63,6 +63,15 @@ export interface Block {
   id: string;
   topicId: string;
   kind: BlockKind;
+  /**
+   * The left-hand column for a `fact` — "Duration", "Funding", "Based in".
+   *
+   * Facts are attributes, not prose, and a sentence is a poor container for
+   * one. Splitting the label off lets a run of them render as a table on the
+   * card and as a real Markdown table on export, which is far denser than the
+   * same content written out as bullets.
+   */
+  label?: string;
   text: string;
   spans: BlockSpan[];
   /** When the speech behind this block was said. */
@@ -122,6 +131,8 @@ export const WorkspaceOp = z.discriminatedUnion("type", [
     blockId: z.string().min(1),
     topicId: z.string().min(1),
     kind: BlockKind,
+    /** Only meaningful for `fact`; ignored elsewhere. */
+    label: z.string().min(1).optional(),
     text: z.string().min(1),
     spans: z.array(BlockSpan).default([]),
   }),
@@ -131,6 +142,7 @@ export const WorkspaceOp = z.discriminatedUnion("type", [
     supersedesBlockId: z.string().min(1),
     topicId: z.string().min(1),
     kind: BlockKind,
+    label: z.string().min(1).optional(),
     text: z.string().min(1),
     spans: z.array(BlockSpan).default([]),
   }),

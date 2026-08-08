@@ -1,11 +1,12 @@
-import Link from "next/link";
-import { ArrowDown, LayoutGrid } from "lucide-react";
+import { Link } from "@/components/nav-link";
+import { LayoutGrid, Mic } from "lucide-react";
 import {
   loadSessionUtterances,
   loadTimelineMarkers,
   loadTimelineSessions,
 } from "@voicemural/db/workspace";
 import { currentUser } from "@/lib/session";
+import { ScrollToLatest } from "./scroll-to-latest";
 import { SessionBlock } from "./session-block";
 import { LoadMoreSentinel } from "./timeline-scroller";
 
@@ -69,7 +70,9 @@ export default async function TimelinePage({
   const latest = allSessions[allSessions.length - 1]!;
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10">
+    <div className="mx-auto max-w-3xl px-6 pt-10 pb-28">
+      <ScrollToLatest targetId={`session-${latest.id}`} />
+
       <header className="mb-8 flex flex-wrap items-baseline justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Timeline</h1>
@@ -88,13 +91,6 @@ export default async function TimelinePage({
             <LayoutGrid size={14} aria-hidden />
             Workspace
           </Link>
-          <a
-            href={`#session-${latest.id}`}
-            className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 hover:bg-white/20"
-          >
-            <ArrowDown size={14} aria-hidden />
-            Latest
-          </a>
         </nav>
       </header>
 
@@ -115,6 +111,38 @@ export default async function TimelinePage({
           />
         ))}
       </div>
+
+      <TimelineActions />
+    </div>
+  );
+}
+
+/**
+ * Where to go next, at the bottom of the page.
+ *
+ * The timeline reads forwards, so the reader finishes at the most recent drive
+ * — which is exactly where "and now?" gets asked. Fixed rather than in the
+ * header for the same reason.
+ */
+function TimelineActions() {
+  return (
+    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-20 flex justify-center bg-gradient-to-t from-[var(--color-ink)] via-[var(--color-ink)]/90 to-transparent pt-10 pb-6">
+      <nav className="pointer-events-auto flex items-center gap-2 rounded-full border border-[var(--color-line)] bg-[var(--color-ink-soft)]/90 p-1.5 shadow-2xl backdrop-blur">
+        <Link
+          href="/workspace"
+          className="flex items-center gap-2 rounded-full px-4 py-2 text-sm text-white/70 hover:bg-white/10 hover:text-white"
+        >
+          <LayoutGrid size={15} aria-hidden />
+          Workspace
+        </Link>
+        <Link
+          href="/record"
+          className="flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+        >
+          <Mic size={15} aria-hidden />
+          Record
+        </Link>
+      </nav>
     </div>
   );
 }

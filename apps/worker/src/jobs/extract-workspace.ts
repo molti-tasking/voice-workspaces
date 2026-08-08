@@ -39,9 +39,6 @@ import { log } from "../logger";
  */
 export const BATCH_SIZE = Number(process.env.WORKSPACE_BATCH_SIZE ?? 8);
 
-/** Kept as the sweep's trigger threshold, which is the same number. */
-export const MIN_SEGMENTS = BATCH_SIZE;
-
 export interface ExtractionOutcome {
   segments: number;
   opsAppended: number;

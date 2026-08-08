@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Link } from "@/components/nav-link";
 import { ListTree, X } from "lucide-react";
 import { loadOps } from "@voicemural/db/workspace";
 import { listSessionsWithStats } from "@voicemural/db/sessions";
@@ -56,7 +56,10 @@ export default async function WorkspacePage({
         ...diff.revisedBlocks.map((r) => r.to.id),
       ])
     : undefined;
-  const blockCount = [...state.blocksByTopic.values()].reduce((n, b) => n + b.length, 0);
+  const blockCount = [...state.blocksByTopic.values()].reduce(
+    (n, b) => n + b.length,
+    0,
+  );
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
@@ -65,8 +68,8 @@ export default async function WorkspacePage({
           <h1 className="text-2xl font-semibold">Workspace</h1>
           <p className="mt-1 text-sm text-white/40">
             {state.topics.length} topic{state.topics.length === 1 ? "" : "s"} ·{" "}
-            {blockCount} block{blockCount === 1 ? "" : "s"} · folded from {state.opCount}{" "}
-            change{state.opCount === 1 ? "" : "s"}
+            {blockCount} block{blockCount === 1 ? "" : "s"} · folded from{" "}
+            {state.opCount} change{state.opCount === 1 ? "" : "s"}
             {validAsOf && (
               <>
                 {" "}
@@ -88,7 +91,10 @@ export default async function WorkspacePage({
             <ListTree size={14} aria-hidden />
             Timeline
           </Link>
-          <Link href="/" className="text-white/40 underline-offset-4 hover:underline">
+          <Link
+            href="/"
+            className="text-white/40 underline-offset-4 hover:underline"
+          >
             Sessions
           </Link>
           <Link
@@ -109,40 +115,23 @@ export default async function WorkspacePage({
             <span className="text-white/50">
               {" "}
               · {diff.addedBlocks.length} added
-              {diff.revisedBlocks.length > 0 && `, ${diff.revisedBlocks.length} revised`}
+              {diff.revisedBlocks.length > 0 &&
+                `, ${diff.revisedBlocks.length} revised`}
               {diff.addedTopics.length > 0 &&
                 `, ${diff.addedTopics.length} new topic${diff.addedTopics.length === 1 ? "" : "s"}`}
             </span>
           </p>
           <Link
-            href={validAsOf ? `/workspace?asOf=${encodeURIComponent(validAsOf.toISOString())}` : "/workspace"}
+            href={
+              validAsOf
+                ? `/workspace?asOf=${encodeURIComponent(validAsOf.toISOString())}`
+                : "/workspace"
+            }
             className="flex items-center gap-1 text-white/40 hover:text-white/70"
           >
             <X size={13} aria-hidden />
             Show everything
           </Link>
-        </div>
-      )}
-
-      {/* Time travel. The fold takes any instant; these are just the useful ones. */}
-      {sessions.length > 0 && (
-        <div className="mb-8 flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-white/30">As of</span>
-          <AsOfLink label="now" href="/workspace" active={!validAsOf} />
-          {sessions.slice(0, 6).map((s) => {
-            const at = (s.endedAt ?? s.startedAt).toISOString();
-            return (
-              <AsOfLink
-                key={s.id}
-                label={`after ${(s.endedAt ?? s.startedAt).toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                })}`}
-                href={`/workspace?asOf=${encodeURIComponent(at)}`}
-                active={validAsOf?.toISOString() === at}
-              />
-            );
-          })}
         </div>
       )}
 
@@ -174,31 +163,14 @@ function parseInstant(value: string | undefined): Date | undefined {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
-function AsOfLink({
-  label,
-  href,
-  active,
-}: {
-  label: string;
-  href: string;
-  active: boolean;
-}) {
-  return (
-    <Link
-      href={href}
-      className={[
-        "rounded-full px-2.5 py-1",
-        active
-          ? "bg-white/15 text-white"
-          : "bg-white/5 text-white/40 hover:bg-white/10 hover:text-white/70",
-      ].join(" ")}
-    >
-      {label}
-    </Link>
-  );
-}
 
-function EmptyState({ hasSessions, hasOps }: { hasSessions: boolean; hasOps: boolean }) {
+function EmptyState({
+  hasSessions,
+  hasOps,
+}: {
+  hasSessions: boolean;
+  hasOps: boolean;
+}) {
   return (
     <div className="rounded-xl border border-dashed border-[var(--color-line)] p-10 text-center">
       <p className="mb-1 font-medium">Nothing here yet</p>
