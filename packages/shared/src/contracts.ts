@@ -92,10 +92,14 @@ export type ProvenanceSpan = z.infer<typeof ProvenanceSpan>;
 export const JOBS = {
   transcribeChunk: "transcribe.chunk",
   classifyUtterance: "classify.utterance",
+  workspaceExtract: "workspace.extract",
   invokeCapability: "invoke.capability",
   evaluateRules: "evaluate.rules",
   exportOutlet: "export.outlet",
 } as const;
+
+export const WorkspaceExtractPayload = z.object({ userId: z.string() });
+export type WorkspaceExtractPayload = z.infer<typeof WorkspaceExtractPayload>;
 
 export const TranscribeChunkPayload = z.object({ chunkId: z.string() });
 export type TranscribeChunkPayload = z.infer<typeof TranscribeChunkPayload>;

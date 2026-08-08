@@ -20,7 +20,10 @@
     "db:studio": "pnpm --filter @voicemural/db studio",
     "db:seed": "pnpm --filter @voicemural/db seed",
     "db:fixtures": "pnpm --filter @voicemural/db fixtures",
-    "tunnel": "cloudflared tunnel --url http://localhost:3000"
+    "tunnel": "cloudflared tunnel --url http://localhost:3000",
+    "workspace:reparse": "pnpm --filter @voicemural/worker workspace reparse",
+    "workspace:rebuild": "pnpm --filter @voicemural/worker workspace rebuild",
+    "workspace:show": "pnpm --filter @voicemural/worker workspace show"
   },
   "devDependencies": {
     "turbo": "2.10.8",
@@ -28,6 +31,8 @@
     "@types/node": "24.10.1"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }

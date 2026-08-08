@@ -13,6 +13,10 @@ const config: NextConfig = {
   transpilePackages: ["@voicemural/db", "@voicemural/llm", "@voicemural/shared"],
   serverExternalPackages: ["postgres"],
   experimental: {
+    // Cross-fades between the timeline and the workspace without an animation
+    // library. Browsers without the View Transitions API navigate instantly and
+    // nothing errors.
+    viewTransition: true,
     serverActions: {
       // Chunks are ~5s of Opus (tens of KB), but a long chunk from a slow
       // upload retry can be larger. Generous ceiling, still far from unbounded.

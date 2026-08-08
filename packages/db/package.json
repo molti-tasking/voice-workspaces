@@ -8,7 +8,9 @@
     "./schema": "./src/schema.ts",
     "./seed": "./src/seed.ts",
     "./link-guest": "./src/link-guest.ts",
-    "./sessions": "./src/sessions.ts"
+    "./sessions": "./src/sessions.ts",
+    "./workspace": "./src/workspace.ts",
+    "./testing": "./src/testing.ts"
   },
   "scripts": {
     "generate": "drizzle-kit generate",
@@ -24,7 +26,8 @@
   "dependencies": {
     "@voicemural/shared": "workspace:*",
     "drizzle-orm": "0.45.2",
-    "postgres": "3.4.9"
+    "postgres": "3.4.9",
+    "@voicemural/workspace": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "24.10.1",

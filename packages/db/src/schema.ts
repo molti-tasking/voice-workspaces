@@ -1,5 +1,6 @@
 import { relations } from "drizzle-orm";
 import {
+  bigserial,
   boolean,
   index,
   integer,
@@ -434,4 +435,141 @@ export const artifactRelations = relations(artifact, ({ one, many }) => ({
     references: [captureSession.id],
   }),
   deliveries: many(exportDelivery),
+}));
+
+/* ---------------------------------------------------------------------------
+ * Workspace — the balance sheet derived from the transcript ledger
+ *
+ * The transcript answers "what did I say, when". The workspace answers "what do
+ * I currently think about X", by folding an append-only op log:
+ *
+ *     workspace(T) = fold(ops where occurredAt <= T)
+ *
+ * Only the ops and the model calls that produced them are stored. Topics and
+ * blocks are folded in memory, so time travel and per-drive diffs come for free
+ * rather than needing their own tables.
+ * ------------------------------------------------------------------------- */
+
+export const workspaceOpTypeEnum = pgEnum("workspace_op_type", [
+  "create_topic",
+  "rename_topic",
+  "merge_topics",
+  "add_block",
+  "revise_block",
+  "retire_block",
+  "move_block",
+]);
+
+/**
+ * One model call: the cache, and the provenance record.
+ *
+ * Persisting the request and the verbatim response is what makes the workspace
+ * deterministic. Rebuilding replays stored extractions and makes no network
+ * calls at all; only a deliberate PROMPT_VERSION or model change forces new
+ * ones. Keeping `rawResponse` also means a parser fix can re-derive ops without
+ * re-paying for — or re-rolling — the model output.
+ */
+export const extraction = pgTable(
+  "extraction",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** sha256(promptVersion, model, temperature, segments, stateDigest). */
+    inputHash: text("input_hash").notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    requestedModel: text("requested_model").notNull(),
+    /** What LiteLLM actually used — aliases and fallbacks make these differ. */
+    resolvedModel: text("resolved_model").notNull(),
+    temperature: text("temperature").notNull(),
+    seed: integer("seed"),
+    /** The exact utterances fed in, in order. */
+    inputSegmentIds: jsonb("input_segment_ids").$type<string[]>().notNull().default([]),
+    /** Fingerprint of the carried-forward state it was conditioned on. */
+    stateDigest: text("state_digest").notNull(),
+    requestMessages: jsonb("request_messages")
+      .$type<{ role: string; content: string }[]>()
+      .notNull(),
+    rawResponse: text("raw_response").notNull(),
+    /** Non-null when the response could not be parsed. The row is kept regardless. */
+    parseError: text("parse_error"),
+    parseWarnings: jsonb("parse_warnings").$type<string[]>().notNull().default([]),
+    promptTokens: integer("prompt_tokens").notNull().default(0),
+    completionTokens: integer("completion_tokens").notNull().default(0),
+    totalTokens: integer("total_tokens").notNull().default(0),
+    latencyMs: integer("latency_ms"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // The cache. Identical input reuses the stored call instead of paying again.
+    uniqueIndex("extraction_user_input_hash_idx").on(t.userId, t.inputHash),
+    index("extraction_user_created_idx").on(t.userId, t.createdAt),
+  ],
+);
+
+/**
+ * The ledger postings. Append-only.
+ *
+ * `occurredAt` is absolute wall-clock, not a session offset: the workspace is
+ * cumulative across every drive, so all sessions compose onto one timeline and
+ * "as of last Tuesday" is a meaningful question.
+ */
+export const workspaceOp = pgTable(
+  "workspace_op",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** Every op traces to the model call that produced it. */
+    extractionId: uuid("extraction_id").references(() => extraction.id, {
+      onDelete: "cascade",
+    }),
+    /** Total order, and the deterministic tie-break when two ops share a moment. */
+    seq: bigserial("seq", { mode: "number" }).notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    captureSessionId: uuid("capture_session_id").references(() => captureSession.id, {
+      onDelete: "set null",
+    }),
+    type: workspaceOpTypeEnum("type").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    sourceUtteranceIds: jsonb("source_utterance_ids")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("workspace_op_user_seq_idx").on(t.userId, t.seq),
+    index("workspace_op_user_occurred_idx").on(t.userId, t.occurredAt),
+    index("workspace_op_session_idx").on(t.captureSessionId),
+  ],
+);
+
+/**
+ * How far extraction has consumed the transcript.
+ *
+ * Explicit rather than inferred from `sourceUtteranceIds`: an utterance may
+ * legitimately produce no ops — filler, false starts, a Whisper hallucination on
+ * silence — and inferring the watermark would reprocess those forever.
+ */
+export const workspaceCursor = pgTable("workspace_cursor", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  lastUtteranceId: uuid("last_utterance_id"),
+  lastOccurredAt: timestamp("last_occurred_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const workspaceOpRelations = relations(workspaceOp, ({ one }) => ({
+  extraction: one(extraction, {
+    fields: [workspaceOp.extractionId],
+    references: [extraction.id],
+  }),
+  captureSession: one(captureSession, {
+    fields: [workspaceOp.captureSessionId],
+    references: [captureSession.id],
+  }),
 }));

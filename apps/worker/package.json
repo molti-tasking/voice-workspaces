@@ -7,12 +7,15 @@
     "dev": "tsx watch --include ../../.env src/index.ts",
     "start": "tsx src/index.ts",
     "build": "echo 'worker runs from TypeScript source via tsx'",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "workspace": "tsx src/scripts/workspace-admin.ts",
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@voicemural/db": "workspace:*",
     "@voicemural/llm": "workspace:*",
     "@voicemural/shared": "workspace:*",
+    "@voicemural/workspace": "workspace:*",
     "dotenv": "^17.4.2",
     "drizzle-orm": "0.45.2",
     "pg-boss": "12.27.0",
@@ -20,6 +23,7 @@
   },
   "devDependencies": {
     "@types/node": "24.10.1",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
   }
 }

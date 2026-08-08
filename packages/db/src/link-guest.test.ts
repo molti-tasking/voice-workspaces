@@ -14,6 +14,7 @@ config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true }
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { and, eq, inArray } from "drizzle-orm";
 import { closeDb, getDb } from "./index";
+import { isDatabaseReachable } from "./testing";
 import { migrateGuestData } from "./link-guest";
 import { seedStarterRepertoire } from "./seed";
 import {
@@ -30,7 +31,7 @@ const GUEST_ID = "test-guest-user";
 const TARGET_ID = "test-target-user";
 const SESSION_ID = "00000000-0000-4000-8000-0000000000aa";
 
-const describeIfDb = process.env.DATABASE_URL ? describe : describe.skip;
+const describeIfDb = (await isDatabaseReachable()) ? describe : describe.skip;
 
 async function cleanup() {
   const db = getDb();

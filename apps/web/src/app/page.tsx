@@ -27,6 +27,9 @@ export default async function HomePage() {
           </p>
         </div>
         <div className="flex items-center gap-4 text-sm">
+          <Link href="/workspace" className="text-white/40 underline-offset-4 hover:underline">
+            Workspace
+          </Link>
           <Link
             href="/record"
             className="rounded-lg bg-[var(--color-accent)] px-4 py-2 font-medium text-white"

@@ -12,7 +12,9 @@ config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true }
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
 import { closeDb, getDb } from "./index";
+import { isDatabaseReachable } from "./testing";
 import { listSessionsWithStats } from "./sessions";
+import { loadTimelineSessions } from "./workspace";
 import { audioChunk, captureSession, user, utterance } from "./schema";
 
 const USER_ID = "test-stats-user";
@@ -21,7 +23,7 @@ const S1 = "00000000-0000-4000-8000-0000000000b1";
 const S2 = "00000000-0000-4000-8000-0000000000b2";
 const S3 = "00000000-0000-4000-8000-0000000000b3";
 
-const describeIfDb = process.env.DATABASE_URL ? describe : describe.skip;
+const describeIfDb = (await isDatabaseReachable()) ? describe : describe.skip;
 
 async function cleanup() {
   await getDb().delete(user).where(inArray(user.id, [USER_ID, OTHER_ID]));
@@ -168,5 +170,35 @@ describeIfDb("listSessionsWithStats", () => {
   it("returns an empty list for a user with no sessions", async () => {
     await makeUser(USER_ID);
     expect(await listSessionsWithStats(USER_ID)).toEqual([]);
+  });
+});
+
+describeIfDb("loadTimelineSessions", () => {
+  beforeEach(cleanup);
+
+  it("returns sessions oldest-first with real counts", async () => {
+    // Guards the drizzle projection trap a second time: this once returned an
+    // empty list because a correlated subquery reported 0 utterances for every
+    // session, so the `> 0` filter discarded all of them.
+    await makeUser(USER_ID);
+    await makeSession(S1, USER_ID, 2, 3);
+    await makeSession(S2, USER_ID, 1, 1);
+
+    const timeline = await loadTimelineSessions(USER_ID);
+
+    expect(timeline.length).toBe(2);
+    expect(timeline.every((s) => s.utteranceCount > 0)).toBe(true);
+    expect(timeline[0]!.startedAt.getTime()).toBeLessThanOrEqual(
+      timeline[1]!.startedAt.getTime(),
+    );
+  });
+
+  it("omits sessions that recorded nothing", async () => {
+    await makeUser(USER_ID);
+    await getDb()
+      .insert(captureSession)
+      .values({ id: S3, userId: USER_ID, startedAt: new Date() });
+
+    expect(await loadTimelineSessions(USER_ID)).toEqual([]);
   });
 });

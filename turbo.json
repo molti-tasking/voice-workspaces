@@ -27,7 +27,11 @@
       "dependsOn": ["^build"]
     },
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      // Never cached: integration suites skip themselves when Postgres is
+      // unreachable, and a cached "skipped" run replays later as a pass — so a
+      // green suite could mean the database was simply down when it last ran.
+      "cache": false
     },
     "lint": {}
   }

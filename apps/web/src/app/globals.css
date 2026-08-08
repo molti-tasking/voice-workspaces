@@ -26,6 +26,46 @@ body {
     sans-serif;
 }
 
+/* --- View transitions -----------------------------------------------------
+   Moving between the ledger (timeline) and the balance sheet (workspace) should
+   feel like the same material being re-read, not a different place. So the
+   workspace lays over the timeline and fades up rather than sliding in. */
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 220ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+::view-transition-new(root) {
+  animation-name: vm-overlay-in;
+}
+
+::view-transition-old(root) {
+  animation-name: vm-overlay-out;
+}
+
+@keyframes vm-overlay-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.995);
+  }
+}
+
+@keyframes vm-overlay-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* Someone who has asked for less motion gets a plain cut. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+  }
+}
+
 /* The recorder is used in a car cradle: never let a stray long-press start a
    text selection or a pull-to-refresh mid-drive. */
 .no-touch-fuss {

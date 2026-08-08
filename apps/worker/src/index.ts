@@ -16,6 +16,8 @@ import {
   discardTranscribedAudio,
   requeueStuckChunks,
 } from "./jobs/sweep";
+import { MIN_SEGMENTS, extractWorkspace } from "./jobs/extract-workspace";
+import { usersWithPendingSpeech } from "@voicemural/db/workspace";
 import { preflightLiteLLM } from "./preflight";
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -54,6 +56,29 @@ async function main() {
     // Keep finished jobs around long enough to debug a bad drive.
     retentionSeconds: 60 * 60 * 24 * 3,
   });
+
+  await boss.createQueue(JOBS.workspaceExtract, {
+    // A cold self-hosted reasoning model can take a minute to load, so give the
+    // first attempt room before retrying.
+    retryLimit: 3,
+    retryDelay: 120,
+    retryBackoff: true,
+    expireInSeconds: 900,
+    retentionSeconds: 60 * 60 * 24 * 3,
+  });
+
+  await boss.work(
+    JOBS.workspaceExtract,
+    // One at a time per worker: extraction reads the folded state and appends
+    // to it, so two concurrent runs for the same user would each build on a
+    // state the other is about to invalidate.
+    { batchSize: 1 },
+    async (jobs: Job<{ userId: string }>[]) => {
+      for (const job of jobs) {
+        await extractWorkspace(job.data.userId);
+      }
+    },
+  );
 
   await boss.work(
     JOBS.transcribeChunk,
@@ -112,6 +137,15 @@ async function main() {
         await boss.send(JOBS.transcribeChunk, { chunkId }, { singletonKey: chunkId });
       }
       if (chunkIds.length > 0) log.info("queued chunks", { count: chunkIds.length });
+
+      // Workspace extraction runs off the transcript, not the queue: whoever
+      // has enough unconsumed speech gets a job. singletonKey per user keeps a
+      // slow extraction from stacking up behind itself.
+      const userIds = await usersWithPendingSpeech(MIN_SEGMENTS);
+      for (const userId of userIds) {
+        await boss.send(JOBS.workspaceExtract, { userId }, { singletonKey: userId });
+      }
+      if (userIds.length > 0) log.info("queued workspace extraction", { users: userIds.length });
     } catch (err) {
       log.error("sweep failed", {
         err: err instanceof Error ? err.message : String(err),
