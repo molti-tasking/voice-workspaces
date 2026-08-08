@@ -27,34 +27,93 @@ body {
 }
 
 /* --- View transitions -----------------------------------------------------
-   Moving between the ledger (timeline) and the balance sheet (workspace) should
-   feel like the same material being re-read, not a different place. So the
-   workspace lays over the timeline and fades up rather than sliding in. */
+   The workspace is a sheet lying ON TOP OF the timeline: it rises into view
+   going forward and drops back out returning. Direction comes from
+   `data-nav` on <html>, set by the Link wrapper in components/nav-link.tsx
+   before the browser takes its snapshot.
+
+   Browsers without the View Transitions API navigate instantly instead. */
 
 ::view-transition-old(root),
 ::view-transition-new(root) {
-  animation-duration: 220ms;
-  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  /* Stop the browser's built-in cross-fade from fighting the animations below;
+     each direction opts back in to exactly what it wants. */
+  animation: none;
+  mix-blend-mode: normal;
 }
 
-::view-transition-new(root) {
-  animation-name: vm-overlay-in;
+/* Forward: the sheet rises, the page beneath settles back. */
+[data-nav="forward"]::view-transition-old(root) {
+  animation: vm-sheet-recede 420ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+[data-nav="forward"]::view-transition-new(root) {
+  animation: vm-sheet-rise 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-::view-transition-old(root) {
-  animation-name: vm-overlay-out;
+/* Back: the sheet drops away, revealing what was underneath.
+   The old page has to paint ABOVE the new one here — it is the sheet being
+   pulled off — which is the reverse of the default stacking. */
+[data-nav="back"]::view-transition-image-pair(root) {
+  isolation: isolate;
+}
+[data-nav="back"]::view-transition-old(root) {
+  animation: vm-sheet-drop 400ms cubic-bezier(0.4, 0, 0.9, 0.6) both;
+  z-index: 2;
+}
+[data-nav="back"]::view-transition-new(root) {
+  animation: vm-sheet-return 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  z-index: 1;
 }
 
-@keyframes vm-overlay-in {
+@keyframes vm-sheet-rise {
   from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.995);
+    transform: translateY(100%);
+    box-shadow: 0 -30px 60px rgb(0 0 0 / 0.6);
+  }
+}
+@keyframes vm-sheet-recede {
+  to {
+    transform: scale(0.94) translateY(-14px);
+    opacity: 0.45;
+    filter: brightness(0.6);
+  }
+}
+@keyframes vm-sheet-drop {
+  to {
+    transform: translateY(100%);
+    box-shadow: 0 -30px 60px rgb(0 0 0 / 0.6);
+  }
+}
+@keyframes vm-sheet-return {
+  from {
+    transform: scale(0.94) translateY(-14px);
+    opacity: 0.45;
+    filter: brightness(0.6);
   }
 }
 
-@keyframes vm-overlay-out {
+/* --- Entering the recorder ------------------------------------------------
+   Starting a recording is a change of activity rather than a change of page:
+   everything blurs away and the recorder resolves out of it. Deliberately not
+   the sheet, so it feels identical from wherever you started. */
+[data-nav="record"]::view-transition-old(root) {
+  animation: vm-record-blur 320ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+[data-nav="record"]::view-transition-new(root) {
+  animation: vm-record-resolve 420ms 80ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes vm-record-blur {
   to {
+    filter: blur(16px) brightness(0.5);
+    transform: scale(1.04);
     opacity: 0;
+  }
+}
+@keyframes vm-record-resolve {
+  from {
+    filter: blur(12px);
+    opacity: 0;
+    transform: scale(1.02);
   }
 }
 
@@ -62,7 +121,7 @@ body {
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-old(root),
   ::view-transition-new(root) {
-    animation: none;
+    animation: none !important;
   }
 }
 

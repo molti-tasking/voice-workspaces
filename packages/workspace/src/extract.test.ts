@@ -197,6 +197,46 @@ describe("parseExtractionResponse", () => {
     if (op.type === "rename_topic") expect(op.icon).toBeUndefined();
   });
 
+  it("keeps a label on a fact and drops it from every other kind", () => {
+    // A stray label on a claim would change that op's payload — and therefore
+    // its identity — for no visible effect.
+    const result = parse(
+      JSON.stringify({
+        ops: [
+          {
+            type: "add_block",
+            topic: "t",
+            kind: "fact",
+            label: "Duration",
+            text: "3-6 months",
+            sources: ["u1"],
+          },
+          {
+            type: "add_block",
+            topic: "t",
+            kind: "claim",
+            label: "Ignored",
+            text: "A claim.",
+            sources: ["u2"],
+          },
+        ],
+      }),
+    );
+
+    const [fact, claim] = result.ops;
+    if (fact?.type === "add_block") expect(fact.label).toBe("Duration");
+    if (claim?.type === "add_block") expect(claim.label).toBeUndefined();
+  });
+
+  it("tolerates a fact that arrives without a label", () => {
+    const op = parse(
+      JSON.stringify({
+        ops: [{ type: "add_block", topic: "t", kind: "fact", text: "3-6 months" }],
+      }),
+    ).ops[0]!;
+    if (op.type === "add_block") expect(op.label).toBeUndefined();
+  });
+
   it("parses topics and blocks, minting ids for new handles", () => {
     const result = parse(
       JSON.stringify({
@@ -361,8 +401,8 @@ describe("PROMPT_VERSION discipline", () => {
     const fingerprint = createHash("sha256").update(SYSTEM_PROMPT).digest("hex").slice(0, 16);
 
     expect({ PROMPT_VERSION, fingerprint }).toEqual({
-      PROMPT_VERSION: "2",
-      fingerprint: "17350f55b1c8bc9b",
+      PROMPT_VERSION: "3",
+      fingerprint: "aa54af6c64ef924a",
     });
   });
 });

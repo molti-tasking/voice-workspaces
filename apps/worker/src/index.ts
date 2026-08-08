@@ -16,7 +16,7 @@ import {
   discardTranscribedAudio,
   requeueStuckChunks,
 } from "./jobs/sweep";
-import { MIN_SEGMENTS, extractWorkspace } from "./jobs/extract-workspace";
+import { BATCH_SIZE, extractWorkspace } from "./jobs/extract-workspace";
 import { usersWithPendingSpeech } from "@voicemural/db/workspace";
 import { preflightLiteLLM } from "./preflight";
 
@@ -141,7 +141,7 @@ async function main() {
       // Workspace extraction runs off the transcript, not the queue: whoever
       // has enough unconsumed speech gets a job. singletonKey per user keeps a
       // slow extraction from stacking up behind itself.
-      const userIds = await usersWithPendingSpeech(MIN_SEGMENTS);
+      const userIds = await usersWithPendingSpeech(BATCH_SIZE);
       for (const userId of userIds) {
         await boss.send(JOBS.workspaceExtract, { userId }, { singletonKey: userId });
       }

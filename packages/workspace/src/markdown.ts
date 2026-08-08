@@ -37,7 +37,11 @@ export function topicToMarkdown(
   lines.push("");
 
   const questions = blocks.filter((b) => b.kind === "question");
-  const rest = blocks.filter((b) => b.kind !== "question");
+  const facts = blocks.filter((b) => b.kind === "fact");
+  const claims = blocks.filter((b) => b.kind === "claim");
+  const rest = blocks.filter(
+    (b) => b.kind === "context" || b.kind === "meta",
+  );
 
   if (questions.length > 0) {
     lines.push("## Open questions");
@@ -46,17 +50,27 @@ export function topicToMarkdown(
     lines.push("");
   }
 
-  for (const block of rest) {
-    switch (block.kind) {
-      case "context":
-        lines.push(`> ${block.text}`);
-        break;
-      case "meta":
-        lines.push(`*${block.text}*`);
-        break;
-      default:
-        lines.push(block.text);
+  if (facts.length > 0) {
+    // A real Markdown table. Attributes are the one part of a topic with
+    // genuine structure, and a table is both the densest way to read them and
+    // the form that survives being pasted into a paper or a notes app.
+    lines.push("## Details");
+    lines.push("");
+    lines.push("| | |");
+    lines.push("| :-- | :-- |");
+    for (const f of facts) {
+      lines.push(`| **${escapeCell(f.label ?? "—")}** | ${escapeCell(f.text)} |`);
     }
+    lines.push("");
+  }
+
+  for (const block of claims) {
+    lines.push(block.text);
+    lines.push("");
+  }
+
+  for (const block of rest) {
+    lines.push(block.kind === "meta" ? `*${block.text}*` : `> ${block.text}`);
     lines.push("");
   }
 
@@ -77,6 +91,11 @@ export function workspaceToMarkdown(
     ? `<!-- VoiceMural workspace as of ${options.asOf.toISOString()} -->\n\n`
     : "";
   return header + parts.join("\n");
+}
+
+/** A pipe inside a cell would split it into two columns. */
+function escapeCell(value: string): string {
+  return value.replace(/\|/g, "\\|").replace(/\n+/g, " ").trim();
 }
 
 /** A filesystem-safe filename for a topic export. */
