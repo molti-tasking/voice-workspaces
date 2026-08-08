@@ -1,6 +1,7 @@
 "use client";
 
 import { Download } from "lucide-react";
+import posthog from "posthog-js";
 import { useState } from "react";
 
 /**
@@ -36,6 +37,7 @@ export function ExportButton({
         // Revoking immediately can cancel the download in some browsers.
         setTimeout(() => URL.revokeObjectURL(url), 10_000);
 
+        posthog.capture("workspace_exported", { export_format: "markdown" });
         setDone(true);
         setTimeout(() => setDone(false), 1500);
       }}

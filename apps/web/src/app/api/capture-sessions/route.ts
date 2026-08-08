@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { and, captureSession, desc, eq, getDb } from "@voicemural/db";
 import { CaptureSessionCreate } from "@voicemural/shared";
+import { createPostHogServerClient, postHogSessionProperties } from "@/lib/posthog-server";
 import { currentUserId } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -48,6 +49,16 @@ export async function POST(req: Request) {
     startedAt,
     deviceInfo,
   });
+
+  const posthog = createPostHogServerClient();
+  if (posthog) {
+    posthog.capture({
+      distinctId: userId,
+      event: "capture_session_created",
+      properties: postHogSessionProperties(req),
+    });
+    await posthog.shutdown();
+  }
 
   return NextResponse.json({ id, resumed: false }, { status: 201 });
 }

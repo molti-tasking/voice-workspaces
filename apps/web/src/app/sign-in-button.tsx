@@ -1,8 +1,38 @@
 "use client";
 
+import posthog from "posthog-js";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { signIn, signOut } from "@/lib/auth-client";
+import { useEffect, useRef, useState } from "react";
+import { signIn, signOut, useSession } from "@/lib/auth-client";
+
+export function PostHogIdentity() {
+  const { data: session, isPending } = useSession();
+  const identifiedUserId = useRef<string | null>(null);
+  const user = session?.user;
+
+  useEffect(() => {
+    if (isPending) return;
+
+    if (!user) {
+      if (identifiedUserId.current) posthog.reset();
+      identifiedUserId.current = null;
+      return;
+    }
+
+    if (identifiedUserId.current && identifiedUserId.current !== user.id) {
+      posthog.reset();
+    }
+
+    const personProperties: Record<string, string> = {};
+    if (user.email) personProperties.email = user.email;
+    if (user.name) personProperties.name = user.name;
+
+    posthog.identify(user.id, personProperties);
+    identifiedUserId.current = user.id;
+  }, [isPending, user?.email, user?.id, user?.name]);
+
+  return null;
+}
 
 /**
  * Start recording immediately, with no account.
@@ -65,7 +95,10 @@ export function SignOutButton() {
   return (
     <button
       type="button"
-      onClick={() => void signOut({ fetchOptions: { onSuccess: () => location.reload() } })}
+      onClick={() => {
+        posthog.reset();
+        void signOut({ fetchOptions: { onSuccess: () => location.reload() } });
+      }}
       className="text-white/40 underline-offset-4 hover:text-white/70 hover:underline"
     >
       Sign out

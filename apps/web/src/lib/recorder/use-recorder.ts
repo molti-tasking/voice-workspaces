@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import posthog from "posthog-js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   clearOpenSession,
@@ -283,6 +284,7 @@ export function useRecorder() {
     }
 
     streamRef.current = stream;
+    posthog.capture("recording_started", { mime_type: mimeType });
 
     const meta: OpenSessionMeta = {
       captureSessionId: crypto.randomUUID(),
@@ -336,6 +338,7 @@ export function useRecorder() {
 
     const meta = metaRef.current;
     if (meta) {
+      posthog.capture("recording_stopped", { recording_duration_ms: meta.elapsedMs });
       try {
         await fetch(`/api/capture-sessions/${meta.captureSessionId}/end`, {
           method: "POST",
