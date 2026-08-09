@@ -19,6 +19,7 @@
     "dotenv": "^17.4.2",
     "drizzle-orm": "0.45.2",
     "pg-boss": "12.27.0",
+    "posthog-node": "^5.48.1",
     "tsx": "4.20.6"
   },
   "devDependencies": {

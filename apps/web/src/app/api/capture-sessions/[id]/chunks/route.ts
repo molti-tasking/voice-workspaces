@@ -2,9 +2,33 @@ import { NextResponse } from "next/server";
 import { and, audioChunk, captureSession, eq, getDb } from "@voicemural/db";
 import { ChunkUploadMeta, extensionForMime } from "@voicemural/shared";
 import { chunkKey, fingerprint, getStorage } from "@voicemural/shared/storage";
+import { capture, sessionIdFrom } from "@/lib/analytics/server";
 import { currentUserId } from "@/lib/session";
 
 export const runtime = "nodejs";
+
+/**
+ * Refuse a chunk, and record why.
+ *
+ * The uploader treats any 4xx other than 401/408 as permanent and deletes the
+ * chunk from IndexedDB, so every one of these is a piece of recording that no
+ * longer exists anywhere. Worth a number rather than only a console line.
+ */
+function reject(
+  req: Request,
+  userId: string,
+  captureSessionId: string,
+  reason: string,
+  status: number,
+) {
+  capture(
+    userId,
+    "chunk_upload_rejected",
+    { capture_session_id: captureSessionId, reason, status },
+    { sessionId: sessionIdFrom(req) },
+  );
+  return NextResponse.json({ error: reason }, { status });
+}
 // Uploads are never cached or prerendered.
 export const dynamic = "force-dynamic";
 
@@ -43,13 +67,13 @@ export async function POST(
     .limit(1);
 
   if (owner.length === 0) {
-    return NextResponse.json({ error: "session_not_found" }, { status: 404 });
+    return reject(req, userId, captureSessionId, "session_not_found", 404);
   }
 
   const form = await req.formData();
   const file = form.get("audio");
   if (!(file instanceof Blob)) {
-    return NextResponse.json({ error: "missing_audio" }, { status: 400 });
+    return reject(req, userId, captureSessionId, "missing_audio", 400);
   }
 
   const parsed = ChunkUploadMeta.safeParse({
@@ -67,10 +91,10 @@ export async function POST(
   const meta = parsed.data;
 
   if (file.size === 0) {
-    return NextResponse.json({ error: "empty_audio" }, { status: 400 });
+    return reject(req, userId, captureSessionId, "empty_audio", 400);
   }
   if (file.size > MAX_CHUNK_BYTES) {
-    return NextResponse.json({ error: "chunk_too_large" }, { status: 413 });
+    return reject(req, userId, captureSessionId, "chunk_too_large", 413);
   }
 
   // Return early on a replay before doing any storage work.
@@ -147,6 +171,6 @@ export async function POST(
   } catch (err) {
     // Do not delete the stored object: the bytes are the irreplaceable half.
     console.error("Failed to record chunk row", { captureSessionId, seq: meta.seq }, err);
-    return NextResponse.json({ error: "storage_failed" }, { status: 500 });
+    return reject(req, userId, captureSessionId, "storage_failed", 500);
   }
 }

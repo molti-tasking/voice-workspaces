@@ -4,6 +4,7 @@ import { anonymous } from "better-auth/plugins/anonymous";
 import { getDb, schema } from "@voicemural/db";
 import { migrateGuestData } from "@voicemural/db/link-guest";
 import { seedStarterRepertoire } from "@voicemural/db/seed";
+import { capture, mergeGuestIntoUser } from "@/lib/analytics/server";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -99,6 +100,26 @@ function buildAuth() {
             to: newUser.user.id,
             ...result,
           });
+
+          // The analytics half of the same migration. Without it the database
+          // and PostHog disagree permanently: the rows move to the new user
+          // while every event the guest produced stays on an orphaned person.
+          // This is the only place both ids are known to be the same human, so
+          // it is the only place the irreversible merge is safe to make.
+          try {
+            mergeGuestIntoUser(anonymousUser.user.id, newUser.user.id);
+            capture(newUser.user.id, "guest_account_upgraded", {
+              sessions_moved: result.sessionsMoved,
+              capabilities_moved: result.capabilitiesMoved,
+              starter_capabilities_replaced: result.starterCapabilitiesReplaced,
+              // The count, not the names: capability names are user-authored
+              // text and belong in the database, not in an analytics property.
+              renamed_on_collision: result.renamedOnCollision.length,
+            });
+          } catch (err) {
+            // Never fail a sign-in over analytics.
+            console.error("Failed to merge guest identity in PostHog", err);
+          }
         },
       }),
     ],
@@ -115,6 +136,18 @@ function buildAuth() {
               // Never fail a sign-in over seeding; it is idempotent and can be
               // re-run with `pnpm db:seed`.
               console.error("Failed to seed starter repertoire", err);
+            }
+
+            try {
+              // This hook fires for guests too — the anonymous plugin creates a
+              // real user row — so an upgrade produces two of these, one for
+              // the guest and one for the GitHub account. The flag is what
+              // keeps a signup funnel from double-counting one person.
+              const isGuest =
+                (createdUser as { isAnonymous?: boolean | null }).isAnonymous === true;
+              capture(createdUser.id, "user_signed_up", { is_guest: isGuest });
+            } catch (err) {
+              console.error("Failed to capture user_signed_up", err);
             }
           },
         },

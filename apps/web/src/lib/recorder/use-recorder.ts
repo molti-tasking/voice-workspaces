@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { capture } from "@/lib/analytics/client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   clearOpenSession,
@@ -161,7 +162,10 @@ export function useRecorder() {
         patch({ wakeLockActive: false });
       });
     } catch {
-      // Denied or unsupported — recording still works while the tab is visible.
+      // Denied or unsupported — recording still works while the tab is visible,
+      // but on iOS a screen lock ends capture, so this is a leading indicator
+      // of a truncated drive rather than a cosmetic failure.
+      capture("wake_lock_denied", {});
       patch({ wakeLockActive: false });
     }
   }, [patch]);
@@ -205,7 +209,9 @@ export function useRecorder() {
   /* --- Recovery ----------------------------------------------------------- */
   useEffect(() => {
     void findOpenSession().then((open) => {
-      if (open) patch({ resumable: open });
+      if (!open) return;
+      patch({ resumable: open });
+      capture("unfinished_session_detected", { capture_session_id: open.captureSessionId });
     });
   }, [patch]);
 
@@ -272,6 +278,9 @@ export function useRecorder() {
         },
       });
     } catch (err) {
+      capture("mic_permission_denied", {
+        error_name: err instanceof Error ? err.name : "Unknown",
+      });
       patch({
         status: "idle",
         error:
@@ -283,6 +292,13 @@ export function useRecorder() {
     }
 
     streamRef.current = stream;
+    capture("recording_started", {
+      mime_type: mimeType,
+      resumed: state.resumable !== null,
+      // Read after the request settles; false here predicts a drive that ends
+      // when the screen locks.
+      wake_lock_active: wakeLockRef.current !== null,
+    });
 
     const meta: OpenSessionMeta = {
       captureSessionId: crypto.randomUUID(),
@@ -336,6 +352,15 @@ export function useRecorder() {
 
     const meta = metaRef.current;
     if (meta) {
+      capture("recording_stopped", {
+        capture_session_id: meta.captureSessionId,
+        recording_duration_ms: meta.elapsedMs,
+        chunks_recorded: meta.nextSeq,
+        // Anything still queued here is what a dead zone is holding. It rides
+        // the durable upload queue, not posthog-js, so it is still reported
+        // even if this event never leaves the phone.
+        chunks_pending: state.pendingUploads,
+      });
       try {
         await fetch(`/api/capture-sessions/${meta.captureSessionId}/end`, {
           method: "POST",
@@ -374,6 +399,7 @@ export function useRecorder() {
       /* best-effort */
     }
     await clearOpenSession(open.captureSessionId);
+    capture("unfinished_session_closed", { capture_session_id: open.captureSessionId });
     patch({ resumable: null });
     kickUploader();
   }, [patch, state.resumable]);

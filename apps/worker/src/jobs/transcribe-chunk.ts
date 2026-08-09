@@ -1,8 +1,9 @@
 import { and, asc, desc, eq, getDb, lt, sql } from "@voicemural/db";
-import { audioChunk, utterance } from "@voicemural/db/schema";
+import { audioChunk, captureSession, utterance } from "@voicemural/db/schema";
 import { LiteLLMError, transcribeChunk } from "@voicemural/llm";
 import { extensionForMime, toAbsoluteSegments } from "@voicemural/shared";
 import { getStorage } from "@voicemural/shared/storage";
+import { capture } from "../analytics";
 import { log } from "../logger";
 
 /** Raised when the failure is transient and pg-boss should retry. */
@@ -24,7 +25,7 @@ const KEEP_AUDIO = process.env.KEEP_AUDIO === "true";
  * Idempotent: if utterances already exist for the chunk it returns early, so a
  * pg-boss retry after a crash mid-write cannot double the transcript.
  */
-export async function handleTranscribeChunk(chunkId: string): Promise<void> {
+export async function handleTranscribeChunk(chunkId: string, attempt = 1): Promise<void> {
   const db = getDb();
 
   const [chunk] = await db
@@ -89,10 +90,29 @@ export async function handleTranscribeChunk(chunkId: string): Promise<void> {
       .orderBy(desc(utterance.startOffsetMs))
       .limit(1);
 
+    // The owning user, for attribution. Transcription is the only model
+    // surface with no row of its own, so this is the sole chance to record who
+    // a call was made for.
+    const [owner] = await db
+      .select({ userId: captureSession.userId })
+      .from(captureSession)
+      .where(eq(captureSession.id, chunk.captureSessionId))
+      .limit(1);
+
     const result = await transcribeChunk(audio, {
       filename: `${chunk.seq}.${extensionForMime(chunk.mimeType)}`,
       mimeType: chunk.mimeType,
       prompt: previous?.text,
+      context: {
+        userId: owner?.userId,
+        // One trace per call. The drive goes in sessionId instead: a long drive
+        // is hundreds of chunks, and collapsing them into one trace yields a
+        // pseudo-trace whose latency is their sum over several hours.
+        traceId: chunk.id,
+        sessionId: chunk.captureSessionId,
+        attempt,
+        extra: { chunk_seq: chunk.seq, capture_session_id: chunk.captureSessionId },
+      },
     });
 
     const segments = toAbsoluteSegments(result.segments, chunk.startOffsetMs);
@@ -167,6 +187,20 @@ export async function handleTranscribeChunk(chunkId: string): Promise<void> {
       .where(eq(audioChunk.id, chunk.id));
 
     log.error("transcription failed", { chunkId, retryable, reason });
+    capture(
+      // The chunk's owner is not always resolvable on this path — the failure
+      // may be the lookup itself — so fall back to the session id and drop the
+      // person profile rather than minting one for a synthetic distinct_id.
+      chunk.captureSessionId,
+      "transcription_failed",
+      {
+        chunk_id: chunkId,
+        capture_session_id: chunk.captureSessionId,
+        retryable,
+        reason: reason.slice(0, 200),
+      },
+      { processPerson: false },
+    );
     if (retryable) throw new RetryableJobError(reason);
   }
 }

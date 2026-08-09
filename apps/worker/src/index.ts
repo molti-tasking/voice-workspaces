@@ -3,7 +3,7 @@
 import { config } from "dotenv";
 config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true });
 
-import { PgBoss, type Job, type JobResult } from "pg-boss";
+import { PgBoss, type Job, type JobResult, type JobWithMetadata } from "pg-boss";
 import { closeDb } from "@voicemural/db";
 import { JOBS } from "@voicemural/shared";
 import { log } from "./logger";
@@ -14,8 +14,11 @@ import {
 import {
   closeIdleSessions,
   discardTranscribedAudio,
+  reportCompletedSessions,
   requeueStuckChunks,
 } from "./jobs/sweep";
+import { captureException, shutdownAnalytics } from "./analytics";
+import { installGenerationSink } from "./ai-analytics";
 import { BATCH_SIZE, extractWorkspace } from "./jobs/extract-workspace";
 import { usersWithPendingSpeech } from "@voicemural/db/workspace";
 import { preflightLiteLLM } from "./preflight";
@@ -45,6 +48,11 @@ async function main() {
   boss.on("error", (err: unknown) => log.error("pg-boss error", { err: String(err) }));
 
   await boss.start();
+
+  // Bridge model calls made inside packages/llm into AI Observability. Set once
+  // here rather than imported there, so the llm package stays free of a
+  // posthog dependency that the web app would also have to compile.
+  installGenerationSink();
 
   await boss.createQueue(JOBS.transcribeChunk, {
     // 60s, 120s, 240s — a ~7 minute window, deliberately shorter than the
@@ -88,12 +96,18 @@ async function main() {
       // fails the entire batch, so chunks that transcribed perfectly well would
       // be retried alongside it — wasted LiteLLM calls on every retry round.
       perJobResults: true,
+      // For retryCount, which distinguishes three paid-for model calls from one
+      // call reported three times in the cost figures.
+      includeMetadata: true,
     },
-    async (jobs: Job<TranscribePayload>[]): Promise<JobResult[]> =>
+    async (jobs: JobWithMetadata<TranscribePayload>[]): Promise<JobResult[]> =>
       Promise.all(
         jobs.map(async (job): Promise<JobResult> => {
           try {
-            await handleTranscribeChunk(job.data.chunkId);
+            // pg-boss counts attempts from 1 on first delivery. Passing it down
+            // is what separates "three calls were paid for" from "one call was
+            // reported three times" in the cost figures.
+            await handleTranscribeChunk(job.data.chunkId, job.retryCount + 1);
             return { id: job.id, status: "completed" };
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -129,6 +143,10 @@ async function main() {
       await requeueStuckChunks();
       await closeIdleSessions();
       await discardTranscribedAudio();
+      // After closeIdleSessions, so a session closed on this pass is a
+      // candidate from here on; the 25-minute settle window inside means it
+      // will not actually be reported for a while yet.
+      await reportCompletedSessions();
 
       const chunkIds = await findUntranscribedChunks(50);
       for (const chunkId of chunkIds) {
@@ -150,6 +168,7 @@ async function main() {
       log.error("sweep failed", {
         err: err instanceof Error ? err.message : String(err),
       });
+      captureException(err);
     } finally {
       sweeping = false;
     }
@@ -166,12 +185,20 @@ async function main() {
     } catch (err) {
       log.error("error stopping pg-boss", { err: String(err) });
     }
+    // Before closeDb, and before exit: the client batches, so without an
+    // explicit flush a redeploy drops whatever the last sweep produced.
+    await shutdownAnalytics();
     await closeDb();
     process.exit(0);
   };
 
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
+
+  process.on("unhandledRejection", (reason) => {
+    log.error("unhandled rejection", { err: String(reason) });
+    captureException(reason);
+  });
 }
 
 main().catch((err: unknown) => {

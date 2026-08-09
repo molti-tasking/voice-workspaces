@@ -23,7 +23,7 @@ export async function POST(
 
   const updated = await getDb()
     .update(captureSession)
-    .set({ endedAt: new Date() })
+    .set({ endedAt: new Date(), endedBy: "client" })
     .where(
       and(
         eq(captureSession.id, id),
@@ -34,5 +34,10 @@ export async function POST(
     )
     .returning({ id: captureSession.id });
 
+  // No analytics event here on purpose. This request comes from a phone that
+  // may be on a poor connection at the end of a drive, and the session is not
+  // finished in any meaningful sense until its queued chunks have drained and
+  // been transcribed. The worker emits `capture_session_completed` once that
+  // has actually settled; `endedBy` above is what tells it this path was taken.
   return NextResponse.json({ id, closed: updated.length > 0 });
 }

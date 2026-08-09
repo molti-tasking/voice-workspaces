@@ -51,6 +51,7 @@ export function TopicCard({
         <ExportButton
           markdown={topicToMarkdown(topic, blocks)}
           filename={topicFilename(topic)}
+          blockCount={blocks.length}
         />
       </header>
 

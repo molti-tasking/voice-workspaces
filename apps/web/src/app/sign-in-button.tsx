@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { resetIdentity } from "@/lib/analytics/client";
 import { signIn, signOut } from "@/lib/auth-client";
 
 /**
@@ -65,7 +66,10 @@ export function SignOutButton() {
   return (
     <button
       type="button"
-      onClick={() => void signOut({ fetchOptions: { onSuccess: () => location.reload() } })}
+      onClick={() => {
+        resetIdentity();
+        void signOut({ fetchOptions: { onSuccess: () => location.reload() } });
+      }}
       className="text-white/40 underline-offset-4 hover:text-white/70 hover:underline"
     >
       Sign out

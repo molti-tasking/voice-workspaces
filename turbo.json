@@ -12,7 +12,14 @@
     "BETTER_AUTH_SECRET",
     "BETTER_AUTH_URL",
     "GITHUB_CLIENT_ID",
-    "GITHUB_CLIENT_SECRET"
+    "GITHUB_CLIENT_SECRET",
+    // NEXT_PUBLIC_* are inlined into the client bundle at build time, so they
+    // are genuine build inputs: without them listed here Turbo would replay a
+    // cached bundle carrying the previous token.
+    "NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN",
+    "NEXT_PUBLIC_POSTHOG_HOST",
+    "POSTHOG_CAPTURE_AI_CONTENT",
+    "WORKSPACE_BATCH_SIZE"
   ],
   "tasks": {
     "build": {

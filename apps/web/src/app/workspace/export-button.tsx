@@ -1,6 +1,7 @@
 "use client";
 
 import { Download } from "lucide-react";
+import { capture } from "@/lib/analytics/client";
 import { useState } from "react";
 
 /**
@@ -14,9 +15,12 @@ import { useState } from "react";
 export function ExportButton({
   markdown,
   filename,
+  blockCount,
 }: {
   markdown: string;
   filename: string;
+  /** For analytics only: how much substance the exported topic had. */
+  blockCount: number;
 }) {
   const [done, setDone] = useState(false);
 
@@ -36,6 +40,14 @@ export function ExportButton({
         // Revoking immediately can cancel the download in some browsers.
         setTimeout(() => URL.revokeObjectURL(url), 10_000);
 
+        // `export_format` alone was constant, so it distinguished nothing.
+        // Which topic, and how much was in it, is what says whether the
+        // workspace produced something a participant judged worth keeping.
+        capture("workspace_topic_exported", {
+          topic_slug: filename.replace(/\.md$/, ""),
+          block_count: blockCount,
+          bytes: markdown.length,
+        });
         setDone(true);
         setTimeout(() => setDone(false), 1500);
       }}

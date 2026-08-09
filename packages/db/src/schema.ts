@@ -1,4 +1,4 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   bigserial,
   boolean,
@@ -134,13 +134,37 @@ export const captureSession = pgTable(
       .references(() => user.id, { onDelete: "cascade" }),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
     endedAt: timestamp("ended_at", { withTimezone: true }),
+    /**
+     * Which path closed the session.
+     *
+     * A drive usually ends by arriving somewhere rather than by deciding to
+     * stop, so the explicit /end call is frequently never made and the idle
+     * sweep closes the session instead. Recording which happened is a finding
+     * in its own right for a study conducted while driving, and it is the only
+     * way to tell the two apart after the fact — both write `endedAt`.
+     */
+    endedBy: text("ended_by").$type<"client" | "idle_sweep">(),
+    /**
+     * When `capture_session_completed` was sent to PostHog.
+     *
+     * Exactly-once is enforced here rather than relying on PostHog's event
+     * deduplication, which resolves at ClickHouse merge time and is defeated by
+     * any difference in timestamp — a retry a minute later would not be caught.
+     */
+    analyticsEmittedAt: timestamp("analytics_emitted_at", { withTimezone: true }),
     /** Active mode/persona at capture time, for reconstructing what was in force. */
     activeModeId: uuid("active_mode_id"),
     activePersonaId: uuid("active_persona_id"),
     deviceInfo: jsonb("device_info").$type<Record<string, unknown>>().notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("capture_session_user_started_idx").on(t.userId, t.startedAt)],
+  (t) => [
+    index("capture_session_user_started_idx").on(t.userId, t.startedAt),
+    // Drives the sweep's "ended but not yet reported" scan.
+    index("capture_session_analytics_pending_idx")
+      .on(t.endedAt)
+      .where(sql`${t.analyticsEmittedAt} is null`),
+  ],
 );
 
 /**

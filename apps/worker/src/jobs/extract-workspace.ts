@@ -7,7 +7,7 @@ import {
   recordExtraction,
   sessionIdsForUtterances,
 } from "@voicemural/db/workspace";
-import { chat, modelFor } from "@voicemural/llm";
+import { chat, modelFor, type ChatMessage, type ChatResult } from "@voicemural/llm";
 import {
   EXTRACTION_SEED,
   EXTRACTION_TEMPERATURE,
@@ -19,6 +19,8 @@ import {
   stateDigest,
   type TranscriptSegment,
 } from "@voicemural/workspace";
+import { captureGeneration } from "../ai-analytics";
+import { capture } from "../analytics";
 import { log } from "../logger";
 
 /**
@@ -83,6 +85,9 @@ export async function extractWorkspace(userId: string): Promise<ExtractionOutcom
   let cacheHit = false;
   let totalTokens = 0;
 
+  /** Set only on a live call, so analytics can tell spend from a replay. */
+  let liveCall: ChatResult | undefined;
+
   if (cached) {
     extractionId = cached.id;
     rawResponse = cached.rawResponse;
@@ -97,6 +102,7 @@ export async function extractWorkspace(userId: string): Promise<ExtractionOutcom
 
     rawResponse = result.content;
     totalTokens = result.usage.totalTokens;
+    liveCall = result;
 
     // Parse first so warnings land on the row, but persist regardless of the
     // outcome: an unparseable response must still be replayable later.
@@ -129,6 +135,7 @@ export async function extractWorkspace(userId: string): Promise<ExtractionOutcom
   const sourceIds = pending.map((s) => s.id);
   const sessionByUtterance = await sessionIdsForUtterances([last.id]);
 
+
   const opsAppended = await appendOps({
     userId,
     extractionId,
@@ -144,6 +151,19 @@ export async function extractWorkspace(userId: string): Promise<ExtractionOutcom
   // Always advance, even when the model produced nothing. A stretch of filler
   // legitimately yields no ops, and not advancing would re-extract it forever.
   await advanceCursor(userId, last.id, last.occurredAt);
+
+  reportExtraction({
+    userId,
+    extractionId,
+    captureSessionId: sessionByUtterance.get(last.id),
+    segments: pending.length,
+    opsAppended,
+    messages,
+    rawResponse,
+    parseError: parsed.error ?? null,
+    parseWarningCount: parsed.warnings.length,
+    liveCall,
+  });
 
   if (parsed.error) {
     log.warn("extraction did not parse", { userId, extractionId, error: parsed.error });
@@ -166,6 +186,104 @@ export async function extractWorkspace(userId: string): Promise<ExtractionOutcom
   });
 
   return { segments: pending.length, opsAppended, cacheHit, totalTokens };
+}
+
+interface ExtractionReport {
+  userId: string;
+  extractionId: string;
+  captureSessionId: string | undefined;
+  segments: number;
+  opsAppended: number;
+  messages: ChatMessage[];
+  rawResponse: string;
+  parseError: string | null;
+  parseWarningCount: number;
+  /** Absent when the extraction cache answered and no model was called. */
+  liveCall: ChatResult | undefined;
+}
+
+/**
+ * Report one extraction to analytics.
+ *
+ * Emitted here at the call site rather than derived from the `extraction` table
+ * afterwards, because `recordExtraction` uses `onConflictDoNothing`: when a
+ * concurrent worker stored the identical call first, we still paid for the
+ * model call but no row is ours. A row-driven reporter would lose exactly that
+ * spend, which is the spend most worth knowing about.
+ *
+ * Nothing needs to guard against double-reporting on a pg-boss retry. A retry
+ * after a successful call finds the row it just wrote and takes the cache
+ * branch, so the extraction cache is already the idempotency mechanism.
+ */
+function reportExtraction(report: ExtractionReport): void {
+  const {
+    userId,
+    extractionId,
+    captureSessionId,
+    segments,
+    opsAppended,
+    messages,
+    rawResponse,
+    parseError,
+    parseWarningCount,
+    liveCall,
+  } = report;
+
+  try {
+    if (!liveCall) {
+      // Deliberately not an $ai_generation: no model was called, so counting it
+      // as one would invent both spend and latency. Tracked on its own because
+      // cost avoided is worth seeing — `workspace:rebuild` replays an entire
+      // transcript without a single call.
+      capture(userId, "workspace_extraction_cached", {
+        extraction_id: extractionId,
+        segments,
+        ops_appended: opsAppended,
+      });
+    } else {
+      captureGeneration({
+        distinctId: userId,
+        traceId: extractionId,
+        sessionId: captureSessionId,
+        spanName: "workspace_extract",
+        // The model that answered, not the one requested: aliases, wildcards
+        // and fallbacks all mean those differ, and only this one is provenance.
+        model: liveCall.resolvedModel,
+        latencyMs: liveCall.latencyMs,
+        input: messages,
+        output: rawResponse,
+        inputTokens: liveCall.usage.promptTokens,
+        outputTokens: liveCall.usage.completionTokens,
+        costUsd: liveCall.costUsd,
+        error: parseError,
+        properties: {
+          prompt_version: PROMPT_VERSION,
+          requested_model: liveCall.requestedModel,
+          temperature: EXTRACTION_TEMPERATURE,
+          seed: EXTRACTION_SEED,
+          segment_count: segments,
+          ops_appended: opsAppended,
+          parse_warning_count: parseWarningCount,
+          cache_hit: false,
+        },
+      });
+    }
+
+    if (parseError || parseWarningCount > 0) {
+      capture(userId, "workspace_extraction_failed", {
+        extraction_id: extractionId,
+        parse_error: parseError,
+        parse_warning_count: parseWarningCount,
+      });
+    }
+  } catch (err) {
+    // Analytics must never break extraction. The extraction row is already
+    // committed and the ops are already appended by this point.
+    log.warn("failed to report extraction", {
+      extractionId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /**
