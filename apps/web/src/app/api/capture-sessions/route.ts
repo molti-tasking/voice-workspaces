@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { and, captureSession, desc, eq, getDb } from "@voicemural/db";
 import { CaptureSessionCreate } from "@voicemural/shared";
-import { createPostHogServerClient, postHogSessionProperties } from "@/lib/posthog-server";
+import { capture, sessionIdFrom } from "@/lib/analytics/server";
 import { currentUserId } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -40,6 +40,12 @@ export async function POST(req: Request) {
     if (existing[0]?.userId !== userId) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
     }
+    capture(
+      userId,
+      "capture_session_opened",
+      { capture_session_id: id, resumed: true },
+      { sessionId: sessionIdFrom(req) },
+    );
     return NextResponse.json({ id, resumed: true });
   }
 
@@ -50,15 +56,15 @@ export async function POST(req: Request) {
     deviceInfo,
   });
 
-  const posthog = createPostHogServerClient();
-  if (posthog) {
-    posthog.capture({
-      distinctId: userId,
-      event: "capture_session_created",
-      properties: postHogSessionProperties(req),
-    });
-    await posthog.shutdown();
-  }
+  // Best-effort by nature: this route is never reached when a drive starts in a
+  // dead zone, and nothing retries it. `capture_session_completed` from the
+  // worker is the event to trust for counting drives.
+  capture(
+    userId,
+    "capture_session_opened",
+    { capture_session_id: id, resumed: false },
+    { sessionId: sessionIdFrom(req) },
+  );
 
   return NextResponse.json({ id, resumed: false }, { status: 201 });
 }

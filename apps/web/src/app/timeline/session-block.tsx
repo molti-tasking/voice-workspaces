@@ -1,4 +1,5 @@
 import { Link } from "@/components/nav-link";
+import { MarkerLink } from "./marker-link";
 import { ArrowUpRight, CircleDot } from "lucide-react";
 import { formatOffset } from "@voicemural/shared";
 import type {
@@ -105,8 +106,12 @@ function MarkerRow({ marker }: { marker: TimelineMarker }) {
 
   return (
     <li className="-ml-[21px] py-1.5">
-      <Link
+      <MarkerLink
         href={`/workspace?${params.toString()}`}
+        extractionId={marker.extractionId}
+        opCount={marker.opCount}
+        totalTokens={marker.totalTokens}
+        resolvedModel={marker.resolvedModel}
         className={[
           "group inline-flex items-center gap-2 rounded-full border py-1 pr-2.5 pl-1.5 text-[11px] transition-colors",
           changed
@@ -124,7 +129,7 @@ function MarkerRow({ marker }: { marker: TimelineMarker }) {
             className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
           />
         )}
-      </Link>
+      </MarkerLink>
     </li>
   );
 }

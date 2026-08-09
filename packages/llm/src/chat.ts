@@ -32,6 +32,16 @@ export interface ChatResult {
   requestedModel: string;
   usage: TokenUsage;
   latencyMs: number;
+  /**
+   * What LiteLLM says the call cost, in USD, when it says anything.
+   *
+   * Read from the `x-litellm-response-cost` response header. This is the only
+   * cost signal available: nothing here has a price table, and half the models
+   * in use are self-hosted under `cavi/`, so deriving cost from tokens
+   * downstream would silently invent numbers for them. Absent when the proxy
+   * does not send the header.
+   */
+  costUsd?: number;
 }
 
 export interface ChatOptions {
@@ -53,6 +63,18 @@ interface ChatCompletionResponse {
     completion_tokens?: number;
     total_tokens?: number;
   };
+}
+
+/**
+ * Undefined rather than 0 for anything unparseable.
+ *
+ * A zero would be indistinguishable from a genuinely free self-hosted call and
+ * would quietly drag any cost average towards nothing.
+ */
+function parseCostHeader(raw: string | null): number | undefined {
+  if (!raw) return undefined;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : undefined;
 }
 
 /** Chat completion via LiteLLM's OpenAI-compatible `/chat/completions`. */
@@ -98,6 +120,7 @@ export async function chat(
 
   return {
     content: json.choices?.[0]?.message?.content ?? "",
+    costUsd: parseCostHeader(res.headers.get("x-litellm-response-cost")),
     // Fall back to the requested name rather than empty: a backend that omits
     // `model` should still leave a usable provenance record.
     resolvedModel: json.model ?? requestedModel,

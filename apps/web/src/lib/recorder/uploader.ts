@@ -1,3 +1,4 @@
+import { capture } from "@/lib/analytics/client";
 import {
   deleteChunk,
   markAttempt,
@@ -86,14 +87,34 @@ async function uploadOne(chunk: PendingChunk): Promise<"ok" | "retry" | "drop"> 
   // wedge the queue behind it and block every later chunk, so drop it and keep
   // the rest of the drive. 401 is the exception: the user can sign back in.
   if (res.status >= 400 && res.status < 500 && res.status !== 401 && res.status !== 408) {
-    console.error(
-      `Dropping chunk ${chunk.seq}: server rejected it with ${res.status}`,
-      await res.text().catch(() => ""),
-    );
+    const body = await res.text().catch(() => "");
+    console.error(`Dropping chunk ${chunk.seq}: server rejected it with ${res.status}`, body);
+    // Every one of these is a permanently lost piece of a recording, and the
+    // console.error above is the only trace it has ever left. Reported so the
+    // loss is visible as a number rather than a puzzled participant.
+    capture("upload_chunk_dropped", {
+      status: res.status,
+      seq: chunk.seq,
+      error_code: errorCodeFrom(body),
+    });
     return "drop";
   }
 
   return "retry";
+}
+
+/** The `error` field of the API's JSON error envelope, when there is one. */
+function errorCodeFrom(body: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (parsed && typeof parsed === "object" && "error" in parsed) {
+      const code = (parsed as { error: unknown }).error;
+      return typeof code === "string" ? code : undefined;
+    }
+  } catch {
+    /* not JSON */
+  }
+  return undefined;
 }
 
 /** Kick the drain loop. Safe to call as often as you like. */
@@ -110,6 +131,15 @@ async function drain(): Promise<void> {
   status.uploading = true;
   emit();
 
+  // Reported once per drain rather than per chunk. Per-chunk would be six
+  // near-identical events a minute; per-session would average away the very
+  // thing worth measuring. Per-drain gives the distribution of how long a
+  // phone spends unable to reach the server, which for a study conducted in a
+  // moving car is a finding rather than an operational metric.
+  let flushed = 0;
+  let dropped = 0;
+  let oldestChunkAgeMs = 0;
+
   try {
     do {
       queuedKick = false;
@@ -119,6 +149,13 @@ async function drain(): Promise<void> {
 
         const batch = await pendingChunks(10);
         if (batch.length === 0) break;
+
+        // The head of the queue is the oldest thing still unsent, so its age is
+        // how far behind the dead zone has pushed us.
+        const head = batch[0];
+        if (head?.createdAt) {
+          oldestChunkAgeMs = Math.max(oldestChunkAgeMs, Date.now() - head.createdAt);
+        }
 
         let progressed = false;
 
@@ -139,6 +176,9 @@ async function drain(): Promise<void> {
             if (outcome === "ok") {
               status.lastSuccessAt = Date.now();
               status.lastError = null;
+              flushed += 1;
+            } else {
+              dropped += 1;
             }
             progressed = true;
           } else {
@@ -164,6 +204,14 @@ async function drain(): Promise<void> {
     status.uploading = false;
     await refreshPending();
     emit();
+
+    if (flushed > 0 || dropped > 0) {
+      capture("upload_drained", {
+        chunks_flushed: flushed,
+        oldest_chunk_age_ms: oldestChunkAgeMs,
+        dropped,
+      });
+    }
   }
 }
 

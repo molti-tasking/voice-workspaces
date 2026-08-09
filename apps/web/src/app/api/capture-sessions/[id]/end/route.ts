@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { and, captureSession, eq, getDb, isNull } from "@voicemural/db";
-import { createPostHogServerClient, postHogSessionProperties } from "@/lib/posthog-server";
 import { currentUserId } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -24,7 +23,7 @@ export async function POST(
 
   const updated = await getDb()
     .update(captureSession)
-    .set({ endedAt: new Date() })
+    .set({ endedAt: new Date(), endedBy: "client" })
     .where(
       and(
         eq(captureSession.id, id),
@@ -35,17 +34,10 @@ export async function POST(
     )
     .returning({ id: captureSession.id });
 
-  if (updated.length > 0) {
-    const posthog = createPostHogServerClient();
-    if (posthog) {
-      posthog.capture({
-        distinctId: userId,
-        event: "capture_session_closed",
-        properties: postHogSessionProperties(req),
-      });
-      await posthog.shutdown();
-    }
-  }
-
+  // No analytics event here on purpose. This request comes from a phone that
+  // may be on a poor connection at the end of a drive, and the session is not
+  // finished in any meaningful sense until its queued chunks have drained and
+  // been transcribed. The worker emits `capture_session_completed` once that
+  // has actually settled; `endedBy` above is what tells it this path was taken.
   return NextResponse.json({ id, closed: updated.length > 0 });
 }

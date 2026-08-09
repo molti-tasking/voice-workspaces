@@ -9,6 +9,7 @@ import { currentUser } from "@/lib/session";
 import { ScrollToLatest } from "./scroll-to-latest";
 import { SessionBlock } from "./session-block";
 import { LoadMoreSentinel } from "./timeline-scroller";
+import { ViewEvent } from "@/lib/analytics/view-event";
 
 export const dynamic = "force-dynamic";
 
@@ -72,6 +73,16 @@ export default async function TimelinePage({
   return (
     <div className="mx-auto max-w-3xl px-6 pt-10 pb-28">
       <ScrollToLatest targetId={`session-${latest.id}`} />
+      <ViewEvent
+        event="timeline_viewed"
+        properties={{ session_count: allSessions.length, marker_count: markers.length }}
+      />
+      {shown > PAGE_SIZE && (
+        // Paging in earlier drives is the one real interaction on this page,
+        // and it no longer shows up as a pageview now that capture is keyed on
+        // pathname alone.
+        <ViewEvent event="timeline_page_loaded" properties={{ sessions_shown: shown }} />
+      )}
 
       <header className="mb-8 flex flex-wrap items-baseline justify-between gap-4">
         <div>

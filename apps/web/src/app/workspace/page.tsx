@@ -5,6 +5,8 @@ import { listSessionsWithStats } from "@voicemural/db/sessions";
 import { diffWorkspace, foldWorkspace } from "@voicemural/workspace";
 import { currentUser } from "@/lib/session";
 import { TopicCard } from "./topic-card";
+import { ViewEvent } from "@/lib/analytics/view-event";
+import { SurveyHost } from "@/components/survey-host";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +65,37 @@ export default async function WorkspacePage({
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
+      <ViewEvent
+        event="workspace_viewed"
+        properties={{
+          topic_count: state.topics.length,
+          block_count: blockCount,
+          // Arriving with a diff means the participant followed a timeline
+          // marker to see what one extraction produced — the moment they are
+          // actually reviewing the model's work.
+          has_diff: diff !== undefined,
+        }}
+      />
+      {diff && (
+        <>
+          <ViewEvent
+            event="workspace_diff_viewed"
+            properties={{
+              added: diff.addedBlocks.length,
+              revised: diff.revisedBlocks.length,
+              new_topics: diff.addedTopics.length,
+            }}
+          />
+          {/*
+            The best moment in the app to ask anything. The participant arrived
+            from a timeline marker and is looking at precisely what the model
+            made of their own speech, so "is this a fair account?" is answerable
+            here and nowhere else — and the answer joins to the generation that
+            produced it. Whether anything actually appears is PostHog's call.
+          */}
+          <SurveyHost sessionsCount={sessions.length} />
+        </>
+      )}
       <header className="mb-8 flex flex-wrap items-baseline justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Workspace</h1>

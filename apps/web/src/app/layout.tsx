@@ -1,7 +1,8 @@
 import { ViewTransitions } from "next-view-transitions";
 import { NavDirectionTracker } from "@/components/nav-link";
 import type { Metadata, Viewport } from "next";
-import { PostHogIdentity } from "./sign-in-button";
+import { PostHogIdentity } from "@/lib/analytics/identity";
+import { PostHogPageview } from "@/lib/analytics/pageview";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -39,6 +40,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-dvh antialiased">
         <NavDirectionTracker />
         <PostHogIdentity />
+        <PostHogPageview />
         {children}
       </body>
     </html>

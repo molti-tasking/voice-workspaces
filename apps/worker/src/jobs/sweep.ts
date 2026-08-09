@@ -1,7 +1,15 @@
 import { and, eq, getDb, isNull, lt, sql } from "@voicemural/db";
-import { audioChunk, captureSession } from "@voicemural/db/schema";
+import {
+  audioChunk,
+  captureSession,
+  extraction,
+  user,
+  utterance,
+  workspaceOp,
+} from "@voicemural/db/schema";
 import { getStorage } from "@voicemural/shared/storage";
 import { isNotNull } from "drizzle-orm";
+import { capture, setPersonProperties } from "../analytics";
 import { log } from "../logger";
 
 /** See transcribe-chunk.ts — audio is transient unless this is set. */
@@ -46,7 +54,12 @@ export async function requeueStuckChunks(): Promise<number> {
     )
     .returning({ id: audioChunk.id });
 
-  if (rows.length > 0) log.warn("requeued stuck chunks", { count: rows.length });
+  if (rows.length > 0) {
+    log.warn("requeued stuck chunks", { count: rows.length });
+    // No person behind this one — it is the worker noticing its own orphans —
+    // so keep it from minting a profile for a synthetic distinct_id.
+    capture("system", "chunk_requeued", { count: rows.length }, { processPerson: false });
+  }
   return rows.length;
 }
 
@@ -105,7 +118,7 @@ export async function closeIdleSessions(): Promise<string[]> {
 
   const rows = await getDb()
     .update(captureSession)
-    .set({ endedAt: new Date() })
+    .set({ endedAt: new Date(), endedBy: "idle_sweep" })
     .where(
       and(
         isNull(captureSession.endedAt),
@@ -126,4 +139,191 @@ export async function closeIdleSessions(): Promise<string[]> {
     log.info("closed idle sessions", { count: rows.length });
   }
   return rows.map((r) => r.id);
+}
+
+/**
+ * A session is only reported once its late chunks have settled.
+ *
+ * Comfortably past the 20-minute idle threshold, so a session closed by the
+ * sweep is never reported while the phone might still be draining a dead zone
+ * into it. A drive that ended cleanly waits the same amount of time, which
+ * costs nothing — nobody is watching this in real time — and keeps one rule
+ * instead of two.
+ */
+const ANALYTICS_SETTLE_MS = 25 * 60 * 1000;
+
+/**
+ * Report finished drives to analytics, exactly once each.
+ *
+ * This exists as a separate step rather than being folded into
+ * `closeIdleSessions` because that function only ever returns sessions it
+ * closed itself — its `endedAt is null` filter means a drive that reached the
+ * explicit /end call is invisible to it. Emitting from there would silently
+ * drop every cleanly-ended drive and leave a dataset biased towards drives that
+ * finished in a dead zone.
+ *
+ * Exactly-once comes from `analyticsEmittedAt` being claimed in the same
+ * statement that selects the rows, so two workers, or a crash and a restart,
+ * cannot double-report. PostHog's own event deduplication is not sufficient
+ * here: it resolves at ClickHouse merge time and is keyed partly on timestamp,
+ * so a retry a minute later counts twice.
+ */
+export async function reportCompletedSessions(limit = 50): Promise<number> {
+  const db = getDb();
+  const settleCutoff = new Date(Date.now() - ANALYTICS_SETTLE_MS);
+
+  // Claim first. Anything selected here is ours to report and nobody else's,
+  // even if the capture below throws.
+  const claimed = await db
+    .update(captureSession)
+    .set({ analyticsEmittedAt: new Date() })
+    .where(
+      and(
+        isNull(captureSession.analyticsEmittedAt),
+        isNotNull(captureSession.endedAt),
+        lt(captureSession.endedAt, settleCutoff),
+        // Never report while chunks are still working through the pipeline, or
+        // the counts below would describe a partially-transcribed drive.
+        sql`not exists (
+          select 1 from ${audioChunk}
+          where ${audioChunk.captureSessionId} = ${captureSession.id}
+            and ${audioChunk.status} in ('stored', 'transcribing')
+        )`,
+        sql`${captureSession.id} in (
+          select ${captureSession.id} from ${captureSession}
+          where ${captureSession.analyticsEmittedAt} is null
+            and ${captureSession.endedAt} is not null
+            and ${captureSession.endedAt} < ${settleCutoff.toISOString()}::timestamptz
+          limit ${limit}
+        )`,
+      ),
+    )
+    .returning({
+      id: captureSession.id,
+      userId: captureSession.userId,
+      startedAt: captureSession.startedAt,
+      endedAt: captureSession.endedAt,
+      endedBy: captureSession.endedBy,
+    });
+
+  if (claimed.length === 0) return 0;
+
+  for (const session of claimed) {
+    try {
+      const [chunks] = await db
+        .select({
+          total: sql<number>`count(*)::int`,
+          failed: sql<number>`count(*) filter (where ${audioChunk.status} = 'failed')::int`,
+          recordedMs: sql<number>`coalesce(sum(${audioChunk.durationMs}), 0)::int`,
+        })
+        .from(audioChunk)
+        .where(eq(audioChunk.captureSessionId, session.id));
+
+      const [utterances] = await db
+        .select({ total: sql<number>`count(*)::int` })
+        .from(utterance)
+        .where(eq(utterance.captureSessionId, session.id));
+
+      capture(
+        session.userId,
+        "capture_session_completed",
+        {
+          capture_session_id: session.id,
+          duration_ms: chunks?.recordedMs ?? 0,
+          chunk_count: chunks?.total ?? 0,
+          failed_chunk_count: chunks?.failed ?? 0,
+          utterance_count: utterances?.total ?? 0,
+          // Older rows predate the column; they were all closed by the sweep,
+          // which was the only path that set endedAt automatically.
+          closed_by: session.endedBy ?? "idle_sweep",
+        },
+        // When the drive actually ended, not when the sweep noticed. Otherwise
+        // every session lands on a five-second sweep boundary up to 25 minutes
+        // after the fact.
+        { timestamp: session.endedAt ?? undefined },
+      );
+
+      await refreshPersonProperties(session.userId);
+    } catch (err) {
+      // The row stays claimed. Losing one analytics event is much cheaper than
+      // risking a duplicate, and the underlying data is still in Postgres.
+      log.error("failed to report completed session", {
+        captureSessionId: session.id,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  log.info("reported completed sessions", { count: claimed.length });
+  return claimed.length;
+}
+
+/**
+ * Recompute a participant's person properties from the database.
+ *
+ * Counted from Postgres rather than accumulated from events on purpose.
+ * PostHog has no atomic increment for person properties, so anything counted
+ * from the event stream drifts the first time an event is lost — and in this
+ * app events are lost by design, every time a phone enters a tunnel. These
+ * properties are what surveys target, so they have to be right.
+ */
+async function refreshPersonProperties(userId: string): Promise<void> {
+  const db = getDb();
+
+  const [sessions] = await db
+    .select({
+      total: sql<number>`count(*)::int`,
+      firstAt: sql<Date | null>`min(${captureSession.startedAt})`,
+      lastAt: sql<Date | null>`max(${captureSession.startedAt})`,
+    })
+    .from(captureSession)
+    .where(eq(captureSession.userId, userId));
+
+  const [chunks] = await db
+    .select({
+      total: sql<number>`count(*)::int`,
+      failed: sql<number>`count(*) filter (where ${audioChunk.status} = 'failed')::int`,
+      recordedMs: sql<number>`coalesce(sum(${audioChunk.durationMs}), 0)::bigint`,
+    })
+    .from(audioChunk)
+    .innerJoin(captureSession, eq(audioChunk.captureSessionId, captureSession.id))
+    .where(eq(captureSession.userId, userId));
+
+  const [ops] = await db
+    .select({
+      topics: sql<number>`count(*) filter (where ${workspaceOp.type} = 'create_topic')::int`,
+      blocks: sql<number>`count(*) filter (where ${workspaceOp.type} = 'add_block')::int`,
+    })
+    .from(workspaceOp)
+    .where(eq(workspaceOp.userId, userId));
+
+  const [extractions] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(extraction)
+    .where(eq(extraction.userId, userId));
+
+  const [account] = await db
+    .select({ isAnonymous: user.isAnonymous })
+    .from(user)
+    .where(eq(user.id, userId))
+    .limit(1);
+
+  const isGuest = account?.isAnonymous === true;
+  const totalChunks = chunks?.total ?? 0;
+
+  setPersonProperties(
+    userId,
+    {
+      is_guest: isGuest,
+      auth_provider: isGuest ? "anonymous" : "github",
+      sessions_count: sessions?.total ?? 0,
+      total_recorded_ms: Number(chunks?.recordedMs ?? 0),
+      failed_chunk_rate: totalChunks > 0 ? (chunks?.failed ?? 0) / totalChunks : 0,
+      topics_count: ops?.topics ?? 0,
+      blocks_count: ops?.blocks ?? 0,
+      extractions_count: extractions?.total ?? 0,
+      ...(sessions?.lastAt ? { last_session_at: sessions.lastAt.toISOString() } : {}),
+    },
+    sessions?.firstAt ? { first_session_at: sessions.firstAt.toISOString() } : undefined,
+  );
 }

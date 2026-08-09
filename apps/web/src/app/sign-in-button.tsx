@@ -1,38 +1,9 @@
 "use client";
 
-import posthog from "posthog-js";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import { signIn, signOut, useSession } from "@/lib/auth-client";
-
-export function PostHogIdentity() {
-  const { data: session, isPending } = useSession();
-  const identifiedUserId = useRef<string | null>(null);
-  const user = session?.user;
-
-  useEffect(() => {
-    if (isPending) return;
-
-    if (!user) {
-      if (identifiedUserId.current) posthog.reset();
-      identifiedUserId.current = null;
-      return;
-    }
-
-    if (identifiedUserId.current && identifiedUserId.current !== user.id) {
-      posthog.reset();
-    }
-
-    const personProperties: Record<string, string> = {};
-    if (user.email) personProperties.email = user.email;
-    if (user.name) personProperties.name = user.name;
-
-    posthog.identify(user.id, personProperties);
-    identifiedUserId.current = user.id;
-  }, [isPending, user?.email, user?.id, user?.name]);
-
-  return null;
-}
+import { useState } from "react";
+import { resetIdentity } from "@/lib/analytics/client";
+import { signIn, signOut } from "@/lib/auth-client";
 
 /**
  * Start recording immediately, with no account.
@@ -96,7 +67,7 @@ export function SignOutButton() {
     <button
       type="button"
       onClick={() => {
-        posthog.reset();
+        resetIdentity();
         void signOut({ fetchOptions: { onSuccess: () => location.reload() } });
       }}
       className="text-white/40 underline-offset-4 hover:text-white/70 hover:underline"

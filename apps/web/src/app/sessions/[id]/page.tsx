@@ -6,6 +6,7 @@ import { findCoverageGaps, formatOffset } from "@voicemural/shared";
 import { currentUser } from "@/lib/session";
 import { AutoRefresh } from "./auto-refresh";
 import { Transcript, type TranscriptRow } from "./transcript";
+import { ViewEvent } from "@/lib/analytics/view-event";
 
 export const dynamic = "force-dynamic";
 
@@ -66,6 +67,17 @@ export default async function SessionPage({
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
       <AutoRefresh pending={untranscribed.length} />
+      <ViewEvent
+        event="transcript_viewed"
+        properties={{
+          capture_session_id: id,
+          utterance_count: rows.length,
+          // Whether the participant is looking at a clean transcript or a
+          // damaged one changes how to read anything else they do next.
+          has_gaps: gaps.length > 0,
+          has_failed_chunks: failed.length > 0,
+        }}
+      />
 
       <Link href="/" className="text-sm text-white/40 underline-offset-4 hover:underline">
         ← Sessions

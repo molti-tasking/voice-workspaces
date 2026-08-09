@@ -64,6 +64,10 @@ services:
       - MODEL_FAST=${MODEL_FAST}
       - MODEL_REASONING=${MODEL_REASONING}
       - STORAGE_DIR=/data/storage
+      # Also needed at runtime, not just as a build arg: the server-side client
+      # in the route handlers and Better Auth hooks reads them per process.
+      - NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN}
+      - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
     volumes:
       - audio-data:/data/storage
     depends_on:
@@ -93,6 +97,12 @@ services:
       # once audio is gone the corpus cannot be re-derived.
       - KEEP_AUDIO=${KEEP_AUDIO:-false}
       - STORAGE_DIR=/data/storage
+      # The worker is where $ai_generation and capture_session_completed come
+      # from, so it needs its own PostHog credentials.
+      - NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN}
+      - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
+      - POSTHOG_CAPTURE_AI_CONTENT=${POSTHOG_CAPTURE_AI_CONTENT:-true}
+      - WORKSPACE_BATCH_SIZE=${WORKSPACE_BATCH_SIZE:-8}
     volumes:
       # Same volume as web: the web app writes chunks, the worker reads them.
       # Both images run as uid 1001, which is what makes the shared mount work.

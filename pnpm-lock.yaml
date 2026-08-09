@@ -108,6 +108,9 @@ importers:
       pg-boss:
         specifier: 12.27.0
         version: 12.27.0
+      posthog-node:
+        specifier: ^5.48.1
+        version: 5.48.1
       tsx:
         specifier: 4.20.6
         version: 4.20.6
