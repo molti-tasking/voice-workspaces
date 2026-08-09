@@ -13,6 +13,7 @@ COPY apps/worker/package.json ./apps/worker/
 COPY packages/db/package.json ./packages/db/
 COPY packages/llm/package.json ./packages/llm/
 COPY packages/shared/package.json ./packages/shared/
+COPY packages/workspace/package.json ./packages/workspace/
 RUN pnpm install --frozen-lockfile
 
 FROM base AS runner
@@ -29,6 +30,21 @@ COPY apps/worker ./apps/worker
 COPY --from=deps /app/packages/db/node_modules ./packages/db/node_modules
 COPY --from=deps /app/packages/llm/node_modules ./packages/llm/node_modules
 COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
+COPY --from=deps /app/packages/workspace/node_modules ./packages/workspace/node_modules
+
+# Fail loudly if a workspace package was left out of the COPY list above.
+#
+# pnpm only installs for packages whose manifest is present at install time, so
+# a missing line yields a package with no node_modules — and the first symptom
+# is an unresolvable dependency deep inside that package's source, which reads
+# as a code error rather than a Dockerfile omission. This turns it back into
+# the one-line fix it actually is.
+RUN for pkg in packages/*/; do \
+      if [ -f "$pkg/package.json" ] && [ ! -d "$pkg/node_modules" ]; then \
+        echo "ERROR: $pkg has no node_modules — add 'COPY $pkg""package.json ./$pkg' to the deps stage of this Dockerfile." >&2; \
+        exit 1; \
+      fi; \
+    done
 
 RUN addgroup -g 1001 -S nodejs && adduser -S worker -u 1001 \
   && mkdir -p /data/storage && chown -R worker:nodejs /data/storage
