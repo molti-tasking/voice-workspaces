@@ -56,8 +56,13 @@ services:
       # mismatch, which looks like a GitHub misconfiguration rather than ours.
       - BETTER_AUTH_URL=${BETTER_AUTH_URL}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      # Each provider is independent: configure either, both, or neither. With
+      # none set the app is guest-only, which is what preview environments run
+      # as — neither GitHub nor Google accepts a wildcard callback URL.
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - LITELLM_BASE_URL=${LITELLM_BASE_URL}
       - LITELLM_API_KEY=${LITELLM_API_KEY}
       - MODEL_TRANSCRIBE=${MODEL_TRANSCRIBE}

@@ -5,6 +5,7 @@ import { getDb, schema } from "@voicemural/db";
 import { migrateGuestData } from "@voicemural/db/link-guest";
 import { seedStarterRepertoire } from "@voicemural/db/seed";
 import { capture, mergeGuestIntoUser } from "@/lib/analytics/server";
+import type { SocialProvider } from "@/lib/providers";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -36,21 +37,50 @@ function baseUrl(): string {
     throw new Error(
       "BETTER_AUTH_URL is not set. Set it to the public origin — " +
         "e.g. https://voice.example.com — with no port and no trailing slash. " +
-        "It must match the callback registered on the GitHub OAuth app.",
+        "It must match the callback registered on every OAuth app.",
     );
   }
   return "http://localhost:3000";
 }
 
 /**
- * GitHub sign-in is optional.
+ * Social sign-in is optional, per provider.
  *
  * Guests can record without any provider configured, so a fresh clone runs with
  * nothing but a database — no OAuth app to register before you can try it.
- * Configure GitHub when you want recordings to survive a cleared cookie.
+ * Configure a provider when you want recordings to survive a cleared cookie.
  */
 export function githubConfigured(): boolean {
   return Boolean(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET);
+}
+
+export function googleConfigured(): boolean {
+  return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+}
+
+/** Providers to offer, so the UI and the server agree on what exists. */
+export function configuredProviders(): SocialProvider[] {
+  const providers: SocialProvider[] = [];
+  if (githubConfigured()) providers.push("github");
+  if (googleConfigured()) providers.push("google");
+  return providers;
+}
+
+function socialProviders() {
+  return {
+    ...(githubConfigured() && {
+      github: {
+        clientId: required("GITHUB_CLIENT_ID"),
+        clientSecret: required("GITHUB_CLIENT_SECRET"),
+      },
+    }),
+    ...(googleConfigured() && {
+      google: {
+        clientId: required("GOOGLE_CLIENT_ID"),
+        clientSecret: required("GOOGLE_CLIENT_SECRET"),
+      },
+    }),
+  };
 }
 
 // Built by a function so the precise inferred type is preserved — annotating
@@ -75,14 +105,28 @@ function buildAuth() {
       expiresIn: 60 * 60 * 24 * 30,
       updateAge: 60 * 60 * 24,
     },
-    socialProviders: githubConfigured()
-      ? {
-          github: {
-            clientId: required("GITHUB_CLIENT_ID"),
-            clientSecret: required("GITHUB_CLIENT_SECRET"),
-          },
-        }
-      : {},
+    socialProviders: socialProviders(),
+    /**
+     * Merge providers that resolve to the same verified email onto one user.
+     *
+     * Without this, signing in with Google on the phone and GitHub on the laptop
+     * produces two user rows, and one person's commutes split across two
+     * repertoires and two growth curves — the same fragmentation the guest
+     * cookie causes, arriving through a different door. Offering a second
+     * provider makes that more likely, not less, so linking is what keeps the
+     * measurement honest.
+     *
+     * The trade: trusting a provider to link on email means whoever controls
+     * that address there reaches the account. Both Google and GitHub verify the
+     * addresses they report, which is why only those two are trusted. Do not add
+     * a provider here without checking that it does the same.
+     */
+    account: {
+      accountLinking: {
+        enabled: true,
+        trustedProviders: ["github", "google"],
+      },
+    },
     plugins: [
       anonymous({
         emailDomainName: "guest.voicemural.local",

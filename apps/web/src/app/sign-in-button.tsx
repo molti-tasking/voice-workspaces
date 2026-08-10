@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { resetIdentity } from "@/lib/analytics/client";
 import { signIn, signOut } from "@/lib/auth-client";
+import { type SocialProvider, providerName } from "@/lib/providers";
 
 /**
  * Start recording immediately, with no account.
@@ -44,7 +45,13 @@ export function GuestButton() {
   );
 }
 
-export function SignInButton({ label = "Sign in with GitHub" }: { label?: string }) {
+export function SignInButton({
+  provider,
+  label,
+}: {
+  provider: SocialProvider;
+  label?: string;
+}) {
   const [pending, setPending] = useState(false);
 
   return (
@@ -53,11 +60,11 @@ export function SignInButton({ label = "Sign in with GitHub" }: { label?: string
       disabled={pending}
       onClick={() => {
         setPending(true);
-        void signIn.social({ provider: "github", callbackURL: "/" });
+        void signIn.social({ provider, callbackURL: "/" });
       }}
       className="w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-ink-soft)] px-5 py-3 font-medium text-white hover:bg-white/10 disabled:opacity-60"
     >
-      {pending ? "Redirecting…" : label}
+      {pending ? "Redirecting…" : (label ?? `Sign in with ${providerName(provider)}`)}
     </button>
   );
 }

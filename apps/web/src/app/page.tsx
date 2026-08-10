@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { listSessionsWithStats } from "@voicemural/db/sessions";
 import { formatOffset } from "@voicemural/shared";
-import { githubConfigured } from "@/lib/auth";
+import { configuredProviders } from "@/lib/auth";
+import { providerName } from "@/lib/providers";
 import { currentUser } from "@/lib/session";
 import { GuestButton, SignInButton, SignOutButton } from "./sign-in-button";
 
@@ -13,7 +14,8 @@ export default async function HomePage() {
 
   // `isAnonymous` is added to the user model by the anonymous plugin.
   const isGuest = (user as { isAnonymous?: boolean | null }).isAnonymous === true;
-  const canUpgrade = isGuest && githubConfigured();
+  const providers = configuredProviders();
+  const canUpgrade = isGuest && providers.length > 0;
 
   const sessions = await listSessionsWithStats(user.id);
 
@@ -50,8 +52,14 @@ export default async function HomePage() {
             starts a separate account — and your sessions would be split across the two.
             Signing in moves everything you have recorded so far onto that account.
           </p>
-          <div className="max-w-xs">
-            <SignInButton label="Keep these — sign in with GitHub" />
+          <div className="max-w-xs space-y-2">
+            {providers.map((provider) => (
+              <SignInButton
+                key={provider}
+                provider={provider}
+                label={`Keep these — sign in with ${providerName(provider)}`}
+              />
+            ))}
           </div>
         </div>
       )}
@@ -124,7 +132,9 @@ function Landing() {
 
       <div className="space-y-3">
         <GuestButton />
-        {githubConfigured() && <SignInButton />}
+        {configuredProviders().map((provider) => (
+          <SignInButton key={provider} provider={provider} />
+        ))}
       </div>
 
       <p className="mt-4 text-sm text-white/40">
