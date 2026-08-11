@@ -1,11 +1,36 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { anonymous } from "better-auth/plugins/anonymous";
-import { getDb, schema } from "@voicemural/db";
+import type { AuthProvider } from "@voicemural/shared";
+import { eq, getDb, schema } from "@voicemural/db";
 import { migrateGuestData } from "@voicemural/db/link-guest";
 import { seedStarterRepertoire } from "@voicemural/db/seed";
-import { capture, mergeGuestIntoUser } from "@/lib/analytics/server";
+import { capture, mergeGuestIntoUser, setPersonProperties } from "@/lib/analytics/server";
 import type { SocialProvider } from "@/lib/providers";
+
+/**
+ * How a user authenticated, read from the database rather than inferred.
+ *
+ * The `account` table is the only place this is recorded: a guest has no row at
+ * all (the anonymous plugin mints no account), and a social sign-in has one per
+ * provider. Reading it here is what keeps `auth_provider` honest now that more
+ * than one provider exists — the alternative, guessing from `isAnonymous`, is
+ * precisely the bug this replaces.
+ *
+ * Account linking means one user can hold several rows. The most recently
+ * created wins, since that is the provider they just used.
+ */
+async function providerFor(userId: string): Promise<AuthProvider> {
+  const rows = await getDb()
+    .select({ providerId: schema.account.providerId })
+    .from(schema.account)
+    .where(eq(schema.account.userId, userId))
+    .orderBy(schema.account.createdAt);
+
+  const latest = rows.at(-1)?.providerId;
+  if (latest === "github" || latest === "google") return latest;
+  return "anonymous";
+}
 
 function required(name: string): string {
   const value = process.env[name];
@@ -168,6 +193,36 @@ function buildAuth() {
       }),
     ],
     databaseHooks: {
+      session: {
+        create: {
+          /**
+           * Every successful authentication, wherever it came from.
+           *
+           * Hooked on session creation rather than in the sign-in buttons
+           * because the buttons only know that a redirect *started* — the OAuth
+           * round trip can fail, and a client event cannot tell the difference.
+           * This fires only when a session actually exists.
+           */
+          after: async (createdSession) => {
+            try {
+              const provider = await providerFor(createdSession.userId);
+              const isGuest = provider === "anonymous";
+              capture(createdSession.userId, "user_signed_in", { provider, is_guest: isGuest });
+              // Set where the provider is known for certain. The worker
+              // recomputes the counted properties later from Postgres, but a
+              // participant who signs in and never records would otherwise
+              // never get an `auth_provider` at all.
+              setPersonProperties(createdSession.userId, {
+                auth_provider: provider,
+                is_guest: isGuest,
+              });
+            } catch (err) {
+              // Never fail a sign-in over analytics.
+              console.error("Failed to capture user_signed_in", err);
+            }
+          },
+        },
+      },
       user: {
         create: {
           after: async (createdUser) => {

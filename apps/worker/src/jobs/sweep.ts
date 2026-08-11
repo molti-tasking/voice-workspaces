@@ -1,5 +1,6 @@
 import { and, eq, getDb, isNull, lt, sql } from "@voicemural/db";
 import {
+  account,
   audioChunk,
   captureSession,
   extraction,
@@ -7,6 +8,7 @@ import {
   utterance,
   workspaceOp,
 } from "@voicemural/db/schema";
+import type { AuthProvider } from "@voicemural/shared";
 import { getStorage } from "@voicemural/shared/storage";
 import { isNotNull } from "drizzle-orm";
 import { capture, setPersonProperties } from "../analytics";
@@ -267,14 +269,31 @@ export async function reportCompletedSessions(limit = 50): Promise<number> {
  * app events are lost by design, every time a phone enters a tunnel. These
  * properties are what surveys target, so they have to be right.
  */
+/**
+ * ISO string from an aggregate timestamp, whatever the driver handed back.
+ *
+ * `sql<Date>` is only a type assertion — it converts nothing — and postgres.js
+ * returns `min()`/`max()` over a timestamp as a **string**. So the previous
+ * `sessions.lastAt.toISOString()` threw on every run, and because the throw
+ * happened while building the argument, `setPersonProperties` was never reached:
+ * no person property has ever actually been set from here. The caller logs and
+ * swallows it, which is why it went unnoticed.
+ */
+function isoOrUndefined(value: Date | string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
 async function refreshPersonProperties(userId: string): Promise<void> {
   const db = getDb();
 
   const [sessions] = await db
     .select({
       total: sql<number>`count(*)::int`,
-      firstAt: sql<Date | null>`min(${captureSession.startedAt})`,
-      lastAt: sql<Date | null>`max(${captureSession.startedAt})`,
+      // Typed as it actually arrives, not as we would like it to.
+      firstAt: sql<Date | string | null>`min(${captureSession.startedAt})`,
+      lastAt: sql<Date | string | null>`max(${captureSession.startedAt})`,
     })
     .from(captureSession)
     .where(eq(captureSession.userId, userId));
@@ -302,28 +321,46 @@ async function refreshPersonProperties(userId: string): Promise<void> {
     .from(extraction)
     .where(eq(extraction.userId, userId));
 
-  const [account] = await db
+  const [userRow] = await db
     .select({ isAnonymous: user.isAnonymous })
     .from(user)
     .where(eq(user.id, userId))
     .limit(1);
 
-  const isGuest = account?.isAnonymous === true;
+  // Read the provider rather than guessing it from `isAnonymous`. A guest has no
+  // `account` row at all; a signed-in user has one per linked provider, and the
+  // most recent is the one they last used. Inferring "github" for everyone who
+  // is not a guest mislabelled every Google account.
+  const providerRows = await db
+    .select({ providerId: account.providerId })
+    .from(account)
+    .where(eq(account.userId, userId))
+    .orderBy(account.createdAt);
+
+  const latestProvider = providerRows.at(-1)?.providerId;
+  const authProvider: AuthProvider =
+    latestProvider === "github" || latestProvider === "google"
+      ? latestProvider
+      : "anonymous";
+
+  const isGuest = userRow?.isAnonymous === true;
   const totalChunks = chunks?.total ?? 0;
+  const lastSessionAt = isoOrUndefined(sessions?.lastAt);
+  const firstSessionAt = isoOrUndefined(sessions?.firstAt);
 
   setPersonProperties(
     userId,
     {
       is_guest: isGuest,
-      auth_provider: isGuest ? "anonymous" : "github",
+      auth_provider: authProvider,
       sessions_count: sessions?.total ?? 0,
       total_recorded_ms: Number(chunks?.recordedMs ?? 0),
       failed_chunk_rate: totalChunks > 0 ? (chunks?.failed ?? 0) / totalChunks : 0,
       topics_count: ops?.topics ?? 0,
       blocks_count: ops?.blocks ?? 0,
       extractions_count: extractions?.total ?? 0,
-      ...(sessions?.lastAt ? { last_session_at: sessions.lastAt.toISOString() } : {}),
+      ...(lastSessionAt ? { last_session_at: lastSessionAt } : {}),
     },
-    sessions?.firstAt ? { first_session_at: sessions.firstAt.toISOString() } : undefined,
+    firstSessionAt ? { first_session_at: firstSessionAt } : undefined,
   );
 }

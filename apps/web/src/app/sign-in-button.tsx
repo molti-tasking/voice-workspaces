@@ -1,10 +1,13 @@
 "use client";
 
+import type { AnalyticsEventMap } from "@voicemural/shared";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { resetIdentity } from "@/lib/analytics/client";
-import { signIn, signOut } from "@/lib/auth-client";
+import { capture } from "@/lib/analytics/client";
+import { signIn } from "@/lib/auth-client";
 import { type SocialProvider, providerName } from "@/lib/providers";
+
+type SignInLocation = AnalyticsEventMap["sign_in_started"]["location"];
 
 /**
  * Start recording immediately, with no account.
@@ -48,9 +51,12 @@ export function GuestButton() {
 export function SignInButton({
   provider,
   label,
+  location,
 }: {
   provider: SocialProvider;
   label?: string;
+  /** Which surface the gesture came from; see `sign_in_started`. */
+  location: SignInLocation;
 }) {
   const [pending, setPending] = useState(false);
 
@@ -60,6 +66,11 @@ export function SignInButton({
       disabled={pending}
       onClick={() => {
         setPending(true);
+        // Captured before the redirect, which is the only chance: the OAuth hop
+        // is a full document navigation and nothing queued after it survives.
+        // The matching `user_signed_in` is emitted server-side, so the gap
+        // between the two is the OAuth drop-off.
+        capture("sign_in_started", { provider, location });
         void signIn.social({ provider, callbackURL: "/" });
       }}
       className="w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-ink-soft)] px-5 py-3 font-medium text-white hover:bg-white/10 disabled:opacity-60"
@@ -69,17 +80,3 @@ export function SignInButton({
   );
 }
 
-export function SignOutButton() {
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        resetIdentity();
-        void signOut({ fetchOptions: { onSuccess: () => location.reload() } });
-      }}
-      className="text-white/40 underline-offset-4 hover:text-white/70 hover:underline"
-    >
-      Sign out
-    </button>
-  );
-}

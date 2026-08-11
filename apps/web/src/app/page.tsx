@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { listSessionsWithStats } from "@voicemural/db/sessions";
 import { formatOffset } from "@voicemural/shared";
+import { AccountMenu } from "@/components/account-menu";
 import { configuredProviders } from "@/lib/auth";
 import { providerName } from "@/lib/providers";
 import { currentUser } from "@/lib/session";
-import { GuestButton, SignInButton, SignOutButton } from "./sign-in-button";
+import { GuestButton, SignInButton } from "./sign-in-button";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +14,8 @@ export default async function HomePage() {
   if (!user) return <Landing />;
 
   // `isAnonymous` is added to the user model by the anonymous plugin.
-  const isGuest = (user as { isAnonymous?: boolean | null }).isAnonymous === true;
+  const isGuest =
+    (user as { isAnonymous?: boolean | null }).isAnonymous === true;
   const providers = configuredProviders();
   const canUpgrade = isGuest && providers.length > 0;
 
@@ -24,21 +26,21 @@ export default async function HomePage() {
       <header className="mb-10 flex items-baseline justify-between">
         <div>
           <h1 className="text-2xl font-semibold">VoiceMural</h1>
-          <p className="text-sm text-white/40">
-            {isGuest ? "Recording as a guest on this device" : user.email}
-          </p>
         </div>
         <div className="flex items-center gap-4 text-sm">
-          <Link href="/workspace" className="text-white/40 underline-offset-4 hover:underline">
+          <Link
+            href="/workspace"
+            className="text-white/40 underline-offset-4 hover:underline"
+          >
             Workspace
           </Link>
           <Link
             href="/record"
-            className="rounded-lg bg-[var(--color-accent)] px-4 py-2 font-medium text-white"
+            className="rounded-lg bg-accent px-4 py-2 font-medium text-white"
           >
             Record
           </Link>
-          <SignOutButton />
+          <AccountMenu />
         </div>
       </header>
 
@@ -48,15 +50,17 @@ export default async function HomePage() {
             These recordings live in this browser&rsquo;s cookie
           </p>
           <p className="mb-3 text-sm text-white/60">
-            Clearing site data, switching browsers, or recording from another device
-            starts a separate account — and your sessions would be split across the two.
-            Signing in moves everything you have recorded so far onto that account.
+            Clearing site data, switching browsers, or recording from another
+            device starts a separate account — and your sessions would be split
+            across the two. Signing in moves everything you have recorded so far
+            onto that account.
           </p>
           <div className="max-w-xs space-y-2">
             {providers.map((provider) => (
               <SignInButton
                 key={provider}
                 provider={provider}
+                location="guest_banner"
                 label={`Keep these — sign in with ${providerName(provider)}`}
               />
             ))}
@@ -71,7 +75,7 @@ export default async function HomePage() {
       {sessions.length === 0 ? (
         <EmptyState />
       ) : (
-        <ul className="divide-y divide-[var(--color-line)] rounded-xl border border-[var(--color-line)]">
+        <ul className="divide-y divide-line rounded-xl border border-[var(--color-line)]">
           {sessions.map((s) => (
             <li key={s.id}>
               <Link
@@ -86,8 +90,8 @@ export default async function HomePage() {
                     })}
                   </p>
                   <p className="text-sm text-white/40">
-                    {formatOffset(s.recordedMs)} recorded · {s.chunkCount} chunks ·{" "}
-                    {s.utteranceCount} utterances
+                    {formatOffset(s.recordedMs)} recorded · {s.chunkCount}{" "}
+                    chunks · {s.utteranceCount} utterances
                     {s.endedAt === null && " · still open"}
                   </p>
                 </div>
@@ -107,7 +111,7 @@ export default async function HomePage() {
 
 function EmptyState() {
   return (
-    <div className="rounded-xl border border-dashed border-[var(--color-line)] p-8 text-center">
+    <div className="rounded-xl border border-dashed border-line p-8 text-center">
       <p className="mb-1 font-medium">No sessions yet</p>
       <p className="text-sm text-white/40">
         Mount your phone, open{" "}
@@ -125,22 +129,22 @@ function Landing() {
     <main className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center px-6">
       <h1 className="mb-3 text-3xl font-semibold">VoiceMural</h1>
       <p className="mb-8 text-white/60">
-        Speech is a good medium for formulating difficult problems and a poor medium for
-        operating software. VoiceMural listens while you are eyes-busy and treats
-        everything as content by default.
+        Speech is a good medium for formulating difficult problems and a poor
+        medium for operating software. VoiceMural listens while you are
+        eyes-busy and treats everything as content by default.
       </p>
 
       <div className="space-y-3">
         <GuestButton />
         {configuredProviders().map((provider) => (
-          <SignInButton key={provider} provider={provider} />
+          <SignInButton key={provider} provider={provider} location="landing" />
         ))}
       </div>
 
       <p className="mt-4 text-sm text-white/40">
-        Starting as a guest needs no account. Your recordings are tied to this browser,
-        so sign in when you want them to survive a cleared cookie — everything you have
-        recorded moves across with you.
+        Starting as a guest needs no account. Your recordings are tied to this
+        browser, so sign in when you want them to survive a cleared cookie —
+        everything you have recorded moves across with you.
       </p>
     </main>
   );

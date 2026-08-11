@@ -1,4 +1,3 @@
-import { Link } from "@/components/nav-link";
 import { MarkerLink } from "./marker-link";
 import { ArrowUpRight, CircleDot } from "lucide-react";
 import { formatOffset } from "@voicemural/shared";
@@ -45,7 +44,8 @@ export function SessionBlock({
             {" · "}
             {formatOffset(session.recordedMs)}
             {" · "}
-            {session.utteranceCount} utterance{session.utteranceCount === 1 ? "" : "s"}
+            {session.utteranceCount} utterance
+            {session.utteranceCount === 1 ? "" : "s"}
           </span>
         </h2>
       </header>
@@ -53,7 +53,10 @@ export function SessionBlock({
       <ol className="space-y-1 border-l border-[var(--color-line)] pl-4">
         {items.map((item) =>
           item.kind === "marker" ? (
-            <MarkerRow key={`m-${item.marker.extractionId}`} marker={item.marker} />
+            <MarkerRow
+              key={`m-${item.marker.extractionId}`}
+              marker={item.marker}
+            />
           ) : (
             <UtteranceRow key={item.utterance.id} utterance={item.utterance} />
           ),
