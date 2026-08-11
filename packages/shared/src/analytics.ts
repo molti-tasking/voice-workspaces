@@ -82,6 +82,29 @@ export interface AnalyticsEventMap {
 
   // --- auth ----------------------------------------------------------------
   user_signed_up: { is_guest: boolean };
+  /**
+   * Authentication succeeded. Server-side, from Better Auth's session hook, so
+   * it is emitted once per session creation however it happened — including a
+   * guest tapping Record, which is why `provider` carries "anonymous".
+   *
+   * Distinct from `user_signed_up`, which fires only when the row is first
+   * created. The pair is what separates returning participants from new ones.
+   */
+  user_signed_in: { provider: AuthProvider; is_guest: boolean };
+  /**
+   * The redirect to a provider was started. Client-side and best-effort: the
+   * matching `user_signed_in` may never arrive, and the gap between the two is
+   * the OAuth drop-off worth seeing.
+   *
+   * `location` separates the two gestures that look identical in aggregate —
+   * signing in cold from the landing page, versus a guest upgrading an account
+   * that already holds recordings.
+   */
+  sign_in_started: {
+    provider: "github" | "google";
+    location: "landing" | "account_menu" | "guest_banner";
+  };
+  user_signed_out: { is_guest: boolean };
   guest_account_upgraded: {
     sessions_moved: number;
     capabilities_moved: number;
@@ -145,6 +168,16 @@ export interface AnalyticsEventMap {
 export type AnalyticsEventName = keyof AnalyticsEventMap;
 
 /**
+ * How a person authenticated.
+ *
+ * A union rather than a bare string so adding a provider is a compile error at
+ * every site that reports one — which is exactly what did not happen when Google
+ * was added and two call sites went on hardcoding "github" for anyone who was
+ * not a guest.
+ */
+export type AuthProvider = "anonymous" | "github" | "google";
+
+/**
  * Person properties set from database truth, not counted from the event stream.
  *
  * PostHog has no atomic increment for person properties, so anything counted
@@ -159,7 +192,7 @@ export type AnalyticsEventName = keyof AnalyticsEventMap;
  */
 export interface PersonProperties {
   is_guest: boolean;
-  auth_provider: "anonymous" | "github";
+  auth_provider: AuthProvider;
   study_participant_id?: string;
   sessions_count: number;
   total_recorded_ms: number;

@@ -46,6 +46,13 @@ export function TopicCard({
   return (
     <section className="rounded-xl border border-[var(--color-line)] bg-[var(--color-ink-soft)]/40 p-4">
       <header className="mb-3 flex items-start gap-2.5">
+        {/*
+          `topicIcon` selects from a module-level map of Lucide components rather
+          than building one, so the identity is stable across renders for a given
+          name — and this is a server component with no state to reset regardless.
+          The rule cannot see through the lookup.
+        */}
+        {/* eslint-disable-next-line react-hooks/static-components */}
         <Icon size={16} aria-hidden className="mt-0.5 shrink-0 text-white/40" />
         <h2 className="min-w-0 flex-1 leading-tight font-medium">{topic.title}</h2>
         <ExportButton

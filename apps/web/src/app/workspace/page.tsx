@@ -3,6 +3,7 @@ import { ListTree, X } from "lucide-react";
 import { loadOps } from "@voicemural/db/workspace";
 import { listSessionsWithStats } from "@voicemural/db/sessions";
 import { diffWorkspace, foldWorkspace } from "@voicemural/workspace";
+import { AccountMenu } from "@/components/account-menu";
 import { currentUser } from "@/lib/session";
 import { TopicCard } from "./topic-card";
 import { ViewEvent } from "@/lib/analytics/view-event";
@@ -136,6 +137,7 @@ export default async function WorkspacePage({
           >
             Record
           </Link>
+          <AccountMenu />
         </nav>
       </header>
 

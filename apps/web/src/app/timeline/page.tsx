@@ -5,6 +5,7 @@ import {
   loadTimelineMarkers,
   loadTimelineSessions,
 } from "@voicemural/db/workspace";
+import { AccountMenu } from "@/components/account-menu";
 import { currentUser } from "@/lib/session";
 import { ScrollToLatest } from "./scroll-to-latest";
 import { SessionBlock } from "./session-block";
@@ -102,6 +103,7 @@ export default async function TimelinePage({
             <LayoutGrid size={14} aria-hidden />
             Workspace
           </Link>
+          <AccountMenu />
         </nav>
       </header>
 
@@ -161,6 +163,11 @@ function TimelineActions() {
 function EmptyState() {
   return (
     <div className="mx-auto max-w-lg px-6 py-16 text-center">
+      {/* Someone with nothing recorded is exactly who most needs the account
+          control — it is the guest who has not signed in yet. */}
+      <div className="mb-6 flex justify-end">
+        <AccountMenu />
+      </div>
       <h1 className="mb-2 text-2xl font-semibold">Timeline</h1>
       <p className="text-sm text-white/40">
         Nothing recorded yet.{" "}

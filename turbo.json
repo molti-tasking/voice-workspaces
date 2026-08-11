@@ -13,6 +13,8 @@
     "BETTER_AUTH_URL",
     "GITHUB_CLIENT_ID",
     "GITHUB_CLIENT_SECRET",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
     // NEXT_PUBLIC_* are inlined into the client bundle at build time, so they
     // are genuine build inputs: without them listed here Turbo would replay a
     // cached bundle carrying the previous token.

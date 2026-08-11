@@ -93,7 +93,12 @@ export function identifyUser({ userId, isGuest, email, name }: IdentityInput): v
 function personPropertiesFor({ isGuest, email, name }: IdentityInput): Record<string, unknown> {
   return {
     is_guest: isGuest,
-    auth_provider: isGuest ? "anonymous" : "github",
+    // `auth_provider` is deliberately NOT set here. The browser session does not
+    // carry which provider was used, so this used to hardcode "github" for
+    // anyone who was not a guest — which silently mislabelled every Google
+    // account. It is set server-side on session creation, where the `account`
+    // table makes it knowable, and recomputed by the worker from Postgres.
+    //
     // Guests get a synthetic `…@guest.voicemural.local` address and the name
     // "Guest". Sending those would fill person search with thousands of
     // identical rows that identify nobody.
