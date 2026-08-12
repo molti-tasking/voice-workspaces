@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { Link } from "@/components/nav-link";
 import { ListTree, X } from "lucide-react";
 import { loadOps } from "@voicemural/db/workspace";
@@ -10,6 +11,11 @@ import { ViewEvent } from "@/lib/analytics/view-event";
 import { SurveyHost } from "@/components/survey-host";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Workspace",
+  robots: { index: false, follow: false },
+};
 
 /**
  * The workspace: a balance sheet folded from the transcript ledger.

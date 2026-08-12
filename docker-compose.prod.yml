@@ -42,6 +42,9 @@ services:
       args:
         - NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN}
         - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
+        # Prerendered pages bake their absolute URLs (canonical, og:image) at
+        # build time. Also passed as runtime environment below, for auth.
+        - BETTER_AUTH_URL=${BETTER_AUTH_URL}
     environment:
       # Declared so Coolify wires Traefik to this service on port 3000.
       - SERVICE_FQDN_WEB_3000

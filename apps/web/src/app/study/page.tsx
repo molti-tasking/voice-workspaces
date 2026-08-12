@@ -28,7 +28,8 @@ import Link from "next/link";
  */
 
 export const metadata: Metadata = {
-  title: "Taking part — VoiceMural",
+  // The root layout's template appends " — VoiceMural".
+  title: "Taking part",
   // A participant information sheet has an audience of about nine people.
   robots: { index: false, follow: false },
 };

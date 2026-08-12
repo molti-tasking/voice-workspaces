@@ -12,6 +12,7 @@
     "stop": "docker compose down",
     "reset": "docker compose down -v && node scripts/setup.mjs",
     "build": "turbo run build",
+    "icons": "node scripts/generate-icons.mjs",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "lint": "turbo run lint",

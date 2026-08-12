@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { Link } from "@/components/nav-link";
 import { LayoutGrid, Mic } from "lucide-react";
 import {
@@ -13,6 +14,11 @@ import { LoadMoreSentinel } from "./timeline-scroller";
 import { ViewEvent } from "@/lib/analytics/view-event";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Timeline",
+  robots: { index: false, follow: false },
+};
 
 /** Sessions rendered per page. One drive is ~200 utterances. */
 const PAGE_SIZE = 3;
