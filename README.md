@@ -159,6 +159,7 @@ constraint, not a feature to add later.
 | `pnpm db:studio` | Drizzle Studio |
 | `pnpm db:seed` | re-install starter repertoire for all users |
 | `pnpm db:fixtures` | seed a demo session with synthesised audio + transcript |
+| `pnpm icons` | redraw the favicon, apple-touch and PWA icons from `scripts/generate-icons.mjs` |
 
 ---
 

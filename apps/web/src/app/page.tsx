@@ -1,13 +1,25 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { listSessionsWithStats } from "@voicemural/db/sessions";
 import { formatOffset } from "@voicemural/shared";
 import { AccountMenu } from "@/components/account-menu";
 import { configuredProviders } from "@/lib/auth";
 import { providerName } from "@/lib/providers";
 import { currentUser } from "@/lib/session";
+import { SITE, siteOrigin } from "@/lib/site";
 import { GuestButton, SignInButton } from "./sign-in-button";
 
 export const dynamic = "force-dynamic";
+
+// Signed in, this route is a private session list; signed out, it is the only
+// page anyone crawls. The metadata describes the second, because the first is
+// never what a crawler is shown.
+export const metadata: Metadata = {
+  // Absolute, so the one page that carries the pitch is not titled
+  // "VoiceMural — VoiceMural" by the layout's template.
+  title: { absolute: SITE.title },
+  alternates: { canonical: "/" },
+};
 
 export default async function HomePage() {
   const user = await currentUser();
@@ -124,9 +136,40 @@ function EmptyState() {
   );
 }
 
+/**
+ * Schema.org description of the app, for the search results and link previews
+ * that read it. Only rendered on the landing view — the signed-in session list
+ * is not a page anything should be describing.
+ */
+function StructuredData() {
+  const origin = siteOrigin();
+  const data = {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    name: SITE.name,
+    url: `${origin}/`,
+    description: SITE.description,
+    applicationCategory: "ProductivityApplication",
+    operatingSystem: "Any",
+    browserRequirements: "Requires a browser with MediaRecorder support",
+    // A research prototype with a participant list, not a product with a price.
+    isAccessibleForFree: true,
+    offers: { "@type": "Offer", price: "0", priceCurrency: "EUR" },
+  };
+  return (
+    <script
+      type="application/ld+json"
+      // The object is ours and contains no user input, so there is nothing here
+      // for a closing </script> to escape out of.
+      dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }}
+    />
+  );
+}
+
 function Landing() {
   return (
     <main className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center px-6">
+      <StructuredData />
       <h1 className="mb-3 text-3xl font-semibold">VoiceMural</h1>
       <p className="mb-8 text-white/60">
         Speech is a good medium for formulating difficult problems and a poor

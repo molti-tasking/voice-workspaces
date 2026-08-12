@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, asc, eq, getDb } from "@voicemural/db";
@@ -9,6 +10,11 @@ import { Transcript, type TranscriptRow } from "./transcript";
 import { ViewEvent } from "@/lib/analytics/view-event";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Session",
+  robots: { index: false, follow: false },
+};
 
 export default async function SessionPage({
   params,

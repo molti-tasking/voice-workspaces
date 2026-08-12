@@ -43,6 +43,13 @@ ARG NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN
 ARG NEXT_PUBLIC_POSTHOG_HOST
 ENV NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=$NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN
 ENV NEXT_PUBLIC_POSTHOG_HOST=$NEXT_PUBLIC_POSTHOG_HOST
+# Not for auth — the runtime container has its own copy for that. Prerendered
+# pages resolve their canonical, og:url and og:image against the origin present
+# at BUILD time, so without this the participant information sheet unfurls with
+# a link preview pointing at http://localhost:3000. Absent here (a plain
+# `docker build`) it falls back to localhost, which is right for a local build.
+ARG BETTER_AUTH_URL
+ENV BETTER_AUTH_URL=$BETTER_AUTH_URL
 # No secrets needed here: auth and the database handle are constructed lazily on
 # first request, so the build never reads credentials or opens a connection.
 RUN pnpm --filter @voicemural/web build
