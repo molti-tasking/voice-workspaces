@@ -1,5 +1,5 @@
 import { litellmConfig, modelFor } from "@voicemural/llm";
-import { log } from "./logger";
+import { log } from "@voicemural/telemetry";
 
 /**
  * Check LiteLLM once at startup and say plainly whether it is usable.

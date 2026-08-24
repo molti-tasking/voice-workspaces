@@ -2,11 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, asc, eq, getDb } from "@voicemural/db";
-import { audioChunk, captureSession, utterance } from "@voicemural/db/schema";
+import { agentTurn, audioChunk, captureSession, utterance } from "@voicemural/db/schema";
 import { findCoverageGaps, formatOffset } from "@voicemural/shared";
 import { currentUser } from "@/lib/session";
 import { AutoRefresh } from "./auto-refresh";
-import { Transcript, type TranscriptRow } from "./transcript";
+import { Transcript, type AgentTurnRow, type TranscriptRow } from "./transcript";
 import { ViewEvent } from "@/lib/analytics/view-event";
 
 export const dynamic = "force-dynamic";
@@ -61,6 +61,30 @@ export default async function SessionPage({
     .where(eq(utterance.captureSessionId, id))
     .orderBy(asc(utterance.startOffsetMs));
 
+  // The system's own turns, on the same session clock, so the two read as one
+  // dialogue. A separate table by design — see the comment on `agentTurn`.
+  const turns: AgentTurnRow[] = await db
+    .select({
+      id: agentTurn.id,
+      seq: agentTurn.seq,
+      startOffsetMs: agentTurn.startOffsetMs,
+      endOffsetMs: agentTurn.endOffsetMs,
+      text: agentTurn.text,
+      generatedText: agentTurn.generatedText,
+      bargedIn: agentTurn.bargedIn,
+      truncatedAtMs: agentTurn.truncatedAtMs,
+      respondingToText: agentTurn.respondingToText,
+      resolvedModel: agentTurn.resolvedModel,
+      asrMs: agentTurn.asrMs,
+      ttftMs: agentTurn.ttftMs,
+      speakTtfbMs: agentTurn.speakTtfbMs,
+      totalLatencyMs: agentTurn.totalLatencyMs,
+      error: agentTurn.error,
+    })
+    .from(agentTurn)
+    .where(eq(agentTurn.captureSessionId, id))
+    .orderBy(asc(agentTurn.startOffsetMs));
+
   // Surface lost audio explicitly. A session with holes must never be mistaken
   // for a complete one when the corpus is analysed.
   const gaps = findCoverageGaps(chunks);
@@ -99,6 +123,7 @@ export default async function SessionPage({
         <p className="mt-1 text-sm text-white/40">
           {formatOffset(recordedMs)} recorded · {chunks.length} chunks ·{" "}
           {rows.length} utterances
+          {turns.length > 0 && ` · ${turns.length} agent turn${turns.length === 1 ? "" : "s"}`}
           {meta.endedAt === null && " · still open"}
         </p>
       </header>
@@ -130,7 +155,7 @@ export default async function SessionPage({
         )}
       </div>
 
-      <Transcript rows={rows} />
+      <Transcript rows={rows} turns={turns} />
     </div>
   );
 }

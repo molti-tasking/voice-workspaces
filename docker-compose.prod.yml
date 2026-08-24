@@ -45,6 +45,10 @@ services:
         # Prerendered pages bake their absolute URLs (canonical, og:image) at
         # build time. Also passed as runtime environment below, for auth.
         - BETTER_AUTH_URL=${BETTER_AUTH_URL}
+        # Decides whether the conversational path is built into the bundle at all.
+        - NEXT_PUBLIC_TALKBACK_ENABLED=${TALKBACK_ENABLED:-false}
+        - NEXT_PUBLIC_TALKBACK_BACKEND=${NEXT_PUBLIC_TALKBACK_BACKEND:-livekit}
+        - NEXT_PUBLIC_PIPECAT_URL=${NEXT_PUBLIC_PIPECAT_URL:-}
     environment:
       # Declared so Coolify wires Traefik to this service on port 3000.
       - SERVICE_FQDN_WEB_3000
@@ -119,6 +123,81 @@ services:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
+
+  # Talk-back: the live conversation socket. Optional — leave TALKBACK_ENABLED
+  # unset and this service refuses upgrades while everything else is unaffected.
+  #
+  # Separate from `web` on purpose. The web container holds the chunk upload
+  # route, the one path in this system that cannot fail, and a custom Next
+  # server would put long-lived duplex sessions and PCM buffers in that same
+  # event loop. This container can leak, stall or be redeployed without touching
+  # capture.
+  realtime:
+    build:
+      context: .
+      dockerfile: apps/realtime/Dockerfile
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      # Signs and verifies the connection tickets. Must be the SAME value as
+      # web's: the web app mints them, this service verifies them, and a
+      # mismatch presents as every connection being rejected as forged.
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      # Origin check on the WebSocket upgrade. An upgrade is not subject to
+      # CORS, so without this any page on the internet could open a socket.
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL}
+      - LITELLM_BASE_URL=${LITELLM_BASE_URL}
+      - LITELLM_API_KEY=${LITELLM_API_KEY}
+      - MODEL_TRANSCRIBE=${MODEL_TRANSCRIBE}
+      # The live path's own ASR deployment. Falls back to MODEL_TRANSCRIBE,
+      # which works but queues behind the worker's batched jobs: measured
+      # 7.9-10.2s per turn during a drive against 1.7s idle.
+      - MODEL_TRANSCRIBE_LIVE=${MODEL_TRANSCRIBE_LIVE:-}
+      - MODEL_CONVERSE=${MODEL_CONVERSE:-}
+      - MODEL_SPEAK=${MODEL_SPEAK:-}
+      - MODEL_SPEAK_SAMPLE_RATE=${MODEL_SPEAK_SAMPLE_RATE:-}
+      # litellm (default, on AU hardware) | elevenlabs | synthetic (diagnostic)
+      - TTS_PROVIDER=${TTS_PROVIDER:-litellm}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID:-}
+      - ELEVENLABS_MODEL_ID=${ELEVENLABS_MODEL_ID:-}
+      - TALKBACK_ENABLED=${TALKBACK_ENABLED:-false}
+      - REALTIME_PORT=3001
+      - NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN}
+      - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
+      - POSTHOG_CAPTURE_AI_CONTENT=${POSTHOG_CAPTURE_AI_CONTENT:-true}
+    # No audio-data volume, deliberately. Live audio lives in memory for the
+    # length of one utterance and is then discarded — not giving this container
+    # anywhere to write audio is what keeps that true rather than aspirational.
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    # Let an in-flight turn settle on redeploy instead of cutting it mid-sentence.
+    # Every push to main restarts this, so in a longitudinal deployment each
+    # deploy is a small conversational outage worth keeping short and clean.
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    labels:
+      # Explicit labels rather than SERVICE_FQDN_REALTIME_3001. Coolify renders
+      # its magic FQDN variable with the container port appended
+      # (`https://host:3001`) — the same trap documented for BETTER_AUTH_URL
+      # above — and its path-prefix handling varies by version.
+      #
+      # Routed on the SAME public origin as web, under /rt, so the browser's
+      # WebSocket is same-origin and dev/tunnel/production all behave alike.
+      # Set REALTIME_HOST to the same domain as BETTER_AUTH_URL, without scheme.
+      - traefik.enable=true
+      - traefik.http.routers.vm-rt.rule=Host(`${REALTIME_HOST}`) && PathPrefix(`/rt`)
+      - traefik.http.routers.vm-rt.entrypoints=https
+      - traefik.http.routers.vm-rt.tls=true
+      # Ahead of web's router, which would otherwise match /rt on the same host.
+      - traefik.http.routers.vm-rt.priority=100
+      - traefik.http.services.vm-rt.loadbalancer.server.port=3001
 
 volumes:
   audio-data:

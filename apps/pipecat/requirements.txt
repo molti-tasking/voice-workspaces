@@ -1,0 +1,6 @@
+# Pinned: this exists to be compared against LiveKit, and a comparison whose
+# versions drift under it is not a comparison.
+pipecat-ai[webrtc,silero,elevenlabs,openai]==1.7.0
+fastapi==0.118.0
+uvicorn[standard]==0.37.0
+python-dotenv==1.1.1

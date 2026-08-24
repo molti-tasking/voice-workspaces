@@ -3,6 +3,16 @@
 import Link from "next/link";
 import { formatOffset } from "@voicemural/shared";
 import { useRecorder } from "@/lib/recorder/use-recorder";
+import { configuredBackend, useTalkback } from "@/lib/talkback/use-talkback";
+
+/**
+ * Whether talk-back is built into this bundle.
+ *
+ * A build-time flag, like the PostHog token, because it decides whether the
+ * conversational path exists at all for a participant. Unset means the recorder
+ * behaves exactly as it did before: no socket, no worklet, nothing to go wrong.
+ */
+const TALKBACK = process.env.NEXT_PUBLIC_TALKBACK_ENABLED === "true";
 
 /**
  * The recorder screen.
@@ -15,6 +25,15 @@ export function RecorderClient() {
   const isRecording = rec.status === "recording";
   const isBusy = rec.status === "requesting" || rec.status === "stopping";
 
+  // Armed with the recording, for the whole drive — there is no separate
+  // gesture to enter it. Everything it does is downstream of the microphone
+  // stream the recorder publishes, so capture is unaffected either way.
+  const talk = useTalkback({
+    captureSessionId: rec.currentSessionId,
+    enabled: TALKBACK && isRecording,
+  });
+  const hearing = talk.status === "speaking";
+
   return (
     <main className="no-touch-fuss flex min-h-dvh flex-col items-center justify-between p-6">
       <header className="flex w-full max-w-md items-center justify-between text-sm text-white/50">
@@ -26,6 +45,8 @@ export function RecorderClient() {
           uploading={rec.uploading}
           wakeLock={rec.wakeLockActive}
           recording={isRecording}
+          talkback={TALKBACK && isRecording ? talk.status : null}
+          backend={TALKBACK && isRecording ? configuredBackend() : null}
         />
       </header>
 
@@ -46,7 +67,9 @@ export function RecorderClient() {
             "flex size-56 items-center justify-center rounded-full text-2xl font-medium",
             "transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
             isRecording
-              ? "bg-[var(--color-accent)] text-white shadow-[0_0_0_12px_var(--color-accent-soft)]"
+              ? hearing
+                ? "bg-[var(--color-accent)] text-white shadow-[0_0_0_18px_var(--color-accent-soft)]"
+                : "bg-[var(--color-accent)] text-white shadow-[0_0_0_12px_var(--color-accent-soft)]"
               : "bg-[var(--color-ink-soft)] text-white ring-1 ring-[var(--color-line)]",
           ].join(" ")}
         >
@@ -58,6 +81,12 @@ export function RecorderClient() {
             ? "Keep this screen on and the app in front."
             : "Mount the phone, plug it in, then start."}
         </p>
+
+        {TALKBACK && isRecording && talk.reply && (
+          <div className="max-w-md">
+            <AgentReply text={talk.reply} replying={talk.status === "speaking"} />
+          </div>
+        )}
       </div>
 
       <footer className="w-full max-w-md space-y-3 text-sm">
@@ -126,20 +155,58 @@ export function RecorderClient() {
   );
 }
 
+/**
+ * What the system is saying.
+ *
+ * Brighter than the transcript and above it, because this is the half of the
+ * dialogue the driver did not produce. Until TTS is wired up this is the only
+ * channel the reply has; once it speaks, this becomes redundancy for a glance
+ * rather than the primary output.
+ */
+function AgentReply({ text, replying }: { text: string; replying: boolean }) {
+  return (
+    <p
+      className={[
+        "text-balance text-center text-lg",
+        replying ? "text-white/70" : "text-white",
+      ].join(" ")}
+      // Never announced: a screen reader interrupting a driver mid-thought is
+      // exactly the failure this whole design is trying to avoid.
+      aria-live="off"
+    >
+      {text}
+      {replying && <span className="ml-1 animate-pulse text-white/40">▍</span>}
+    </p>
+  );
+}
+
 function StatusPills({
   pending,
   uploading,
   wakeLock,
   recording,
+  talkback,
+  backend,
 }: {
   pending: number;
   uploading: boolean;
   wakeLock: boolean;
   recording: boolean;
+  talkback: string | null;
+  backend: string | null;
 }) {
   return (
     <div className="flex items-center gap-2 text-xs">
       {recording && wakeLock && <Pill label="awake" tone="ok" />}
+      {/* Which implementation is speaking. Shown only while both exist: judging
+          one and attributing the verdict to the other would waste the whole
+          comparison. Remove this with the losing backend. */}
+      {backend && <Pill label={backend} tone="ok" />}
+      {/* Only worth showing when it is NOT working. A healthy socket needs no
+          pill: the transcript appearing is the evidence, and a car dashboard
+          should not carry an indicator for every subsystem that is fine. */}
+      {talkback === "degraded" && <Pill label="talk offline" tone="warn" />}
+      {talkback === "connecting" && <Pill label="talk…" tone="warn" />}
       {pending > 0 && (
         <Pill label={uploading ? `↑ ${pending}` : `${pending} queued`} tone="warn" />
       )}

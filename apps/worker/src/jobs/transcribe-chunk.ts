@@ -1,10 +1,9 @@
 import { and, asc, desc, eq, getDb, lt, sql } from "@voicemural/db";
 import { audioChunk, captureSession, utterance } from "@voicemural/db/schema";
-import { LiteLLMError, transcribeChunk } from "@voicemural/llm";
+import { LiteLLMError, collapseRepeats, isDegenerate, transcribeChunk } from "@voicemural/llm";
 import { extensionForMime, toAbsoluteSegments } from "@voicemural/shared";
 import { getStorage } from "@voicemural/shared/storage";
-import { capture } from "../analytics";
-import { log } from "../logger";
+import { capture, log } from "@voicemural/telemetry";
 
 /** Raised when the failure is transient and pg-boss should retry. */
 export class RetryableJobError extends Error {}
@@ -78,6 +77,11 @@ export async function handleTranscribeChunk(chunkId: string, attempt = 1): Promi
     // Feed the tail of the previous chunk as a prompt. Whisper uses it for
     // context, which measurably improves continuity across the boundary —
     // words split by a chunk edge are otherwise often mangled.
+    //
+    // This is also a foot-gun, and the reason for the degeneracy check below:
+    // if the previous chunk looped, handing that loop back to Whisper makes it
+    // loop again, and the failure propagates for the rest of the drive. An
+    // observed session lost three consecutive chunks that way.
     const [previous] = await db
       .select({ text: utterance.text })
       .from(utterance)
@@ -89,6 +93,32 @@ export async function handleTranscribeChunk(chunkId: string, attempt = 1): Promi
       )
       .orderBy(desc(utterance.startOffsetMs))
       .limit(1);
+
+    /* Do not hand a looping transcript back to Whisper.
+     *
+     * This is the line that was missing. `collapseRepeats` repairs a loop WITHIN
+     * a chunk, and the degeneracy was even being logged — but the repaired text
+     * was still passed forward as the next chunk's prompt, so the model was
+     * re-primed with its own artefact and looped again. An observed drive lost
+     * six consecutive chunks to "It's been a while since I filmed a video",
+     * repeated across every one of them, from a driver who said it never.
+     *
+     * Checked against the STORED text, which is already repaired: if repairing
+     * it again still shortens it, the phrase is repetitive and unsafe to carry.
+     * Dropping the prompt costs a little continuity across one boundary and
+     * stops the cascade dead. */
+    const carryForward =
+      previous?.text && !isDegenerate(previous.text, collapseRepeats(previous.text))
+        ? previous.text
+        : undefined;
+
+    if (previous?.text && !carryForward) {
+      log.warn("not carrying a repetitive transcript into the next chunk", {
+        chunkId,
+        seq: chunk.seq,
+        previous: previous.text.slice(0, 80),
+      });
+    }
 
     // The owning user, for attribution. Transcription is the only model
     // surface with no row of its own, so this is the sole chance to record who
@@ -102,7 +132,7 @@ export async function handleTranscribeChunk(chunkId: string, attempt = 1): Promi
     const result = await transcribeChunk(audio, {
       filename: `${chunk.seq}.${extensionForMime(chunk.mimeType)}`,
       mimeType: chunk.mimeType,
-      prompt: previous?.text,
+      prompt: carryForward,
       context: {
         userId: owner?.userId,
         // One trace per call. The drive goes in sessionId instead: a long drive
@@ -114,6 +144,20 @@ export async function handleTranscribeChunk(chunkId: string, attempt = 1): Promi
         extra: { chunk_seq: chunk.seq, capture_session_id: chunk.captureSessionId },
       },
     });
+
+    if (result.degenerate) {
+      // Kept, not dropped: `collapseRepeats` has already reduced the loop to a
+      // single occurrence, so what lands in the ledger is a plausible
+      // transcription rather than hundreds of invented words. Worth logging
+      // because a run of these says something about the audio — usually near
+      // silence, or a reply being overheard through a speaker.
+      log.warn("transcription degenerated into repetition", {
+        chunkId,
+        seq: chunk.seq,
+        captureSessionId: chunk.captureSessionId,
+        repaired: result.text.slice(0, 120),
+      });
+    }
 
     const segments = toAbsoluteSegments(result.segments, chunk.startOffsetMs);
 
