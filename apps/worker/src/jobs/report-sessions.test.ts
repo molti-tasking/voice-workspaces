@@ -22,11 +22,12 @@ import { audioChunk, captureSession, user, utterance } from "@voicemural/db/sche
 
 const captured: { event: string; distinctId: string; properties: Record<string, unknown> }[] = [];
 
-vi.mock("../analytics", () => ({
+vi.mock("@voicemural/telemetry", () => ({
   capture: (distinctId: string, event: string, properties: Record<string, unknown>) => {
     captured.push({ distinctId, event, properties });
   },
   setPersonProperties: () => {},
+  log: { info: () => {}, warn: () => {}, error: () => {} },
 }));
 
 const { reportCompletedSessions } = await import("./sweep");

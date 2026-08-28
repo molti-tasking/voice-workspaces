@@ -13,6 +13,7 @@ COPY apps/worker/package.json ./apps/worker/
 COPY packages/db/package.json ./packages/db/
 COPY packages/llm/package.json ./packages/llm/
 COPY packages/shared/package.json ./packages/shared/
+COPY packages/telemetry/package.json ./packages/telemetry/
 COPY packages/workspace/package.json ./packages/workspace/
 RUN pnpm install --frozen-lockfile
 
@@ -30,6 +31,7 @@ COPY apps/worker ./apps/worker
 COPY --from=deps /app/packages/db/node_modules ./packages/db/node_modules
 COPY --from=deps /app/packages/llm/node_modules ./packages/llm/node_modules
 COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
+COPY --from=deps /app/packages/telemetry/node_modules ./packages/telemetry/node_modules
 COPY --from=deps /app/packages/workspace/node_modules ./packages/workspace/node_modules
 
 # Fail loudly if a workspace package was left out of the COPY list above.

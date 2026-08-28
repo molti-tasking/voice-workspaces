@@ -14,6 +14,7 @@ COPY apps/worker/package.json ./apps/worker/
 COPY packages/db/package.json ./packages/db/
 COPY packages/llm/package.json ./packages/llm/
 COPY packages/shared/package.json ./packages/shared/
+COPY packages/telemetry/package.json ./packages/telemetry/
 COPY packages/workspace/package.json ./packages/workspace/
 RUN pnpm install --frozen-lockfile
 
@@ -43,6 +44,11 @@ ARG NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN
 ARG NEXT_PUBLIC_POSTHOG_HOST
 ENV NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=$NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN
 ENV NEXT_PUBLIC_POSTHOG_HOST=$NEXT_PUBLIC_POSTHOG_HOST
+ARG NEXT_PUBLIC_TALKBACK_ENABLED
+ENV NEXT_PUBLIC_TALKBACK_ENABLED=$NEXT_PUBLIC_TALKBACK_ENABLED
+# Which talk-back backend the bundle talks to. Baked in like the flag above,
+ARG NEXT_PUBLIC_PIPECAT_URL
+ENV NEXT_PUBLIC_PIPECAT_URL=$NEXT_PUBLIC_PIPECAT_URL
 # Not for auth — the runtime container has its own copy for that. Prerendered
 # pages resolve their canonical, og:url and og:image against the origin present
 # at BUILD time, so without this the participant information sheet unfurls with

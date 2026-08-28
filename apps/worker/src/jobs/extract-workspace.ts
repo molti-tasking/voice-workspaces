@@ -19,9 +19,7 @@ import {
   stateDigest,
   type TranscriptSegment,
 } from "@voicemural/workspace";
-import { captureGeneration } from "../ai-analytics";
-import { capture } from "../analytics";
-import { log } from "../logger";
+import { capture, captureGeneration, log } from "@voicemural/telemetry";
 
 /**
  * Utterances per extraction. Both the trigger threshold and the take size.

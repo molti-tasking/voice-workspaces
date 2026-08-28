@@ -3,6 +3,17 @@
 import Link from "next/link";
 import { formatOffset } from "@voicemural/shared";
 import { useRecorder } from "@/lib/recorder/use-recorder";
+import { useTalkback } from "@/lib/talkback/use-talkback";
+import type { TalkbackTurn } from "@/lib/talkback/types";
+
+/**
+ * Whether talk-back is built into this bundle.
+ *
+ * A build-time flag, like the PostHog token, because it decides whether the
+ * conversational path exists at all for a participant. Unset means the recorder
+ * behaves exactly as it did before: no socket, no worklet, nothing to go wrong.
+ */
+const TALKBACK = process.env.NEXT_PUBLIC_TALKBACK_ENABLED === "true";
 
 /**
  * The recorder screen.
@@ -15,6 +26,15 @@ export function RecorderClient() {
   const isRecording = rec.status === "recording";
   const isBusy = rec.status === "requesting" || rec.status === "stopping";
 
+  // Armed with the recording, for the whole drive — there is no separate
+  // gesture to enter it. Everything it does is downstream of the microphone
+  // stream the recorder publishes, so capture is unaffected either way.
+  const talk = useTalkback({
+    captureSessionId: rec.currentSessionId,
+    enabled: TALKBACK && isRecording,
+  });
+  const hearing = talk.status === "speaking";
+
   return (
     <main className="no-touch-fuss flex min-h-dvh flex-col items-center justify-between p-6">
       <header className="flex w-full max-w-md items-center justify-between text-sm text-white/50">
@@ -26,6 +46,7 @@ export function RecorderClient() {
           uploading={rec.uploading}
           wakeLock={rec.wakeLockActive}
           recording={isRecording}
+          talkback={TALKBACK && isRecording ? talk.status : null}
         />
       </header>
 
@@ -46,7 +67,9 @@ export function RecorderClient() {
             "flex size-56 items-center justify-center rounded-full text-2xl font-medium",
             "transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
             isRecording
-              ? "bg-[var(--color-accent)] text-white shadow-[0_0_0_12px_var(--color-accent-soft)]"
+              ? hearing
+                ? "bg-[var(--color-accent)] text-white shadow-[0_0_0_18px_var(--color-accent-soft)]"
+                : "bg-[var(--color-accent)] text-white shadow-[0_0_0_12px_var(--color-accent-soft)]"
               : "bg-[var(--color-ink-soft)] text-white ring-1 ring-[var(--color-line)]",
           ].join(" ")}
         >
@@ -58,6 +81,10 @@ export function RecorderClient() {
             ? "Keep this screen on and the app in front."
             : "Mount the phone, plug it in, then start."}
         </p>
+
+        {TALKBACK && isRecording && talk.turns.length > 0 && (
+          <Exchange turns={talk.turns} speaking={talk.status === "speaking"} />
+        )}
       </div>
 
       <footer className="w-full max-w-md space-y-3 text-sm">
@@ -126,20 +153,87 @@ export function RecorderClient() {
   );
 }
 
+/**
+ * The conversation as it happens.
+ *
+ * BOTH halves, because only one of them was ever visible and that made the
+ * common failure undiagnosable: when a reply seems wrong, the first thing you
+ * need to know is whether the question was heard correctly. A single line of
+ * agent text cannot answer that, and by the time the session transcript is
+ * available the drive is over.
+ *
+ * The hook caps this at MAX_VISIBLE_TURNS and drops turns the silence gate
+ * declined, so what is on screen is what was actually said aloud.
+ *
+ * Sided like `/sessions/[id]` — agent tinted and boxed, driver plain — so the
+ * live view and the recorded one read the same way.
+ */
+function Exchange({ turns, speaking }: { turns: TalkbackTurn[]; speaking: boolean }) {
+  const last = turns[turns.length - 1];
+
+  return (
+    <ol
+      className="flex w-full max-w-md flex-col gap-1.5 text-sm"
+      // Never announced. A screen reader reading this out would interrupt the
+      // driver mid-thought, which is the failure the whole design avoids.
+      aria-live="off"
+    >
+      {turns.map((turn, index) => {
+        // Older turns recede rather than disappear: the newest is what matters
+        // at a glance, the rest is there if you look.
+        const faded = index < turns.length - 2;
+        return (
+          <li
+            key={turn.id}
+            className={turn.role === "agent" ? "flex justify-start" : "flex justify-end"}
+          >
+            <span
+              className={[
+                "max-w-[85%] rounded-lg px-3 py-1.5",
+                // `transition-opacity` only — no layout animation. This renders
+                // on a warm phone that is also holding a MediaRecorder open.
+                "transition-opacity motion-reduce:transition-none",
+                turn.role === "agent"
+                  ? "rounded-tl-sm border border-sky-400/25 bg-sky-400/10 text-sky-50"
+                  : "rounded-tr-sm bg-white/6 text-white/90",
+                faded ? "opacity-40" : "opacity-100",
+              ].join(" ")}
+            >
+              {turn.text}
+              {speaking && turn === last && turn.role === "agent" && (
+                <span className="ml-1 animate-pulse text-white/40 motion-reduce:animate-none">
+                  ▍
+                </span>
+              )}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function StatusPills({
   pending,
   uploading,
   wakeLock,
   recording,
+  talkback,
 }: {
   pending: number;
   uploading: boolean;
   wakeLock: boolean;
   recording: boolean;
+  talkback: string | null;
 }) {
   return (
     <div className="flex items-center gap-2 text-xs">
       {recording && wakeLock && <Pill label="awake" tone="ok" />}
+      {/* Only worth showing when it is NOT working. A healthy socket needs no
+          pill: the transcript appearing is the evidence, and a car dashboard
+          should not carry an indicator for every subsystem that is fine. */}
+      {talkback === "degraded" && <Pill label="talk offline" tone="warn" />}
+      {talkback === "connecting" && <Pill label="talk…" tone="warn" />}
       {pending > 0 && (
         <Pill label={uploading ? `↑ ${pending}` : `${pending} queued`} tone="warn" />
       )}

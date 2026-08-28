@@ -1,0 +1,57 @@
+# The voice service.
+#
+#     docker compose -f docker-compose.yml -f docker-compose.pipecat.yml up -d
+#
+# or `pnpm talkback:up`, which is the same thing.
+#
+# No media server: SmallWebRTC is peer-to-peer between the browser and this
+# container, which is fine for one driver at a time. That was also the deciding
+# advantage over the LiveKit implementation this replaced — one fewer service
+# to run, and audio that never traverses a server at all.
+services:
+  pipecat:
+    build:
+      context: .
+      dockerfile: apps/pipecat/Dockerfile
+    environment:
+      - LITELLM_BASE_URL=${LITELLM_BASE_URL}
+      - LITELLM_API_KEY=${LITELLM_API_KEY}
+      - MODEL_TRANSCRIBE=${MODEL_TRANSCRIBE}
+      - MODEL_TRANSCRIBE_LIVE=${MODEL_TRANSCRIBE_LIVE:-}
+      - MODEL_CONVERSE=${MODEL_CONVERSE}
+      # Falls back to MODEL_CONVERSE. Deliberately not MODEL_FAST — a rolling
+      # summary built by a model that invents detail amplifies its own mistakes.
+      - MODEL_SUMMARISE=${MODEL_SUMMARISE:-}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
+      # Must stay a streaming-capable model. eleven_v3 is HTTP-only and 403s on
+      # the websocket, which would make Pipecat sound chopped for a reason that
+      # has nothing to do with Pipecat.
+      - ELEVENLABS_MODEL_ID=${ELEVENLABS_MODEL_ID:-eleven_turbo_v2_5}
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:3000}
+      - PIPECAT_PORT=7860
+      # Live transcription. Default keeps audio at AU; deepgram/assemblyai do
+      # not — see the note in .env.example before switching.
+      - STT_PROVIDER=${STT_PROVIDER:-litellm}
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
+      - DEEPGRAM_MODEL=${DEEPGRAM_MODEL:-nova-3}
+      - DEEPGRAM_UTTERANCE_END_MS=${DEEPGRAM_UTTERANCE_END_MS:-1000}
+      - ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY:-}
+      # The prompt, retrieval and the summary seed all live in the Next app —
+      # `/api/realtime/session` once per drive and `/api/realtime/context` once
+      # per turn. Inside a container `localhost` is this container, so reach the
+      # developer's machine through the host gateway explicitly.
+      - WEB_URL=${WEB_URL:-http://host.docker.internal:3000}
+    ports:
+      - "7860:7860"
+    # Peer-to-peer WebRTC needs the host's network path for ICE to work without
+    # a TURN server. On Linux this is what makes local media connect at all.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:7860/healthz')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s

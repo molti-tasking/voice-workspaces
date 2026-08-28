@@ -1,0 +1,7 @@
+# Pinned. Originally because this was one half of a controlled comparison; now
+# because a voice pipeline that changes under you between drives makes a
+# longitudinal study unreproducible, which is worse.
+pipecat-ai[webrtc,silero,elevenlabs,openai,deepgram,assemblyai]==1.7.0
+fastapi==0.118.0
+uvicorn[standard]==0.37.0
+python-dotenv==1.1.1

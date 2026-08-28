@@ -6,7 +6,7 @@ config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true }
 import { PgBoss, type Job, type JobResult, type JobWithMetadata } from "pg-boss";
 import { closeDb } from "@voicemural/db";
 import { JOBS } from "@voicemural/shared";
-import { log } from "./logger";
+import { log } from "@voicemural/telemetry";
 import {
   findUntranscribedChunks,
   handleTranscribeChunk,
@@ -17,8 +17,7 @@ import {
   reportCompletedSessions,
   requeueStuckChunks,
 } from "./jobs/sweep";
-import { captureException, shutdownAnalytics } from "./analytics";
-import { installGenerationSink } from "./ai-analytics";
+import { captureException, installGenerationSink, shutdownAnalytics } from "@voicemural/telemetry";
 import { BATCH_SIZE, extractWorkspace } from "./jobs/extract-workspace";
 import { usersWithPendingSpeech } from "@voicemural/db/workspace";
 import { preflightLiteLLM } from "./preflight";

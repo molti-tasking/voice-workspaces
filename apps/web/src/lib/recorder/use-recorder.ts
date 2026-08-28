@@ -10,6 +10,7 @@ import {
   saveOpenSession,
   type OpenSessionMeta,
 } from "./idb";
+import { publishStream } from "./mic-bus";
 import { installUploaderTriggers, kickUploader, subscribeUploader } from "./uploader";
 
 /**
@@ -50,6 +51,13 @@ export interface RecorderState {
   uploading: boolean;
   lastUploadError: string | null;
   resumable: OpenSessionMeta | null;
+  /**
+   * The drive currently being recorded, or null.
+   *
+   * Distinct from `lastSessionId`, which only appears after stopping: talk-back
+   * needs to know which session it is conversing within *while* it runs.
+   */
+  currentSessionId: string | null;
   /** The session just finished, so the UI can link straight to its transcript. */
   lastSessionId: string | null;
   /** Recorded length of that session, for the confirmation line. */
@@ -134,6 +142,7 @@ export function useRecorder() {
     uploading: false,
     lastUploadError: null,
     resumable: null,
+    currentSessionId: null,
     lastSessionId: null,
     lastSessionMs: 0,
   });
@@ -292,6 +301,10 @@ export function useRecorder() {
     }
 
     streamRef.current = stream;
+    // Share the track with talk-back, which taps it for the live conversation.
+    // Nothing downstream of this is allowed to affect capture: if no one is
+    // listening, or a listener throws, the chunk loop below is unchanged.
+    publishStream(stream);
     capture("recording_started", {
       mime_type: mimeType,
       resumed: state.resumable !== null,
@@ -331,7 +344,13 @@ export function useRecorder() {
     }
 
     runningRef.current = true;
-    patch({ status: "recording", elapsedMs: 0, resumable: null, lastSessionId: null });
+    patch({
+      status: "recording",
+      elapsedMs: 0,
+      resumable: null,
+      currentSessionId: meta.captureSessionId,
+      lastSessionId: null,
+    });
     await acquireWakeLock();
     void runLoop(stream, meta);
   }, [acquireWakeLock, patch, runLoop]);
@@ -346,6 +365,9 @@ export function useRecorder() {
     stopChunkRef.current?.();
     stopChunkRef.current = null;
 
+    // Before stopping the tracks, so talk-back tears its tap down against a
+    // stream that is still live rather than one already ending under it.
+    publishStream(null);
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     await releaseWakeLock();
@@ -378,6 +400,7 @@ export function useRecorder() {
     // gives no sense that anything was captured at all.
     patch({
       status: "idle",
+      currentSessionId: null,
       lastSessionId: meta?.captureSessionId ?? null,
       lastSessionMs: meta?.elapsedMs ?? 0,
     });

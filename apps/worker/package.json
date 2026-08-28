@@ -15,6 +15,7 @@
     "@voicemural/db": "workspace:*",
     "@voicemural/llm": "workspace:*",
     "@voicemural/shared": "workspace:*",
+    "@voicemural/telemetry": "workspace:*",
     "@voicemural/workspace": "workspace:*",
     "dotenv": "^17.4.2",
     "drizzle-orm": "0.45.2",

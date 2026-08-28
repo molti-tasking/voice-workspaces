@@ -45,6 +45,9 @@ services:
         # Prerendered pages bake their absolute URLs (canonical, og:image) at
         # build time. Also passed as runtime environment below, for auth.
         - BETTER_AUTH_URL=${BETTER_AUTH_URL}
+        # Decides whether the conversational path is built into the bundle at all.
+        - NEXT_PUBLIC_TALKBACK_ENABLED=${TALKBACK_ENABLED:-false}
+        - NEXT_PUBLIC_PIPECAT_URL=${NEXT_PUBLIC_PIPECAT_URL:-}
     environment:
       # Declared so Coolify wires Traefik to this service on port 3000.
       - SERVICE_FQDN_WEB_3000
@@ -119,6 +122,87 @@ services:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
+
+  # Talk-back: the live conversation socket. Optional — leave TALKBACK_ENABLED
+  # unset and this service refuses upgrades while everything else is unaffected.
+  #
+  # The voice service. Separate from `web` on purpose: the web container holds
+  # the chunk upload route, the one path in this system that cannot fail, and
+  # long-lived duplex sessions plus PCM buffers have no business in that event
+  # loop. This container can leak, stall or be redeployed without touching
+  # capture — which is the acceptance criterion for the whole feature.
+  #
+  # REPLACED the old `realtime` service, which built `apps/realtime/Dockerfile`.
+  # That directory was deleted when talk-back moved to a framework and this file
+  # was never updated, so production talk-back had been un-deployable — the
+  # compose file referenced a Dockerfile that did not exist.
+  pipecat:
+    build:
+      context: .
+      dockerfile: apps/pipecat/Dockerfile
+    environment:
+      - LITELLM_BASE_URL=${LITELLM_BASE_URL}
+      - LITELLM_API_KEY=${LITELLM_API_KEY}
+      - MODEL_TRANSCRIBE=${MODEL_TRANSCRIBE}
+      # The live path's own ASR deployment. Falls back to MODEL_TRANSCRIBE,
+      # which works but queues behind the worker's batched jobs.
+      - MODEL_TRANSCRIBE_LIVE=${MODEL_TRANSCRIBE_LIVE:-}
+      - MODEL_CONVERSE=${MODEL_CONVERSE}
+      # Folds the drive into a rolling summary. Falls back to MODEL_CONVERSE,
+      # deliberately not to MODEL_FAST — see packages/llm/src/config.ts.
+      - MODEL_SUMMARISE=${MODEL_SUMMARISE:-}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
+      # Must stay a streaming-capable model. eleven_v3 is HTTP-only and 403s on
+      # the websocket, which would make every reply sound chopped.
+      - ELEVENLABS_MODEL_ID=${ELEVENLABS_MODEL_ID:-eleven_turbo_v2_5}
+      # CORS origin for the browser's /offer request.
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL}
+      - PIPECAT_PORT=7860
+      # Retrieval, the prompt and the summary seed all live in the Next app.
+      # The INTERNAL service name, not host.docker.internal: that is a
+      # developer-machine escape hatch and resolves to nothing here.
+      - WEB_URL=http://web:3000
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    # No audio volume, deliberately. Live audio lives in memory for the length
+    # of one utterance and is then discarded — not giving this container
+    # anywhere to write audio is what keeps that true rather than aspirational.
+    #
+    # Let an in-flight turn settle on redeploy instead of cutting it mid-sentence.
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:7860/healthz')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    labels:
+      # Signalling only. Routed on the SAME public origin as web, under
+      # /pipecat, so the browser's request is same-origin.
+      #
+      # ⚠️ MEDIA DOES NOT GO THROUGH TRAEFIK. SmallWebRTC is peer-to-peer: only
+      # the SDP exchange below is HTTP. The audio itself needs a direct UDP path
+      # between the browser and this container, so behind NAT — which is where
+      # a Coolify host usually sits — ICE will fail and the call will connect,
+      # sit in `connecting`, and time out after ~40s with a message that reads
+      # like a network blip. A TURN server (or host networking plus open UDP)
+      # is required before this is usable in production. Untested in production
+      # as of 2026-08-25.
+      - traefik.enable=true
+      - traefik.http.routers.vm-pc.rule=Host(`${REALTIME_HOST}`) && PathPrefix(`/pipecat`)
+      - traefik.http.routers.vm-pc.entrypoints=https
+      - traefik.http.routers.vm-pc.tls=true
+      # Ahead of web's router, which would otherwise match /pipecat on the host.
+      - traefik.http.routers.vm-pc.priority=100
+      # Strips /pipecat so the container sees POST /offer and PATCH /offer.
+      # The PATCH route is NOT optional — without it the browser's trickle-ICE
+      # candidates 405 and the peer connection never leaves `connecting`.
+      - traefik.http.middlewares.vm-pc-strip.stripprefix.prefixes=/pipecat
+      - traefik.http.routers.vm-pc.middlewares=vm-pc-strip
+      - traefik.http.services.vm-pc.loadbalancer.server.port=7860
 
 volumes:
   audio-data:

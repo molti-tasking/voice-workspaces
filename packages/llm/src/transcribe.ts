@@ -1,14 +1,24 @@
 import type { RelativeSegment } from "@voicemural/shared";
-import { LiteLLMError, litellmConfig, modelFor } from "./config";
+import { LiteLLMError, litellmConfig, modelFor, type ModelRole } from "./config";
 import { emitGeneration, type GenerationContext } from "./observe";
+import { collapseRepeats, isDegenerate, repetitionRatio } from "./transcript-repair";
 
 export interface TranscriptionResult {
-  /** Full text of the chunk, as returned by the model. */
+  /** Full text of the chunk, with repetition loops repaired. */
   text: string;
   /** Segments with timestamps RELATIVE to this chunk, in seconds. */
   segments: RelativeSegment[];
   language?: string;
   durationSec?: number;
+  /**
+   * True when the model degenerated into repeating itself and the output was
+   * mostly artefact.
+   *
+   * Callers should NOT carry a degenerate transcript forward as the next
+   * chunk's continuity prompt: feeding the artefact back is what makes the loop
+   * sustain itself across a whole drive.
+   */
+  degenerate: boolean;
 }
 
 interface VerboseJsonResponse {
@@ -46,11 +56,20 @@ export async function transcribeChunk(
      * generation cannot be joined to anything.
      */
     context?: GenerationContext;
+    /**
+     * Which ASR deployment to use. Defaults to the ledger's.
+     *
+     * The live conversation passes `transcribe_live` so its turns do not queue
+     * behind the chunk pipeline's batched jobs — see the note on ROLE_FALLBACK
+     * in config.ts. Nothing else about the call differs.
+     */
+    role?: Extract<ModelRole, "transcribe" | "transcribe_live">;
   },
 ): Promise<TranscriptionResult> {
   const { baseUrl, apiKey } = litellmConfig();
   const endpoint = `${baseUrl}/audio/transcriptions`;
-  const model = modelFor("transcribe");
+  const role = options.role ?? "transcribe";
+  const model = modelFor(role);
 
   const form = new FormData();
   // Copy into a fresh ArrayBuffer: a Uint8Array view over a pooled Node Buffer
@@ -67,8 +86,32 @@ export async function transcribeChunk(
   if (sentPrompt) form.append("prompt", sentPrompt);
   if (options.language) form.append("language", options.language);
 
+  /* Two settings against Whisper's habit of inventing YouTube.
+   *
+   * `temperature: 0` makes decoding greedy. Left unset, the server is free to
+   * sample, and on quiet or near-silent audio it samples fluent nonsense from
+   * its training distribution.
+   *
+   * `condition_on_previous_text: false` is the one that matters. Whisper
+   * conditions each segment on the segments it has already produced WITHIN this
+   * file, so one bad guess feeds the next and the output locks into a loop —
+   * "I will show you how to make a simple, easy, and easy to make I will show
+   * you how to make ...". Real drives produced exactly that, five chunks in
+   * nine, and the repetition guard downstream could only tidy the wreckage.
+   *
+   * This is NOT the same knob as `prompt` above. That one is the caller's
+   * cross-chunk continuity and is still sent; this one is Whisper feeding on
+   * itself inside a single chunk. Verified accepted by the deployment — all
+   * four combinations answered 200 against a real clip. */
+  form.append("temperature", "0");
+  form.append("condition_on_previous_text", "false");
+
   const context = options.context ?? {};
   const startedAt = Date.now();
+  // Separate span names so the live path's latency is not averaged together
+  // with the ledger's in AI Observability — they have different models,
+  // different queues, and only one of them has a user waiting on it.
+  const spanName = role === "transcribe_live" ? "transcribe_live" : "transcribe_chunk";
 
   /** Audio has no text form, so stand in for it with what was actually sent. */
   const describeInput = () => [
@@ -91,7 +134,7 @@ export async function transcribeChunk(
     // A dead proxy or an aborted request never reaches the !res.ok branch, and
     // is exactly the failure worth seeing in AI Observability.
     emitGeneration({
-      spanName: "transcribe_chunk",
+      spanName,
       model,
       latencyMs: Date.now() - startedAt,
       context,
@@ -105,7 +148,7 @@ export async function transcribeChunk(
   if (!res.ok) {
     const body = await res.text();
     emitGeneration({
-      spanName: "transcribe_chunk",
+      spanName,
       model,
       latencyMs: Date.now() - startedAt,
       context,
@@ -118,25 +161,32 @@ export async function transcribeChunk(
   }
 
   const json = (await res.json()) as VerboseJsonResponse;
-  const text = (json.text ?? "").trim();
+  const rawText = (json.text ?? "").trim();
+
+  // Repair before anything else sees it. Whisper locks onto a phrase on quiet
+  // or truncated audio and repeats it — hundreds of words the speaker never
+  // said, written straight into the append-only ledger.
+  const text = collapseRepeats(rawText);
+  const degenerate = isDegenerate(rawText, text);
 
   // Not every backend honours verbose_json. Falling back to one whole-chunk
   // segment keeps the pipeline working with degraded (chunk-level) provenance
   // rather than dropping the audio entirely.
   const rawSegments = json.segments ?? [];
-  const segments: RelativeSegment[] =
+  const segments: RelativeSegment[] = (
     rawSegments.length > 0
       ? rawSegments.map((s) => ({
           start: s.start ?? 0,
           end: s.end ?? s.start ?? 0,
-          text: s.text ?? "",
+          text: collapseRepeats(s.text ?? ""),
         }))
       : text
         ? [{ start: 0, end: json.duration ?? 0, text }]
-        : [];
+        : []
+  ).filter((segment) => segment.text.trim().length > 0);
 
   emitGeneration({
-    spanName: "transcribe_chunk",
+    spanName,
     model,
     latencyMs: Date.now() - startedAt,
     context,
@@ -149,6 +199,11 @@ export async function transcribeChunk(
       audio_duration_sec: json.duration,
       segment_count: segments.length,
       language: json.language,
+      // A data-quality signal worth having in the record: how often the ASR
+      // degenerates, and on what, is a finding about the corpus rather than
+      // only an operational detail.
+      repetition_ratio: Number(repetitionRatio(rawText, text).toFixed(3)),
+      degenerate,
       ...context.extra,
     },
   });
@@ -158,6 +213,7 @@ export async function transcribeChunk(
     segments,
     language: json.language,
     durationSec: json.duration,
+    degenerate,
   };
 }
 
