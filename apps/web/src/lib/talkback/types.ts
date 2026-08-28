@@ -1,29 +1,48 @@
 /**
- * The shape both backends present, so the recorder does not know which is live.
+ * The shape the recorder sees, independent of what is doing the talking.
  *
- * LiveKit and Pipecat are being compared head to head, and a comparison is only
- * fair if the surrounding code is identical — a difference in how the UI drives
- * one of them would show up as a difference in how it feels.
+ * This was an abstraction over two backends being compared head to head. That
+ * comparison is over and only Pipecat remains, but the seam is worth keeping:
+ * the recorder should not know how the voice path is implemented, and the
+ * capture path must stay able to run with talk-back off entirely.
  */
 export type TalkbackStatus = "off" | "connecting" | "listening" | "speaking" | "degraded";
 
+/**
+ * One side of the live exchange, as it happens.
+ *
+ * Held in memory only and deliberately so: the durable record is `utterance`
+ * and `agent_turn`, written by the capture pipeline and the bot. This is the
+ * screen catching up with the conversation, not a second transcript — if it
+ * disagreed with the ledger, the ledger is right.
+ */
+export interface TalkbackTurn {
+  id: string;
+  role: "you" | "agent";
+  text: string;
+}
+
 export interface TalkbackState {
   status: TalkbackStatus;
-  /** What the agent is saying, as transcribed by whichever backend is running. */
+  /** What the agent last said. Kept for the single-line glance view. */
   reply: string | null;
+  /**
+   * The exchange so far, oldest first, bounded.
+   *
+   * Bounded because this runs for a whole drive on a phone: an unbounded list
+   * would grow without limit in memory and re-render longer every turn, on the
+   * same device that is holding a MediaRecorder open.
+   */
+  turns: TalkbackTurn[];
   error: string | null;
 }
 
-export const OFF: TalkbackState = { status: "off", reply: null, error: null };
+/** How much of the exchange is kept on screen. A glance, not a history. */
+export const MAX_VISIBLE_TURNS = 8;
+
+export const OFF: TalkbackState = { status: "off", reply: null, turns: [], error: null };
 
 export interface TalkbackOptions {
   captureSessionId: string | null;
   enabled: boolean;
-}
-
-/** Which implementation to run. Switched by env so neither is privileged. */
-export type TalkbackBackend = "livekit" | "pipecat";
-
-export function configuredBackend(): TalkbackBackend {
-  return process.env.NEXT_PUBLIC_TALKBACK_BACKEND === "pipecat" ? "pipecat" : "livekit";
 }

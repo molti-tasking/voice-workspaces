@@ -8,29 +8,27 @@
     "MODEL_TRANSCRIBE",
     "MODEL_FAST",
     "MODEL_REASONING",
-    // Talk-back roles. MODEL_TRANSCRIBE_LIVE falls back to MODEL_TRANSCRIBE;
-    // the rest are required only by apps/realtime.
+    // Talk-back roles. MODEL_TRANSCRIBE_LIVE falls back to MODEL_TRANSCRIBE and
+    // MODEL_SUMMARISE falls back to MODEL_CONVERSE; see packages/llm/src/config.ts.
     "MODEL_TRANSCRIBE_LIVE",
     "MODEL_CONVERSE",
-    "MODEL_SPEAK",
-    "MODEL_SPEAK_SAMPLE_RATE",
-    "TTS_PROVIDER",
-    "LIVEKIT_API_KEY",
-    "LIVEKIT_API_SECRET",
-    "LIVEKIT_URL",
-    "NEXT_PUBLIC_LIVEKIT_URL",
-    "NEXT_PUBLIC_TALKBACK_BACKEND",
+    "MODEL_SUMMARISE",
+    // The talk-back container's own settings. Listed here even though only
+    // apps/pipecat reads most of them, because docker-compose.pipecat.yml
+    // interpolates them from the same .env that Turbo hashes.
     "NEXT_PUBLIC_PIPECAT_URL",
     "PIPECAT_PORT",
+    "WEB_URL",
+    "STT_PROVIDER",
+    "DEEPGRAM_API_KEY",
+    "DEEPGRAM_MODEL",
+    "DEEPGRAM_UTTERANCE_END_MS",
+    "ASSEMBLYAI_API_KEY",
     "ELEVENLABS_API_KEY",
     "ELEVENLABS_VOICE_ID",
     "ELEVENLABS_MODEL_ID",
-    "MODEL_EMBED",
     "TALKBACK_ENABLED",
     "NEXT_PUBLIC_TALKBACK_ENABLED",
-    "NEXT_PUBLIC_TALKBACK_VOICE",
-    "REALTIME_PORT",
-    "NEXT_PUBLIC_REALTIME_URL",
     "STORAGE_DIR",
     "BETTER_AUTH_SECRET",
     "BETTER_AUTH_URL",

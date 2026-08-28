@@ -1,5 +1,5 @@
 {
-  "id": "044d220e-a70a-481a-8074-68de4ebcb84f",
+  "id": "db23050b-bbb3-44f7-8f5b-51578bac57f5",
   "prevId": "be39a01c-9a7f-4c17-a2b4-ecc71e684b97",
   "version": "7",
   "dialect": "postgresql",
@@ -1910,6 +1910,21 @@
           "isUnique": false,
           "concurrently": false,
           "method": "btree",
+          "with": {}
+        },
+        "utterance_text_search_idx": {
+          "name": "utterance_text_search_idx",
+          "columns": [
+            {
+              "expression": "to_tsvector('simple', \"text\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "gin",
           "with": {}
         }
       },

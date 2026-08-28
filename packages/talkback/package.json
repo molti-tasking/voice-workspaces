@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@voicemural/db": "workspace:*",
+    "@voicemural/llm": "workspace:*",
     "@voicemural/shared": "workspace:*",
     "@voicemural/telemetry": "workspace:*",
     "drizzle-orm": "0.45.2"

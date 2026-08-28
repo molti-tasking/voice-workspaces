@@ -32,4 +32,5 @@ ALTER TABLE "agent_turn" ADD CONSTRAINT "agent_turn_capture_session_id_capture_s
 ALTER TABLE "agent_turn" ADD CONSTRAINT "agent_turn_mode_version_id_capability_version_id_fk" FOREIGN KEY ("mode_version_id") REFERENCES "public"."capability_version"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "agent_turn" ADD CONSTRAINT "agent_turn_persona_version_id_capability_version_id_fk" FOREIGN KEY ("persona_version_id") REFERENCES "public"."capability_version"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "agent_turn_session_seq_idx" ON "agent_turn" USING btree ("capture_session_id","seq");--> statement-breakpoint
-CREATE INDEX "agent_turn_session_offset_idx" ON "agent_turn" USING btree ("capture_session_id","start_offset_ms");
+CREATE INDEX "agent_turn_session_offset_idx" ON "agent_turn" USING btree ("capture_session_id","start_offset_ms");--> statement-breakpoint
+CREATE INDEX "utterance_text_search_idx" ON "utterance" USING gin (to_tsvector('simple', "text"));

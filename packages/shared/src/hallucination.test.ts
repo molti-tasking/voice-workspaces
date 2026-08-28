@@ -71,3 +71,46 @@ describe("withoutHallucinatedSentences", () => {
     expect(withoutHallucinatedSentences("Thanks for watching")).toBe("");
   });
 });
+
+describe("narrated-video hallucinations", () => {
+  it("catches the openings Whisper invents on near-silence", () => {
+    // All verbatim from one nine-chunk drive.
+    expect(
+      isLikelyHallucination(
+        "Hello everyone, welcome to my channel. Today I will show you how to make a beautiful and beautiful Christmas tree.",
+      ),
+    ).toBe(true);
+    expect(
+      isLikelyHallucination("Today I will show you how to make an easy, easy, and easy cake"),
+    ).toBe(true);
+  });
+
+  it("strips the narration but keeps real speech in the same row", () => {
+    expect(
+      withoutHallucinatedSentences(
+        "So the deadline is Friday. Hello everyone, welcome to my channel.",
+      ),
+    ).toBe("So the deadline is Friday.");
+  });
+
+  it("does not touch someone genuinely talking about making something", () => {
+    const said = "I want to make the argument stronger in section three.";
+    expect(isLikelyHallucination(said)).toBe(false);
+    expect(withoutHallucinatedSentences(said)).toBe(said);
+  });
+
+  it("strips bare narration wedged between real speech", () => {
+    // Verbatim from the corpus: the hallucination sits mid-row, with genuine
+    // speech on both sides, so only sentence-level filtering recovers it.
+    expect(
+      withoutHallucinatedSentences(
+        "Where did we stop? I will show you how to make a very simple and easy cake. Yes, what is it?",
+      ),
+    ).toBe("Where did we stop? Yes, what is it?");
+  });
+
+  it("does not fire on 'welcome' used normally", () => {
+    const said = "Welcome to Aarhus, it is a good place to live.";
+    expect(isLikelyHallucination(said)).toBe(false);
+  });
+});

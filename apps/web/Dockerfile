@@ -47,9 +47,6 @@ ENV NEXT_PUBLIC_POSTHOG_HOST=$NEXT_PUBLIC_POSTHOG_HOST
 ARG NEXT_PUBLIC_TALKBACK_ENABLED
 ENV NEXT_PUBLIC_TALKBACK_ENABLED=$NEXT_PUBLIC_TALKBACK_ENABLED
 # Which talk-back backend the bundle talks to. Baked in like the flag above,
-# so a deploy that means to use Pipecat cannot silently fall back to LiveKit.
-ARG NEXT_PUBLIC_TALKBACK_BACKEND
-ENV NEXT_PUBLIC_TALKBACK_BACKEND=$NEXT_PUBLIC_TALKBACK_BACKEND
 ARG NEXT_PUBLIC_PIPECAT_URL
 ENV NEXT_PUBLIC_PIPECAT_URL=$NEXT_PUBLIC_PIPECAT_URL
 # Not for auth — the runtime container has its own copy for that. Prerendered

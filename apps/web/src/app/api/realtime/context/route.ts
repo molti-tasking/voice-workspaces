@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { captureSession, eq, getDb } from "@voicemural/db";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
-import { buildContextMessage } from "@voicemural/talkback";
+import { buildContextPassages } from "@voicemural/talkback";
 import { z } from "zod";
 
 export const runtime = "nodejs";
@@ -10,12 +10,18 @@ export const dynamic = "force-dynamic";
 /**
  * What the driver has said before, for whoever is doing the talking.
  *
- * EXISTS FOR THE PYTHON BACKEND. The LiveKit agent calls `buildContextMessage`
- * in process; `apps/pipecat` cannot, so it reaches the same function through
- * here. Reimplementing retrieval in Python would mean two versions of the one
- * thing that decides whether the agent knows anything — and while the two
- * backends are being compared, a difference in recall would look like a
- * property of the framework instead of a bug in the copy.
+ * EXISTS FOR THE PYTHON BACKEND. `apps/pipecat` cannot call into the ledger
+ * itself, so it reaches retrieval through here. Reimplementing it in Python
+ * would mean two versions of the one thing that decides whether the agent knows
+ * anything, and only one of them would get fixed.
+ *
+ * Returns PASSAGES, not a finished prompt block. What was said earlier in this
+ * drive is deliberately absent: it used to be read from the `utterance` ledger,
+ * which trails live speech by 15-25 seconds because it is written by the batch
+ * chunk pipeline — so the driver could ask about something they had just said
+ * and be told it could not be found. The container keeps its own running
+ * summary off the live STT stream instead, and it alone can assemble the final
+ * block because it alone holds that summary.
  *
  * Authorised by the same short-lived ticket the WebSocket path uses, because
  * the Python container has no Better Auth session and should not gain one. The
@@ -62,7 +68,11 @@ export async function POST(req: Request) {
    * bound that matters, and the client refreshes it — the risk of a re-read of
    * the driver's own transcript, by a holder who already proved ownership of
    * the drive, is not worth ending the conversation over. */
-  const context = await buildContextMessage(payload.userId, payload.captureSessionId, parsed.data.said);
+  const passages = await buildContextPassages(
+    payload.userId,
+    payload.captureSessionId,
+    parsed.data.said,
+  );
 
-  return NextResponse.json({ context }, { headers: { "Cache-Control": "no-store" } });
+  return NextResponse.json({ passages }, { headers: { "Cache-Control": "no-store" } });
 }

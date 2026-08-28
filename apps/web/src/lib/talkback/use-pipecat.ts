@@ -1,22 +1,34 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { PipecatClient, RTVIEvent, type BotLLMTextData, type Participant } from "@pipecat-ai/client-js";
+import {
+  PipecatClient,
+  RTVIEvent,
+  type BotOutputData,
+  type Participant,
+  type TranscriptData,
+} from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import { subscribeStream } from "@/lib/recorder/mic-bus";
-import { OFF, type TalkbackOptions, type TalkbackState } from "./types";
+import {
+  MAX_VISIBLE_TURNS,
+  OFF,
+  type TalkbackOptions,
+  type TalkbackState,
+  type TalkbackTurn,
+} from "./types";
 
 /**
  * The live conversation, over Pipecat.
  *
- * The alternative to `use-livekit.ts`, deliberately the same shape — same
+ * The client half of the voice service. Kept behind `useTalkback` — same
  * state, same options, same rule that capture must not depend on it — so the
  * two can be swapped by one env var and judged on how they SOUND rather than on
  * how they are wired.
  *
  * SmallWebRTC is peer-to-peer: the browser negotiates directly with the Python
  * container and there is no media server in between. So this backend needs no
- * equivalent of the `livekit` service, and it still gets the browser's real echo
+ * equivalent of a media server, and it still gets the browser's real echo
  * canceller, because the media path is WebRTC either way.
  */
 export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
@@ -82,8 +94,44 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
       });
       client = next;
 
-      next.on(RTVIEvent.BotTranscript, (data: BotLLMTextData) => {
-        if (data?.text) patch({ reply: data.text });
+      /* Both halves of the exchange, on screen as it happens.
+       *
+       * Appended rather than replaced: seeing only the latest line makes it
+       * impossible to tell a misheard question from a bad answer, which is the
+       * first thing anybody needs to know when a reply seems wrong. */
+      const append = (role: TalkbackTurn["role"], text: string, key?: string) => {
+        const trimmed = text.trim();
+        if (!trimmed) return;
+        setState((prev) => {
+          const turns = [...prev.turns];
+          const last = turns[turns.length - 1];
+          // The bot streams one segment as several events, so a matching key
+          // REPLACES rather than appends — otherwise a single sentence arrives
+          // as a column of fragments.
+          if (last && key && last.id === key) {
+            turns[turns.length - 1] = { ...last, text: trimmed };
+          } else {
+            turns.push({ id: key ?? `${role}-${Date.now()}-${turns.length}`, role, text: trimmed });
+          }
+          return {
+            ...prev,
+            turns: turns.slice(-MAX_VISIBLE_TURNS),
+            reply: role === "agent" ? trimmed : prev.reply,
+          };
+        });
+      };
+
+      next.on(RTVIEvent.UserTranscript, (data: TranscriptData) => {
+        // Interim results rewrite themselves several times a second. Only the
+        // final text is worth putting in front of someone driving.
+        if (data?.final) append("you", data.text);
+      });
+
+      next.on(RTVIEvent.BotOutput, (data: BotOutputData) => {
+        // A turn the silence gate declined never reaches the speaker, so it
+        // must not appear here either — the screen should show what was said.
+        if (data?.will_be_spoken === false) return;
+        append("agent", data.text, data.segment_id != null ? `agent-${data.segment_id}` : undefined);
       });
 
       next.on(RTVIEvent.TrackStarted, (track: MediaStreamTrack, participant?: Participant) => {
@@ -97,11 +145,11 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
         void audioEl.play().catch(() => undefined);
       });
 
-      /* THE ONE PLACE THIS DIFFERS FROM THE LIVEKIT BACKEND, stated plainly
+      /* THE ONE KNOWN HAZARD TO THE LEDGER, stated plainly
        * because it is a confound in the comparison and not an implementation
        * detail.
        *
-       * LiveKit lets us publish the recorder's existing MediaStreamTrack. This
+       * A transport that accepted an existing MediaStreamTrack would avoid this. It
        * client owns its capture through its MediaManager and only accepts a
        * DEVICE id, so a second getUserMedia is unavoidable without subclassing
        * internals the package does not export. Pinning it to the recorder's own

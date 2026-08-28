@@ -47,7 +47,6 @@ services:
         - BETTER_AUTH_URL=${BETTER_AUTH_URL}
         # Decides whether the conversational path is built into the bundle at all.
         - NEXT_PUBLIC_TALKBACK_ENABLED=${TALKBACK_ENABLED:-false}
-        - NEXT_PUBLIC_TALKBACK_BACKEND=${NEXT_PUBLIC_TALKBACK_BACKEND:-livekit}
         - NEXT_PUBLIC_PIPECAT_URL=${NEXT_PUBLIC_PIPECAT_URL:-}
     environment:
       # Declared so Coolify wires Traefik to this service on port 3000.
@@ -127,77 +126,83 @@ services:
   # Talk-back: the live conversation socket. Optional — leave TALKBACK_ENABLED
   # unset and this service refuses upgrades while everything else is unaffected.
   #
-  # Separate from `web` on purpose. The web container holds the chunk upload
-  # route, the one path in this system that cannot fail, and a custom Next
-  # server would put long-lived duplex sessions and PCM buffers in that same
-  # event loop. This container can leak, stall or be redeployed without touching
-  # capture.
-  realtime:
+  # The voice service. Separate from `web` on purpose: the web container holds
+  # the chunk upload route, the one path in this system that cannot fail, and
+  # long-lived duplex sessions plus PCM buffers have no business in that event
+  # loop. This container can leak, stall or be redeployed without touching
+  # capture — which is the acceptance criterion for the whole feature.
+  #
+  # REPLACED the old `realtime` service, which built `apps/realtime/Dockerfile`.
+  # That directory was deleted when talk-back moved to a framework and this file
+  # was never updated, so production talk-back had been un-deployable — the
+  # compose file referenced a Dockerfile that did not exist.
+  pipecat:
     build:
       context: .
-      dockerfile: apps/realtime/Dockerfile
+      dockerfile: apps/pipecat/Dockerfile
     environment:
-      - DATABASE_URL=${DATABASE_URL}
-      # Signs and verifies the connection tickets. Must be the SAME value as
-      # web's: the web app mints them, this service verifies them, and a
-      # mismatch presents as every connection being rejected as forged.
-      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
-      # Origin check on the WebSocket upgrade. An upgrade is not subject to
-      # CORS, so without this any page on the internet could open a socket.
-      - BETTER_AUTH_URL=${BETTER_AUTH_URL}
       - LITELLM_BASE_URL=${LITELLM_BASE_URL}
       - LITELLM_API_KEY=${LITELLM_API_KEY}
       - MODEL_TRANSCRIBE=${MODEL_TRANSCRIBE}
       # The live path's own ASR deployment. Falls back to MODEL_TRANSCRIBE,
-      # which works but queues behind the worker's batched jobs: measured
-      # 7.9-10.2s per turn during a drive against 1.7s idle.
+      # which works but queues behind the worker's batched jobs.
       - MODEL_TRANSCRIBE_LIVE=${MODEL_TRANSCRIBE_LIVE:-}
-      - MODEL_CONVERSE=${MODEL_CONVERSE:-}
-      - MODEL_SPEAK=${MODEL_SPEAK:-}
-      - MODEL_SPEAK_SAMPLE_RATE=${MODEL_SPEAK_SAMPLE_RATE:-}
-      # litellm (default, on AU hardware) | elevenlabs | synthetic (diagnostic)
-      - TTS_PROVIDER=${TTS_PROVIDER:-litellm}
-      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
-      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID:-}
-      - ELEVENLABS_MODEL_ID=${ELEVENLABS_MODEL_ID:-}
-      - TALKBACK_ENABLED=${TALKBACK_ENABLED:-false}
-      - REALTIME_PORT=3001
-      - NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN}
-      - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
-      - POSTHOG_CAPTURE_AI_CONTENT=${POSTHOG_CAPTURE_AI_CONTENT:-true}
-    # No audio-data volume, deliberately. Live audio lives in memory for the
-    # length of one utterance and is then discarded — not giving this container
-    # anywhere to write audio is what keeps that true rather than aspirational.
+      - MODEL_CONVERSE=${MODEL_CONVERSE}
+      # Folds the drive into a rolling summary. Falls back to MODEL_CONVERSE,
+      # deliberately not to MODEL_FAST — see packages/llm/src/config.ts.
+      - MODEL_SUMMARISE=${MODEL_SUMMARISE:-}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
+      # Must stay a streaming-capable model. eleven_v3 is HTTP-only and 403s on
+      # the websocket, which would make every reply sound chopped.
+      - ELEVENLABS_MODEL_ID=${ELEVENLABS_MODEL_ID:-eleven_turbo_v2_5}
+      # CORS origin for the browser's /offer request.
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL}
+      - PIPECAT_PORT=7860
+      # Retrieval, the prompt and the summary seed all live in the Next app.
+      # The INTERNAL service name, not host.docker.internal: that is a
+      # developer-machine escape hatch and resolves to nothing here.
+      - WEB_URL=http://web:3000
     depends_on:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
+    # No audio volume, deliberately. Live audio lives in memory for the length
+    # of one utterance and is then discarded — not giving this container
+    # anywhere to write audio is what keeps that true rather than aspirational.
+    #
     # Let an in-flight turn settle on redeploy instead of cutting it mid-sentence.
-    # Every push to main restarts this, so in a longitudinal deployment each
-    # deploy is a small conversational outage worth keeping short and clean.
     stop_grace_period: 20s
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001/healthz || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:7860/healthz')\""]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 20s
+      start_period: 40s
     labels:
-      # Explicit labels rather than SERVICE_FQDN_REALTIME_3001. Coolify renders
-      # its magic FQDN variable with the container port appended
-      # (`https://host:3001`) — the same trap documented for BETTER_AUTH_URL
-      # above — and its path-prefix handling varies by version.
+      # Signalling only. Routed on the SAME public origin as web, under
+      # /pipecat, so the browser's request is same-origin.
       #
-      # Routed on the SAME public origin as web, under /rt, so the browser's
-      # WebSocket is same-origin and dev/tunnel/production all behave alike.
-      # Set REALTIME_HOST to the same domain as BETTER_AUTH_URL, without scheme.
+      # ⚠️ MEDIA DOES NOT GO THROUGH TRAEFIK. SmallWebRTC is peer-to-peer: only
+      # the SDP exchange below is HTTP. The audio itself needs a direct UDP path
+      # between the browser and this container, so behind NAT — which is where
+      # a Coolify host usually sits — ICE will fail and the call will connect,
+      # sit in `connecting`, and time out after ~40s with a message that reads
+      # like a network blip. A TURN server (or host networking plus open UDP)
+      # is required before this is usable in production. Untested in production
+      # as of 2026-08-25.
       - traefik.enable=true
-      - traefik.http.routers.vm-rt.rule=Host(`${REALTIME_HOST}`) && PathPrefix(`/rt`)
-      - traefik.http.routers.vm-rt.entrypoints=https
-      - traefik.http.routers.vm-rt.tls=true
-      # Ahead of web's router, which would otherwise match /rt on the same host.
-      - traefik.http.routers.vm-rt.priority=100
-      - traefik.http.services.vm-rt.loadbalancer.server.port=3001
+      - traefik.http.routers.vm-pc.rule=Host(`${REALTIME_HOST}`) && PathPrefix(`/pipecat`)
+      - traefik.http.routers.vm-pc.entrypoints=https
+      - traefik.http.routers.vm-pc.tls=true
+      # Ahead of web's router, which would otherwise match /pipecat on the host.
+      - traefik.http.routers.vm-pc.priority=100
+      # Strips /pipecat so the container sees POST /offer and PATCH /offer.
+      # The PATCH route is NOT optional — without it the browser's trickle-ICE
+      # candidates 405 and the peer connection never leaves `connecting`.
+      - traefik.http.middlewares.vm-pc-strip.stripprefix.prefixes=/pipecat
+      - traefik.http.routers.vm-pc.middlewares=vm-pc-strip
+      - traefik.http.services.vm-pc.loadbalancer.server.port=7860
 
 volumes:
   audio-data:

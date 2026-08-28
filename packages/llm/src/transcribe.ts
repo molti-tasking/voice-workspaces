@@ -86,6 +86,26 @@ export async function transcribeChunk(
   if (sentPrompt) form.append("prompt", sentPrompt);
   if (options.language) form.append("language", options.language);
 
+  /* Two settings against Whisper's habit of inventing YouTube.
+   *
+   * `temperature: 0` makes decoding greedy. Left unset, the server is free to
+   * sample, and on quiet or near-silent audio it samples fluent nonsense from
+   * its training distribution.
+   *
+   * `condition_on_previous_text: false` is the one that matters. Whisper
+   * conditions each segment on the segments it has already produced WITHIN this
+   * file, so one bad guess feeds the next and the output locks into a loop —
+   * "I will show you how to make a simple, easy, and easy to make I will show
+   * you how to make ...". Real drives produced exactly that, five chunks in
+   * nine, and the repetition guard downstream could only tidy the wreckage.
+   *
+   * This is NOT the same knob as `prompt` above. That one is the caller's
+   * cross-chunk continuity and is still sent; this one is Whisper feeding on
+   * itself inside a single chunk. Verified accepted by the deployment — all
+   * four combinations answered 200 against a real clip. */
+  form.append("temperature", "0");
+  form.append("condition_on_previous_text", "false");
+
   const context = options.context ?? {};
   const startedAt = Date.now();
   // Separate span names so the live path's latency is not averaged together

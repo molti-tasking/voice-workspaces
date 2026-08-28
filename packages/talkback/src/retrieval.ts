@@ -100,6 +100,40 @@ async function spokenByAgent(captureSessionIds: string[]): Promise<string[]> {
 }
 
 /**
+ * The same, but keyed by drive.
+ *
+ * A passage must be cleaned against what the agent said in ITS OWN drive, not
+ * against everything it has ever said — echo containment is deliberately loose
+ * (0.75, asymmetric), and widening the comparison set would start hiding things
+ * the driver really said in one drive because the agent said something similar
+ * in another. One query for all of them, grouped here, rather than one query
+ * per hit inside a loop.
+ */
+async function spokenByAgentPerSession(
+  captureSessionIds: string[],
+): Promise<Map<string, string[]>> {
+  const bySession = new Map<string, string[]>();
+  if (captureSessionIds.length === 0) return bySession;
+  try {
+    const rows = await getDb()
+      .select({ text: agentTurn.text, captureSessionId: agentTurn.captureSessionId })
+      .from(agentTurn)
+      .where(sql`${agentTurn.captureSessionId} in ${captureSessionIds}`);
+    for (const row of rows) {
+      if (!row.text?.trim()) continue;
+      const existing = bySession.get(row.captureSessionId);
+      if (existing) existing.push(row.text);
+      else bySession.set(row.captureSessionId, [row.text]);
+    }
+  } catch (err) {
+    log.error("could not load spoken turns", {
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return bySession;
+}
+
+/**
  * What was said earlier in this drive.
  *
  * Answers "what have we covered so far" without a search, and grounds anaphora
@@ -202,16 +236,32 @@ export async function searchTranscripts(
       limit ${limit}
     `);
 
+    // Everything below used to run inside a `for` loop, one window query and
+    // one spoken-turns query per hit — up to 1 + 4x2 = 9 strictly sequential
+    // round trips before the first token of a reply, on the one code path whose
+    // whole design rationale is latency. The hits are independent, so they are
+    // fetched together, and the spoken turns for every hit drive come back in a
+    // single query rather than one per hit.
+    const sessionIds = [...new Set(hits.map((hit) => hit.capture_session_id))];
+    const [spokenPerSession, windows] = await Promise.all([
+      spokenByAgentPerSession(sessionIds),
+      Promise.all(
+        hits.map((hit) =>
+          db.execute<{ text: string; start_offset_ms: number; started_at: Date }>(sql`
+            select u.text, u.start_offset_ms, cs.started_at
+            from utterance u
+            join capture_session cs on cs.id = u.capture_session_id
+            where u.capture_session_id = ${hit.capture_session_id}
+              and u.start_offset_ms between ${hit.start_offset_ms - windowMs} and ${hit.start_offset_ms + windowMs}
+            order by u.start_offset_ms
+          `),
+        ),
+      ),
+    ]);
+
     const passages: Passage[] = [];
-    for (const hit of hits) {
-      const window = await db.execute<{ text: string; start_offset_ms: number; started_at: Date }>(sql`
-        select u.text, u.start_offset_ms, cs.started_at
-        from utterance u
-        join capture_session cs on cs.id = u.capture_session_id
-        where u.capture_session_id = ${hit.capture_session_id}
-          and u.start_offset_ms between ${hit.start_offset_ms - windowMs} and ${hit.start_offset_ms + windowMs}
-        order by u.start_offset_ms
-      `);
+    for (const [index, hit] of hits.entries()) {
+      const window = windows[index] ?? [];
 
       const first = window[0];
       if (!first) continue;
@@ -219,7 +269,7 @@ export async function searchTranscripts(
       // Past drives carry the same contamination, so a passage must be cleaned
       // before it is quoted back — otherwise a reply invented three drives ago
       // returns as established fact about the driver's own thinking.
-      const spoken = await spokenByAgent([hit.capture_session_id]);
+      const spoken = spokenPerSession.get(hit.capture_session_id) ?? [];
       const text = withoutEcho(
         // Whisper's invented sign-offs go too, for the same reason and by the
         // same rule: the ledger is verbatim, a read is allowed to know better.

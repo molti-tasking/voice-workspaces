@@ -1,19 +1,18 @@
-import type { ChatMessage } from "@voicemural/llm";
-
 /**
  * What the system is, and how it takes a turn.
  *
- * Phase 2 hard-codes this. From Phase 3 it is composed from the active mode and
- * persona's `capabilityVersion.markdown`, which is the paper's actual claim —
- * `mode` governing turn-taking and elicitation, `persona` governing register.
- * The shape here is deliberately the shape that composition will produce, so
- * swapping the source does not mean rewriting the caller.
+ * Lives here rather than in an app because there is no longer an app that owns
+ * it: the LiveKit agent that used to hold this file is gone, and the Pipecat
+ * container fetches the composed prompt over HTTP from
+ * `/api/realtime/session`. Keeping it in the shared package is what lets that
+ * route compose it — see `composeSystemPrompt`, which layers the driver's
+ * persona and repertoire on top of the base text below.
  *
  * Pure: no I/O, no model call, fully testable.
  */
 
 /** Bumped when the prompt changes, so a drive's turns stay interpretable later. */
-export const TALKBACK_CONFIG_VERSION = "talkback-1";
+export const TALKBACK_CONFIG_VERSION = "talkback-2";
 
 /**
  * The default register: quiet.
@@ -63,12 +62,6 @@ HOW TO SPEAK
   do at length. "I'd need more detail — what's pushing you toward cutting it?"
   not a paragraph about what you lack.`;
 
-/** One side of the conversation so far. */
-export interface Turn {
-  role: "user" | "assistant";
-  text: string;
-}
-
 /**
  * The marker the model emits instead of speaking.
  *
@@ -79,89 +72,15 @@ export interface Turn {
 export const SILENCE_TOKEN = "<silence>";
 
 /**
- * How much conversation to carry.
- *
- * Short on purpose. Prompt processing dominates time-to-first-token on a
- * self-hosted model, and a drive is an hour long — carrying all of it would
- * make every turn slower than the last. The workspace is the long-term memory;
- * this is just the thread of the current exchange.
- */
-const MAX_HISTORY_TURNS = 8;
-
-/** Transcript put in front of the model for this turn. */
-export interface RetrievedContext {
-  /** What was said earlier in this same drive, oldest first. */
-  driveSoFar: string[];
-  /** Passages from past recordings, each already labelled with when it was. */
-  fromThePast: { when: string; text: string }[];
-}
-
-/**
- * How much retrieved transcript to include.
- *
- * Prompt processing dominates time-to-first-token on a self-hosted model, so
- * this is a direct latency cost paid on every turn — and past a point more
- * context makes the answer worse, not better, by burying the relevant line.
- */
-const MAX_CONTEXT_CHARS = 4000;
-
-function trimToBudget(lines: string[], budget: number): string[] {
-  const kept: string[] = [];
-  let used = 0;
-  // Backwards: the most recent lines are the ones worth keeping.
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i] ?? "";
-    if (used + line.length > budget) break;
-    kept.unshift(line);
-    used += line.length;
-  }
-  return kept;
-}
-
-export function buildTurnPrompt(history: Turn[], context?: RetrievedContext): ChatMessage[] {
-  const messages: ChatMessage[] = [{ role: "system", content: SYSTEM_PROMPT }];
-
-  const sections: string[] = [];
-
-  if (context?.fromThePast.length) {
-    sections.push(
-      "From their past recordings:\n" +
-        context.fromThePast.map((p) => `[${p.when}] ${p.text}`).join("\n\n"),
-    );
-  }
-
-  if (context?.driveSoFar.length) {
-    const lines = trimToBudget(context.driveSoFar, MAX_CONTEXT_CHARS / 2);
-    if (lines.length) sections.push(`Earlier in this drive:\n${lines.join(" ")}`);
-  }
-
-  if (sections.length) {
-    // A system message rather than a user one: it is reference material, not
-    // something the driver said, and a model that mistakes the two starts
-    // replying to the transcript instead of to the person.
-    messages.push({
-      role: "system",
-      content: `${sections.join("\n\n")}\n\nThat transcript is background. Answer only what was just said to you.`,
-    });
-  }
-
-  messages.push(
-    ...history.slice(-MAX_HISTORY_TURNS).map((turn) => ({
-      role: turn.role,
-      content: turn.text,
-    })),
-  );
-
-  return messages;
-}
-
-/**
  * Whether a completion means "say nothing".
  *
  * Tolerant of the ways a model dresses the sentinel up — surrounding
  * whitespace, a trailing full stop, a stray quotation mark. A missed sentinel
  * is the system reading the word "silence" aloud in a car, which is the single
  * most conspicuous way this could fail.
+ *
+ * Mirrored in `apps/pipecat/bot.py` as `is_silence`, which is what actually
+ * gates TTS. Change one and change the other.
  */
 export function isSilence(reply: string): boolean {
   const normalised = reply.trim().toLowerCase().replace(/[."'`*]/g, "");
@@ -172,7 +91,8 @@ export function isSilence(reply: string): boolean {
  * Strip anything the model added around a real reply.
  *
  * Small models occasionally emit the sentinel AND a sentence, or wrap a reply in
- * quotes. Both are read aloud verbatim otherwise.
+ * quotes. Both are read aloud verbatim otherwise. Mirrored in `bot.py` as
+ * `clean_reply`.
  */
 export function cleanReply(reply: string): string {
   return reply

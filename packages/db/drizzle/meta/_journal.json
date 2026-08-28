@@ -26,15 +26,8 @@
     {
       "idx": 3,
       "version": "7",
-      "when": 1786909981811,
-      "tag": "0003_glamorous_juggernaut",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1786919811307,
-      "tag": "0004_magical_gateway",
+      "when": 1787921584191,
+      "tag": "0003_chunky_nighthawk",
       "breakpoints": true
     }
   ]

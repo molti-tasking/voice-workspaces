@@ -45,6 +45,34 @@ const ARTEFACTS = [
   "thank you",
 ];
 
+/**
+ * The other family: Whisper narrating a cooking video.
+ *
+ * Distinct from ARTEFACTS above, which are complete self-contained lines. These
+ * are OPENINGS — a hallucinated sentence continues into invented specifics
+ * ("...a beautiful and beautiful Christmas tree", "...you will need 1 egg"), so
+ * there is no fixed string to match. Anchored to the start of a sentence and
+ * kept to phrasings no driver thinking aloud would ever produce, because the
+ * cost of a false positive is discarding real speech.
+ *
+ * All observed verbatim in this corpus, in a single nine-chunk drive.
+ */
+const NARRATION_OPENINGS = [
+  /^hello everyone,? welcome to my channel/i,
+  /^welcome (back )?to my channel/i,
+  /^today,? i('ll| will| am going to) show you how to make/i,
+  /^i('m| am) going to show you how to make/i,
+  /* Sentence-initial and bare, with no "today". A judgement call, made
+   * deliberately: "I will show you how to make ..." is a presenter addressing
+   * an audience, and the speaker here is alone in a car thinking aloud. The
+   * asymmetry also runs the other way from the ARTEFACTS list above — this
+   * filter governs what the AGENT is shown, not what the ledger keeps, so a
+   * false positive costs one sentence of context while a false negative tells
+   * the agent the driver was narrating a baking video. */
+  /^i('ll| will) show you how to make/i,
+  /^in this video,? i/i,
+];
+
 function normalise(text: string): string {
   return text
     .toLowerCase()
@@ -61,6 +89,9 @@ function normalise(text: string): string {
  * are someone talking.
  */
 export function isLikelyHallucination(text: string): boolean {
+  const trimmed = text.trim();
+  if (NARRATION_OPENINGS.some((opening) => opening.test(trimmed))) return true;
+
   const normalised = normalise(text);
   if (!normalised) return false;
   return ARTEFACTS.includes(normalised);

@@ -1,1 +1,0 @@
-CREATE INDEX "utterance_text_search_idx" ON "utterance" USING gin (to_tsvector('simple', "text"));

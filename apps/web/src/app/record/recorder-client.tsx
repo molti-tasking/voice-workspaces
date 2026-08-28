@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { formatOffset } from "@voicemural/shared";
 import { useRecorder } from "@/lib/recorder/use-recorder";
-import { configuredBackend, useTalkback } from "@/lib/talkback/use-talkback";
+import { useTalkback } from "@/lib/talkback/use-talkback";
+import type { TalkbackTurn } from "@/lib/talkback/types";
 
 /**
  * Whether talk-back is built into this bundle.
@@ -46,7 +47,6 @@ export function RecorderClient() {
           wakeLock={rec.wakeLockActive}
           recording={isRecording}
           talkback={TALKBACK && isRecording ? talk.status : null}
-          backend={TALKBACK && isRecording ? configuredBackend() : null}
         />
       </header>
 
@@ -82,10 +82,8 @@ export function RecorderClient() {
             : "Mount the phone, plug it in, then start."}
         </p>
 
-        {TALKBACK && isRecording && talk.reply && (
-          <div className="max-w-md">
-            <AgentReply text={talk.reply} replying={talk.status === "speaking"} />
-          </div>
+        {TALKBACK && isRecording && talk.turns.length > 0 && (
+          <Exchange turns={talk.turns} speaking={talk.status === "speaking"} />
         )}
       </div>
 
@@ -156,27 +154,62 @@ export function RecorderClient() {
 }
 
 /**
- * What the system is saying.
+ * The conversation as it happens.
  *
- * Brighter than the transcript and above it, because this is the half of the
- * dialogue the driver did not produce. Until TTS is wired up this is the only
- * channel the reply has; once it speaks, this becomes redundancy for a glance
- * rather than the primary output.
+ * BOTH halves, because only one of them was ever visible and that made the
+ * common failure undiagnosable: when a reply seems wrong, the first thing you
+ * need to know is whether the question was heard correctly. A single line of
+ * agent text cannot answer that, and by the time the session transcript is
+ * available the drive is over.
+ *
+ * The hook caps this at MAX_VISIBLE_TURNS and drops turns the silence gate
+ * declined, so what is on screen is what was actually said aloud.
+ *
+ * Sided like `/sessions/[id]` — agent tinted and boxed, driver plain — so the
+ * live view and the recorded one read the same way.
  */
-function AgentReply({ text, replying }: { text: string; replying: boolean }) {
+function Exchange({ turns, speaking }: { turns: TalkbackTurn[]; speaking: boolean }) {
+  const last = turns[turns.length - 1];
+
   return (
-    <p
-      className={[
-        "text-balance text-center text-lg",
-        replying ? "text-white/70" : "text-white",
-      ].join(" ")}
-      // Never announced: a screen reader interrupting a driver mid-thought is
-      // exactly the failure this whole design is trying to avoid.
+    <ol
+      className="flex w-full max-w-md flex-col gap-1.5 text-sm"
+      // Never announced. A screen reader reading this out would interrupt the
+      // driver mid-thought, which is the failure the whole design avoids.
       aria-live="off"
     >
-      {text}
-      {replying && <span className="ml-1 animate-pulse text-white/40">▍</span>}
-    </p>
+      {turns.map((turn, index) => {
+        // Older turns recede rather than disappear: the newest is what matters
+        // at a glance, the rest is there if you look.
+        const faded = index < turns.length - 2;
+        return (
+          <li
+            key={turn.id}
+            className={turn.role === "agent" ? "flex justify-start" : "flex justify-end"}
+          >
+            <span
+              className={[
+                "max-w-[85%] rounded-lg px-3 py-1.5",
+                // `transition-opacity` only — no layout animation. This renders
+                // on a warm phone that is also holding a MediaRecorder open.
+                "transition-opacity motion-reduce:transition-none",
+                turn.role === "agent"
+                  ? "rounded-tl-sm border border-sky-400/25 bg-sky-400/10 text-sky-50"
+                  : "rounded-tr-sm bg-white/6 text-white/90",
+                faded ? "opacity-40" : "opacity-100",
+              ].join(" ")}
+            >
+              {turn.text}
+              {speaking && turn === last && turn.role === "agent" && (
+                <span className="ml-1 animate-pulse text-white/40 motion-reduce:animate-none">
+                  ▍
+                </span>
+              )}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -186,22 +219,16 @@ function StatusPills({
   wakeLock,
   recording,
   talkback,
-  backend,
 }: {
   pending: number;
   uploading: boolean;
   wakeLock: boolean;
   recording: boolean;
   talkback: string | null;
-  backend: string | null;
 }) {
   return (
     <div className="flex items-center gap-2 text-xs">
       {recording && wakeLock && <Pill label="awake" tone="ok" />}
-      {/* Which implementation is speaking. Shown only while both exist: judging
-          one and attributing the verdict to the other would waste the whole
-          comparison. Remove this with the losing backend. */}
-      {backend && <Pill label={backend} tone="ok" />}
       {/* Only worth showing when it is NOT working. A healthy socket needs no
           pill: the transcript appearing is the evidence, and a car dashboard
           should not carry an indicator for every subsystem that is fine. */}

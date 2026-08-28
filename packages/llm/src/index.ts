@@ -2,8 +2,4 @@ export * from "./config";
 export * from "./observe";
 export * from "./transcribe";
 export * from "./chat";
-export * from "./chat-stream";
-export * from "./speak";
 export * from "./transcript-repair";
-export * from "./speak-elevenlabs";
-export * from "./speak-synthetic";

@@ -1,16 +1,25 @@
 /**
- * What the agent knows, independent of which framework is speaking.
+ * What the agent knows, independent of what is doing the talking.
  *
- * Extracted out of `apps/agent` so the LiveKit and Pipecat backends share ONE
- * retrieval implementation rather than two that drift. That matters twice over:
- * a second copy would be a second thing to keep correct, and while the two
- * backends are being compared, any difference in what they can recall would be
- * a confound in the comparison rather than a property of the framework.
- *
- * The Python side reaches this through `/api/realtime/context` instead of
- * reimplementing it — same code, same ledger, same echo filtering.
+ * This was extracted so two competing backends could share ONE retrieval
+ * implementation while they were being compared. That comparison is over —
+ * Pipecat won and `apps/agent` is gone — but the split earned its keep for a
+ * second reason: the Python container reaches this over HTTP
+ * (`/api/realtime/context`, `/api/realtime/session`) rather than
+ * reimplementing it, so there is still exactly one copy of the code that
+ * decides what the agent can remember.
  */
-export { buildContextMessage } from "./context";
+export { buildContextPassages, loadDriveSoFarText, type ContextPassage } from "./context";
+export { MAX_CONTEXT_CHARS, trimToBudget } from "./budget";
+export { SUMMARY_PROMPT, foldSummary } from "./summary";
+export {
+  SILENCE_TOKEN,
+  SYSTEM_PROMPT,
+  TALKBACK_CONFIG_VERSION,
+  cleanReply,
+  isSilence,
+} from "./prompt";
+export { recordAgentTurn, type AgentTurnRecord } from "./agent-turns";
 export {
   contentWords,
   describeWhen,
