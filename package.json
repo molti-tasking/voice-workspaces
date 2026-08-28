@@ -10,6 +10,9 @@
     "dev": "node scripts/check-dev.mjs && turbo run dev",
     "dev:unchecked": "turbo run dev",
     "stop": "docker compose down",
+    "talkback:up": "docker compose -f docker-compose.yml -f docker-compose.pipecat.yml up -d",
+    "talkback:down": "docker compose -f docker-compose.yml -f docker-compose.pipecat.yml down",
+    "talkback:logs": "docker compose -f docker-compose.yml -f docker-compose.pipecat.yml logs -f pipecat",
     "reset": "docker compose down -v && node scripts/setup.mjs",
     "build": "turbo run build",
     "icons": "node scripts/generate-icons.mjs",
@@ -22,6 +25,7 @@
     "db:seed": "pnpm --filter @voicemural/db seed",
     "db:fixtures": "pnpm --filter @voicemural/db fixtures",
     "tunnel": "cloudflared tunnel --url http://localhost:3000",
+    "spike:talkback": "node scripts/spike-talkback.mjs",
     "workspace:reparse": "pnpm --filter @voicemural/worker workspace reparse",
     "workspace:rebuild": "pnpm --filter @voicemural/worker workspace rebuild",
     "workspace:show": "pnpm --filter @voicemural/worker workspace show"

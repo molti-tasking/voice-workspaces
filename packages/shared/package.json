@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./storage": "./src/storage.ts"
+    "./storage": "./src/storage.ts",
+    "./realtime-ticket": "./src/realtime-ticket.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

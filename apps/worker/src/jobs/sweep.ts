@@ -11,8 +11,7 @@ import {
 import type { AuthProvider } from "@voicemural/shared";
 import { getStorage } from "@voicemural/shared/storage";
 import { isNotNull } from "drizzle-orm";
-import { capture, setPersonProperties } from "../analytics";
-import { log } from "../logger";
+import { capture, log, setPersonProperties } from "@voicemural/telemetry";
 
 /** See transcribe-chunk.ts — audio is transient unless this is set. */
 const KEEP_AUDIO = process.env.KEEP_AUDIO === "true";

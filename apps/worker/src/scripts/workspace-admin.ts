@@ -24,7 +24,7 @@ import {
 } from "@voicemural/db/workspace";
 import { foldWorkspace, parseExtractionResponse } from "@voicemural/workspace";
 import { extractWorkspaceFully } from "../jobs/extract-workspace";
-import { log } from "../logger";
+import { log } from "@voicemural/telemetry";
 
 async function targetUsers(explicit?: string): Promise<string[]> {
   if (explicit) return [explicit];

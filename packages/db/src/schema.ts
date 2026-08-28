@@ -244,6 +244,17 @@ export const utterance = pgTable(
   (t) => [
     index("utterance_session_offset_idx").on(t.captureSessionId, t.startOffsetMs),
     index("utterance_kind_idx").on(t.kind),
+    // Full-text search over the corpus, for talk-back's recall.
+    //
+    // `simple` rather than a language configuration on purpose: the corpus is
+    // mixed German and English, and stemming everything as one language is
+    // worse than not stemming at all. Phase 5 adds pgvector alongside this; the
+    // lexical arm stays either way, because exact words — a name, a project, a
+    // number — are what people actually ask to be reminded of.
+    index("utterance_text_search_idx").using(
+      "gin",
+      sql`to_tsvector('simple', ${t.text})`,
+    ),
   ],
 );
 
@@ -344,6 +355,136 @@ export const invocation = pgTable(
     index("invocation_session_idx").on(t.captureSessionId),
   ],
 );
+
+/* ---------------------------------------------------------------------------
+ * Talk-back
+ * ------------------------------------------------------------------------- */
+
+/**
+ * One turn the system took. Append-only.
+ *
+ * A SEPARATE TABLE FROM `utterance`, deliberately, and this is the load-bearing
+ * decision in talk-back's schema.
+ *
+ * The obvious alternative — a `speaker` column on `utterance` — would mean
+ * making `chunkId` nullable (permanently weakening a NOT NULL on the ledger)
+ * and, worse, every existing reader would silently start including the machine's
+ * words: `loadPendingSegments`, `loadAllSegments`, `loadSessionUtterances`,
+ * `usersWithPendingSpeech`, `listSessionsWithStats`, `loadTimelineMarkers`, and
+ * the Whisper prompt-carryover in transcribe-chunk.ts, which would feed the
+ * agent's own speech back to Whisper as context for the user's next chunk. The
+ * workspace — "what do *I* currently think about X" — would start folding in
+ * the system's opinions. Miss one call site and it is silent.
+ *
+ * Here that corruption is impossible by construction rather than prevented by
+ * remembering a WHERE clause in seven places.
+ *
+ * They are also not the same kind of thing. An utterance is what Whisper heard
+ * from a microphone at an offset into audio that existed. A turn is generated
+ * text with a model, a cost, a time-to-first-token, a truncation point and a
+ * mode/persona in force.
+ */
+export const agentTurnKindEnum = pgEnum("agent_turn_kind", [
+  "reply",
+  "proactive_prompt",
+  "confirmation_request",
+  "backchannel",
+]);
+
+export const agentTurn = pgTable(
+  "agent_turn",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    captureSessionId: uuid("capture_session_id")
+      .notNull()
+      .references(() => captureSession.id, { onDelete: "cascade" }),
+    /** Monotonic within a drive. */
+    seq: integer("seq").notNull(),
+    /**
+     * Session-relative, on the SAME clock as `utterance.startOffsetMs`, so the
+     * two tables merge into one dialogue when read together.
+     */
+    startOffsetMs: integer("start_offset_ms").notNull(),
+    /** When speaking actually stopped: truncated by barge-in, or a natural end. */
+    endOffsetMs: integer("end_offset_ms").notNull(),
+    kind: agentTurnKindEnum("kind").notNull().default("reply"),
+    /**
+     * The live ASR of the user turn this answers.
+     *
+     * Deliberately text, not a foreign key to `utterance`: the ledger's copy of
+     * that speech is written seconds later by the chunk pipeline, and is a
+     * different transcription of the same audio. Pointing at a row that does
+     * not exist yet — and will not match word for word — would be a lie.
+     */
+    respondingToText: text("responding_to_text"),
+    /**
+     * What the user actually HEARD.
+     *
+     * Differs from `generatedText` exactly when the user barged in. How often
+     * that happens, and how far into a reply, is the turn-taking data the `mode`
+     * abstraction claims to govern — a finding, not bookkeeping.
+     */
+    text: text("text").notNull(),
+    /** What the model produced, whether or not it was all spoken. */
+    generatedText: text("generated_text").notNull(),
+    truncatedAtMs: integer("truncated_at_ms"),
+    bargedIn: boolean("barged_in").notNull().default(false),
+    /**
+     * What was in force for THIS turn.
+     *
+     * `capture_session.activeModeId` only holds the last one, and because
+     * `capability_version` is append-only these two ids reconstruct the exact
+     * composed prompt months later — so the prompt text itself is never stored.
+     */
+    modeVersionId: uuid("mode_version_id").references(() => capabilityVersion.id, {
+      onDelete: "set null",
+    }),
+    personaVersionId: uuid("persona_version_id").references(() => capabilityVersion.id, {
+      onDelete: "set null",
+    }),
+    requestedModel: text("requested_model"),
+    /** What LiteLLM actually used — aliases and fallbacks make these differ. */
+    resolvedModel: text("resolved_model"),
+    /**
+     * Latency, split by stage.
+     *
+     * A live conversation is not replayable — it depends on wall-clock timing,
+     * VAD outcomes, network jitter and a sampler above temperature 0 — so unlike
+     * the workspace there is no cache to reconstruct it from. These columns are
+     * the only record that a turn ever happened, and the only way to answer
+     * "did it feel fast" after the fact.
+     */
+    asrMs: integer("asr_ms"),
+    ttftMs: integer("ttft_ms"),
+    speakTtfbMs: integer("speak_ttfb_ms"),
+    totalLatencyMs: integer("total_latency_ms"),
+    promptTokens: integer("prompt_tokens"),
+    completionTokens: integer("completion_tokens"),
+    /** Text, not numeric: absent means unknown, never zero. */
+    costUsd: text("cost_usd"),
+    toolCalls: jsonb("tool_calls")
+      .$type<{ name: string; latencyMs: number; error?: string; invocationId?: string }[]>()
+      .notNull()
+      .default([]),
+    /** Which talk-back configuration produced this, for later interpretation. */
+    configVersion: text("config_version"),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("agent_turn_session_seq_idx").on(t.captureSessionId, t.seq),
+    // Also the interval the echo filter needs: an utterance fully inside one of
+    // these, and similar to its text, is the agent hearing itself.
+    index("agent_turn_session_offset_idx").on(t.captureSessionId, t.startOffsetMs),
+  ],
+);
+
+export const agentTurnRelations = relations(agentTurn, ({ one }) => ({
+  captureSession: one(captureSession, {
+    fields: [agentTurn.captureSessionId],
+    references: [captureSession.id],
+  }),
+}));
 
 /* ---------------------------------------------------------------------------
  * Artefacts and outlets
