@@ -13,6 +13,7 @@ COPY apps/worker/package.json ./apps/worker/
 COPY packages/db/package.json ./packages/db/
 COPY packages/llm/package.json ./packages/llm/
 COPY packages/shared/package.json ./packages/shared/
+COPY packages/talkback/package.json ./packages/talkback/
 COPY packages/telemetry/package.json ./packages/telemetry/
 COPY packages/workspace/package.json ./packages/workspace/
 RUN pnpm install --frozen-lockfile
