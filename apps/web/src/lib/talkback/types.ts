@@ -34,13 +34,33 @@ export interface TalkbackState {
    * same device that is holding a MediaRecorder open.
    */
   turns: TalkbackTurn[];
+  /**
+   * Whether the agent can reach anything the driver has said before.
+   *
+   * Separate from `status` because it is orthogonal: talk-back can be perfectly
+   * connected and holding a fluent conversation while knowing nothing about the
+   * person it is talking to. That happens when the context ticket cannot be
+   * minted — an expired session cookie, or BETTER_AUTH_SECRET unset — and the
+   * bot then falls back to a prompt that admits it has no memory.
+   *
+   * It is surfaced because failing open SILENTLY is how a whole drive gets
+   * recorded against an amnesiac agent, and the transcript afterwards gives no
+   * hint why the answers were thin.
+   */
+  memory: "ready" | "unavailable";
   error: string | null;
 }
 
 /** How much of the exchange is kept on screen. A glance, not a history. */
 export const MAX_VISIBLE_TURNS = 8;
 
-export const OFF: TalkbackState = { status: "off", reply: null, turns: [], error: null };
+export const OFF: TalkbackState = {
+  status: "off",
+  reply: null,
+  turns: [],
+  memory: "ready",
+  error: null,
+};
 
 export interface TalkbackOptions {
   captureSessionId: string | null;

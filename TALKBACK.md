@@ -134,6 +134,17 @@ values — `STT_PROVIDER=deepgram` sat in `.env` for a whole drive while the
 container ran `litellm`. Use `--force-recreate`, and settle it with
 `docker exec voice-workspace-pipecat-1 printenv STT_PROVIDER`.
 
+**Degraded mode is a fallback, and it must never be silent.** If
+`/api/realtime/ticket` cannot be minted — expired session cookie, or
+`BETTER_AUTH_SECRET` unset, which answers 503 — the browser still connects, with
+`ticket: null`. `fetch_session` then serves `FALLBACK_SYSTEM_PROMPT`: a fluent
+agent that knows nothing about this person and says so rather than inventing a
+past. That failing-open choice is right; failing open *quietly* is not, because
+the drive is recorded either way and the thin answers are only explicable
+afterwards. Both paths now log (`no ticket supplied` / `unreachable`), and
+`/record` shows a **`no memory`** pill — distinct from `talk offline`, because
+the conversation is working, it simply cannot reach anything said before.
+
 **`GET /models` returns 401** on this proxy for a key that inference accepts, so
 the worker's preflight logs "LiteLLM reachable but rejected our key" at boot.
 Noise, not a fault.

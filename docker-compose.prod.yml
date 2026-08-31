@@ -163,6 +163,11 @@ services:
       # The INTERNAL service name, not host.docker.internal: that is a
       # developer-machine escape hatch and resolves to nothing here.
       - WEB_URL=http://web:3000
+      # Only signalling goes through Traefik; the media is peer-to-peer, so
+      # behind NAT this container needs STUN to discover its public mapping.
+      # Without it ICE never completes and calls time out looking like a
+      # network fault. TURN goes here too if STUN is not enough.
+      - ICE_SERVERS=${ICE_SERVERS:-stun:stun.l.google.com:19302}
     depends_on:
       migrate:
         condition: service_completed_successfully
