@@ -47,6 +47,7 @@ export function RecorderClient() {
           wakeLock={rec.wakeLockActive}
           recording={isRecording}
           talkback={TALKBACK && isRecording ? talk.status : null}
+          memory={TALKBACK && isRecording ? talk.memory : null}
         />
       </header>
 
@@ -219,12 +220,14 @@ function StatusPills({
   wakeLock,
   recording,
   talkback,
+  memory,
 }: {
   pending: number;
   uploading: boolean;
   wakeLock: boolean;
   recording: boolean;
   talkback: string | null;
+  memory: "ready" | "unavailable" | null;
 }) {
   return (
     <div className="flex items-center gap-2 text-xs">
@@ -234,6 +237,10 @@ function StatusPills({
           should not carry an indicator for every subsystem that is fine. */}
       {talkback === "degraded" && <Pill label="talk offline" tone="warn" />}
       {talkback === "connecting" && <Pill label="talk…" tone="warn" />}
+      {/* Connected but amnesiac. Distinct from "talk offline" because the
+          conversation still works — it just cannot reach anything said before,
+          which is the difference between a thin answer and a broken one. */}
+      {memory === "unavailable" && <Pill label="no memory" tone="warn" />}
       {pending > 0 && (
         <Pill label={uploading ? `↑ ${pending}` : `${pending} queued`} tone="warn" />
       )}

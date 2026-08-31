@@ -50,7 +50,7 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
       if (!micTrack || disposed) return;
 
       const url = process.env.NEXT_PUBLIC_PIPECAT_URL ?? "http://localhost:7860";
-      patch({ status: "connecting", error: null });
+      patch({ status: "connecting", memory: "ready", error: null });
 
       /* The Python container has no Better Auth session and should not gain
        * one, so it carries a signed ticket instead — the same mechanism the
@@ -72,6 +72,11 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
         console.warn(`[talkback:pipecat] no context ticket — ${String(err)}`);
       }
       if (disposed) return;
+      // Say so on the screen, not only in a console nobody is reading while
+      // driving. Without a ticket the bot runs its degraded prompt and knows
+      // nothing about this person, which is a materially different session and
+      // should not be discovered afterwards from thin answers.
+      if (!ticket) patch({ memory: "unavailable" });
 
       const next = new PipecatClient({
         transport: new SmallWebRTCTransport({

@@ -85,6 +85,34 @@ LITELLM_API_KEY = os.environ["LITELLM_API_KEY"]
 # machine.
 WEB_URL = os.getenv("WEB_URL", "http://host.docker.internal:3000").rstrip("/")
 
+# How the browser and this container find a path for the AUDIO.
+#
+# Only the SDP exchange goes through Traefik; the media is peer-to-peer. In
+# development both ends are on one LAN, so the host candidates each side gathers
+# are directly reachable and no ICE server is needed — which is exactly why this
+# was missing and why the gap does not show up until deployment.
+#
+# In production this container sits behind Docker's bridge NAT on a host that is
+# itself usually NATed, so its only candidates are 172.x addresses no browser can
+# reach. The call then connects, sits in `connecting`, and times out after ~40s
+# with a message that reads like a network blip. STUN is what lets it discover
+# its public mapping and hole-punch.
+#
+# STUN alone is usually enough from a datacenter host. If ICE still fails —
+# symmetric NAT, or UDP blocked — a TURN server is required, and this is the
+# variable that points at it:
+#
+#   ICE_SERVERS=stun:stun.example.org:3478,turn:user:pass@turn.example.org:3478
+#
+# Comma-separated. Empty disables ICE servers entirely, which is the right
+# setting for a purely local run and wrong for anything else. The default is a
+# public STUN server: it learns this container's IP and nothing about the
+# participant — no audio and no transcript passes through it — but point it at
+# AU infrastructure if even that is worth avoiding.
+ICE_SERVERS = [
+    s.strip() for s in os.getenv("ICE_SERVERS", "stun:stun.l.google.com:19302").split(",") if s.strip()
+]
+
 # Folds the drive into a rolling summary. Falls back to MODEL_CONVERSE and
 # deliberately NOT to MODEL_FAST: each fold builds on the last, so a model that
 # restates a transcription artefact as fact turns the summary into a
@@ -118,8 +146,16 @@ def fetch_session(ticket: str | None) -> dict:
     Fails open to the degraded prompt above. A drive where the agent is dim is
     worth more than a drive where it will not connect — and either way the
     capture ledger is untouched.
+
+    BUT IT SAYS SO, LOUDLY. Failing open silently is how a whole drive gets
+    recorded against an agent with no memory, with the only trace a browser
+    console warning nobody reads at 110 km/h. Both degraded paths log.
     """
     if not ticket:
+        # No ticket at all: either a test harness dialling /offer directly, or a
+        # browser whose /api/realtime/ticket call failed — an expired session
+        # cookie, or BETTER_AUTH_SECRET unset, which answers 503.
+        logger.warning("[session] no ticket supplied — running degraded, no memory of past drives")
         return {"systemPrompt": FALLBACK_SYSTEM_PROMPT, "degraded": True}
     try:
         req = urllib.request.Request(
@@ -903,7 +939,7 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
         )
         return connection.get_answer()
 
-    connection = SmallWebRTCConnection()
+    connection = SmallWebRTCConnection(ice_servers=ICE_SERVERS)
     await connection.initialize(sdp=request["sdp"], type=request["type"])
 
     @connection.event_handler("closed")
