@@ -49,8 +49,17 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
       const [micTrack] = stream.getAudioTracks();
       if (!micTrack || disposed) return;
 
-      const url = process.env.NEXT_PUBLIC_PIPECAT_URL ?? "http://localhost:7860";
+      /* `||`, NOT `??`.
+       *
+       * docker-compose passes `NEXT_PUBLIC_PIPECAT_URL=${NEXT_PUBLIC_PIPECAT_URL:-}`,
+       * so an unset variable arrives as an EMPTY STRING rather than undefined —
+       * and `"" ?? fallback` is `""`. That silently makes the endpoint `/offer`
+       * on the app's own origin, where Next answers 404 and the only symptom is
+       * a "talk offline" pill. An empty value has to mean "not configured". */
+      const url =
+        process.env.NEXT_PUBLIC_PIPECAT_URL || "http://localhost:7860";
       patch({ status: "connecting", memory: "ready", error: null });
+      console.info(`[talkback:pipecat] connecting to ${url}`);
 
       /* The Python container has no Better Auth session and should not gain
        * one, so it carries a signed ticket instead — the same mechanism the
@@ -67,7 +76,8 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
           body: JSON.stringify({ captureSessionId, scope: "context" }),
         });
         if (res.ok) ({ ticket } = (await res.json()) as { ticket: string });
-        else console.warn(`[talkback:pipecat] no context ticket — ${res.status}`);
+        else
+          console.warn(`[talkback:pipecat] no context ticket — ${res.status}`);
       } catch (err) {
         console.warn(`[talkback:pipecat] no context ticket — ${String(err)}`);
       }
@@ -93,7 +103,8 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
           onBotStartedSpeaking: () => patch({ status: "speaking" }),
           onBotStoppedSpeaking: () => patch({ status: "listening" }),
           onDisconnected: () => {
-            if (!disposed) patch({ status: "degraded", error: "connection lost" });
+            if (!disposed)
+              patch({ status: "degraded", error: "connection lost" });
           },
         },
       });
@@ -104,7 +115,11 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
        * Appended rather than replaced: seeing only the latest line makes it
        * impossible to tell a misheard question from a bad answer, which is the
        * first thing anybody needs to know when a reply seems wrong. */
-      const append = (role: TalkbackTurn["role"], text: string, key?: string) => {
+      const append = (
+        role: TalkbackTurn["role"],
+        text: string,
+        key?: string,
+      ) => {
         const trimmed = text.trim();
         if (!trimmed) return;
         setState((prev) => {
@@ -116,7 +131,11 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
           if (last && key && last.id === key) {
             turns[turns.length - 1] = { ...last, text: trimmed };
           } else {
-            turns.push({ id: key ?? `${role}-${Date.now()}-${turns.length}`, role, text: trimmed });
+            turns.push({
+              id: key ?? `${role}-${Date.now()}-${turns.length}`,
+              role,
+              text: trimmed,
+            });
           }
           return {
             ...prev,
@@ -136,19 +155,26 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
         // A turn the silence gate declined never reaches the speaker, so it
         // must not appear here either — the screen should show what was said.
         if (data?.will_be_spoken === false) return;
-        append("agent", data.text, data.segment_id != null ? `agent-${data.segment_id}` : undefined);
+        append(
+          "agent",
+          data.text,
+          data.segment_id != null ? `agent-${data.segment_id}` : undefined,
+        );
       });
 
-      next.on(RTVIEvent.TrackStarted, (track: MediaStreamTrack, participant?: Participant) => {
-        // The agent's voice. Played through an element in this page, so it is
-        // part of the render stream the echo canceller references — which is
-        // what lets the microphone stay open while the agent speaks.
-        if (participant?.local || track.kind !== "audio") return;
-        audioEl ??= new Audio();
-        audioEl.autoplay = true;
-        audioEl.srcObject = new MediaStream([track]);
-        void audioEl.play().catch(() => undefined);
-      });
+      next.on(
+        RTVIEvent.TrackStarted,
+        (track: MediaStreamTrack, participant?: Participant) => {
+          // The agent's voice. Played through an element in this page, so it is
+          // part of the render stream the echo canceller references — which is
+          // what lets the microphone stay open while the agent speaks.
+          if (participant?.local || track.kind !== "audio") return;
+          audioEl ??= new Audio();
+          audioEl.autoplay = true;
+          audioEl.srcObject = new MediaStream([track]);
+          void audioEl.play().catch(() => undefined);
+        },
+      );
 
       /* THE ONE KNOWN HAZARD TO THE LEDGER, stated plainly
        * because it is a confound in the comparison and not an implementation
@@ -176,8 +202,14 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
         patch({ status: "listening" });
 
         const after = micTrack.getSettings();
-        const changed = (["sampleRate", "channelCount", "echoCancellation", "deviceId"] as const)
-          .filter((key) => before[key] !== after[key]);
+        const changed = (
+          [
+            "sampleRate",
+            "channelCount",
+            "echoCancellation",
+            "deviceId",
+          ] as const
+        ).filter((key) => before[key] !== after[key]);
         if (changed.length > 0) {
           console.warn(
             "[talkback:pipecat] the recorder's track changed when the second capture opened —",
