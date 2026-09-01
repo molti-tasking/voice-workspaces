@@ -50,6 +50,8 @@ ENV NEXT_PUBLIC_TALKBACK_ENABLED=$NEXT_PUBLIC_TALKBACK_ENABLED
 # Which talk-back backend the bundle talks to. Baked in like the flag above,
 ARG NEXT_PUBLIC_PIPECAT_URL
 ENV NEXT_PUBLIC_PIPECAT_URL=$NEXT_PUBLIC_PIPECAT_URL
+ARG NEXT_PUBLIC_ICE_SERVERS
+ENV NEXT_PUBLIC_ICE_SERVERS=$NEXT_PUBLIC_ICE_SERVERS
 # Not for auth — the runtime container has its own copy for that. Prerendered
 # pages resolve their canonical, og:url and og:image against the origin present
 # at BUILD time, so without this the participant information sheet unfurls with

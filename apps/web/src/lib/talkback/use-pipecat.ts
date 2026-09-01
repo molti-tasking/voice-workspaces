@@ -31,6 +31,26 @@ import {
  * equivalent of a media server, and it still gets the browser's real echo
  * canceller, because the media path is WebRTC either way.
  */
+/**
+ * How the BROWSER finds a path to the container for the audio.
+ *
+ * The mirror of `ICE_SERVERS` in apps/pipecat/bot.py, and needed for the same
+ * reason on this side: only the SDP exchange goes over HTTPS, the media is
+ * peer-to-peer. A browser behind a home router has to learn its own public
+ * mapping before the container can send it anything.
+ *
+ * Comma-separated, and inlined at BUILD time like every NEXT_PUBLIC_ value —
+ * changing it needs a rebuild, not a restart. Empty disables ICE servers, which
+ * is right on a LAN and wrong anywhere else.
+ */
+const ICE_SERVERS: RTCIceServer[] = (
+  process.env.NEXT_PUBLIC_ICE_SERVERS || "stun:stun.l.google.com:19302"
+)
+  .split(",")
+  .map((url) => url.trim())
+  .filter(Boolean)
+  .map((urls) => ({ urls }));
+
 export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
   const { captureSessionId, enabled } = options;
   const [state, setState] = useState<TalkbackState>(OFF);
@@ -90,6 +110,22 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
 
       const next = new PipecatClient({
         transport: new SmallWebRTCTransport({
+          /* THE BROWSER NEEDS STUN TOO, and forgetting it fails in a way that
+           * looks like a server problem.
+           *
+           * Without this the browser gathers only `host` candidates — the
+           * 192.168.x address of the machine — and offers those to a container
+           * that cannot route to a private LAN. The container's own candidates
+           * are fine (it publishes a public srflx via ICE_SERVERS), but ICE
+           * needs a path BOTH ways: the peer must be able to answer. So the
+           * call reaches `checking` and sits there until it times out.
+           *
+           * On a LAN this never shows up, because host candidates are directly
+           * reachable — which is exactly why it survived every local test and
+           * only appeared once the container was in a datacentre.
+           *
+           * Build-time, like the URL above: it is baked into the bundle. */
+          iceServers: ICE_SERVERS,
           webrtcRequestParams: {
             endpoint: `${url}/offer`,
             // Rides along with the SDP offer, so the bot has it before the
