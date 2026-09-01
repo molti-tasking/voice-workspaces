@@ -1,7 +1,12 @@
 import type { RelativeSegment } from "@voicemural/shared";
 import { LiteLLMError, litellmConfig, modelFor, type ModelRole } from "./config";
 import { emitGeneration, type GenerationContext } from "./observe";
-import { collapseRepeats, isDegenerate, repetitionRatio } from "./transcript-repair";
+import {
+  collapseRepeatedSegments,
+  collapseRepeats,
+  isDegenerate,
+  repetitionRatio,
+} from "./transcript-repair";
 
 export interface TranscriptionResult {
   /** Full text of the chunk, with repetition loops repaired. */
@@ -173,8 +178,18 @@ export async function transcribeChunk(
   // segment keeps the pipeline working with degraded (chunk-level) provenance
   // rather than dropping the audio entirely.
   const rawSegments = json.segments ?? [];
-  const segments: RelativeSegment[] = (
-    rawSegments.length > 0
+  /* TWO repairs, because Whisper loops in two different shapes.
+   *
+   * `collapseRepeats` fixes a phrase repeated INSIDE one segment.
+   * `collapseRepeatedSegments` fixes the same phrase emitted as a run of
+   * separate segments — where the per-segment repair is a no-op because each
+   * copy is individually clean, and every one of them becomes its own utterance.
+   *
+   * Only the first was applied for a long time, so `degenerate` was detected
+   * from the joined text, logged as `repaired: "..."`, and then the unrepaired
+   * segments were written to the ledger anyway. */
+  const segments: RelativeSegment[] = collapseRepeatedSegments(
+    (rawSegments.length > 0
       ? rawSegments.map((s) => ({
           start: s.start ?? 0,
           end: s.end ?? s.start ?? 0,
@@ -183,7 +198,8 @@ export async function transcribeChunk(
       : text
         ? [{ start: 0, end: json.duration ?? 0, text }]
         : []
-  ).filter((segment) => segment.text.trim().length > 0);
+    ).filter((segment) => segment.text.trim().length > 0),
+  );
 
   emitGeneration({
     spanName,

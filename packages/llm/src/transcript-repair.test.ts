@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collapseRepeats, isDegenerate, repetitionRatio } from "./transcript-repair";
+import { collapseRepeats, isDegenerate, repetitionRatio, collapseRepeatedSegments } from "./transcript-repair";
 
 /**
  * Built from a real chunk. Whisper locked onto a fragment of a truncated
@@ -82,5 +82,52 @@ describe("isDegenerate", () => {
   it("reports how much was repetition", () => {
     expect(repetitionRatio(REAL_LOOP, collapseRepeats(REAL_LOOP))).toBeGreaterThan(0.8);
     expect(repetitionRatio("hello there", "hello there")).toBe(0);
+  });
+});
+
+describe("collapseRepeatedSegments", () => {
+  const seg = (start: number, end: number, text: string) => ({ start, end, text });
+
+  it("collapses a loop spread across separate segments", () => {
+    // Verbatim from a real drive: fifteen identical rows reached the ledger.
+    const looped = Array.from({ length: 15 }, (_, i) =>
+      seg(i * 2, i * 2 + 2, "I made a hole in the bottom of the box."),
+    );
+    const out = collapseRepeatedSegments(looped);
+    expect(out).toHaveLength(1);
+    // One utterance covering the whole span, not fifteen claims of the sentence.
+    expect(out[0]).toEqual(seg(0, 30, "I made a hole in the bottom of the box."));
+  });
+
+  it("keeps a person repeating themselves twice", () => {
+    const said = [seg(0, 1, "No."), seg(1, 2, "No."), seg(2, 4, "I disagree.")];
+    expect(collapseRepeatedSegments(said)).toEqual(said);
+  });
+
+  it("leaves ordinary speech untouched", () => {
+    const said = [seg(0, 2, "The deadline moved."), seg(2, 5, "We should tell Maria.")];
+    expect(collapseRepeatedSegments(said)).toEqual(said);
+  });
+
+  it("ignores punctuation and case when matching a run", () => {
+    const out = collapseRepeatedSegments([
+      seg(0, 2, "I'm going to make a video about it."),
+      seg(2, 4, "I'm going to make a video about it"),
+      seg(4, 6, "im going to make a video about it."),
+      seg(6, 9, "Where should we start?"),
+    ]);
+    expect(out.map((s) => s.text)).toEqual([
+      "I'm going to make a video about it.",
+      "Where should we start?",
+    ]);
+  });
+
+  it("collapses each run independently", () => {
+    const out = collapseRepeatedSegments([
+      ...Array.from({ length: 4 }, (_, i) => seg(i, i + 1, "a")),
+      seg(4, 5, "middle"),
+      ...Array.from({ length: 3 }, (_, i) => seg(5 + i, 6 + i, "b")),
+    ]);
+    expect(out.map((s) => s.text)).toEqual(["a", "middle", "b"]);
   });
 });

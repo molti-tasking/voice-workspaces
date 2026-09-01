@@ -80,6 +80,8 @@ export function Transcript({
     ...turns.map((turn): Entry => ({ kind: "agent", at: turn.startOffsetMs, turn })),
   ].sort((a, b) => a.at - b.at);
 
+  const looped = loopedRows(rows);
+
   return (
     <ol className="space-y-2">
       {entries.map((entry) =>
@@ -88,6 +90,7 @@ export function Transcript({
             key={`u-${entry.row.id}`}
             row={entry.row}
             echoOf={echoOfTurn(entry.row, turns)}
+            looped={looped.has(entry.row.id)}
           />
         ) : (
           <AgentLine key={`a-${entry.turn.id}`} turn={entry.turn} />
@@ -95,6 +98,37 @@ export function Transcript({
       )}
     </ol>
   );
+}
+
+/**
+ * Rows that are one line of a Whisper repetition loop.
+ *
+ * The ASR locks onto a phrase on quiet audio and emits it as a run of separate,
+ * individually-clean segments — fifteen consecutive rows all reading "I made a
+ * hole in the bottom of the box." Each one is plausible alone, which is why no
+ * per-line check catches them; only the run gives it away.
+ *
+ * Collapsed at the ASR boundary now, so new drives do not produce these. Older
+ * ones still hold them, and the ledger is append-only — so they are MARKED, the
+ * same read-side treatment given to echoes and invented sign-offs. The first of
+ * a run is left alone: the driver did say something there.
+ *
+ * Three, matching MIN_REPEATS in transcript-repair.ts. People repeat themselves
+ * twice; nothing legitimate says the same sentence three times in a row.
+ */
+function loopedRows(rows: TranscriptRow[]): Set<string> {
+  const key = (text: string) =>
+    text.trim().toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, "").replace(/\s+/g, " ");
+
+  const marked = new Set<string>();
+  for (let i = 0; i < rows.length; ) {
+    let run = 1;
+    while (i + run < rows.length && key(rows[i + run]!.text) === key(rows[i]!.text)) run += 1;
+    // Everything after the first occurrence of a long-enough run.
+    if (run >= 3) for (let k = 1; k < run; k++) marked.add(rows[i + k]!.id);
+    i += run;
+  }
+  return marked;
 }
 
 /**
@@ -126,8 +160,19 @@ function echoOfTurn(row: TranscriptRow, turns: AgentTurnRow[]): number | undefin
   return undefined;
 }
 
-function UserLine({ row, echoOf }: { row: TranscriptRow; echoOf?: number }) {
+function UserLine({
+  row,
+  echoOf,
+  looped,
+}: {
+  row: TranscriptRow;
+  echoOf?: number;
+  looped?: boolean;
+}) {
   const kind = row.kindOverride ?? row.kind;
+  // Three ways a line can be something the driver did not say. Treated alike
+  // on screen — dimmed and annotated, never removed.
+  const suspect = isLikelyHallucination(row.text) || looped === true;
   const hallucinated = isLikelyHallucination(row.text);
 
   return (
@@ -142,11 +187,11 @@ function UserLine({ row, echoOf }: { row: TranscriptRow; echoOf?: number }) {
         <p
           className={[
             "inline-block rounded-lg rounded-tl-sm px-3 py-1.5",
-            hallucinated || echoOf !== undefined
+            suspect || echoOf !== undefined
               ? "border border-dashed border-white/15 bg-transparent text-white/35"
               : "bg-white/[0.04]",
-            kind === "directive" && !hallucinated ? "text-amber-300" : "",
-            !hallucinated && echoOf === undefined ? "text-white" : "",
+            kind === "directive" && !suspect ? "text-amber-300" : "",
+            !suspect && echoOf === undefined ? "text-white" : "",
           ].join(" ")}
         >
           {row.text}
@@ -157,6 +202,12 @@ function UserLine({ row, echoOf }: { row: TranscriptRow; echoOf?: number }) {
           <p className="mt-0.5 text-[11px] text-white/30">
             likely a transcription artefact — Whisper invents sign-offs like this on
             silence
+          </p>
+        )}
+        {looped && (
+          <p className="mt-0.5 text-[11px] text-white/30">
+            repeat of the line above — Whisper looping on quiet audio, not something
+            said again
           </p>
         )}
         {echoOf !== undefined && (
