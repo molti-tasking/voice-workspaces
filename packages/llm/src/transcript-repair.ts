@@ -115,3 +115,56 @@ export function repetitionRatio(original: string, repaired: string): number {
 export function isDegenerate(original: string, repaired: string): boolean {
   return repetitionRatio(original, repaired) > 0.5;
 }
+
+/** One transcribed span, as returned by the ASR before offsets are absolutised. */
+export interface RepairableSegment {
+  start: number;
+  end: number;
+  text: string;
+}
+
+/**
+ * Collapse a loop that spans SEGMENTS rather than sitting inside one.
+ *
+ * `collapseRepeats` works on a single string, so it repairs a phrase repeated
+ * within one segment and nothing else. Whisper's other failure mode emits the
+ * loop as a run of separate, individually-clean segments:
+ *
+ *   0:30  I'm going to make a video about it.
+ *   0:32  I'm going to make a video about it.
+ *   0:34  I'm going to make a video about it.        (…and twelve more)
+ *
+ * Each one collapses to itself, so the per-segment repair is a no-op and every
+ * copy lands in the ledger as its own utterance. The chunk-level check DOES
+ * notice — `isDegenerate` compares the joined text — but that verdict was only
+ * ever logged, while the unrepaired segments were what got written. A real
+ * drive stored ~20 identical rows this way.
+ *
+ * Keeps the FIRST occurrence and extends its end to cover the run, because the
+ * driver did say something across that span; what is false is the claim that
+ * they said it fifteen times.
+ *
+ * Same MIN_REPEATS threshold and the same reasoning as the text-level repair:
+ * two adjacent identical segments could be a person repeating themselves, and
+ * the ledger is meant to hold that. Three is a machine looping.
+ */
+export function collapseRepeatedSegments<T extends RepairableSegment>(segments: T[]): T[] {
+  const key = (s: T) => s.text.trim().toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, "").replace(/\s+/g, " ");
+
+  const out: T[] = [];
+  for (let i = 0; i < segments.length; ) {
+    let run = 1;
+    while (i + run < segments.length && key(segments[i + run]!) === key(segments[i]!) && key(segments[i]!) !== "") {
+      run += 1;
+    }
+    if (run >= MIN_REPEATS) {
+      // One utterance covering the whole run, rather than N identical ones.
+      out.push({ ...segments[i]!, end: segments[i + run - 1]!.end });
+      i += run;
+    } else {
+      for (let k = 0; k < run; k++) out.push(segments[i + k]!);
+      i += run;
+    }
+  }
+  return out;
+}
