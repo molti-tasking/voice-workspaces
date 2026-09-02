@@ -3,8 +3,8 @@ import { captureSession, eq, getDb } from "@voicemural/db";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import {
   SUMMARY_PROMPT,
-  SYSTEM_PROMPT,
   TALKBACK_CONFIG_VERSION,
+  composeSystemPrompt,
   foldSummary,
   loadDriveSoFarText,
 } from "@voicemural/talkback";
@@ -27,7 +27,10 @@ export const dynamic = "force-dynamic";
  * TypeScript file at import time — with the file copied into the image by the
  * Dockerfile. That worked only because the prompt was a constant. From Phase 3
  * it is composed per driver from `capabilityVersion.markdown`, which no
- * build-time copy can produce, so the container has to ask.
+ * build-time copy can produce, so the container has to ask. It is composed
+ * today from the session's `setting` — the same value that decides whether the
+ * cue panel renders — so the agent and the screen can never disagree about
+ * whether the person it is talking to can look at anything.
  *
  * Authorised by the same drive-scoped ticket as `/context`, and ownership is
  * re-resolved here rather than trusted from the payload, for the same reason
@@ -52,7 +55,11 @@ export async function POST(req: Request) {
   }
 
   const rows = await getDb()
-    .select({ userId: captureSession.userId, startedAt: captureSession.startedAt })
+    .select({
+      userId: captureSession.userId,
+      startedAt: captureSession.startedAt,
+      setting: captureSession.setting,
+    })
     .from(captureSession)
     .where(eq(captureSession.id, payload.captureSessionId))
     .limit(1);
@@ -74,10 +81,17 @@ export async function POST(req: Request) {
   const driveSoFar = await loadDriveSoFarText(payload.captureSessionId).catch(() => "");
   const driveSummary = driveSoFar ? await foldSummary(null, driveSoFar) : null;
 
+  const composed = composeSystemPrompt({ setting: row.setting });
+
   return NextResponse.json(
     {
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt: composed.prompt,
       summaryPrompt: SUMMARY_PROMPT,
+      // Echoed so a turn can be interpreted from the container's own logs, and
+      // so `bot.py` need not parse prose to know the reply cap.
+      setting: composed.setting,
+      maxReplyWords: composed.maxReplyWords,
+      displayAllowed: composed.displayAllowed,
       driveSummary,
       // The container computes offsets against this so `agent_turn` shares a
       // clock with `utterance`, which is ms since the drive started.

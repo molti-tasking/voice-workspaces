@@ -134,9 +134,16 @@ transcript is all you will ever be able to analyse.
 The schema is the paper's measurement apparatus, and the repertoire growth curve
 cannot be reconstructed after the fact. Three consequences:
 
-- `utterance` is **append-only and never mutated**. Corrections go to
-  `kindOverride`. This is the asymmetry that makes misclassification survivable:
-  artefacts are derived, so an error blemishes but never destroys.
+- `utterance.text` is **append-only and never mutated**. This is the asymmetry
+  that makes misclassification survivable: artefacts are derived, so an error
+  blemishes but never destroys.
+
+  The one write after insert is `kind`, and it is deliberately narrow. The
+  classifier fills it `where kind = 'unclassified'` — a monotone one-way fill of
+  a derived default, so running twice cannot change an answer and a failed job
+  simply leaves the row for the next sweep. `text` is never touched and human
+  corrections still go to `kindOverride`, which is the only column the Workspace
+  writes.
 - `capabilityVersion` is append-only, so *edits* are measurable, not just
   creations. `capabilityOrigin` records `createdVia` and the triggering session.
 - `invocation` records every fire — including rejected and reverted ones. That

@@ -10,7 +10,9 @@
     "./link-guest": "./src/link-guest.ts",
     "./sessions": "./src/sessions.ts",
     "./workspace": "./src/workspace.ts",
-    "./testing": "./src/testing.ts"
+    "./testing": "./src/testing.ts",
+    "./repertoire": "./src/repertoire.ts",
+    "./display": "./src/display.ts"
   },
   "scripts": {
     "generate": "drizzle-kit generate",

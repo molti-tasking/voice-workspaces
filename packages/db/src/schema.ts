@@ -113,6 +113,29 @@ export const capabilityOriginKindEnum = pgEnum("capability_origin_kind", [
   "reflexive",
 ]);
 
+/**
+ * Where a recording happened.
+ *
+ * Not a fifth `capability_type`: Notes.md argues for the closure of
+ * mode/persona/action/rule, and a setting is not something the user authors —
+ * it is a fact about where they were, stated once per recording. It governs
+ * turn-taking and how much may appear on screen, so it has to be recoverable
+ * for the whole session afterwards, which is why it is stored rather than held
+ * in the client.
+ */
+export const captureSettingEnum = pgEnum("capture_setting", [
+  "driving",
+  "walking",
+  "hands_busy",
+  "desk",
+]);
+
+export const macroProposalStatusEnum = pgEnum("macro_proposal_status", [
+  "proposed",
+  "accepted",
+  "declined",
+]);
+
 export const chunkStatusEnum = pgEnum("chunk_status", [
   "stored",
   "transcribing",
@@ -152,6 +175,13 @@ export const captureSession = pgTable(
      * any difference in timestamp — a retry a minute later would not be caught.
      */
     analyticsEmittedAt: timestamp("analytics_emitted_at", { withTimezone: true }),
+    /**
+     * The setting the user stated before starting. NULL for recordings made
+     * before the question was asked; readers treat that as `driving`, which is
+     * the stance the base prompt was written with, so old sessions are
+     * unchanged rather than retroactively reinterpreted.
+     */
+    setting: captureSettingEnum("setting"),
     /** Active mode/persona at capture time, for reconstructing what was in force. */
     activeModeId: uuid("active_mode_id"),
     activePersonaId: uuid("active_persona_id"),
@@ -244,6 +274,12 @@ export const utterance = pgTable(
   (t) => [
     index("utterance_session_offset_idx").on(t.captureSessionId, t.startOffsetMs),
     index("utterance_kind_idx").on(t.kind),
+    // Drives the classifier sweep: "which chunks still hold unclassified
+    // speech". Partial, because after the backlog drains the answer is almost
+    // always none and a full index would be scanned every five seconds.
+    index("utterance_unclassified_idx")
+      .on(t.chunkId)
+      .where(sql`${t.kind} = 'unclassified'`),
     // Full-text search over the corpus, for talk-back's recall.
     //
     // `simple` rather than a language configuration on purpose: the corpus is
@@ -552,6 +588,122 @@ export const exportDelivery = pgTable(
 );
 
 /* ---------------------------------------------------------------------------
+ * Directions
+ *
+ * The Midas-touch split, made durable.
+ *
+ * `utterance.kind` says WHETHER a line was addressed to the system. This table
+ * says WHAT it asked for, and it exists because that is a different question
+ * with a different lifetime: `kind` is a three-valued column on an append-only
+ * ledger, while a direction has a verb, an object, a restatement to read back,
+ * and possibly a capability it resolves to. Putting those on `utterance` would
+ * have meant four nullable columns that are null for 98% of rows.
+ *
+ * Append-only, one row per directive utterance. A re-classification never
+ * updates a row; the guard on `utterance.kind` means it never runs twice.
+ * ------------------------------------------------------------------------- */
+
+export const directive = pgTable(
+  "directive",
+  {
+    /** One direction per utterance, so the PK is the utterance. */
+    utteranceId: uuid("utterance_id")
+      .primaryKey()
+      .references(() => utterance.id, { onDelete: "cascade" }),
+    captureSessionId: uuid("capture_session_id")
+      .notNull()
+      .references(() => captureSession.id, { onDelete: "cascade" }),
+    /** Normalised operation, e.g. "mark". Lower case, one word where possible. */
+    verb: text("verb").notNull(),
+    /** What it acted on, in the speaker's words. Empty when the verb stands alone. */
+    object: text("object").notNull().default(""),
+    /** One sentence, read back for eyes-free verification. */
+    restatement: text("restatement").notNull(),
+    /**
+     * The capability this resolved to, or NULL for an improvised operation.
+     *
+     * NULL is the interesting case, not the failure case: it is precisely the
+     * set the macro detector mines, because an operation nobody has a
+     * capability for is one the user invented.
+     */
+    capabilityId: uuid("capability_id").references(() => capability.id, {
+      onDelete: "set null",
+    }),
+    /** 0-100. Kept for tuning the split, like `utterance.kindConfidence`. */
+    confidence: integer("confidence").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("directive_session_created_idx").on(t.captureSessionId, t.createdAt),
+    // The macro detector's scan: improvised operations, newest first.
+    index("directive_unresolved_idx")
+      .on(t.createdAt)
+      .where(sql`${t.capabilityId} is null`),
+  ],
+);
+
+/* ---------------------------------------------------------------------------
+ * Macros
+ *
+ * A recurring improvised operation, induced from the transcript and offered
+ * back. Kept out of `capability` on purpose: a proposal is not a capability
+ * until the user accepts it, and `capability` is the repertoire — putting
+ * unaccepted rows in it would corrupt the growth curve, which is the paper's
+ * dependent variable.
+ *
+ * Declined proposals are kept. "What they tried to add and failed" is a stated
+ * field-study measure, and it is only answerable if refusals survive.
+ * ------------------------------------------------------------------------- */
+
+export const macroProposal = pgTable(
+  "macro_proposal",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /**
+     * The canonical form that recurred — `verb|object-head`, or several joined
+     * by `>` for a sequence. Unique per user, so re-detection is idempotent and
+     * a declined proposal is never offered twice.
+     */
+    canonicalForm: text("canonical_form").notNull(),
+    /** Every utterance that evidenced the pattern, oldest first. */
+    occurrences: jsonb("occurrences")
+      .$type<{ utteranceId: string; captureSessionId: string; text: string; occurredAt: string }[]>()
+      .notNull()
+      .default([]),
+    /** How many distinct sessions it spanned. Below two it is a habit of one drive. */
+    sessionCount: integer("session_count").notNull().default(0),
+    proposedName: text("proposed_name").notNull(),
+    restatement: text("restatement").notNull(),
+    markdown: text("markdown").notNull(),
+    params: jsonb("params").$type<Record<string, unknown>>().notNull().default({}),
+    /**
+     * The replay preview: the proposal run against the speech that triggered it.
+     *
+     * Notes.md is explicit that the user cannot read the file, so verification
+     * is hearing the effect rather than the definition. This is that effect,
+     * with spans, so the same text serves the screen and the speaker.
+     */
+    replayArtifactId: uuid("replay_artifact_id").references(() => artifact.id, {
+      onDelete: "set null",
+    }),
+    status: macroProposalStatusEnum("status").notNull().default("proposed"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    /** Set on acceptance. The link from proposal to repertoire entry. */
+    capabilityId: uuid("capability_id").references(() => capability.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("macro_proposal_user_form_idx").on(t.userId, t.canonicalForm),
+    index("macro_proposal_user_status_idx").on(t.userId, t.status),
+  ],
+);
+
+/* ---------------------------------------------------------------------------
  * Relations
  * ------------------------------------------------------------------------- */
 
@@ -576,6 +728,28 @@ export const utteranceRelations = relations(utterance, ({ one }) => ({
     references: [captureSession.id],
   }),
   chunk: one(audioChunk, { fields: [utterance.chunkId], references: [audioChunk.id] }),
+}));
+
+export const directiveRelations = relations(directive, ({ one }) => ({
+  utterance: one(utterance, {
+    fields: [directive.utteranceId],
+    references: [utterance.id],
+  }),
+  capability: one(capability, {
+    fields: [directive.capabilityId],
+    references: [capability.id],
+  }),
+}));
+
+export const macroProposalRelations = relations(macroProposal, ({ one }) => ({
+  replayArtifact: one(artifact, {
+    fields: [macroProposal.replayArtifactId],
+    references: [artifact.id],
+  }),
+  capability: one(capability, {
+    fields: [macroProposal.capabilityId],
+    references: [capability.id],
+  }),
 }));
 
 export const capabilityRelations = relations(capability, ({ many, one }) => ({

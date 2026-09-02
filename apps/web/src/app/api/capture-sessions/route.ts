@@ -27,7 +27,7 @@ export async function POST(req: Request) {
   }
 
   const db = getDb();
-  const { id, startedAt, deviceInfo } = parsed.data;
+  const { id, startedAt, deviceInfo, setting } = parsed.data;
 
   const existing = await db
     .select({ id: captureSession.id, userId: captureSession.userId })
@@ -40,6 +40,10 @@ export async function POST(req: Request) {
     if (existing[0]?.userId !== userId) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
     }
+    // The setting is deliberately NOT updated on a resumed session. It governs
+    // turn-taking and how much went on screen for the whole recording, and a
+    // session whose second half was interpreted under different rules is not
+    // interpretable at all.
     capture(
       userId,
       "capture_session_opened",
@@ -54,6 +58,7 @@ export async function POST(req: Request) {
     userId,
     startedAt,
     deviceInfo,
+    setting,
   });
 
   // Best-effort by nature: this route is never reached when a drive starts in a
@@ -62,7 +67,7 @@ export async function POST(req: Request) {
   capture(
     userId,
     "capture_session_opened",
-    { capture_session_id: id, resumed: false },
+    { capture_session_id: id, resumed: false, setting: setting ?? null },
     { sessionId: sessionIdFrom(req) },
   );
 

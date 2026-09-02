@@ -34,6 +34,13 @@ export interface AnalyticsEventMap {
     /** True when picking up an unfinished session from a previous page load. */
     resumed: boolean;
     wake_lock_active: boolean;
+    /**
+     * Where the user said they were. Null when the browser had nothing stored.
+     *
+     * The independent variable for everything setting-governed: reply length,
+     * whether the cue panel rendered at all, how much went on it.
+     */
+    setting?: string | null;
   };
   recording_stopped: {
     capture_session_id: string;
@@ -63,7 +70,12 @@ export interface AnalyticsEventMap {
   upload_chunk_dropped: { status: number; seq: number; error_code?: string };
 
   // --- capture session lifecycle, server-side (authoritative) --------------
-  capture_session_opened: { capture_session_id: string; resumed: boolean };
+  capture_session_opened: {
+    capture_session_id: string;
+    resumed: boolean;
+    /** Null for a resumed session, whose setting was fixed when it opened. */
+    setting?: string | null;
+  };
   /**
    * Emitted once per session by the worker, after late chunks have settled.
    * This — not `recording_stopped` — is the conversion event.
@@ -157,6 +169,61 @@ export interface AnalyticsEventMap {
     /** Individual ops dropped by the parser. */
     parse_warning_count: number;
   };
+  // --- directions, repertoire and macros -----------------------------------
+  /**
+   * Directions found in one chunk.
+   *
+   * `candidates` against `utterances` is the lexical gate's yield, which is how
+   * you tell "the gate is too tight" from "this person gives few directions" —
+   * a distinction invisible from the directive count alone.
+   */
+  directives_detected: {
+    chunk_id: string;
+    directives: number;
+    candidates: number;
+    utterances: number;
+    prompt_version: string;
+    model: string | null;
+  };
+  /** Every fire, including the ones parked awaiting confirmation. */
+  capability_invoked: {
+    capability: string;
+    capability_type: "mode" | "persona" | "action" | "rule";
+    capture_session_id: string;
+    /** Null while awaiting confirmation for an irreversible or outbound action. */
+    confirmed: boolean | null;
+  };
+  /** A recurring improvised operation offered back as a macro. */
+  macro_proposed: {
+    canonical_form: string;
+    occurrences: number;
+    session_count: number;
+    has_replay: boolean;
+  };
+  /**
+   * The growth curve's increments, and its refusals.
+   *
+   * Declines matter as much as acceptances: "what they tried to add and failed"
+   * is a stated field-study measure, and it is only answerable if a refusal is
+   * an event rather than the absence of one.
+   */
+  macro_decided: {
+    canonical_form: string;
+    accepted: boolean;
+    occurrences: number;
+  };
+  repertoire_viewed: {
+    capability_count: number;
+    proposal_count: number;
+    total_invocations: number;
+  };
+  trajectory_viewed: {
+    topic_count: number;
+    bucket_count: number;
+    /** Whether the scrubber was moved off "now" before this render. */
+    has_as_of: boolean;
+  };
+
   transcription_failed: {
     chunk_id: string;
     capture_session_id: string;

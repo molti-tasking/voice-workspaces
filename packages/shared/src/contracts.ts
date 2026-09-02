@@ -28,10 +28,24 @@ export function extensionForMime(mime: string): string {
   return "bin";
 }
 
+/**
+ * Where the recording is happening.
+ *
+ * Chosen once, before the recording starts, and immutable for its duration: it
+ * governs turn-taking and how much may go on screen, and both of those have to
+ * be interpretable for the whole session afterwards. Mirrors
+ * `SETTINGS` in `@voicemural/talkback/setting` — that package owns the
+ * profiles, this one owns the wire format.
+ */
+export const CaptureSetting = z.enum(["driving", "walking", "hands_busy", "desk"]);
+export type CaptureSetting = z.infer<typeof CaptureSetting>;
+
 export const CaptureSessionCreate = z.object({
   /** Client-generated UUID so the recorder can queue chunks before the server replies. */
   id: z.uuid(),
   startedAt: z.coerce.date(),
+  /** Optional: recordings made before the question existed have none. */
+  setting: CaptureSetting.optional(),
   deviceInfo: z
     .object({
       userAgent: z.string().max(512).optional(),
@@ -96,6 +110,7 @@ export const JOBS = {
   invokeCapability: "invoke.capability",
   evaluateRules: "evaluate.rules",
   exportOutlet: "export.outlet",
+  detectMacros: "detect.macros",
 } as const;
 
 export const WorkspaceExtractPayload = z.object({ userId: z.string() });
@@ -106,3 +121,14 @@ export type TranscribeChunkPayload = z.infer<typeof TranscribeChunkPayload>;
 
 export const EvaluateRulesPayload = z.object({ captureSessionId: z.string() });
 export type EvaluateRulesPayload = z.infer<typeof EvaluateRulesPayload>;
+
+/** One chunk's worth of utterances to classify as content or direction. */
+export const ClassifyUtterancePayload = z.object({ chunkId: z.string() });
+export type ClassifyUtterancePayload = z.infer<typeof ClassifyUtterancePayload>;
+
+/** One detected direction to resolve against the user's repertoire. */
+export const InvokeCapabilityPayload = z.object({ utteranceId: z.string() });
+export type InvokeCapabilityPayload = z.infer<typeof InvokeCapabilityPayload>;
+
+export const DetectMacrosPayload = z.object({ userId: z.string() });
+export type DetectMacrosPayload = z.infer<typeof DetectMacrosPayload>;
