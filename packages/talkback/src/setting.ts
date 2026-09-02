@@ -12,7 +12,11 @@
  * it is a fact about where they are, chosen once per recording. It lives as a
  * column on `capture_session` and as the profile below.
  *
- * Pure: no I/O, no model call, fully testable.
+ * Pure: no I/O, no model call, fully testable — and deliberately free of any
+ * @voicemural/db import, because the recorder is a client component that
+ * needs these profiles. It is exported as `@voicemural/talkback/setting` so
+ * the browser can reach it without pulling in the package index, which
+ * re-exports retrieval.ts and with it the Postgres driver.
  */
 
 export const SETTINGS = ["driving", "walking", "hands_busy", "desk"] as const;

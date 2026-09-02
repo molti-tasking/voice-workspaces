@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { formatOffset, type CaptureSetting } from "@voicemural/shared";
-import { SETTINGS, SETTING_PROFILES } from "@voicemural/talkback";
+// The `/setting` subpath, NOT the package index: the index re-exports
+// retrieval.ts, which imports @voicemural/db, and that drags the Postgres
+// driver into the browser bundle. setting.ts is pure by construction.
+import { SETTINGS, SETTING_PROFILES } from "@voicemural/talkback/setting";
 import { useRecorder } from "@/lib/recorder/use-recorder";
 import { useSetting } from "@/lib/recorder/setting-store";
 import { useTalkback } from "@/lib/talkback/use-talkback";

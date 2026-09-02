@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Link } from "@/components/nav-link";
-import { ListTree, X } from "lucide-react";
+import { ListTree, Sparkles, Waypoints, X } from "lucide-react";
 import { loadOps } from "@voicemural/db/workspace";
 import { listSessionsWithStats } from "@voicemural/db/sessions";
 import { diffWorkspace, foldWorkspace } from "@voicemural/workspace";
@@ -124,6 +124,20 @@ export default async function WorkspacePage({
         </div>
 
         <nav className="flex items-center gap-4 text-sm">
+          <Link
+            href="/trajectory"
+            className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
+          >
+            <Waypoints size={14} aria-hidden />
+            Trajectory
+          </Link>
+          <Link
+            href="/repertoire"
+            className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
+          >
+            <Sparkles size={14} aria-hidden />
+            Repertoire
+          </Link>
           <Link
             href="/timeline"
             className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"

@@ -63,6 +63,71 @@ describe("isDirectiveCandidate", () => {
   });
 
   it("ignores capability names too short to be unambiguous", () => {
-    expect(isDirectiveCandidate("go on then", { capabilityNames: ["go"] })).toBe(false);
+    expect(
+      isDirectiveCandidate("I think we should go and see what they have done about it", {
+        capabilityNames: ["go"],
+      }),
+    ).toBe(false);
+  });
+});
+
+/**
+ * The half of the gate contribution 3 depends on.
+ *
+ * A closed verb list can only ever admit operations somebody already thought
+ * of, which makes discovering an invented one impossible by construction. The
+ * open rule inverts it: a short line that does not begin like a statement is a
+ * candidate, whatever verb it uses.
+ */
+describe("isDirectiveCandidate, on operations nobody has named", () => {
+  const invented = [
+    "Chase the invoice when I get in.",
+    "Park that one for Thursday.",
+    "Ping Niklas about the ethics form.",
+    "Stitch those two together.",
+    "Can you pull the funding thread out of this?",
+  ];
+
+  const narration = [
+    "I keep circling back to the Midas touch problem.",
+    "The repertoire is the contribution, not the recogniser.",
+    "We chased that invoice for weeks and got nowhere.",
+    "There is a version of this where the whole thing is much simpler.",
+    "Because the alternative is a classifier arms race, and that never converges.",
+    "What Niklas said about watertight seals applies here too.",
+    "If everything I say is content by default, the failure mode is additive.",
+    "Three to six months feels right, any less and nothing lands.",
+    // Long enough to be thinking rather than an instruction, whatever it opens with.
+    "Chase down every last one of the outstanding questions before the deadline arrives next month.",
+  ];
+
+  for (const line of invented) {
+    it(`admits ${JSON.stringify(line)}`, () => {
+      expect(isDirectiveCandidate(line)).toBe(true);
+    });
+  }
+
+  for (const line of narration) {
+    it(`rejects ${JSON.stringify(line)}`, () => {
+      expect(isDirectiveCandidate(line)).toBe(false);
+    });
+  }
+
+  it("strips stacked filler before looking at the opener", () => {
+    expect(isDirectiveCandidate("OK, so, right, chase that invoice.")).toBe(true);
+    expect(isDirectiveCandidate("Right, so the thing I keep coming back to is the framing.")).toBe(
+      false,
+    );
+  });
+
+  /**
+   * Whisper invents sign-offs on silence, and they are short and
+   * imperative-shaped. Blocking them in the gate keeps an artefact from costing
+   * a model call on every quiet chunk of a long recording.
+   */
+  it("does not spend a model call on a transcription artefact", () => {
+    for (const line of ["Thank you.", "Thanks for watching!", "Subtitles by the community"]) {
+      expect(isDirectiveCandidate(line)).toBe(false);
+    }
   });
 });

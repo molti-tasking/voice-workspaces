@@ -15,6 +15,10 @@ import { useEffect, type ComponentProps } from "react";
 const ROUTE_DEPTH: { prefix: string; depth: number }[] = [
   { prefix: "/workspace", depth: 1 },
   { prefix: "/sessions", depth: 1 },
+  // Overviews, alongside the timeline rather than on top of it: both are ways
+  // of reading the whole corpus, and moving between them is sideways.
+  { prefix: "/trajectory", depth: 0 },
+  { prefix: "/repertoire", depth: 0 },
   { prefix: "/timeline", depth: 0 },
   { prefix: "/record", depth: 0 },
   { prefix: "/", depth: 0 },

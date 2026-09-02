@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Link } from "@/components/nav-link";
-import { LayoutGrid, Mic } from "lucide-react";
+import { LayoutGrid, Mic, Waypoints } from "lucide-react";
 import {
   loadSessionUtterances,
   loadTimelineMarkers,
@@ -108,6 +108,13 @@ export default async function TimelinePage({
           >
             <LayoutGrid size={14} aria-hidden />
             Workspace
+          </Link>
+          <Link
+            href="/trajectory"
+            className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
+          >
+            <Waypoints size={14} aria-hidden />
+            Trajectory
           </Link>
           <AccountMenu />
         </nav>

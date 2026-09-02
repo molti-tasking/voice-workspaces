@@ -81,10 +81,13 @@ match, otherwise sign-in will redirect to the wrong host.
 
 ```
 apps/web      Next.js — Workspace UI, recorder PWA, API routes, Better Auth
-apps/worker   pg-boss worker: transcription, sweeps, (later) rules and exports
+apps/worker   pg-boss worker: transcription, classification, extraction, macros
+apps/pipecat  Python voice agent (see TALKBACK.md)
 packages/db   Drizzle schema + migrations   ← shared contract
 packages/llm  LiteLLM wrappers (chat, transcribe)
-packages/shared  Zod contracts, offset arithmetic, storage interface  ← shared contract
+packages/shared  Zod contracts, offset arithmetic, the directive gate  ← shared contract
+packages/talkback  What the agent knows: retrieval, prompt, setting profiles
+packages/workspace  Pure fold/extract/classify/macros/trajectory logic
 ```
 
 Packages ship TypeScript source rather than build artefacts. Next transpiles
@@ -111,7 +114,21 @@ instead. The cost is a few milliseconds of audio at each boundary, which is why
 MediaRecorder → IndexedDB queue → POST /chunks → filesystem + audio_chunk row
                                                         ↓
                         worker sweep → pg-boss → LiteLLM Whisper → utterance rows
+                                                        ↓
+        ┌───────────────────────────────────────────────┴────────────────────┐
+        │                                                                    │
+  classify.utterance (per chunk, ~20s)                  workspace.extract (per 8, ~60s)
+        │                                                                    │
+  directive rows ──→ invocation ──→ macro_proposal              workspace_op rows
+        │                                                                    │
+        └────────────────────→ /api/record/cues ←────────────────────────────┘
+                                (the secondary display)
 ```
+
+Both lanes feed the cue panel on `/record`, and both come out of Postgres —
+never from the voice container. That is the point: kill Pipecat mid-recording
+and the panel keeps filling, because it was never downstream of the
+conversation.
 
 Chunks are written to IndexedDB **first** and deleted only once the server
 acknowledges them. A commute goes through tunnels; without the local queue,
@@ -152,6 +169,38 @@ cannot be reconstructed after the fact. Three consequences:
 `artifact.spans` carries provenance back to source utterances. Treat it as a
 constraint, not a feature to add later.
 
+- `directive` is one row per direction, keyed by the utterance that carried it,
+  with the verb, the object and a restatement to read back. A `capabilityId` of
+  NULL is the interesting case, not the failure case: it is an operation the
+  person invented, and those are exactly what the macro detector mines.
+- `macro_proposal` holds crystallisation candidates, **including declined ones**.
+  A declined proposal is never re-offered, and "what they tried to add and
+  failed" is a stated field-study measure that only survives if refusals do.
+- `capture_session.setting` is chosen once, before recording, and never updated —
+  not even when a session is resumed. It governs turn-taking and how much goes
+  on screen, so a recording whose halves ran under different rules would not be
+  interpretable under either.
+
+## Where the setting is read
+
+One value, two consumers, so the voice and the screen can never disagree about
+whether the person can look at anything:
+
+| Consumer | Reads | Effect |
+|---|---|---|
+| `composeSystemPrompt` | `SETTING_PROFILES[s].stanza`, `maxReplyWords` | reply length, and whether the agent may mention the screen |
+| `/api/record/cues` + `CuePanel` | `displayAllowed`, `maxContentCues`, `maxDirectionCues` | whether the panel exists, and how much is on it |
+
+`driving` reproduces the stance the base prompt was written with, so an unset
+setting and an explicit `driving` behave identically — which is what makes the
+column safely nullable for every recording made before it existed.
+
+`packages/talkback/src/setting.ts` is exported as `@voicemural/talkback/setting`
+as well as from the index. The recorder is a client component and must reach the
+profiles **through that subpath**: the package index re-exports `retrieval.ts`,
+which imports `@voicemural/db`, and importing it from the browser drags the
+Postgres driver into the client bundle and fails the build.
+
 ---
 
 ## Commands
@@ -167,6 +216,13 @@ constraint, not a feature to add later.
 | `pnpm db:seed` | re-install starter repertoire for all users |
 | `pnpm db:fixtures` | seed a demo session with synthesised audio + transcript |
 | `pnpm icons` | redraw the favicon, apple-touch and PWA icons from `scripts/generate-icons.mjs` |
+
+`pnpm db:fixtures` seeds three sessions rather than one, with the workspace ops
+and the macro proposal they would have produced. Both are written directly:
+extraction and induction need a model, and the whole point of the fixture is
+that `/workspace`, `/trajectory` and `/repertoire` all render without a LiteLLM
+key. It also picks `hands_busy` for the most recent session, so the cue panel is
+visible on `/record` without a car.
 
 ---
 
@@ -219,8 +275,10 @@ two-person decision. Otherwise the seams are independent:
 
 | Seam | Scope |
 |---|---|
-| **A — Capture** | recorder PWA, IndexedDB queue, chunk upload, storage |
-| **B — Pipeline** | worker jobs, transcription, classification, repertoire engine |
-| **C — Workspace** | session/artefact/repertoire UI, growth-curve chart, exports |
+| **A — Capture** | recorder PWA, IndexedDB queue, chunk upload, storage, the cue panel |
+| **B — Pipeline** | worker jobs, transcription, classification, invocation, macros |
+| **C — Workspace** | workspace/trajectory/repertoire UI, growth curve, exports |
 
 A and B meet only at the `utterance` table. C consumes both and touches neither.
+The cue panel sits in A but reads B's output over HTTP, so it never reaches into
+the pipeline's tables directly — `packages/db/src/display.ts` is that seam.

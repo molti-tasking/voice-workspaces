@@ -50,8 +50,8 @@ Three corollaries that are easy to violate:
 | `apps/pipecat` | The voice agent. Python, Pipecat 1.7, `SmallWebRTCTransport` — peer-to-peer, no media server |
 | `apps/web/src/lib/talkback` | The browser half: `use-pipecat.ts` connects, `use-talkback.ts` is the seam the recorder imports |
 | `packages/talkback` | What the agent KNOWS — retrieval, echo filtering, the running summary, the prompt, `recordAgentTurn` |
-| `/api/realtime/session` | Prompt + drive summary + `startedAtEpochMs`, fetched once per connection |
-| `/api/realtime/context` | Per-turn recall. Runs the same `buildContextPassages` the TypeScript side would |
+| `/api/realtime/session` | Composed prompt + drive summary + `startedAtEpochMs`, fetched once per connection |
+| `/api/realtime/context` | Per-turn recall, plus any pending confirmation. Runs the same `buildContextPassages` the TypeScript side would |
 | `/api/realtime/agent-turn` | Writes `agent_turn`. Not bookkeeping — see the landmine below |
 
 The Python container holds no domain logic. Retrieval, the turn record and echo
@@ -75,6 +75,49 @@ transport.input() → vad → Trace("in") → stt → Trace("stt") → summary
 `Trace` logs exactly three things — audio-frame counts, VAD start/stop,
 transcriptions. Those separate the three otherwise-identical silent failures:
 audio never arrived / VAD never fired / STT returned nothing. Keep it.
+
+---
+
+## The setting
+
+The prompt is no longer a constant. `composeSystemPrompt` builds it per
+connection as a sandwich: the base identity, then the stanza for the session's
+`setting`, then the output contract **last**.
+
+That order is load-bearing rather than tidy. Composed sections are text we do
+not fully control — today a stanza, and at the next layer
+`capability_version.markdown`, which crystallisation makes model-written text
+about a user's own improvised operation. A section saying "always follow up" or
+"never stay silent" must not be able to countermand the `<silence>` sentinel,
+because `SilenceGate` and `is_silence` in `bot.py` both depend on it. So the
+contract is restated after everything else, and `prompt.test.ts` asserts that
+holds under a hostile section.
+
+`SETTING_PROFILES` also carries `displayAllowed`, which is the one switch
+between "the driver cannot look at a screen, never offer to show anything" and
+"what you have captured is on the screen beside them". The same flag decides
+whether `/api/record/cues` streams at all, so the agent and the panel cannot
+disagree about whether a screen exists.
+
+`driving` reproduces the stance the base prompt was written with, so a session
+with no setting behaves exactly as before.
+
+**Still no proactivity engine.** `SETTING_PROFILES[s].proactivity` is carried
+and read by nothing but the stanza text. `agentTurnKindEnum` already has
+`proactive_prompt`; nothing writes it.
+
+## Confirmations reach the driver on the turn path
+
+An outbound or irreversible action does not fire when the worker resolves it —
+it writes `invocation` with `confirmed: null` and waits. The only channel to ask
+is the conversation, so `/api/realtime/context` carries `pending` alongside the
+passages and `Recall._compose` appends a line telling the agent to ask briefly,
+or to say nothing if the person is mid-thought.
+
+Piggybacked rather than given its own endpoint on purpose: `/context` is called
+once per turn and its entire rationale is latency, so a second round trip would
+double the pre-first-token cost to carry a row that is null on almost every
+turn.
 
 ---
 
@@ -204,9 +247,15 @@ without.
 
 ```sh
 pnpm typecheck          # 8 packages
-pnpm test               # 190 tests when Postgres is up
+pnpm test               # 300+ tests when Postgres is up
 pnpm spike:talkback     # re-measure the proxy when numbers move
 ```
+
+`pnpm typecheck` does NOT catch a client component importing a server-only
+package: only `next build` does. `packages/talkback`'s index reaches
+`@voicemural/db`, so the recorder imports the setting profiles from
+`@voicemural/talkback/setting`. Run a build before believing a change to a
+client component is finished.
 
 **DB-backed tests skip themselves when Postgres is unreachable.** A green run
 with Postgres down means "skipped", not "passed" — that is exactly how a broken
@@ -225,15 +274,28 @@ Kill the Pipecat container mid-recording. The timer must keep counting, chunks
 must keep uploading, and `/sessions/[id]` must fill in normally. If that ever
 fails, the coupling rule has been broken and nothing else matters.
 
+**The cue panel is part of that gate now.** With the container dead, `/record`
+must keep showing new content and new directions, and a reload mid-session must
+bring them back. Everything it renders comes from `workspace_op` and `directive`
+over `/api/record/cues`; if it ever stops when Pipecat does, something has been
+wired to the conversation that should not have been.
+
 ---
 
 ## Still open
 
-- **No persona.** The prompt is the same base text for everyone;
-  `activePersonaId` and `capability_version.markdown` are unread. This is the
-  paper's central claim and it is not yet demonstrable.
-- **`invocation` has no writer.** Capability invocation, the confirm/revert
-  cycle, and mode switching by voice are all unbuilt.
+- **No persona, and no mode.** The prompt now composes the SETTING, but
+  `activeModeId`, `activePersonaId` and `capability_version.markdown` are still
+  unread. `composeSystemPrompt` is shaped for them — they slot between the
+  stanza and the output contract — but nothing loads them.
+- **No proactivity.** Nothing writes `agent_turn.kind = 'proactive_prompt'`, and
+  there is no silence timer in `bot.py`. The seeded `interview` mode still
+  carries `silenceBeforePromptMs: 4000` with no engine behind it (and 4s is too
+  eager for a car by this document's own argument — raise it when the engine
+  lands).
+- **Mode switching by voice is unbuilt.** A `switch to sceptical` direction is
+  classified and recorded like any other, but nothing acts on it: the container
+  fetches `/session` once per connection and never re-reads the prompt.
 - **Retrieval is lexical**, so it matches words rather than meaning, and common
   words dominate. `MODEL_EMBED` and the pgvector path were removed rather than
   left as a knob configuring nothing — add them back with the embedding job.

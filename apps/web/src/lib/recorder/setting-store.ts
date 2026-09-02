@@ -2,7 +2,8 @@
 
 import { useCallback, useSyncExternalStore } from "react";
 import type { CaptureSetting } from "@voicemural/shared";
-import { SETTINGS } from "@voicemural/talkback";
+// The `/setting` subpath, not the package index — see recorder-client.tsx.
+import { SETTINGS } from "@voicemural/talkback/setting";
 
 /**
  * The remembered setting, as an external store.
