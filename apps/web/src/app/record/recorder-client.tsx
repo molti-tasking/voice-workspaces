@@ -1,10 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { formatOffset } from "@voicemural/shared";
+import { formatOffset, type CaptureSetting } from "@voicemural/shared";
+import { SETTINGS, SETTING_PROFILES } from "@voicemural/talkback";
 import { useRecorder } from "@/lib/recorder/use-recorder";
+import { useSetting } from "@/lib/recorder/setting-store";
 import { useTalkback } from "@/lib/talkback/use-talkback";
 import type { TalkbackTurn } from "@/lib/talkback/types";
+import { useCues } from "@/lib/display/use-cues";
+import { CuePanel } from "./cue-panel";
 
 /**
  * Whether talk-back is built into this bundle.
@@ -26,6 +30,11 @@ export function RecorderClient() {
   const isRecording = rec.status === "recording";
   const isBusy = rec.status === "requesting" || rec.status === "stopping";
 
+  // Remembered per browser. See setting-store.ts for why this is an external
+  // store rather than state seeded in an effect.
+  const [setting, choose] = useSetting();
+  const profile = SETTING_PROFILES[setting];
+
   // Armed with the recording, for the whole drive — there is no separate
   // gesture to enter it. Everything it does is downstream of the microphone
   // stream the recorder publishes, so capture is unaffected either way.
@@ -34,6 +43,14 @@ export function RecorderClient() {
     enabled: TALKBACK && isRecording,
   });
   const hearing = talk.status === "speaking";
+
+  // Reads Postgres, never the voice container: the panel keeps filling with
+  // talk-back dead, and survives a reload mid-recording. See the route comment.
+  const cues = useCues({
+    captureSessionId: rec.currentSessionId,
+    budgets: { content: profile.maxContentCues, directions: profile.maxDirectionCues },
+    enabled: isRecording && profile.displayAllowed,
+  });
 
   return (
     <main className="no-touch-fuss flex min-h-dvh flex-col items-center justify-between p-6">
@@ -62,7 +79,7 @@ export function RecorderClient() {
 
         <button
           type="button"
-          onClick={() => (isRecording ? void rec.stop() : void rec.start())}
+          onClick={() => (isRecording ? void rec.stop() : void rec.start(setting))}
           disabled={isBusy}
           className={[
             "flex size-56 items-center justify-center rounded-full text-2xl font-medium",
@@ -78,14 +95,18 @@ export function RecorderClient() {
         </button>
 
         <p className="h-5 text-center text-sm text-white/40">
-          {isRecording
-            ? "Keep this screen on and the app in front."
-            : "Mount the phone, plug it in, then start."}
+          {isRecording ? profile.hint : "Pick where you are, then start."}
         </p>
+
+        {!isRecording && (
+          <SettingPicker value={setting} onChange={choose} disabled={isBusy} />
+        )}
 
         {TALKBACK && isRecording && talk.turns.length > 0 && (
           <Exchange turns={talk.turns} speaking={talk.status === "speaking"} />
         )}
+
+        {isRecording && <CuePanel cues={cues} />}
       </div>
 
       <footer className="w-full max-w-md space-y-3 text-sm">
@@ -151,6 +172,57 @@ export function RecorderClient() {
         )}
       </footer>
     </main>
+  );
+}
+
+/**
+ * Where you are, asked once, before anything starts.
+ *
+ * Pre-recording only, and deliberately so. The setting governs turn-taking and
+ * how much goes on screen for the whole session, so a mid-recording change
+ * would leave a session that ran under two sets of rules and is interpretable
+ * under neither. It is also a touch target, and the premise of every setting
+ * here is that the user's hands are on something else.
+ *
+ * Four options, one row, no icons: the labels are shorter to read than any
+ * pictogram is to decode, and this is the last thing between opening the app
+ * and starting to think.
+ */
+function SettingPicker({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: CaptureSetting;
+  onChange: (next: CaptureSetting) => void;
+  disabled: boolean;
+}) {
+  return (
+    <fieldset
+      className="flex w-full max-w-md flex-wrap justify-center gap-1.5"
+      disabled={disabled}
+    >
+      <legend className="sr-only">Where are you?</legend>
+      {SETTINGS.map((option) => {
+        const active = option === value;
+        return (
+          <button
+            key={option}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(option)}
+            className={[
+              "rounded-full px-3.5 py-1.5 text-sm transition-colors disabled:opacity-50",
+              active
+                ? "bg-white/12 text-white ring-1 ring-white/25"
+                : "text-white/40 hover:text-white/70",
+            ].join(" ")}
+          >
+            {SETTING_PROFILES[option].label}
+          </button>
+        );
+      })}
+    </fieldset>
   );
 }
 

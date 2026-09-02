@@ -439,7 +439,7 @@ class Recall(FrameProcessor):
         # the whole mechanism that stops the prompt growing without bound.
         self._message: dict | None = None
 
-    def _fetch(self, said: str) -> list[dict]:
+    def _fetch(self, said: str) -> tuple[list[dict], dict | None]:
         req = urllib.request.Request(
             f"{WEB_URL}/api/realtime/context",
             method="POST",
@@ -447,9 +447,10 @@ class Recall(FrameProcessor):
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=5) as res:
-            return json.loads(res.read()).get("passages") or []
+            body = json.loads(res.read())
+            return body.get("passages") or [], body.get("pending")
 
-    def _compose(self, passages: list[dict]) -> str | None:
+    def _compose(self, passages: list[dict], pending: dict | None = None) -> str | None:
         sections: list[str] = []
         if passages:
             sections.append(
@@ -461,12 +462,29 @@ class Recall(FrameProcessor):
         summary = self._summary.summary
         if summary and summary.strip():
             sections.append(f"So far in this drive:\n{summary.strip()}")
-        if not sections:
+
+        if not sections and not pending:
             return None
-        return (
-            "\n\n".join(sections)
-            + "\n\nThat is background. Answer only what was just said to you."
-        )
+
+        block = "\n\n".join(sections) if sections else ""
+        if block:
+            block += "\n\nThat is background. Answer only what was just said to you."
+
+        # An outbound or irreversible action they asked for, parked until they
+        # agree. The instruction is deliberately permissive about waiting: the
+        # asymmetry the whole design rests on is that additive things fire
+        # freely while irreversible things ask — and asking in the middle of
+        # somebody's sentence is its own kind of damage.
+        if pending and pending.get("restatement"):
+            ask = (
+                "They earlier asked for this, and it has not happened yet because it "
+                f"cannot be undone: {pending['restatement']}\n"
+                "If they are between thoughts, ask in one short sentence whether to go "
+                "ahead. If they are mid-thought, say nothing and it will keep."
+            )
+            block = f"{block}\n\n{ask}" if block else ask
+
+        return block
 
     def _reflow(self) -> None:
         """Bound the history, and park the context block beside the current turn.
@@ -512,11 +530,14 @@ class Recall(FrameProcessor):
                 self._recorder.note_user(frame.text)
 
             passages: list[dict] = []
+            pending: dict | None = None
             if self._ticket:
                 try:
-                    passages = await asyncio.to_thread(self._fetch, frame.text)
+                    passages, pending = await asyncio.to_thread(self._fetch, frame.text)
                     if passages:
                         logger.info(f"[recall] {len(passages)} passage(s) from past drives")
+                    if pending:
+                        logger.info(f"[recall] pending confirmation {pending.get('invocationId')}")
                 except Exception as err:
                     # Never fatal. An agent that has forgotten the past is worth
                     # far more than one that stops talking, and the capture
@@ -525,7 +546,7 @@ class Recall(FrameProcessor):
 
             # Composed even when retrieval failed: the running summary is local
             # and still worth putting in front of the model.
-            content = self._compose(passages)
+            content = self._compose(passages, pending)
             if content:
                 # REPLACE, never append. Calling add_message every turn used to
                 # stack a new block onto a context that is never pruned — by turn

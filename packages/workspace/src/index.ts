@@ -4,3 +4,4 @@ export * from "./fold";
 export * from "./extract";
 export * from "./markdown";
 export * from "./classify";
+export * from "./macros";

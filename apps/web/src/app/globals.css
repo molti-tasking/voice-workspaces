@@ -117,10 +117,28 @@ body {
   }
 }
 
+/* --- A cue arriving on the secondary display -------------------------------
+   Opacity only, on the arriving row only. No slide and no colour flash: the
+   panel is read peripherally while the person is doing something else, and
+   motion in the corner of the eye is the one thing guaranteed to pull their
+   attention off their actual task. Fading in is enough to say "this is new"
+   to someone already looking, and invisible to someone who is not. */
+@keyframes vm-cue-in {
+  from {
+    opacity: 0;
+  }
+}
+
 /* Someone who has asked for less motion gets a plain cut. */
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-old(root),
   ::view-transition-new(root) {
+    animation: none !important;
+  }
+  /* Including the cue fade: `motion-reduce:` cannot cancel an inline
+     `animation`, and the panel is the one surface where an unwanted animation
+     would fire repeatedly for an entire recording. */
+  [style*="vm-cue-in"] {
     animation: none !important;
   }
 }

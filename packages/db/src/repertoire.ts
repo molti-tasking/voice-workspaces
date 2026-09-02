@@ -49,10 +49,13 @@ export async function loadRepertoire(
 ): Promise<LoadedCapability[]> {
   const db = getDb();
 
+  // Aliased `newest_version`, not `version`: joining it against
+  // `capability_version.version` with the same name makes the ON clause
+  // ambiguous, and Postgres rejects the whole query.
   const newest = db
     .select({
       capabilityId: capabilityVersion.capabilityId,
-      version: max(capabilityVersion.version).as("version"),
+      newestVersion: max(capabilityVersion.version).as("newest_version"),
     })
     .from(capabilityVersion)
     .groupBy(capabilityVersion.capabilityId)
@@ -76,7 +79,7 @@ export async function loadRepertoire(
       capabilityVersion,
       and(
         eq(capabilityVersion.capabilityId, capability.id),
-        eq(capabilityVersion.version, newest.version),
+        eq(capabilityVersion.version, newest.newestVersion),
       ),
     )
     .where(
