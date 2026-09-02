@@ -7,42 +7,69 @@
  * about how — citable, testable, and changeable in one place rather than spread
  * across a component.
  *
- * The situation these are written for: the person's primary task is something
- * else. They are not reading this screen, they are glancing at it, from a metre
- * away, between two other things. A glance is about a second and a half, which
- * is four short lines. Everything below follows from that.
- */
-
-/**
- * Nothing may move when a cue arrives.
+ * There are TWO situations, and the first version of this file only served one.
  *
- * Layout shift is what makes someone look — the eye is drawn to motion long
- * before it is drawn to text — so the panel reserves its full height from the
- * moment it appears and holds it whether it is full or empty.
- */
-export const PANEL_MIN_ROWS = 5;
-
-/**
- * How long an item is guaranteed on screen before it can be replaced.
+ * `glance` — hands in the sink, phone propped a metre away, the screen caught
+ * for a second between two other things. Few items, short, held still.
  *
- * Without this, a phone draining a dead-zone backlog commits eight utterances
- * at once and the whole panel turns over in a single frame — the one moment a
- * peripheral display must not demand attention. Arrivals queue and release.
+ * `read` — the screen is genuinely in front of them. Glanceability has stopped
+ * being the constraint, and holding to eight words is no longer restraint, it
+ * is withholding: what is worth showing here is the workspace forming, as the
+ * small structured document it actually is.
+ *
+ * The rules below therefore come in pairs, keyed on `SettingProfile.density`.
+ * Applying the at-110km/h numbers to someone at a desk is the specific mistake
+ * this shape exists to prevent — and the numbers were never used while driving
+ * anyway, because `driving` renders no panel at all.
  */
-export const MIN_DWELL_MS = 8_000;
 
-/** The only animation. No slide, no colour flash, and only on the new item. */
+export type Density = "glance" | "read";
+
+export interface DisplayRules {
+  /**
+   * Rows the panel reserves whether or not it is full.
+   *
+   * Layout shift is what makes someone look — the eye finds motion long before
+   * it finds text — so the height is held from the first render. It matters
+   * most at a glance and is worth keeping at a desk, where a list that grows
+   * under the cursor is merely annoying rather than dangerous.
+   */
+  minRows: number;
+  /**
+   * How long an item is guaranteed on screen before it can be replaced.
+   *
+   * Without a floor, a phone draining a dead-zone backlog commits eight
+   * utterances at once and the whole panel turns over in one frame. That is
+   * intolerable in the corner of someone's eye and merely brisk in front of
+   * their face, so the floor drops with the density.
+   */
+  dwellMs: number;
+  /**
+   * Words per item, or `null` to show the block as written.
+   *
+   * The extractor already writes one clause per block. "Short" for a document
+   * is still long for a glance, so glance mode cuts; read mode does not, and
+   * paying a model call to shorten prose nobody is squinting at would be
+   * absurd in either.
+   */
+  maxWords: number | null;
+  /** Group content under its topic, rather than as one flat run. */
+  groupByTopic: boolean;
+}
+
+export const DISPLAY_RULES: Record<Density, DisplayRules> = {
+  glance: { minRows: 5, dwellMs: 8_000, maxWords: 8, groupByTopic: false },
+  read: { minRows: 6, dwellMs: 2_500, maxWords: null, groupByTopic: true },
+};
+
+/** The only animation, at either density. No slide, no colour flash. */
 export const ENTER_MS = 400;
 
-/**
- * Hard truncation, applied at render.
- *
- * The extractor already writes short blocks, but "short" for a document is long
- * for a glance, and paying a second model call to shorten prose that is about
- * to be read in a second and a half would be absurd. Cut it and let the full
- * text stay where full text belongs — the workspace.
- */
-export const MAX_CUE_WORDS = 8;
+/** Kept for the glance path and for tests that assert the cut length. */
+export const MAX_CUE_WORDS = DISPLAY_RULES.glance.maxWords ?? 8;
+
+/** The longest dwell any density asks for; the bound on how late a cue can be. */
+export const MIN_DWELL_MS = DISPLAY_RULES.glance.dwellMs;
 
 /** How often the browser asks again after falling back from the stream. */
 export const POLL_INTERVAL_MS = 10_000;
@@ -56,9 +83,9 @@ export const STREAM_ERRORS_BEFORE_POLLING = 2;
  * Word-wise rather than character-wise: a cut mid-word reads as a rendering
  * fault and costs a second look, which is the thing being economised.
  */
-export function toGlance(text: string, maxWords = MAX_CUE_WORDS): string {
+export function toGlance(text: string, maxWords: number | null = MAX_CUE_WORDS): string {
   const words = text.trim().split(/\s+/);
-  if (words.length <= maxWords) return words.join(" ");
+  if (maxWords === null || words.length <= maxWords) return words.join(" ");
   return `${words.slice(0, maxWords).join(" ")}…`;
 }
 
@@ -95,4 +122,31 @@ export function settle<T extends { id: string }>(
   const arrivals = [...incoming].reverse().filter((item) => !keptIds.has(item.id));
 
   return [...arrivals, ...kept].slice(0, budget);
+}
+
+/**
+ * Group content under its topic, without reordering anything.
+ *
+ * Topics appear in the order their first visible block does, and blocks keep
+ * the order `settle` put them in. That is the whole constraint: a topic gaining
+ * a block must not jump the list, or the reader loses their place in a panel
+ * they are only half looking at.
+ *
+ * Pure and generic over the item type, so the read view's one piece of
+ * arithmetic is testable without rendering anything.
+ */
+export function groupByTopic<T extends { topic?: string }>(
+  cues: readonly T[],
+  fallback = "Unfiled",
+): { topic: string; cues: T[] }[] {
+  const groups: { topic: string; cues: T[] }[] = [];
+
+  for (const cue of cues) {
+    const topic = cue.topic?.trim() || fallback;
+    const existing = groups.find((g) => g.topic === topic);
+    if (existing) existing.cues.push(cue);
+    else groups.push({ topic, cues: [cue] });
+  }
+
+  return groups;
 }

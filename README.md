@@ -189,7 +189,19 @@ whether the person can look at anything:
 | Consumer | Reads | Effect |
 |---|---|---|
 | `composeSystemPrompt` | `SETTING_PROFILES[s].stanza`, `maxReplyWords` | reply length, and whether the agent may mention the screen |
-| `/api/record/cues` + `CuePanel` | `displayAllowed`, `maxContentCues`, `maxDirectionCues` | whether the panel exists, and how much is on it |
+| `/api/record/cues` + `CuePanel` | `displayAllowed`, `density`, `maxContentCues`, `maxDirectionCues` | whether the panel exists, how it renders, and how much is on it |
+
+`displayAllowed` and `density` are separate questions on purpose. The first asks
+whether a screen exists; the second asks what to do with it. Collapsing them is
+how the panel came to render its at-110km/h design — five rows, eight words, an
+eight-second dwell floor — for somebody sitting at a desk. `driving` and
+`walking` render no panel at all, so those rules had never once run in the
+setting they were written for.
+
+| Density | Setting | Reads as |
+|---|---|---|
+| `glance` | `hands_busy` | flat, cut to eight words, held still for eight seconds |
+| `read` | `desk` | grouped by topic, typed by block kind, nothing truncated |
 
 `driving` reproduces the stance the base prompt was written with, so an unset
 setting and an explicit `driving` behave identically — which is what makes the

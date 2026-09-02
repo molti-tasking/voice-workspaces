@@ -2,15 +2,27 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  MIN_DWELL_MS,
+  DISPLAY_RULES,
   POLL_INTERVAL_MS,
   STREAM_ERRORS_BEFORE_POLLING,
   settle,
+  type Density,
 } from "./rules";
 
 export interface Cue {
   id: string;
   text: string;
+  /**
+   * Present on a content cue: what the extractor made of it.
+   *
+   * Carried through rather than flattened, so the read view can type a block
+   * the way `workspace/topic-card.tsx` types it — a question is not a claim,
+   * and rendering both as grey text loses the distinction the extractor was
+   * asked to make.
+   */
+  kind?: "claim" | "context" | "meta" | "question" | "fact";
+  /** The left-hand column of a `fact`. Absent on every other kind. */
+  label?: string;
   /** Present on a content cue: which topic it landed under. */
   topic?: string;
   /** Present on a direction cue: the operation, and whether it resolved. */
@@ -21,6 +33,8 @@ export interface Cue {
 
 interface CuePayload {
   displayAllowed: boolean;
+  /** Decided server-side from the session's setting, so one value governs both. */
+  density?: Density;
   content?: Cue[];
   directions?: Cue[];
   pending?: number;
@@ -29,6 +43,8 @@ interface CuePayload {
 export interface CueState {
   /** False when the setting has no screen. The panel renders nothing at all. */
   displayAllowed: boolean;
+  /** How the panel should render, and how long an item must hold its slot. */
+  density: Density;
   content: Cue[];
   directions: Cue[];
   /** Utterances still awaiting a verdict. Not shown as a cue; see rules.ts. */
@@ -39,6 +55,7 @@ export interface CueState {
 
 const IDLE: CueState = {
   displayAllowed: false,
+  density: "glance",
   content: [],
   directions: [],
   pending: 0,
@@ -100,8 +117,12 @@ export function useCues({
         return;
       }
 
+      // Scaled by density: a panel turning over at once is intolerable in the
+      // corner of someone's eye and merely brisk in front of their face.
+      const dwellMs = DISPLAY_RULES[payload.density ?? "glance"].dwellMs;
+
       const waited = Date.now() - lastAppliedAt.current;
-      if (lastAppliedAt.current !== 0 && waited < MIN_DWELL_MS) {
+      if (lastAppliedAt.current !== 0 && waited < dwellMs) {
         // Inside the dwell window. Hold the newest payload — not a queue of
         // them, because only the latest is worth showing when it releases.
         heldPayload.current = payload;
@@ -110,7 +131,7 @@ export function useCues({
           const held = heldPayload.current;
           heldPayload.current = null;
           if (held) apply(held);
-        }, MIN_DWELL_MS - waited);
+        }, dwellMs - waited);
         return;
       }
 
@@ -120,6 +141,7 @@ export function useCues({
       // mirrored ref would be a second copy that can only ever be stale.
       setState((previous) => ({
         displayAllowed: true,
+        density: payload.density ?? "glance",
         content: settle(previous.content, payload.content ?? [], contentBudget),
         directions: settle(previous.directions, payload.directions ?? [], directionBudget),
         pending: payload.pending ?? 0,

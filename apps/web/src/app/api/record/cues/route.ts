@@ -137,7 +137,11 @@ async function buildCues(
   userId: string,
   startedAt: Date,
   captureSessionId: string,
-  profile: { maxContentCues: number; maxDirectionCues: number },
+  profile: {
+    maxContentCues: number;
+    maxDirectionCues: number;
+    density: "glance" | "read";
+  },
 ) {
   /*
    * The content lane.
@@ -164,6 +168,9 @@ async function buildCues(
       id: block.id,
       text: block.text,
       kind: block.kind,
+      // Only meaningful on a `fact`, and the read view needs it: an attribute
+      // without its label reads as a sentence fragment.
+      label: block.label,
       topic: now.topics.find((t) => t.id === block.topicId)?.title ?? "",
       at: block.occurredAt.toISOString(),
     }));
@@ -182,6 +189,10 @@ async function buildCues(
 
   return {
     displayAllowed: true,
+    // Sent rather than re-derived in the browser: the session's setting is the
+    // one source, and the agent's prompt reads the same profile. Deriving it
+    // twice is how the two would come to disagree.
+    density: profile.density,
     content,
     directions,
     /* Not a spinner — a spinner invites monitoring, which is the opposite of a

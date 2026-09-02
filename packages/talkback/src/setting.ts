@@ -52,6 +52,21 @@ export interface SettingProfile {
   maxContentCues: number;
   maxDirectionCues: number;
   /**
+   * How the display is meant to be consumed.
+   *
+   * `glance` is the peripheral case: the person's eyes are on something else
+   * and the screen is caught in passing, so items are few, short, and held
+   * still. `read` is the case where the screen is genuinely in front of them
+   * and glanceability is no longer the constraint — grouping and structure buy
+   * more than austerity does.
+   *
+   * Separate from `displayAllowed` because it is a different question. That one
+   * asks whether a screen exists; this asks what to do with it. Collapsing them
+   * is how the panel ended up rendering its at-110km/h design for someone
+   * sitting at a desk.
+   */
+  density: "glance" | "read";
+  /**
    * How forthcoming the system is allowed to be.
    *
    * Carried here rather than in the prompt text so that when the proactive
@@ -78,6 +93,9 @@ export const SETTING_PROFILES: Record<Setting, SettingProfile> = {
     displayAllowed: false,
     maxContentCues: 0,
     maxDirectionCues: 0,
+    // Moot while `displayAllowed` is false, and stated anyway: if a driving
+    // display is ever tried, a glance is what it would have to be.
+    density: "glance",
     proactivity: "quiet",
     stanza: `THE SETTING
 They are driving. Their hands and their eyes are busy and staying alive is the task; talking to you is not.
@@ -93,6 +111,7 @@ They are driving. Their hands and their eyes are busy and staying alive is the t
     displayAllowed: false,
     maxContentCues: 0,
     maxDirectionCues: 0,
+    density: "glance",
     proactivity: "occasional",
     stanza: `THE SETTING
 They are walking. Their attention is freer than in a car, but the phone is in a pocket and everything reaches them as audio.
@@ -108,6 +127,10 @@ They are walking. Their attention is freer than in a car, but the phone is in a 
     displayAllowed: true,
     maxContentCues: 3,
     maxDirectionCues: 2,
+    // Hands in the sink, screen propped a metre away, looked at for a second
+    // between two other things. This is the case the glance rules were written
+    // for — and, until now, the only case they ever ran in.
+    density: "glance",
     proactivity: "forthcoming",
     stanza: `THE SETTING
 Their hands are busy — cooking, washing up, tidying — but a screen is propped nearby and they can glance at it.
@@ -122,8 +145,13 @@ Their hands are busy — cooking, washing up, tidying — but a screen is proppe
     hint: "Screen in front of you. The fullest view.",
     maxReplyWords: 60,
     displayAllowed: true,
-    maxContentCues: 5,
-    maxDirectionCues: 3,
+    maxContentCues: 8,
+    maxDirectionCues: 4,
+    // The screen is in front of them and they can read it. Holding to eight
+    // words and five rows here is not restraint, it is withholding: the
+    // workspace forming is the thing worth watching, and it can be shown as
+    // the small structured document it actually is.
+    density: "read",
     proactivity: "forthcoming",
     stanza: `THE SETTING
 They are at a desk with the screen in front of them.

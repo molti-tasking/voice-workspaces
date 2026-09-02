@@ -44,20 +44,49 @@ const EARLIER_SESSION_IDS = [
   "00000000-0000-4000-8000-00000000f1a6",
 ] as const;
 
-/** Plausible commute monologue, mixing content with the occasional directive. */
-const SCRIPT: { text: string; kind: "content" | "directive" | "unclassified" }[] = [
+/**
+ * A plausible monologue, mixing content with the occasional direction.
+ *
+ * A direction carries the RESTATEMENT the classifier would have written — one
+ * sentence, second person, the thing that could be read back aloud — not the
+ * words that were said. Seeding the raw transcript line here instead was what
+ * made the cue panel look like a truncated transcript when it is meant to show
+ * what the system understood.
+ */
+const SCRIPT: {
+  text: string;
+  kind: "content" | "directive" | "unclassified";
+  /** Only on a directive: verb, object and what would be read back. */
+  as?: { verb: string; object: string; restatement: string };
+}[] = [
   { text: "Right, so the thing I keep circling back to is the Midas touch problem.", kind: "content" },
   { text: "If everything I say is content by default, the failure mode is additive, not destructive.", kind: "content" },
-  { text: "Mark that.", kind: "directive" },
+  {
+    text: "Mark that.",
+    kind: "directive",
+    as: { verb: "mark", object: "the additive failure mode", restatement: "Marking the point about the failure mode being additive." },
+  },
   { text: "Because the alternative is a classifier arms race, and that never converges.", kind: "content" },
   { text: "What Niklas said about watertight seals between projects — that applies here too.", kind: "content" },
   { text: "The repertoire is the contribution, not the recogniser.", kind: "content" },
-  { text: "Make that a thing, call it the asymmetry argument.", kind: "directive" },
+  {
+    text: "Make that a thing, call it the asymmetry argument.",
+    kind: "directive",
+    as: { verb: "name", object: "the asymmetry argument", restatement: "Making that a capability, called the asymmetry argument." },
+  },
   { text: "Actually no, the interesting claim is that you cannot specify the repertoire in advance.", kind: "content" },
   { text: "You only find out what you need after you have needed it a few times.", kind: "content" },
   { text: "Which is exactly why the growth curve is the measurement and not the feature list.", kind: "content" },
-  { text: "Summarise this into the diary when I get in.", kind: "directive" },
-  { text: "And flag the bit about specification in advance, that is the abstract.", kind: "directive" },
+  {
+    text: "Summarise this into the diary when I get in.",
+    kind: "directive",
+    as: { verb: "summarise", object: "this session", restatement: "Writing this session up as a diary entry when you stop." },
+  },
+  {
+    text: "And flag the bit about specification in advance, that is the abstract.",
+    kind: "directive",
+    as: { verb: "flag", object: "specification in advance", restatement: "Flagging the bit about specifying in advance for the abstract." },
+  },
 ];
 
 /**
@@ -108,6 +137,29 @@ const EARLIER: {
   },
 ];
 
+/**
+ * What the extractor would have made of the demo session.
+ *
+ * Seeded because the cue panel's content lane is `diffWorkspace` between the
+ * session's start and now — so a demo session with no ops of its own leaves
+ * the panel showing directions alone, which is precisely what made it read as a
+ * truncated transcript. Kinds are mixed on purpose: a question, a fact with its
+ * label and a couple of claims are what the read density is built to
+ * distinguish.
+ */
+const FIXTURE_OPS: {
+  type: "create_topic" | "add_block";
+  payload: Record<string, unknown>;
+}[] = [
+  { type: "create_topic", payload: { topicId: "fx-midas", title: "Midas touch", slug: "midas-touch", icon: "Puzzle" } },
+  { type: "add_block", payload: { blockId: "fx-m1", topicId: "fx-midas", kind: "claim", text: "Treating everything as content by default makes the failure mode additive rather than destructive.", spans: [] } },
+  { type: "add_block", payload: { blockId: "fx-m2", topicId: "fx-midas", kind: "context", text: "The alternative is a classifier arms race, which does not converge.", spans: [] } },
+  { type: "create_topic", payload: { topicId: "fx-rep", title: "Repertoire", slug: "repertoire", icon: "Wrench" } },
+  { type: "add_block", payload: { blockId: "fx-r1", topicId: "fx-rep", kind: "claim", text: "The repertoire is the contribution, not the recogniser.", spans: [] } },
+  { type: "add_block", payload: { blockId: "fx-r2", topicId: "fx-rep", kind: "question", text: "Can the repertoire be specified in advance at all?", spans: [] } },
+  { type: "add_block", payload: { blockId: "fx-r3", topicId: "fx-rep", kind: "fact", label: "Measurement", text: "The growth curve, not the feature list.", spans: [] } },
+];
+
 export async function seedFixtureSession(userId: string): Promise<void> {
   const db = getDb();
 
@@ -134,9 +186,10 @@ export async function seedFixtureSession(userId: string): Promise<void> {
     userId,
     startedAt,
     endedAt: new Date(startedAt.getTime() + SCRIPT.length * CHUNK_MS),
-    // `hands_busy` rather than `driving`, so the cue panel is visible on
-    // `/record` for anyone looking at the fixture without a car.
-    setting: "hands_busy",
+    // `desk` rather than `driving`: the panel exists at all (driving renders
+    // none), and it renders at its `read` density, so the fixture shows the
+    // richer view. Pick `Hands busy` on `/record` to see the glance density.
+    setting: "desk",
     deviceInfo: { fixture: true, note: "Synthesised by pnpm db:fixtures" },
   });
 
@@ -181,12 +234,26 @@ export async function seedFixtureSession(userId: string): Promise<void> {
       await db.insert(directive).values({
         utteranceId: row.id,
         captureSessionId: FIXTURE_SESSION_ID,
-        verb: verbOf(line.text),
-        object: objectOf(line.text),
-        restatement: line.text,
+        verb: line.as?.verb ?? verbOf(line.text),
+        object: line.as?.object ?? objectOf(line.text),
+        restatement: line.as?.restatement ?? line.text,
         confidence: 85,
       });
     }
+  }
+
+  // Spread across the session rather than stamped at its start, so the cue
+  // panel's diff picks them up the way real extraction would — a batch landing
+  // every eight utterances or so.
+  for (const [index, op] of FIXTURE_OPS.entries()) {
+    await db.insert(workspaceOp).values({
+      userId,
+      captureSessionId: FIXTURE_SESSION_ID,
+      type: op.type,
+      payload: op.payload,
+      occurredAt: new Date(startedAt.getTime() + (index + 2) * CHUNK_MS),
+      sourceUtteranceIds: [],
+    });
   }
 
   await seedMacroProposal(userId);

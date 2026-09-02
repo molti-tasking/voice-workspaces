@@ -10,6 +10,14 @@
  * These run against a real Postgres because the guarantee lives in a single
  * UPDATE ... RETURNING claiming rows, which is precisely the part a mock cannot
  * check.
+ *
+ * `reportCompletedSessions` scans EVERY user by design — it is a sweep — so
+ * assertions here are scoped to this suite's own sessions rather than to its
+ * return value. Anyone who has run `pnpm db:fixtures` against the same database
+ * has unreported sessions of their own sitting there, and a suite that counted
+ * them would fail for a reason that has nothing to do with the code. Claiming
+ * those rows to make the count come out would be worse: it would suppress the
+ * conversion event for a real recording.
  */
 import { config } from "dotenv";
 config({ path: new URL("../../../../.env", import.meta.url).pathname, quiet: true });
@@ -43,6 +51,13 @@ const describeIfDb = (await isDatabaseReachable()) ? describe : describe.skip;
 
 const HOUR_AGO = () => new Date(Date.now() - 60 * 60 * 1000);
 const MINUTES_AGO = (n: number) => new Date(Date.now() - n * 60 * 1000);
+
+const OURS = [S_CLIENT, S_SWEEP, S_RECENT, S_OPEN, S_PENDING];
+
+/** Events for this suite's own sessions. Other users' drives are not our business. */
+function mine() {
+  return captured.filter((e) => OURS.includes(String(e.properties.capture_session_id)));
+}
 
 async function makeSession(
   id: string,
@@ -108,27 +123,33 @@ describeIfDb("reportCompletedSessions", () => {
     // the whole dataset towards drives that ended in a dead zone.
     await makeSession(S_CLIENT, { endedAt: MINUTES_AGO(30), endedBy: "client" });
 
-    expect(await reportCompletedSessions()).toBe(1);
-    expect(captured).toHaveLength(1);
-    expect(captured[0]!.event).toBe("capture_session_completed");
-    expect(captured[0]!.properties.closed_by).toBe("client");
-    expect(captured[0]!.properties.capture_session_id).toBe(S_CLIENT);
+    await reportCompletedSessions();
+
+    expect(mine()).toHaveLength(1);
+    expect(mine()[0]!.event).toBe("capture_session_completed");
+    expect(mine()[0]!.properties.closed_by).toBe("client");
+    expect(mine()[0]!.properties.capture_session_id).toBe(S_CLIENT);
   });
 
   it("reports a drive closed by the idle sweep", async () => {
     await makeSession(S_SWEEP, { endedAt: MINUTES_AGO(30), endedBy: "idle_sweep" });
 
-    expect(await reportCompletedSessions()).toBe(1);
-    expect(captured[0]!.properties.closed_by).toBe("idle_sweep");
+    await reportCompletedSessions();
+
+    expect(mine()).toHaveLength(1);
+    expect(mine()[0]!.properties.closed_by).toBe("idle_sweep");
   });
 
   it("never reports the same session twice", async () => {
     await makeSession(S_CLIENT, { endedAt: MINUTES_AGO(30), endedBy: "client" });
 
-    expect(await reportCompletedSessions()).toBe(1);
+    // The property that matters. Three sweeps, one event — and the second and
+    // third claim nothing at all, which is the single UPDATE ... RETURNING
+    // doing its job.
+    await reportCompletedSessions();
     expect(await reportCompletedSessions()).toBe(0);
     expect(await reportCompletedSessions()).toBe(0);
-    expect(captured).toHaveLength(1);
+    expect(mine()).toHaveLength(1);
   });
 
   it("waits out the settle window before reporting", async () => {
@@ -137,14 +158,15 @@ describeIfDb("reportCompletedSessions", () => {
     // publish counts for a half-uploaded drive.
     await makeSession(S_RECENT, { endedAt: MINUTES_AGO(5), endedBy: "client" });
 
-    expect(await reportCompletedSessions()).toBe(0);
-    expect(captured).toHaveLength(0);
+    await reportCompletedSessions();
+    expect(mine()).toHaveLength(0);
   });
 
   it("ignores sessions that are still open", async () => {
     await makeSession(S_OPEN, { endedAt: null });
 
-    expect(await reportCompletedSessions()).toBe(0);
+    await reportCompletedSessions();
+    expect(mine()).toHaveLength(0);
   });
 
   it("holds back a session whose chunks have not finished transcribing", async () => {
@@ -154,8 +176,8 @@ describeIfDb("reportCompletedSessions", () => {
       chunkStatus: "stored",
     });
 
-    expect(await reportCompletedSessions()).toBe(0);
-    expect(captured).toHaveLength(0);
+    await reportCompletedSessions();
+    expect(mine()).toHaveLength(0);
   });
 
   it("carries the real counts and the time the drive actually ended", async () => {
@@ -164,11 +186,11 @@ describeIfDb("reportCompletedSessions", () => {
 
     await reportCompletedSessions();
 
-    const props = captured[0]!.properties;
+    const props = mine()[0]!.properties;
     expect(props.chunk_count).toBe(3);
     expect(props.utterance_count).toBe(3);
     expect(props.duration_ms).toBe(30_000);
     expect(props.failed_chunk_count).toBe(0);
-    expect(captured[0]!.distinctId).toBe(USER_ID);
+    expect(mine()[0]!.distinctId).toBe(USER_ID);
   });
 });
