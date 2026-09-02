@@ -55,6 +55,20 @@ interface TranscribePayload {
  */
 const MACRO_INTERVAL_MS = Number(process.env.MACRO_INTERVAL_MS ?? 30 * 60 * 1000);
 
+/**
+ * Back-off for a chunk whose classification keeps failing.
+ *
+ * Unlike transcription, classification has no status column to move a chunk out
+ * of the scan — `utterance.kind` stays `unclassified`, which is exactly what
+ * makes a retry safe. The cost is that a chunk failing for an external reason
+ * (LiteLLM down) is re-queued on every five-second sweep, forever. Held in
+ * memory rather than in a column: the state is "how hard should THIS process
+ * push right now", it is worthless after a restart, and adding a column would
+ * make a transient outage leave permanent marks on the ledger.
+ */
+const CLASSIFY_BACKOFF_BASE_MS = 30_000;
+const CLASSIFY_BACKOFF_MAX_MS = 15 * 60 * 1000;
+
 async function main() {
   const boss = new PgBoss({
     connectionString: DATABASE_URL,
@@ -132,9 +146,11 @@ async function main() {
         jobs.map(async (job): Promise<JobResult> => {
           try {
             await classifyChunk(job.data.chunkId, job.data.userId);
+            classifyBackoff.delete(job.data.chunkId);
             return { id: job.id, status: "completed" };
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
+            noteClassifyFailure(job.data.chunkId);
             log.error("classify job failed", { chunkId: job.data.chunkId, err: message });
             return { id: job.id, status: "failed", output: { message } };
           }
@@ -199,6 +215,23 @@ async function main() {
    * simply accumulate as `stored` and are picked up on the next start. It also
    * absorbs the burst that arrives when a phone regains signal after a tunnel.
    */
+  /**
+   * Chunks to leave alone for a while, and for how long.
+   *
+   * Bounded by the number of chunks currently failing, which is bounded by the
+   * scan limit — so this cannot grow without limit even during a long outage.
+   */
+  const classifyBackoff = new Map<string, { failures: number; nextAttemptAt: number }>();
+
+  const noteClassifyFailure = (chunkId: string) => {
+    const failures = (classifyBackoff.get(chunkId)?.failures ?? 0) + 1;
+    const delay = Math.min(
+      CLASSIFY_BACKOFF_BASE_MS * 2 ** (failures - 1),
+      CLASSIFY_BACKOFF_MAX_MS,
+    );
+    classifyBackoff.set(chunkId, { failures, nextAttemptAt: Date.now() + delay });
+  };
+
   let sweeping = false;
   /* Starts at zero so the first sweep after a restart runs the detector. A
    * worker that has just come up is exactly when a backlog of directions is
@@ -236,7 +269,9 @@ async function main() {
       // The fast lane behind the secondary display. Per chunk, so a direction
       // lands ~15-25s after it was said rather than waiting for the next
       // extraction batch.
-      const unclassified = await chunksWithUnclassifiedUtterances(50);
+      const unclassified = (await chunksWithUnclassifiedUtterances(50)).filter(
+        ({ chunkId }) => (classifyBackoff.get(chunkId)?.nextAttemptAt ?? 0) <= Date.now(),
+      );
       for (const { chunkId, userId } of unclassified) {
         await boss.send(
           JOBS.classifyUtterance,
