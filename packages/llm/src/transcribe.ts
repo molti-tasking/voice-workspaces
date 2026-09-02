@@ -93,23 +93,35 @@ export async function transcribeChunk(
 
   /* Two settings against Whisper's habit of inventing YouTube.
    *
-   * `temperature: 0` makes decoding greedy. Left unset, the server is free to
-   * sample, and on quiet or near-silent audio it samples fluent nonsense from
-   * its training distribution.
+   * `vad_filter` IS THE ONE THAT WORKS. faster-whisper runs Silero over the
+   * audio first and transcribes only the speech, so non-speech never reaches
+   * the decoder and there is nothing for it to confabulate from. Measured
+   * against this deployment on 12s of faint noise:
    *
-   * `condition_on_previous_text: false` is the one that matters. Whisper
-   * conditions each segment on the segments it has already produced WITHIN this
-   * file, so one bad guess feeds the next and the output locks into a loop —
-   * "I will show you how to make a simple, easy, and easy to make I will show
-   * you how to make ...". Real drives produced exactly that, five chunks in
-   * nine, and the repetition guard downstream could only tidy the wreckage.
+   *   (baseline)                        -> "Thank you."
+   *   condition_on_previous_text=false  -> "Thank you."   (no effect)
+   *   no_speech_threshold=0.2           -> "Thank you."   (no effect)
+   *   vad_filter=true                   -> ""             <-
    *
-   * This is NOT the same knob as `prompt` above. That one is the caller's
-   * cross-chunk continuity and is still sent; this one is Whisper feeding on
-   * itself inside a single chunk. Verified accepted by the deployment — all
-   * four combinations answered 200 against a real clip. */
+   * And it is not lossy: the same clip with real speech plus an 8s quiet tail
+   * transcribes identically with and without it. That matters — this writes the
+   * verbatim ledger, so a filter that trimmed quiet speech would be worse than
+   * the artefacts it removes.
+   *
+   * `temperature: 0` makes decoding greedy; left unset the server samples, and
+   * on unclear audio it samples fluent nonsense. Verified forwarded rather than
+   * assumed: `temperature=99` returns garbage ("kal поговор Love"), which an
+   * ignored parameter could not do.
+   *
+   * WHAT IS NOT SENT, and why. `condition_on_previous_text=false` looks like
+   * the right knob — Whisper conditioning on its own output is what turns one
+   * bad guess into a cooking show — but this proxy silently DROPS it, along
+   * with any unknown field: `condition_on_previous_text=banana` and
+   * `totally_made_up_param=xyz` both return 200 and normal text. A 200 here
+   * proves only that the request was accepted, never that the parameter
+   * reached the model. It was sent for days while the loops continued. */
   form.append("temperature", "0");
-  form.append("condition_on_previous_text", "false");
+  form.append("vad_filter", "true");
 
   const context = options.context ?? {};
   const startedAt = Date.now();
