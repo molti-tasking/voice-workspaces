@@ -1,3 +1,4 @@
+import { TASK_STATES } from "@voicemural/shared";
 import { z } from "zod";
 
 /**
@@ -48,8 +49,29 @@ export interface TranscriptSegment {
  * stream. This one asks "what role does this play in the derived document?".
  * Conflating them would collapse two genuinely different questions.
  */
-export const BlockKind = z.enum(["claim", "context", "meta", "question", "fact"]);
+export const BlockKind = z.enum(["claim", "context", "meta", "question", "fact", "task"]);
 export type BlockKind = z.infer<typeof BlockKind>;
+
+/**
+ * Where a `task` stands — the tense of the speech that last mentioned it.
+ *
+ * Carried on the op payload rather than as its own op type, for the same
+ * reason topic icons are: a transition is a `revise_block` with a new state,
+ * and adding one needed no enum migration on a deployed database. The literal
+ * set lives in `@voicemural/shared` so the analytics taxonomy can type it.
+ */
+export const TaskState = z.enum(TASK_STATES);
+export type TaskState = z.infer<typeof TaskState>;
+
+/**
+ * Who posted an op, when it was not the extractor.
+ *
+ * Extraction ops omit this. A manual gesture on the board — moving a card,
+ * retiring one — carries `"user"`, so the fold can tell a person's correction
+ * from the model's reading of their speech. That distinction is the
+ * measurement: whether a speech-driven transition was kept or reversed.
+ */
+export type OpVia = "user";
 
 /** A span of derived text traced back to the utterance it came from. */
 export const BlockSpan = z.object({
@@ -73,6 +95,10 @@ export interface Block {
    */
   label?: string;
   text: string;
+  /** Only on a `task`; absent on every other kind. Defaults to `open`. */
+  state?: TaskState;
+  /** Set on a block a person posted from the board, not the extractor. */
+  via?: OpVia;
   spans: BlockSpan[];
   /** When the speech behind this block was said. */
   occurredAt: Date;
@@ -134,6 +160,9 @@ export const WorkspaceOp = z.discriminatedUnion("type", [
     /** Only meaningful for `fact`; ignored elsewhere. */
     label: z.string().min(1).optional(),
     text: z.string().min(1),
+    /** Only meaningful for `task`; ignored elsewhere. */
+    state: TaskState.optional(),
+    via: z.enum(["user"]).optional(),
     spans: z.array(BlockSpan).default([]),
   }),
   z.object({
@@ -144,11 +173,18 @@ export const WorkspaceOp = z.discriminatedUnion("type", [
     kind: BlockKind,
     label: z.string().min(1).optional(),
     text: z.string().min(1),
+    /**
+     * On a `task`, the new state. Omitted, the revision inherits the previous
+     * block's state — a sharper wording is not a transition.
+     */
+    state: TaskState.optional(),
+    via: z.enum(["user"]).optional(),
     spans: z.array(BlockSpan).default([]),
   }),
   z.object({
     type: z.literal("retire_block"),
     blockId: z.string().min(1),
+    via: z.enum(["user"]).optional(),
   }),
   z.object({
     type: z.literal("move_block"),

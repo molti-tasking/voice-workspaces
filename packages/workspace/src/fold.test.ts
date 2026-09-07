@@ -283,6 +283,137 @@ describe("malformed op logs", () => {
   });
 });
 
+describe("tasks", () => {
+  const task = (id: string, extra: Partial<Extract<WorkspaceOp, { type: "add_block" }>> = {}) =>
+    op(T1, {
+      type: "add_block",
+      blockId: id,
+      topicId: "topic-a",
+      kind: "task",
+      text: "Email the host lab about a start date.",
+      spans: [{ utteranceId: "u2" }],
+      ...extra,
+    });
+
+  it("opens a task added without a state", () => {
+    const state = foldWorkspace([...baseline(), task("task-1")]);
+    expect(state.allBlocks.get("task-1")?.state).toBe("open");
+  });
+
+  it("inherits the state on a revise that omits it", () => {
+    // A sharper wording is not a transition back to `open`.
+    const ops = [
+      ...baseline(),
+      task("task-1", { state: "next" }),
+      op(T2, {
+        type: "revise_block",
+        blockId: "task-2",
+        supersedesBlockId: "task-1",
+        topicId: "topic-a",
+        kind: "task",
+        text: "Email Sarah at the host lab about starting in March.",
+        spans: [],
+      }),
+    ];
+    expect(foldWorkspace(ops).allBlocks.get("task-2")?.state).toBe("next");
+  });
+
+  it("records the new state on a revise that carries one", () => {
+    const ops = [
+      ...baseline(),
+      task("task-1", { state: "next" }),
+      op(T2, {
+        type: "revise_block",
+        blockId: "task-2",
+        supersedesBlockId: "task-1",
+        topicId: "topic-a",
+        kind: "task",
+        text: "Email the host lab about a start date.",
+        state: "done",
+        spans: [],
+      }),
+    ];
+    const state = foldWorkspace(ops);
+    expect(state.allBlocks.get("task-2")?.state).toBe("done");
+    expect(state.blocksByTopic.get("topic-a")?.map((b) => b.id)).toContain("task-2");
+    expect(state.blocksByTopic.get("topic-a")?.map((b) => b.id)).not.toContain("task-1");
+  });
+
+  it("drops a state from anything that is not a task", () => {
+    const ops = [
+      ...baseline(),
+      op(T1, {
+        type: "add_block",
+        blockId: "claim-2",
+        topicId: "topic-a",
+        kind: "claim",
+        text: "A claim with a stray state.",
+        state: "done",
+        spans: [],
+      }),
+    ];
+    expect(foldWorkspace(ops).allBlocks.get("claim-2")?.state).toBeUndefined();
+  });
+
+  it("carries `via` onto the block so a manual move is distinguishable", () => {
+    const ops = [
+      ...baseline(),
+      task("task-1", { state: "next" }),
+      op(T2, {
+        type: "revise_block",
+        blockId: "task-2",
+        supersedesBlockId: "task-1",
+        topicId: "topic-a",
+        kind: "task",
+        text: "Email the host lab about a start date.",
+        state: "doing",
+        via: "user",
+        spans: [],
+      }),
+    ];
+    const state = foldWorkspace(ops);
+    expect(state.allBlocks.get("task-1")?.via).toBeUndefined();
+    expect(state.allBlocks.get("task-2")?.via).toBe("user");
+  });
+
+  it("re-points a revise aimed at an already-superseded block to the head of its chain", () => {
+    // The board POST → extraction race: the user moved the card (task-1 →
+    // task-2) while an extraction, folded before the move, revises task-1.
+    // Without re-pointing, the chain forks into two visible blocks.
+    const ops = [
+      ...baseline(),
+      task("task-1", { state: "next" }),
+      op(T2, {
+        type: "revise_block",
+        blockId: "task-2",
+        supersedesBlockId: "task-1",
+        topicId: "topic-a",
+        kind: "task",
+        text: "Email the host lab about a start date.",
+        state: "doing",
+        via: "user",
+        spans: [],
+      }),
+      op(T3, {
+        type: "revise_block",
+        blockId: "task-3",
+        supersedesBlockId: "task-1",
+        topicId: "topic-a",
+        kind: "task",
+        text: "Email the host lab about a start date.",
+        state: "done",
+        spans: [],
+      }),
+    ];
+    const state = foldWorkspace(ops);
+    const visible = state.blocksByTopic.get("topic-a")!.filter((b) => b.kind === "task");
+
+    expect(visible.map((b) => b.id)).toEqual(["task-3"]);
+    expect(state.allBlocks.get("task-3")?.supersedes).toBe("task-2");
+    expect(state.allBlocks.get("task-2")?.supersededById).toBe("task-3");
+  });
+});
+
 describe("diffWorkspace", () => {
   it("reports what a drive contributed", () => {
     const before = foldWorkspace(baseline());

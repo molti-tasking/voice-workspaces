@@ -34,6 +34,14 @@ export const user = pgTable("user", {
    * database is concerned.
    */
   isAnonymous: boolean("is_anonymous").notNull().default(false),
+  /**
+   * When the task board was switched on for this participant, or null.
+   *
+   * Nullable rather than a flag so the before/after phase of the study is a
+   * timestamp on the row, not a deploy date someone has to remember. Not a
+   * Better Auth field; set by hand via SQL or Drizzle Studio.
+   */
+  boardEnabledAt: timestamp("board_enabled_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

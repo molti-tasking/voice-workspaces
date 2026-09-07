@@ -1,7 +1,9 @@
 import { DEFAULT_TOPIC_ICON } from "./icons";
 import type {
   Block,
+  BlockKind,
   StoredOp,
+  TaskState,
   Topic,
   WorkspaceDiff,
   WorkspaceState,
@@ -88,6 +90,8 @@ export function foldWorkspace(ops: readonly StoredOp[], asOf?: Date): WorkspaceS
           kind: op.kind,
           label: op.label,
           text: op.text,
+          state: taskState(op.kind, op.state, undefined),
+          via: op.via,
           spans: op.spans ?? [],
           occurredAt: stored.occurredAt,
           extractionId: stored.extractionId,
@@ -98,7 +102,12 @@ export function foldWorkspace(ops: readonly StoredOp[], asOf?: Date): WorkspaceS
 
       case "revise_block": {
         if (allBlocks.has(op.blockId)) break;
-        const previous = allBlocks.get(op.supersedesBlockId);
+        // A revise aimed at a block that has since been superseded lands on
+        // the head of its chain instead. Otherwise the chain forks into two
+        // visible blocks — which is exactly what happens when a board move and
+        // an extraction race: the route folds, the user moves the card, and the
+        // extraction appends against the id it saw before the move.
+        const previous = headOf(allBlocks, op.supersedesBlockId);
         // Without the block it claims to replace there is nothing to supersede;
         // treating it as a plain addition keeps the content.
         const topicId = resolveTopic(topics, op.topicId) ?? previous?.topicId;
@@ -112,9 +121,11 @@ export function foldWorkspace(ops: readonly StoredOp[], asOf?: Date): WorkspaceS
           kind: op.kind,
           label: op.label,
           text: op.text,
+          state: taskState(op.kind, op.state, previous),
+          via: op.via,
           spans: op.spans ?? [],
           occurredAt: stored.occurredAt,
-          supersedes: previous ? op.supersedesBlockId : undefined,
+          supersedes: previous?.id,
           extractionId: stored.extractionId,
         });
         touch(topics, topicId, stored.occurredAt);
@@ -191,6 +202,64 @@ function resolveTopic(topics: Map<string, Topic>, topicId: string): string | und
     hops += 1;
   }
   return current?.id;
+}
+
+/**
+ * The current end of a revision chain.
+ *
+ * Bounded like `resolveTopic`: `supersededById` is set by this fold and cannot
+ * cycle, but a bound costs nothing and the chain is model-derived data.
+ * Exported because the board route needs the same answer: a move posted
+ * against a stale block id must land on the block that is currently visible.
+ */
+export function headOf(allBlocks: ReadonlyMap<string, Block>, blockId: string): Block | undefined {
+  let current = allBlocks.get(blockId);
+  let hops = 0;
+  while (current?.supersededById && hops < 32) {
+    const next = allBlocks.get(current.supersededById);
+    if (!next) break;
+    current = next;
+    hops += 1;
+  }
+  return current;
+}
+
+/**
+ * The start of a revision chain — the block's identity across revisions.
+ *
+ * The board keys a card on this: every revise mints a new block id, so the id
+ * of "the task about emailing William" changes each time it is moved, while
+ * the root never does.
+ */
+export function rootOf(allBlocks: ReadonlyMap<string, Block>, blockId: string): string {
+  let current = allBlocks.get(blockId);
+  const seen = new Set<string>();
+  let hops = 0;
+  while (current?.supersedes && hops < 32 && !seen.has(current.supersedes)) {
+    seen.add(current.id);
+    const previous = allBlocks.get(current.supersedes);
+    if (!previous) break;
+    current = previous;
+    hops += 1;
+  }
+  return current?.id ?? blockId;
+}
+
+/**
+ * The state a block carries, if it is a task.
+ *
+ * A revision that omits `state` inherits it: the extractor sharpens wording
+ * far more often than it reports progress, and a text-only revise must not
+ * read as a transition back to `open`. Anything that is not a task carries no
+ * state at all, whatever the op said.
+ */
+function taskState(
+  kind: BlockKind,
+  given: TaskState | undefined,
+  previous: Block | undefined,
+): TaskState | undefined {
+  if (kind !== "task") return undefined;
+  return given ?? previous?.state ?? "open";
 }
 
 function touch(topics: Map<string, Topic>, topicId: string, at: Date): void {
