@@ -11,7 +11,7 @@ import {
   stateDigest,
 } from "./extract";
 import { foldWorkspace } from "./fold";
-import type { StoredOp, TranscriptSegment } from "./types";
+import { TaskState, type StoredOp, type TranscriptSegment } from "./types";
 
 const SEED = "seed-abc";
 const T0 = new Date("2026-08-01T08:00:00Z");
@@ -391,6 +391,133 @@ describe("parseExtractionResponse", () => {
   });
 });
 
+describe("tasks", () => {
+  const parse = (raw: string) => parseExtractionResponse(raw, { idSeed: SEED });
+
+  const taskOp = (id: string, state: string, seq: number, occurredAt = T0): StoredOp => ({
+    id: `op-${id}`,
+    seq,
+    occurredAt,
+    op: {
+      type: "add_block",
+      blockId: id,
+      topicId: "topic-a",
+      kind: "task",
+      text: `Task ${id}`,
+      state: TaskState.parse(state),
+      spans: [],
+    },
+  });
+
+  it("renders a task with its state, so the model can see the tense it is in", () => {
+    const user = buildExtractionPrompt(
+      foldWorkspace([...ops, taskOp("task-1", "doing", 3)]),
+      segments,
+    )[1]!.content;
+    expect(user).toContain("(task/doing) Task task-1  [id: task-1]");
+  });
+
+  it("always renders a live task, even past the per-topic cap", () => {
+    // The model can only transition an id it can see. Nine newer claims must
+    // not push an open task out of the window.
+    const task = taskOp("task-1", "open", 3);
+    const claims: StoredOp[] = Array.from({ length: 9 }, (_, i) => ({
+      id: `op-claim-${i}`,
+      seq: 10 + i,
+      occurredAt: new Date(T0.getTime() + (i + 1) * 60_000),
+      op: {
+        type: "add_block",
+        blockId: `claim-${i}`,
+        topicId: "topic-a",
+        kind: "claim",
+        text: `Claim number ${i}.`,
+        spans: [],
+      },
+    }));
+    const user = buildExtractionPrompt(foldWorkspace([...ops, task, ...claims]), segments)[1]!
+      .content;
+
+    expect(user).toContain("[id: task-1]");
+    // The cap still applies to everything else: the oldest claims fall out.
+    expect(user).not.toContain("[id: claim-0]");
+    expect(user).toContain("[id: claim-8]");
+  });
+
+  it("does not exempt a finished task from the cap", () => {
+    const task = taskOp("task-1", "done", 3);
+    const claims: StoredOp[] = Array.from({ length: 9 }, (_, i) => ({
+      id: `op-claim-${i}`,
+      seq: 10 + i,
+      occurredAt: new Date(T0.getTime() + (i + 1) * 60_000),
+      op: {
+        type: "add_block",
+        blockId: `claim-${i}`,
+        topicId: "topic-a",
+        kind: "claim",
+        text: `Claim number ${i}.`,
+        spans: [],
+      },
+    }));
+    const user = buildExtractionPrompt(foldWorkspace([...ops, task, ...claims]), segments)[1]!
+      .content;
+    expect(user).not.toContain("[id: task-1]");
+  });
+
+  it("keeps a state on a task and drops it from every other kind", () => {
+    const result = parse(
+      JSON.stringify({
+        ops: [
+          { type: "add_block", topic: "t", kind: "task", text: "Email William.", state: "next" },
+          { type: "add_block", topic: "t", kind: "claim", text: "A claim.", state: "done" },
+        ],
+      }),
+    );
+    const [task, claim] = result.ops;
+    if (task?.type === "add_block") expect(task.state).toBe("next");
+    if (claim?.type === "add_block") expect(claim.state).toBeUndefined();
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("drops an invented state but keeps the task, without a warning", () => {
+    const result = parse(
+      JSON.stringify({
+        ops: [{ type: "add_block", topic: "t", kind: "task", text: "Email William.", state: "someday" }],
+      }),
+    );
+    expect(result.ops).toHaveLength(1);
+    expect(result.warnings).toEqual([]);
+    if (result.ops[0]?.type === "add_block") expect(result.ops[0].state).toBeUndefined();
+  });
+
+  it("parses a progress revise with its new state", () => {
+    const op = parse(
+      JSON.stringify({
+        ops: [
+          {
+            type: "revise_block",
+            supersedes: "task-1",
+            topic: "t",
+            kind: "task",
+            text: "Email William.",
+            state: "done",
+            sources: ["u3"],
+          },
+        ],
+      }),
+    ).ops[0]!;
+    expect(op.type).toBe("revise_block");
+    if (op.type === "revise_block") {
+      expect(op.state).toBe("done");
+      expect(op.supersedesBlockId).toBe("task-1");
+    }
+  });
+
+  it("teaches the model every state, by name", () => {
+    expect(SYSTEM_PROMPT).toContain('"task"');
+    for (const state of TaskState.options) expect(SYSTEM_PROMPT).toContain(`"${state}"`);
+  });
+});
+
 describe("PROMPT_VERSION discipline", () => {
   it("matches the recorded fingerprint of the prompt text", () => {
     // The cache is keyed on PROMPT_VERSION, so editing the prompt without
@@ -401,8 +528,8 @@ describe("PROMPT_VERSION discipline", () => {
     const fingerprint = createHash("sha256").update(SYSTEM_PROMPT).digest("hex").slice(0, 16);
 
     expect({ PROMPT_VERSION, fingerprint }).toEqual({
-      PROMPT_VERSION: "3",
-      fingerprint: "aa54af6c64ef924a",
+      PROMPT_VERSION: "4",
+      fingerprint: "a2f0afc4d6d5fddf",
     });
   });
 });
