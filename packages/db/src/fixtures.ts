@@ -13,6 +13,7 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
+import { enableBoard } from "./board";
 import { closeDb, getDb } from "./index";
 import {
   artifact,
@@ -118,6 +119,7 @@ const EARLIER: {
       { type: "create_topic", payload: { topicId: "fx-stay", title: "Research stay", slug: "research-stay", icon: "Plane" } },
       { type: "add_block", payload: { blockId: "fx-b1", topicId: "fx-stay", kind: "claim", text: "What matters is not the name of the place.", spans: [] } },
       { type: "add_block", payload: { blockId: "fx-b2", topicId: "fx-stay", kind: "fact", label: "Duration", text: "Three to six months.", spans: [] } },
+      { type: "add_block", payload: { blockId: "fx-t1", topicId: "fx-stay", kind: "task", state: "next", text: "Email the host lab about a start date.", spans: [] } },
     ],
   },
   {
@@ -131,9 +133,28 @@ const EARLIER: {
     ],
     ops: [
       { type: "revise_block", payload: { blockId: "fx-b3", supersedesBlockId: "fx-b1", topicId: "fx-stay", kind: "claim", text: "What matters is who I would work with, day to day.", spans: [] } },
+      // Progress reported in speech: the same text, a new state.
+      { type: "revise_block", payload: { blockId: "fx-t2", supersedesBlockId: "fx-t1", topicId: "fx-stay", kind: "task", state: "done", text: "Email the host lab about a start date.", spans: [] } },
       { type: "create_topic", payload: { topicId: "fx-ethics", title: "Ethics form", slug: "ethics-form", icon: "Scale" } },
       { type: "add_block", payload: { blockId: "fx-b4", topicId: "fx-ethics", kind: "question", text: "Does the data management plan have to name the outlet?", spans: [] } },
     ],
+  },
+];
+
+/**
+ * A board gesture: the person putting a card back where speech moved it from.
+ *
+ * Seeded AFTER the earlier sessions — `seq` is a bigserial, so insertion order
+ * is the ledger order — with a deterministic id, no extraction and no session,
+ * exactly as the board route writes one. This is what makes `/board` show a
+ * reversal, which is the study's primary measure, without anyone clicking.
+ */
+const USER_OPS: { id: string; daysAgo: number; type: "revise_block" | "retire_block"; payload: Record<string, unknown> }[] = [
+  {
+    id: "00000000-0000-4000-8000-00000000f1b1",
+    daysAgo: 3,
+    type: "revise_block",
+    payload: { blockId: "fx-t3", supersedesBlockId: "fx-t2", topicId: "fx-stay", kind: "task", state: "next", text: "Email the host lab about a start date.", via: "user", spans: [] },
   },
 ];
 
@@ -154,10 +175,13 @@ const FIXTURE_OPS: {
   { type: "create_topic", payload: { topicId: "fx-midas", title: "Midas touch", slug: "midas-touch", icon: "Puzzle" } },
   { type: "add_block", payload: { blockId: "fx-m1", topicId: "fx-midas", kind: "claim", text: "Treating everything as content by default makes the failure mode additive rather than destructive.", spans: [] } },
   { type: "add_block", payload: { blockId: "fx-m2", topicId: "fx-midas", kind: "context", text: "The alternative is a classifier arms race, which does not converge.", spans: [] } },
+  { type: "add_block", payload: { blockId: "fx-m3", topicId: "fx-midas", kind: "task", state: "open", text: "Write up the asymmetry argument.", spans: [] } },
   { type: "create_topic", payload: { topicId: "fx-rep", title: "Repertoire", slug: "repertoire", icon: "Wrench" } },
   { type: "add_block", payload: { blockId: "fx-r1", topicId: "fx-rep", kind: "claim", text: "The repertoire is the contribution, not the recogniser.", spans: [] } },
   { type: "add_block", payload: { blockId: "fx-r2", topicId: "fx-rep", kind: "question", text: "Can the repertoire be specified in advance at all?", spans: [] } },
   { type: "add_block", payload: { blockId: "fx-r3", topicId: "fx-rep", kind: "fact", label: "Measurement", text: "The growth curve, not the feature list.", spans: [] } },
+  { type: "add_block", payload: { blockId: "fx-r4", topicId: "fx-rep", kind: "task", state: "doing", text: "Summarise this session into the diary.", spans: [] } },
+  { type: "add_block", payload: { blockId: "fx-r5", topicId: "fx-rep", kind: "task", state: "dropped", text: "Build a recogniser for every direction in advance.", spans: [] } },
 ];
 
 export async function seedFixtureSession(userId: string): Promise<void> {
@@ -177,7 +201,11 @@ export async function seedFixtureSession(userId: string): Promise<void> {
   // replacement silently.
   await db.delete(macroProposal).where(eq(macroProposal.userId, userId));
 
+  // The fixture is the demo, and the board is part of it.
+  await enableBoard(userId);
+
   await seedEarlierSessions(userId);
+  await seedUserOps(userId);
 
   const startedAt = new Date(Date.now() - 60 * 60 * 1000);
 
@@ -336,6 +364,23 @@ async function seedEarlierSessions(userId: string): Promise<void> {
   }
 }
 
+/** The person's own board gestures, after the drives they respond to. */
+async function seedUserOps(userId: string): Promise<void> {
+  const db = getDb();
+  for (const op of USER_OPS) {
+    await db.insert(workspaceOp).values({
+      id: op.id,
+      userId,
+      extractionId: null,
+      captureSessionId: null,
+      type: op.type,
+      payload: op.payload,
+      occurredAt: new Date(Date.now() - op.daysAgo * 24 * 60 * 60 * 1000),
+      sourceUtteranceIds: [],
+    });
+  }
+}
+
 /**
  * A macro proposal, as the detector would have produced one.
  *
@@ -438,7 +483,7 @@ async function main() {
 
   await seedFixtureSession(firstUser.id);
   const earlierLines = EARLIER.reduce((n, d) => n + d.lines.length, 0);
-  const earlierOps = EARLIER.reduce((n, d) => n + d.ops.length, 0);
+  const earlierOps = EARLIER.reduce((n, d) => n + d.ops.length, 0) + USER_OPS.length;
   console.log(
     `Fixtures seeded for ${firstUser.email}: ` +
       `${EARLIER.length + 1} sessions, ${SCRIPT.length + earlierLines} utterances, ` +

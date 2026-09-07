@@ -232,9 +232,16 @@ Postgres driver into the client bundle and fails the build.
 `pnpm db:fixtures` seeds three sessions rather than one, with the workspace ops
 and the macro proposal they would have produced. Both are written directly:
 extraction and induction need a model, and the whole point of the fixture is
-that `/workspace`, `/trajectory` and `/repertoire` all render without a LiteLLM
-key. It also picks `hands_busy` for the most recent session, so the cue panel is
-visible on `/record` without a car.
+that `/workspace`, `/trajectory`, `/repertoire` and `/board` all render without
+a LiteLLM key. It also picks `hands_busy` for the most recent session, so the
+cue panel is visible on `/record` without a car, and it enables the board for
+the seeded user — with one task speech moved to `done` and the person having
+moved it back, so the reversal marker is visible without anyone clicking.
+
+The task board is hidden per participant until `user.board_enabled_at` is set.
+There is no admin UI for it; enable someone with `pnpm db:studio` or
+`UPDATE "user" SET board_enabled_at = now() WHERE id = '…';`. `pnpm
+workspace:show` prints tasks as `(task/<state>)`.
 
 ---
 
