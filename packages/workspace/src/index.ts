@@ -6,3 +6,4 @@ export * from "./markdown";
 export * from "./classify";
 export * from "./macros";
 export * from "./trajectory";
+export * from "./board";

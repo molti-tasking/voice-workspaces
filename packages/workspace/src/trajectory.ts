@@ -66,7 +66,7 @@ export interface Trajectory {
  * flat line that dominates the chart and compresses everything interesting into
  * the left-hand tenth of it.
  */
-function boundaries(ops: readonly StoredOp[], bucket: Bucket): Date[] {
+export function bucketBoundaries(ops: readonly StoredOp[], bucket: Bucket): Date[] {
   if (ops.length === 0) return [];
 
   const keyed = new Map<string, Date>();
@@ -103,7 +103,7 @@ export function buildTrajectory(
     ? ops
     : ops.filter((o) => o.occurredAt.getTime() <= cutoff);
 
-  const buckets = boundaries(visible, bucket);
+  const buckets = bucketBoundaries(visible, bucket);
 
   if (buckets.length === 0) {
     return { buckets: [], tracks: [], revisions: [], final: foldWorkspace([]) };
@@ -147,8 +147,12 @@ export function buildTrajectory(
       track.lastTouched = topic.lastTouchedAt;
     }
 
+    // A card moved on the board is a `revise_block` too, but it is not the
+    // thinking changing its mind — it is the person correcting the record.
+    // Counting it here would make a busy board look like a volatile topic.
+    const speechRevisions = diff.revisedBlocks.filter((r) => r.to.via !== "user");
     const addedByTopic = countBy(diff.addedBlocks, (b) => b.topicId);
-    const revisedByTopic = countBy(diff.revisedBlocks.map((r) => r.to), (b) => b.topicId);
+    const revisedByTopic = countBy(speechRevisions.map((r) => r.to), (b) => b.topicId);
     const retiredByTopic = countBy(diff.retiredBlocks, (b) => b.topicId);
 
     for (const track of tracks.values()) {
@@ -162,7 +166,7 @@ export function buildTrajectory(
       track.weight += added + revised;
     }
 
-    for (const { from, to } of diff.revisedBlocks) {
+    for (const { from, to } of speechRevisions) {
       revisions.push({ at, topicId: to.topicId, from, to });
     }
 

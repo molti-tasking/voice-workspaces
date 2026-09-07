@@ -16,6 +16,7 @@
  *
  * Naming: `object_verb_past`, snake_case, properties snake_case too.
  */
+import type { TaskStateName } from "./tasks";
 
 /**
  * Why `recording_*` and `capture_session_*` both exist.
@@ -161,6 +162,10 @@ export interface AnalyticsEventMap {
     extraction_id: string;
     segments: number;
     ops_appended: number;
+    /** Ops that touched a task — the board's yield from this batch. */
+    task_ops: number;
+    /** Of those, the ones that moved a card between columns. */
+    task_transitions: number;
   };
   workspace_extraction_failed: {
     extraction_id: string;
@@ -222,6 +227,41 @@ export interface AnalyticsEventMap {
     bucket_count: number;
     /** Whether the scrubber was moved off "now" before this render. */
     has_as_of: boolean;
+  };
+
+  // --- task board ----------------------------------------------------------
+  board_viewed: {
+    card_count: number;
+    open: number;
+    next: number;
+    doing: number;
+    done: number;
+    dropped: number;
+    /** Cards speech moved that the person has neither kept nor reversed yet. */
+    awaiting_review: number;
+  };
+  /**
+   * A manual move. Yield monitoring only: the acceptance measure itself — did
+   * the person keep, reverse or never touch a speech-driven transition — needs
+   * "never touched", which only the ledger can answer, so it is computed from
+   * the ops (`judge` in @voicemural/workspace) rather than from these events.
+   */
+  board_card_moved: {
+    block_id: string;
+    card_id: string;
+    from_state: TaskStateName;
+    to_state: TaskStateName;
+    /** Who last moved this card before now. Null when it was only ever added. */
+    previous_via: "speech" | "user" | null;
+    /** True when this move puts the card back where speech had moved it from. */
+    reverses_speech: boolean;
+    sessions_since_last_transition: number;
+  };
+  board_card_retired: {
+    block_id: string;
+    card_id: string;
+    state: TaskStateName;
+    previous_via: "speech" | "user" | null;
   };
 
   transcription_failed: {
