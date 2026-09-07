@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { BlockKind, TaskState } from "@voicemural/workspace";
 import {
   DISPLAY_RULES,
   POLL_INTERVAL_MS,
@@ -20,9 +21,11 @@ export interface Cue {
    * and rendering both as grey text loses the distinction the extractor was
    * asked to make.
    */
-  kind?: "claim" | "context" | "meta" | "question" | "fact";
+  kind?: BlockKind;
   /** The left-hand column of a `fact`. Absent on every other kind. */
   label?: string;
+  /** The column of a `task`. Absent on every other kind. */
+  state?: TaskState;
   /** Present on a content cue: which topic it landed under. */
   topic?: string;
   /** Present on a direction cue: the operation, and whether it resolved. */

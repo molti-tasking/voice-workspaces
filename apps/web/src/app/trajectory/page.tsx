@@ -4,6 +4,8 @@ import { Link } from "@/components/nav-link";
 import { loadOps } from "@voicemural/db/workspace";
 import { buildTrajectory } from "@voicemural/workspace";
 import { AccountMenu } from "@/components/account-menu";
+import { BoardLink } from "@/components/board-link";
+import { parseInstant } from "@/lib/instant";
 import { currentUser } from "@/lib/session";
 import { ViewEvent } from "@/lib/analytics/view-event";
 import { topicIcon } from "@/app/workspace/icons";
@@ -87,6 +89,7 @@ export default async function TrajectoryPage({
             <LayoutGrid size={14} aria-hidden />
             Workspace
           </Link>
+          <BoardLink userId={user.id} />
           <Link
             href="/timeline"
             className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
@@ -120,12 +123,6 @@ export default async function TrajectoryPage({
       )}
     </div>
   );
-}
-
-function parseInstant(value: string | undefined): Date | undefined {
-  if (!value) return undefined;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
 /**

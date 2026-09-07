@@ -12,7 +12,8 @@
     "./workspace": "./src/workspace.ts",
     "./testing": "./src/testing.ts",
     "./repertoire": "./src/repertoire.ts",
-    "./display": "./src/display.ts"
+    "./display": "./src/display.ts",
+    "./board": "./src/board.ts"
   },
   "scripts": {
     "generate": "drizzle-kit generate",

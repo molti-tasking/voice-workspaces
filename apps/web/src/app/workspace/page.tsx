@@ -5,6 +5,8 @@ import { loadOps } from "@voicemural/db/workspace";
 import { listSessionsWithStats } from "@voicemural/db/sessions";
 import { diffWorkspace, foldWorkspace } from "@voicemural/workspace";
 import { AccountMenu } from "@/components/account-menu";
+import { BoardLink } from "@/components/board-link";
+import { parseInstant } from "@/lib/instant";
 import { currentUser } from "@/lib/session";
 import { TopicCard } from "./topic-card";
 import { ViewEvent } from "@/lib/analytics/view-event";
@@ -124,6 +126,7 @@ export default async function WorkspacePage({
         </div>
 
         <nav className="flex items-center gap-4 text-sm">
+          <BoardLink userId={user.id} />
           <Link
             href="/trajectory"
             className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
@@ -210,14 +213,6 @@ export default async function WorkspacePage({
     </div>
   );
 }
-
-/** A query param to an instant, or undefined for anything unparseable. */
-function parseInstant(value: string | undefined): Date | undefined {
-  if (!value) return undefined;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
-}
-
 
 function EmptyState({
   hasSessions,

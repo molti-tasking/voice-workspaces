@@ -10,6 +10,7 @@ import {
   loadRepertoire,
 } from "@voicemural/db/repertoire";
 import { AccountMenu } from "@/components/account-menu";
+import { BoardLink } from "@/components/board-link";
 import { currentUser } from "@/lib/session";
 import { ViewEvent } from "@/lib/analytics/view-event";
 import { CapabilityCard, type CapabilityView } from "./capability-card";
@@ -155,6 +156,7 @@ export default async function RepertoirePage() {
             <LayoutGrid size={14} aria-hidden />
             Workspace
           </Link>
+          <BoardLink userId={user.id} />
           <Link
             href="/trajectory"
             className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"

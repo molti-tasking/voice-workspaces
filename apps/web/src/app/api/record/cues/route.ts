@@ -171,6 +171,9 @@ async function buildCues(
       // Only meaningful on a `fact`, and the read view needs it: an attribute
       // without its label reads as a sentence fragment.
       label: block.label,
+      // A task's column. The diff already carries state-only revises, so a
+      // spoken "that's sorted" shows up here as the card moving to done.
+      state: block.state,
       topic: now.topics.find((t) => t.id === block.topicId)?.title ?? "",
       at: block.occurredAt.toISOString(),
     }));

@@ -93,6 +93,10 @@ function GlanceView({ cues }: { cues: CueState }) {
           className="truncate text-sm leading-snug text-white/85 motion-reduce:animate-none"
           style={{ animation: `vm-cue-in ${ENTER_MS}ms ease-out` }}
         >
+          {/* Prefixed before the cut, so the column survives the eight words. */}
+          {cue.kind === "task" && (
+            <span className="font-mono text-[10px] text-white/40">{cue.state ?? "open"} </span>
+          )}
           {toGlance(cue.text, DISPLAY_RULES.glance.maxWords)}
         </p>
       ))}
@@ -154,6 +158,20 @@ function ContentRow({ cue }: { cue: Cue }) {
       >
         <CircleHelp size={13} aria-hidden className="mt-1 shrink-0 opacity-60" />
         <span>{cue.text}</span>
+      </p>
+    );
+  }
+
+  // A task, with the column it is in. A spoken "sent it" moves the same card
+  // rather than adding a line, so the prefix is the whole story.
+  if (cue.kind === "task") {
+    return (
+      <p
+        className="flex items-baseline gap-2 text-sm leading-snug motion-reduce:animate-none"
+        style={style}
+      >
+        <span className="shrink-0 font-mono text-[10px] text-white/40">{cue.state ?? "open"}</span>
+        <span className="text-white/85">{cue.text}</span>
       </p>
     );
   }
