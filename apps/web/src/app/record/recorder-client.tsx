@@ -13,6 +13,7 @@ import { useTalkback } from "@/lib/talkback/use-talkback";
 import type { TalkbackTurn } from "@/lib/talkback/types";
 import { useCues } from "@/lib/display/use-cues";
 import { CuePanel } from "./cue-panel";
+import { DraftPanel } from "./draft-panel";
 
 /**
  * Whether talk-back is built into this bundle.
@@ -57,7 +58,10 @@ export function RecorderClient() {
   // talk-back dead, and survives a reload mid-recording. See the route comment.
   const cues = useCues({
     captureSessionId: rec.currentSessionId,
-    budgets: { content: profile.maxContentCues, directions: profile.maxDirectionCues },
+    budgets: {
+      content: profile.maxContentCues,
+      directions: profile.maxDirectionCues,
+    },
     enabled: isRecording && profile.displayAllowed,
   });
 
@@ -100,13 +104,13 @@ export function RecorderClient() {
           }}
           disabled={isBusy}
           className={[
-            "flex size-56 items-center justify-center rounded-full text-2xl font-medium",
+            "cursor-pointer flex size-56 items-center justify-center rounded-full text-2xl font-medium",
             "transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
             isRecording
               ? hearing
-                ? "bg-[var(--color-accent)] text-white shadow-[0_0_0_18px_var(--color-accent-soft)]"
-                : "bg-[var(--color-accent)] text-white shadow-[0_0_0_12px_var(--color-accent-soft)]"
-              : "bg-[var(--color-ink-soft)] text-white ring-1 ring-[var(--color-line)]",
+                ? "bg-accent text-white shadow-[0_0_0_18px_var(--color-accent-soft)]"
+                : "bg-accent text-white shadow-[0_0_0_12px_var(--color-accent-soft)]"
+              : "bg-ink-soft text-white ring-1 ring-line",
           ].join(" ")}
         >
           {isBusy ? "…" : isRecording ? "Stop" : "Record"}
@@ -123,7 +127,7 @@ export function RecorderClient() {
               <button
                 type="button"
                 onClick={() => setShowPicker((v) => !v)}
-                className="underline-offset-4 hover:underline"
+                className="cursor-pointer underline-offset-4 hover:underline"
               >
                 {showPicker ? "done" : "not right?"}
               </button>
@@ -147,6 +151,10 @@ export function RecorderClient() {
         )}
 
         {isRecording && <CuePanel cues={cues} />}
+
+        {/* Below the cue panel, because a draft is read deliberately and the
+            glanceable lane must keep the position it has trained. */}
+        {isRecording && <DraftPanel drafts={cues.drafts} />}
       </div>
 
       <footer className="w-full max-w-md space-y-3 text-sm">
@@ -177,15 +185,15 @@ export function RecorderClient() {
 
         {rec.lastUploadError && rec.pendingUploads > 0 && (
           <Notice tone="warn" title="Waiting for signal">
-            {rec.pendingUploads} chunk{rec.pendingUploads === 1 ? "" : "s"} held on this
-            device. They upload automatically — nothing is lost.
+            {rec.pendingUploads} chunk{rec.pendingUploads === 1 ? "" : "s"} held
+            on this device. They upload automatically — nothing is lost.
           </Notice>
         )}
 
         {isRecording && !rec.wakeLockActive && (
           <Notice tone="warn" title="Screen may sleep">
-            This browser would not hold a wake lock. If the screen locks, recording
-            stops — set the display timeout to Never.
+            This browser would not hold a wake lock. If the screen locks,
+            recording stops — set the display timeout to Never.
           </Notice>
         )}
 
@@ -281,7 +289,13 @@ function SettingPicker({
  * Sided like `/sessions/[id]` — agent tinted and boxed, driver plain — so the
  * live view and the recorded one read the same way.
  */
-function Exchange({ turns, speaking }: { turns: TalkbackTurn[]; speaking: boolean }) {
+function Exchange({
+  turns,
+  speaking,
+}: {
+  turns: TalkbackTurn[];
+  speaking: boolean;
+}) {
   const last = turns[turns.length - 1];
 
   return (
@@ -298,7 +312,9 @@ function Exchange({ turns, speaking }: { turns: TalkbackTurn[]; speaking: boolea
         return (
           <li
             key={turn.id}
-            className={turn.role === "agent" ? "flex justify-start" : "flex justify-end"}
+            className={
+              turn.role === "agent" ? "flex justify-start" : "flex justify-end"
+            }
           >
             <span
               className={[
@@ -354,7 +370,10 @@ function StatusPills({
           which is the difference between a thin answer and a broken one. */}
       {memory === "unavailable" && <Pill label="no memory" tone="warn" />}
       {pending > 0 && (
-        <Pill label={uploading ? `↑ ${pending}` : `${pending} queued`} tone="warn" />
+        <Pill
+          label={uploading ? `↑ ${pending}` : `${pending} queued`}
+          tone="warn"
+        />
       )}
       {pending === 0 && !recording && <Pill label="synced" tone="ok" />}
     </div>
@@ -366,7 +385,9 @@ function Pill({ label, tone }: { label: string; tone: "ok" | "warn" }) {
     <span
       className={[
         "rounded-full px-2 py-0.5 font-mono",
-        tone === "ok" ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-300",
+        tone === "ok"
+          ? "bg-emerald-500/15 text-emerald-300"
+          : "bg-amber-500/15 text-amber-300",
       ].join(" ")}
     >
       {label}

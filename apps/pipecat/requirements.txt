@@ -5,3 +5,10 @@ pipecat-ai[webrtc,silero,elevenlabs,openai,deepgram,assemblyai]==1.7.0
 fastapi==0.118.0
 uvicorn[standard]==0.37.0
 python-dotenv==1.1.1
+
+# Tracing, for Langfuse. The `tracing` extra brings the OpenTelemetry SDK that
+# Pipecat's own spans are built on; the OTLP/HTTP exporter is separate and is
+# the wire format Langfuse ingests on. Both are inert unless LANGFUSE_PUBLIC_KEY
+# is set — see `setup_langfuse_tracing` in bot.py.
+pipecat-ai[tracing]==1.7.0
+opentelemetry-exporter-otlp-proto-http==1.39.0

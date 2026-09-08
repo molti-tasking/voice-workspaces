@@ -920,3 +920,45 @@ export const workspaceOpRelations = relations(workspaceOp, ({ one }) => ({
     references: [captureSession.id],
   }),
 }));
+
+/**
+ * Text the agent handed the person to keep, rather than said to them.
+ *
+ * Its own table, not a `kind` on `agent_turn`. A draft is not a turn: nothing
+ * was spoken, so it has no `endOffsetMs`, no barge-in, no latency columns, and
+ * — crucially — the echo filter must never see it. `agent_turn` exists so
+ * `withoutEcho` can tell the agent's voice from the driver's, and a draft that
+ * was never played through a speaker cannot be echoed. Putting it there would
+ * teach the filter to delete the participant's own words whenever they happened
+ * to resemble a draft they asked for.
+ *
+ * Durable on purpose. The point of a draft is copying it later, which usually
+ * means after the drive, from a different device — so it outlives the
+ * conversation exactly the way the ledger does.
+ */
+export const agentDraft = pgTable(
+  "agent_draft",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    captureSessionId: uuid("capture_session_id")
+      .notNull()
+      .references(() => captureSession.id, { onDelete: "cascade" }),
+    /** Monotonic within a drive, from the container's own counter. */
+    seq: integer("seq").notNull(),
+    /** Session-relative, same clock as `utterance` and `agent_turn`. */
+    startOffsetMs: integer("start_offset_ms").notNull(),
+    /** The tag's `title`. Empty when the model omitted one. */
+    title: text("title").notNull().default(""),
+    /** The draft body, verbatim. Markdown allowed: this is read, never spoken. */
+    text: text("text").notNull(),
+    /** The user turn that asked for it, for reading the two back together. */
+    respondingToText: text("responding_to_text"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One row per (drive, seq): the container retries a failed POST, and a
+    // retry must not leave two copies of the same draft on the screen.
+    uniqueIndex("agent_draft_session_seq_idx").on(t.captureSessionId, t.seq),
+    index("agent_draft_session_idx").on(t.captureSessionId),
+  ],
+);

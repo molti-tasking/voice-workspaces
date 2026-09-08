@@ -121,6 +121,73 @@ ICE_SERVERS = [
 SUMMARISE_MODEL = os.getenv("MODEL_SUMMARISE") or os.environ["MODEL_CONVERSE"]
 
 
+# Langfuse, over OpenTelemetry.
+#
+# The reason this exists: the composed prompt is assembled somewhere else
+# entirely — `composeSystemPrompt` in packages/talkback sandwiches the base
+# identity, the setting stanza and the output contract, and /api/realtime/context
+# appends recalled passages per turn. By the time it reaches the model it has
+# been through two services, and the only record of what was ACTUALLY sent was a
+# character count in a log line. That is not enough to tell a bad reply caused by
+# a bad prompt from one caused by a bad model.
+#
+# Pipecat 1.7 emits spans for each STT/LLM/TTS call with the serialised messages
+# on the `input` attribute, which is exactly the thing that was missing, and
+# Langfuse ingests OTLP directly — so this is an exporter and a header, not an
+# integration.
+#
+# OFF unless LANGFUSE_PUBLIC_KEY is set. It is a study rig: a drive must not
+# fail because an observability backend is down, and the import itself is
+# deferred so a deployment that never sets the key does not even need the
+# packages installed.
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "")
+LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com").rstrip("/")
+
+TRACING_ENABLED = False
+
+
+def setup_langfuse_tracing() -> bool:
+    """Point Pipecat's OpenTelemetry spans at Langfuse. Idempotent.
+
+    Returns whether tracing is on, and never raises: a misconfigured or
+    unreachable Langfuse must cost a log line, not the drive. The export itself
+    is batched and off the event loop by the SDK, so a slow backend cannot add
+    latency to a turn either.
+    """
+    global TRACING_ENABLED
+    if TRACING_ENABLED:
+        return True
+    if not (LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY):
+        return False
+
+    try:
+        import base64
+
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from pipecat.utils.tracing.setup import setup_tracing
+
+        # Langfuse authenticates OTLP with HTTP Basic over the key pair, not a
+        # bearer token — the same credentials as its SDKs, encoded per RFC 7617.
+        auth = base64.b64encode(
+            f"{LANGFUSE_PUBLIC_KEY}:{LANGFUSE_SECRET_KEY}".encode()
+        ).decode()
+
+        setup_tracing(
+            service_name=os.getenv("LANGFUSE_SERVICE_NAME", "voicemural-talkback"),
+            exporter=OTLPSpanExporter(
+                endpoint=f"{LANGFUSE_HOST}/api/public/otel/v1/traces",
+                headers={"Authorization": f"Basic {auth}"},
+            ),
+        )
+        TRACING_ENABLED = True
+        logger.info(f"[tracing] exporting to Langfuse at {LANGFUSE_HOST}")
+    except Exception as exc:  # noqa: BLE001 — see the docstring
+        logger.warning(f"[tracing] disabled, could not reach OpenTelemetry: {exc}")
+
+    return TRACING_ENABLED
+
+
 # The base prompt, used ONLY when /api/realtime/session cannot be reached.
 #
 # Deliberately not a copy of the real one. A silent partial copy that drifts is
@@ -429,9 +496,11 @@ class Recall(FrameProcessor):
         summary: RunningSummary,
         ticket: str | None,
         recorder: "TurnRecorder | None" = None,
+        drafts: "DraftRecorder | None" = None,
     ):
         super().__init__()
         self._recorder = recorder
+        self._drafts = drafts
         self._context = context
         self._summary = summary
         self._ticket = ticket
@@ -528,6 +597,11 @@ class Recall(FrameProcessor):
             # cannot read them itself.
             if self._recorder is not None:
                 self._recorder.note_user(frame.text)
+            # The draft recorder needs the same words for `respondingToText`:
+            # a draft read back weeks later is far more legible next to the
+            # request that produced it.
+            if self._drafts is not None:
+                self._drafts.note_user(frame.text)
 
             passages: list[dict] = []
             pending: dict | None = None
@@ -572,6 +646,62 @@ class Recall(FrameProcessor):
 MAX_HISTORY_TURNS = 8
 
 SILENCE_TOKEN = "<silence>"
+
+# The tags around text meant for the screen rather than the speaker.
+#
+# Mirrors DRAFT_OPEN/DRAFT_CLOSE in packages/talkback/src/prompt.ts, which is
+# where the model is told about them. Change one and change the other.
+DRAFT_OPEN = "<draft"
+DRAFT_CLOSE = "</draft>"
+
+# What a partial tag at the end of a stream chunk could still turn into. Both
+# start with `<`, which is what lets a normal spoken reply stop being a
+# candidate on its very first frame — see SilenceGate's latency note.
+_TAG_PREFIXES = (SILENCE_TOKEN, DRAFT_OPEN, DRAFT_CLOSE)
+
+
+def extract_drafts(reply: str) -> tuple[str, list[dict]]:
+    """Split a completion into what is spoken and what is kept.
+
+    Ported from `extractDrafts` in the TypeScript prompt module, with the same
+    tolerance: a model that forgets the closing tag has still obviously written
+    a draft, so an unterminated block runs to the end of the completion rather
+    than being thrown away over seven missing characters.
+
+    Returns (speech, drafts) where each draft is {"title", "text"}.
+    """
+    drafts: list[dict] = []
+    speech = ""
+    rest = reply
+
+    while True:
+        open_at = rest.find(DRAFT_OPEN)
+        if open_at == -1:
+            speech += rest
+            break
+        # `<draft` must actually open a tag. Without this a sentence that merely
+        # contains the characters would swallow the rest of the reply.
+        open_end = rest.find(">", open_at)
+        if open_end == -1:
+            # `<draft` with no `>` never opened a tag: ordinary text, kept.
+            # Dropping from here would truncate a reply that merely used the
+            # characters. Mirrors the TypeScript `extractDrafts`.
+            speech += rest
+            break
+
+        speech += rest[:open_at]
+        title_match = re.search(r'title\s*=\s*"([^"]*)"', rest[open_at:open_end])
+        title = title_match.group(1).strip() if title_match else ""
+
+        close_at = rest.find(DRAFT_CLOSE, open_end)
+        body = rest[open_end + 1 :] if close_at == -1 else rest[open_end + 1 : close_at]
+        if body.strip():
+            drafts.append({"title": title, "text": body.strip()})
+        if close_at == -1:
+            break
+        rest = rest[close_at + len(DRAFT_CLOSE) :]
+
+    return clean_reply(speech), drafts
 
 
 def is_silence(reply: str) -> bool:
@@ -671,6 +801,86 @@ class TurnRecorder:
             pass
 
 
+def _partial_tail(text: str, token: str) -> str:
+    """The longest suffix of `text` that is still a proper prefix of `token`.
+
+    What makes streaming tag removal safe: `<dra` arriving at the end of one
+    frame must be held rather than spoken, because the next frame may complete
+    it into `<draft`. Returns "" when nothing at the end could grow into the
+    token, which is the common case and costs one comparison.
+    """
+    for size in range(min(len(token) - 1, len(text)), 0, -1):
+        if token.startswith(text[-size:]):
+            return text[-size:]
+    return ""
+
+
+class DraftRecorder:
+    """Posts drafts to the web app, which is what makes them outlive the drive.
+
+    Separate from `TurnRecorder` and deliberately so: a draft was never spoken,
+    so it must not reach `agent_turn`. That table is the echo filter's input —
+    `withoutEcho` deletes transcript lines matching what the agent said aloud —
+    and a draft that only ever existed on screen cannot have been echoed.
+    Filing it as a turn would teach the filter to delete the participant's own
+    words whenever they resembled a draft they had asked for.
+    """
+
+    def __init__(self, ticket: str | None, started_at_ms: int | None):
+        self._ticket = ticket
+        self._started_at_ms = started_at_ms
+        self._seq = 0
+        self._responding_to: str | None = None
+
+    def note_user(self, text: str) -> None:
+        if text.strip():
+            self._responding_to = text
+
+    def record(self, drafts: list[dict]) -> None:
+        """Fire and forget. A failed POST must never cost the driver a reply."""
+        if not self._ticket or not self._started_at_ms or not drafts:
+            return
+
+        offset = max(0, int(time.time() * 1000) - self._started_at_ms)
+        payloads = []
+        for draft in drafts:
+            seq, self._seq = self._seq, self._seq + 1
+            payload = {
+                "ticket": self._ticket,
+                "seq": seq,
+                "startOffsetMs": offset,
+                "title": draft.get("title", ""),
+                "text": draft["text"],
+            }
+            if self._responding_to:
+                payload["respondingToText"] = self._responding_to
+            payloads.append(payload)
+
+        async def send() -> None:
+            for payload in payloads:
+                try:
+                    await asyncio.to_thread(self._post, payload)
+                    logger.info(
+                        f"[draft] stored {payload['title']!r} ({len(payload['text'])} chars)"
+                    )
+                except Exception as err:
+                    # Loud: the person was told the text is on their screen, and
+                    # this is the only place that knows it never arrived.
+                    logger.warning(f"[draft] NOT stored, the person will not see it: {err}")
+
+        asyncio.create_task(send())
+
+    def _post(self, payload: dict) -> None:
+        req = urllib.request.Request(
+            f"{WEB_URL}/api/realtime/draft",
+            method="POST",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=5):
+            pass
+
+
 class SilenceGate(FrameProcessor):
     """Stops the sentinel reaching TTS.
 
@@ -697,13 +907,61 @@ class SilenceGate(FrameProcessor):
         self,
         summary: RunningSummary | None = None,
         recorder: TurnRecorder | None = None,
+        drafts: DraftRecorder | None = None,
     ):
         super().__init__()
         self._summary = summary
         self._recorder = recorder
+        self._drafts = drafts
         self._text = ""
         self._spoken = ""
         self._holding = True
+        # Draft suppression, which runs on everything released downstream.
+        # `_pending` holds a partial tag straddling two frames; `_in_draft` is
+        # true between the tags, where nothing may reach TTS.
+        self._pending = ""
+        self._in_draft = False
+
+    def _for_speech(self, chunk: str) -> str:
+        """Strip draft blocks out of streaming text, tag-safe across frames.
+
+        The body between the tags is the whole point of a draft — it is read,
+        not heard — so it must never reach TTS. Done here rather than by holding
+        the completion and splitting it at the end, because holding would cost
+        the full generation time on every turn, which is the trade `SilenceGate`
+        already refused once.
+        """
+        buf, self._pending, out = self._pending + chunk, "", ""
+
+        while buf:
+            if self._in_draft:
+                close_at = buf.find(DRAFT_CLOSE)
+                if close_at == -1:
+                    # All body. Keep back anything that could still become the
+                    # closing tag, and discard the rest.
+                    self._pending = _partial_tail(buf, DRAFT_CLOSE)
+                    break
+                buf = buf[close_at + len(DRAFT_CLOSE) :]
+                self._in_draft = False
+                continue
+
+            open_at = buf.find(DRAFT_OPEN)
+            if open_at == -1:
+                tail = _partial_tail(buf, DRAFT_OPEN)
+                out += buf[: len(buf) - len(tail)] if tail else buf
+                self._pending = tail
+                break
+
+            out += buf[:open_at]
+            open_end = buf.find(">", open_at)
+            if open_end == -1:
+                # The tag is still arriving — attributes can be long. Hold it.
+                self._pending = buf[open_at:]
+                break
+            self._in_draft = True
+            buf = buf[open_end + 1 :]
+
+        return out
 
     def _spoke(self, text: str) -> None:
         """Tell the running summary what the driver actually HEARD.
@@ -739,6 +997,8 @@ class SilenceGate(FrameProcessor):
             self._text = ""
             self._spoken = ""
             self._holding = True
+            self._pending = ""
+            self._in_draft = False
         elif isinstance(frame, LLMTextFrame):
             self._text += frame.text
             if self._holding:
@@ -746,9 +1006,11 @@ class SilenceGate(FrameProcessor):
                     # Still might be a decline — say nothing yet.
                     return
                 # It cannot be. Release everything held so far as one frame and
-                # stream normally from here.
+                # stream normally from here. A reply that opens with a draft tag
+                # lands here too — `<draft` is not a sentinel prefix — and
+                # `_for_speech` is what keeps its body out of TTS.
                 self._holding = False
-                released = clean_reply(self._text)
+                released = self._for_speech(clean_reply(self._text))
                 if released:
                     self._spoke(released)
                     await self.push_frame(LLMTextFrame(text=released), direction)
@@ -756,7 +1018,7 @@ class SilenceGate(FrameProcessor):
             # Already streaming. Strip any sentinel the model tacked on mid-reply
             # — small models emit one alongside a real sentence often enough that
             # `clean_reply` was written for it.
-            tail = frame.text.replace(SILENCE_TOKEN, "")
+            tail = self._for_speech(frame.text.replace(SILENCE_TOKEN, ""))
             if tail:
                 self._spoke(tail)
                 await self.push_frame(LLMTextFrame(text=tail), direction)
@@ -768,10 +1030,20 @@ class SilenceGate(FrameProcessor):
                 else:
                     # Held to the end without ever resolving — e.g. a reply that
                     # is genuinely just "sil". Emit it rather than swallow it.
-                    remainder = clean_reply(self._text)
+                    remainder = self._for_speech(clean_reply(self._text))
                     if remainder:
                         self._spoke(remainder)
                         await self.push_frame(LLMTextFrame(text=remainder), direction)
+
+            # Drafts come off the WHOLE completion rather than the stream: the
+            # streaming pass only has to keep the body away from TTS, and
+            # parsing the finished text is where a malformed or unterminated tag
+            # can still be recovered. `_pending` is dropped on purpose — it is
+            # by construction a fragment of a tag, never speech.
+            if self._drafts is not None:
+                _, drafts = extract_drafts(self._text)
+                if drafts:
+                    self._drafts.record(drafts)
             # ONE row per turn, written here because this is the only point that
             # knows the whole reply. A suppressed turn leaves `_spoken` empty and
             # records nothing — the echo filter must only ever learn about audio
@@ -789,12 +1061,19 @@ def build_pipeline(
     connection: SmallWebRTCConnection,
     ticket: str | None = None,
     session: dict | None = None,
+    capture_session_id: str | None = None,
 ) -> PipelineWorker:
     """Assemble one drive's pipeline.
 
     `session` is the bootstrap from `/api/realtime/session` — the prompt, the
     summary instruction and any seed summary. Fetched once by the caller rather
     than here so a renegotiation does not pay for it again.
+
+    `capture_session_id` is carried only for tracing, where it becomes the
+    conversation id: it is the same key the ledger uses, so a Langfuse trace
+    joins to `capture_session`, `utterance` and `agent_turn` by an id that is
+    already there rather than a correlation anyone has to reconstruct by
+    timestamp.
     """
     session = session or {"systemPrompt": FALLBACK_SYSTEM_PROMPT, "degraded": True}
     transport = SmallWebRTCTransport(
@@ -884,6 +1163,7 @@ def build_pipeline(
     # `utterance` uses — which is what lets the two tables be read as one
     # dialogue, and what the echo filter compares intervals against.
     recorder = TurnRecorder(ticket, session.get("startedAtEpochMs"))
+    drafts = DraftRecorder(ticket, session.get("startedAtEpochMs"))
     # A SECOND analyzer, deliberately, not the same instance: this one drives
     # turn completion and interruption in the aggregator, and the two keep
     # independent state.
@@ -902,14 +1182,14 @@ def build_pipeline(
             # Before Recall: the summary must see this turn's speech, and Recall
             # reads the summary when it composes the block.
             summary,
-            Recall(context, summary, ticket, recorder),
+            Recall(context, summary, ticket, recorder, drafts),
             aggregator.user(),
             llm,
             # Between the LLM and TTS deliberately: the aggregator downstream
             # still records what the model generated, so a declined turn is
             # visible in the context as a turn that happened, while never
             # reaching the speaker.
-            SilenceGate(summary, recorder),
+            SilenceGate(summary, recorder, drafts),
             tts,
             transport.output(),
             aggregator.assistant(),
@@ -919,9 +1199,45 @@ def build_pipeline(
     # PipelineWorker, not the PipelineTask/PipelineRunner pair — those are
     # deprecated since 1.3.0 and removed in 2.0.0. Metrics stay on: they are the
     # only per-stage timing this path has, and silence is its hardest failure.
+    #
+    # `enable_tracing` is what makes the spans, and it is gated on the exporter
+    # actually being configured: turning it on without one buys the per-turn span
+    # overhead and drops the result on the floor.
     return PipelineWorker(
         pipeline,
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
+        enable_tracing=TRACING_ENABLED,
+        conversation_id=capture_session_id,
+        additional_span_attributes={
+            # Which arm of the study this drive ran under, on every span. The
+            # setting decides the prompt's stanza and the reply length, so a
+            # trace that does not carry it cannot be compared with another.
+            "voicemural.setting": session.get("setting") or "unknown",
+            # A degraded drive ran on FALLBACK_SYSTEM_PROMPT and knows nothing
+            # about the person. Its replies are thin BY DESIGN, and without this
+            # they look like a model regression months later.
+            "voicemural.degraded": bool(session.get("degraded")),
+            # THE THREE LANGFUSE-SPECIFIC KEYS, and they are what make a trace
+            # findable rather than merely present.
+            #
+            # Pipecat's own spans name themselves `llm`/`stt`/`tts` and leave the
+            # TRACE unnamed, so without this every drive lists as a blank row —
+            # 97 observations of real content behind nothing you can search for.
+            # `conversation_id` above groups spans into one trace; it does NOT
+            # populate Langfuse's session, which reads this attribute instead.
+            "langfuse.trace.name": f"drive · {session.get('setting') or 'unknown'}",
+            # The ledger's own key, so a trace opens straight onto the drive it
+            # came from — the same id in `capture_session`, `utterance` and
+            # `agent_turn`. Empty string rather than None: OTel drops an
+            # attribute with a null value and the field would silently vanish.
+            "langfuse.session.id": capture_session_id or "",
+            # Tags render as filter chips, which is how you find the degraded
+            # drives without reading them.
+            "langfuse.trace.tags": [
+                session.get("setting") or "unknown",
+                "degraded" if session.get("degraded") else "full",
+            ],
+        },
     )
 
 
@@ -936,6 +1252,13 @@ app.add_middleware(
 
 # One connection per browser tab. Keyed so a renegotiation finds its own peer.
 connections: dict[str, SmallWebRTCConnection] = {}
+
+# At import rather than under `__main__`, so it is set up the same way whether
+# the container runs bot.py directly or something wraps it in `uvicorn bot:app`.
+# Spans are created per connection, so this only has to happen before the first
+# one — but a tracer configured after the fact silently loses the drive that
+# provoked it, which is the one anybody would be looking at.
+setup_langfuse_tracing()
 
 
 @app.get("/healthz")
@@ -970,14 +1293,18 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
 
     # The client nests anything it sends under `requestData`; the top level is
     # reserved for the transport's own sdp/type/pc_id/restart_pc.
-    ticket = (request.get("requestData") or {}).get("ticket")
+    request_data = request.get("requestData") or {}
+    ticket = request_data.get("ticket")
+    # Tracing only. It is NOT trusted for anything the participant owns —
+    # ownership is re-resolved from the signed ticket on every /context call.
+    capture_session_id = request_data.get("captureSessionId")
 
     # Once per connection, not per turn. Off the event loop because it makes a
     # blocking HTTP call that itself waits on a model call for the seed summary,
     # and stalling the loop here would stall every other drive on this container.
     session = await asyncio.to_thread(fetch_session, ticket)
 
-    worker = build_pipeline(connection, ticket, session)
+    worker = build_pipeline(connection, ticket, session, capture_session_id)
 
     async def run():
         await WorkerRunner(handle_sigint=False).run(worker)

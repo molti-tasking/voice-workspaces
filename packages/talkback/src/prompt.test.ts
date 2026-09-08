@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   OUTPUT_CONTRACT,
+  extractDrafts,
   SILENCE_TOKEN,
   SYSTEM_PROMPT,
   cleanReply,
@@ -73,5 +74,51 @@ describe("the sentinel, which bot.py mirrors", () => {
 
   it("strips a sentinel emitted alongside a real reply", () => {
     expect(cleanReply("<silence> That one's worth keeping.")).toBe("That one's worth keeping.");
+  });
+});
+
+describe("extractDrafts, which bot.py mirrors", () => {
+  it("splits the spoken line from the draft body", () => {
+    const { speech, drafts } = extractDrafts(
+      'That one is on your screen.<draft title="Email to William">Hi William,\n\nFollowing up.</draft>',
+    );
+    expect(speech).toBe("That one is on your screen.");
+    expect(drafts).toEqual([
+      { title: "Email to William", text: "Hi William,\n\nFollowing up." },
+    ]);
+  });
+
+  it("keeps a draft whose closing tag the model forgot", () => {
+    // Losing the text over seven missing characters is the worse failure: the
+    // person asked for exactly this and heard that it was saved.
+    const { speech, drafts } = extractDrafts('Saved.<draft title="Notes">a\nb');
+    expect(speech).toBe("Saved.");
+    expect(drafts).toEqual([{ title: "Notes", text: "a\nb" }]);
+  });
+
+  it("handles a draft with no title and one before the speech", () => {
+    const { speech, drafts } = extractDrafts("<draft>just this</draft>Done.");
+    expect(speech).toBe("Done.");
+    expect(drafts).toEqual([{ title: "", text: "just this" }]);
+  });
+
+  it("takes several drafts from one completion", () => {
+    const { drafts } = extractDrafts(
+      '<draft title="A">one</draft>and<draft title="B">two</draft>',
+    );
+    expect(drafts.map((d) => d.title)).toEqual(["A", "B"]);
+  });
+
+  it("does not eat a reply that merely contains the characters", () => {
+    // No `>` closing the tag, so nothing opened. Without this guard the rest of
+    // the sentence would vanish into a draft body.
+    const { speech, drafts } = extractDrafts("I would not write <draft without a plan");
+    expect(drafts).toEqual([]);
+    expect(speech).toBe("I would not write <draft without a plan");
+  });
+
+  it("drops an empty draft rather than storing a blank card", () => {
+    const { drafts } = extractDrafts('ok<draft title="X">   </draft>');
+    expect(drafts).toEqual([]);
   });
 });

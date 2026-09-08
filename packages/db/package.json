@@ -13,7 +13,8 @@
     "./testing": "./src/testing.ts",
     "./repertoire": "./src/repertoire.ts",
     "./display": "./src/display.ts",
-    "./board": "./src/board.ts"
+    "./board": "./src/board.ts",
+    "./drafts": "./src/drafts.ts"
   },
   "scripts": {
     "generate": "drizzle-kit generate",

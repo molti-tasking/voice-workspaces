@@ -106,6 +106,40 @@ with no setting behaves exactly as before.
 and read by nothing but the stanza text. `agentTurnKindEnum` already has
 `proactive_prompt`; nothing writes it.
 
+## Drafts: text you keep rather than hear
+
+Ask for something to take away — "draft me an email to William", "write me a
+prompt for that", "note that down" — and the model wraps it in `<draft
+title="...">...</draft>`. The body is never spoken. It is stored and shown with
+a Copy button.
+
+The tags are declared in `OUTPUT_CONTRACT`, so they sit in the same
+last-and-wins section as the `<silence>` sentinel and a composed stanza cannot
+countermand them. `extractDrafts` (TypeScript) and `extract_drafts` (bot.py) are
+mirrors of each other and both tested; change one and change the other.
+
+**Two paths, for two different failures.** `SilenceGate._for_speech` strips the
+block from the *stream*, tag-safe across frame boundaries, so a body split as
+`<dr` / `aft ti` / `tle="X">` never reaches TTS. Extraction then runs on the
+*whole* completion at `LLMFullResponseEndFrame`, where a malformed or
+unterminated tag can still be recovered. Holding the completion to split it
+once would cost the full generation time on every turn — the trade `SilenceGate`
+already refused.
+
+**`agent_draft`, not `agent_turn`.** A draft was never spoken, so the echo
+filter must never see it. `withoutEcho` deletes transcript lines matching what
+the agent said aloud; filing a draft as a turn would teach it to delete the
+participant's own words whenever they resembled something they had asked for.
+
+**Durable on purpose.** The container POSTs to `/api/realtime/draft`
+(ticket-authorised, ownership re-resolved, idempotent on `(session, seq)`), and
+both readers come from Postgres — the live panel via `/api/record/cues`, and
+`/sessions/[id]` afterwards. That matters most for `driving`, where
+`displayAllowed` is false and the cue stream never opens: a draft asked for at
+110 km/h is written, stored, and waiting at the desk. It is also the one panel
+that is tappable, which the cue panel's no-tap rule explicitly is not — there is
+no voice equivalent of "put this on my clipboard".
+
 ## Confirmations reach the driver on the turn path
 
 An outbound or irreversible action does not fire when the worker resolves it —

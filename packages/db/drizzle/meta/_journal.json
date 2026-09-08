@@ -43,6 +43,13 @@
       "when": 1788822064668,
       "tag": "0005_board_enabled_at",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788884399281,
+      "tag": "0006_motionless_hammerhead",
+      "breakpoints": true
     }
   ]
 }

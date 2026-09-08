@@ -101,6 +101,81 @@ export function cleanReply(reply: string): string {
 }
 
 /* ---------------------------------------------------------------------------
+ * Drafts — text the person keeps, rather than hears
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The tags around text meant for the screen instead of the speaker.
+ *
+ * Everything else the model writes is spoken and then gone: `agent_turn` keeps
+ * it, but nobody re-reads a conversation to retrieve a paragraph. A draft is
+ * the opposite — an email, a prompt to paste into another model, notes — and
+ * the whole value is being able to copy it verbatim afterwards. Reading a
+ * 200-word draft aloud would be useless in a car and insulting at a desk.
+ *
+ * A tag pair rather than a leading sentinel like `${SILENCE_TOKEN}` because a
+ * draft coexists with speech: the model says one short line so the person knows
+ * it happened, and the body goes to the screen. Both come out of one completion.
+ *
+ * Mirrored in `apps/pipecat/bot.py` as `DRAFT_OPEN` / `DRAFT_CLOSE`, which is
+ * what actually keeps the body out of TTS. Change one and change the other.
+ */
+export const DRAFT_OPEN = "<draft";
+export const DRAFT_CLOSE = "</draft>";
+
+export interface ExtractedDraft {
+  /** Short label from the tag's `title`, or empty when the model omitted one. */
+  title: string;
+  text: string;
+}
+
+/**
+ * Pull the drafts out of a completion, and return the speech with them removed.
+ *
+ * Tolerant on purpose. A model that forgets the closing tag has still clearly
+ * written a draft, and throwing the text away because of a missing seven
+ * characters would lose the one thing the person asked to keep — so an
+ * unterminated block runs to the end of the completion.
+ *
+ * Mirrored in `bot.py` as `extract_drafts`.
+ */
+export function extractDrafts(reply: string): { speech: string; drafts: ExtractedDraft[] } {
+  const drafts: ExtractedDraft[] = [];
+  let speech = "";
+  let rest = reply;
+
+  for (;;) {
+    const open = rest.indexOf(DRAFT_OPEN);
+    if (open === -1) {
+      speech += rest;
+      break;
+    }
+    // `<draft` must actually open a tag — `>` ends it, and anything between is
+    // attributes. Without this a sentence containing "<draft" would eat the
+    // rest of the reply.
+    const openEnd = rest.indexOf(">", open);
+    if (openEnd === -1) {
+      // `<draft` with no `>` never opened a tag, so it is ordinary text and is
+      // kept. Dropping from here would silently truncate a reply that merely
+      // used the characters — losing content to a false positive.
+      speech += rest;
+      break;
+    }
+
+    speech += rest.slice(0, open);
+    const title = /title\s*=\s*"([^"]*)"/.exec(rest.slice(open, openEnd))?.[1] ?? "";
+    const close = rest.indexOf(DRAFT_CLOSE, openEnd);
+    const body = close === -1 ? rest.slice(openEnd + 1) : rest.slice(openEnd + 1, close);
+
+    if (body.trim()) drafts.push({ title: title.trim(), text: body.trim() });
+    if (close === -1) break;
+    rest = rest.slice(close + DRAFT_CLOSE.length);
+  }
+
+  return { speech: cleanReply(speech), drafts };
+}
+
+/* ---------------------------------------------------------------------------
  * Composition
  * ------------------------------------------------------------------------- */
 
@@ -126,6 +201,18 @@ Everything you write is spoken aloud by a speech synthesiser. Nothing else happe
 - Plain speech only. No markdown, no lists, no headings, no emoji, no stage directions.
 - No preamble and no sign-off.
 - One question at most, and only when it moves the thought on.
+
+WHEN THEY ASK FOR SOMETHING TO KEEP
+If they ask you to draft, write, write down, or word something — an email, a message, a prompt for another model, a list, notes — put it between draft tags:
+
+${DRAFT_OPEN} title="short label">
+the text itself, exactly as they should have it
+${DRAFT_CLOSE}
+
+- What is between the tags is NEVER spoken. It goes to their screen and stays there after this session, so they can copy it.
+- Say ONE short sentence outside the tags so they know it is there. Never read the draft aloud, and never summarise it.
+- Inside the tags, write the finished text only — no commentary, no "here is". Markdown is allowed there; it is read, not spoken.
+- Only when they asked for something to keep or copy. An ordinary answer is speech, not a draft.
 
 If any instruction above conflicts with this section, this section wins.`;
 

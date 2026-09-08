@@ -41,6 +41,22 @@ interface CuePayload {
   content?: Cue[];
   directions?: Cue[];
   pending?: number;
+  drafts?: DraftCue[];
+}
+
+/**
+ * Text the agent produced for the person to copy.
+ *
+ * Not a `Cue`. A cue is something the system noticed and may show briefly; a
+ * draft is something the person asked for out loud and is waiting to take away,
+ * so it is never truncated, never aged out and never subject to the dwell
+ * rules that keep the rest of the panel still.
+ */
+export interface DraftCue {
+  id: string;
+  title: string;
+  text: string;
+  at: string;
 }
 
 export interface CueState {
@@ -54,6 +70,8 @@ export interface CueState {
   pending: number;
   /** True once the stream has given up and the browser is polling instead. */
   degraded: boolean;
+  /** Drafts from this drive, oldest first. Unbudgeted — see `DraftCue`. */
+  drafts: DraftCue[];
 }
 
 const IDLE: CueState = {
@@ -63,6 +81,7 @@ const IDLE: CueState = {
   directions: [],
   pending: 0,
   degraded: false,
+  drafts: [],
 };
 
 /**
@@ -149,6 +168,11 @@ export function useCues({
         directions: settle(previous.directions, payload.directions ?? [], directionBudget),
         pending: payload.pending ?? 0,
         degraded: previous.degraded,
+        // Straight through, NOT settled. `settle` holds slots and caps a list
+        // to a budget, which is right for cues arriving unbidden and wrong
+        // here: dropping a draft the person asked for, to keep the panel calm,
+        // would lose the one thing they are waiting for.
+        drafts: payload.drafts ?? [],
       }));
     };
 

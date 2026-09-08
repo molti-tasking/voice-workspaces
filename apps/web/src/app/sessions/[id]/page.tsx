@@ -4,7 +4,9 @@ import { notFound } from "next/navigation";
 import { and, asc, eq, getDb } from "@voicemural/db";
 import { agentTurn, audioChunk, captureSession, utterance } from "@voicemural/db/schema";
 import { findCoverageGaps, formatOffset } from "@voicemural/shared";
+import { loadSessionDrafts } from "@voicemural/db/drafts";
 import { currentUser } from "@/lib/session";
+import { SessionDrafts } from "./session-drafts";
 import { AutoRefresh } from "./auto-refresh";
 import { Transcript, type AgentTurnRow, type TranscriptRow } from "./transcript";
 import { ViewEvent } from "@/lib/analytics/view-event";
@@ -94,6 +96,8 @@ export default async function SessionPage({
     (c) => c.status === "stored" || c.status === "transcribing",
   );
 
+  const drafts = await loadSessionDrafts(id);
+
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
       <AutoRefresh pending={untranscribed.length} />
@@ -154,6 +158,11 @@ export default async function SessionPage({
           </Banner>
         )}
       </div>
+
+      {/* Above the transcript deliberately. A draft is the one thing on this
+          page the person asked for by name, and it is what they came back to
+          copy — putting it under a thousand utterances would bury it. */}
+      <SessionDrafts drafts={drafts} />
 
       <Transcript rows={rows} turns={turns} />
     </div>

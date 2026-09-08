@@ -1,4 +1,5 @@
 import { loadOps } from "@voicemural/db/workspace";
+import { loadSessionDrafts } from "@voicemural/db/drafts";
 import {
   countUnclassified,
   cueVersion,
@@ -190,6 +191,19 @@ async function buildCues(
     at: d.createdAt.toISOString(),
   }));
 
+  /* The asked-for lane.
+   *
+   * Unlike content and directions, a draft is not something the system noticed
+   * — it is something the person requested out loud and is now waiting to copy.
+   * So it is never truncated to a cue budget and never ages out: all of them,
+   * in the order they were asked for. */
+  const drafts = (await loadSessionDrafts(captureSessionId)).map((d) => ({
+    id: d.id,
+    title: d.title,
+    text: d.text,
+    at: d.createdAt.toISOString(),
+  }));
+
   return {
     displayAllowed: true,
     // Sent rather than re-derived in the browser: the session's setting is the
@@ -203,5 +217,6 @@ async function buildCues(
      * than looking finished, in the one place that matters: the end of a
      * recording, when the user is deciding whether to walk away. */
     pending: await countUnclassified(captureSessionId),
+    drafts,
   };
 }

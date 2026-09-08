@@ -10,7 +10,7 @@
  */
 import { and, asc, desc, eq, gte, max, sql } from "drizzle-orm";
 import { getDb } from "./index";
-import { captureSession, directive, utterance, workspaceOp } from "./schema";
+import { agentDraft, captureSession, directive, utterance, workspaceOp } from "./schema";
 
 export interface LiveSession {
   id: string;
@@ -105,10 +105,20 @@ export async function cueVersion(
     .from(directive)
     .where(eq(directive.captureSessionId, captureSessionId));
 
+  // Drafts are in the version because they are the one lane the user ASKED
+  // for. A cue arriving late is a cue; a draft arriving late is the person
+  // staring at a screen that does not have the thing they just requested.
+  const [drafts] = await db
+    .select({ n: sql<number>`count(*)`, last: max(agentDraft.createdAt) })
+    .from(agentDraft)
+    .where(eq(agentDraft.captureSessionId, captureSessionId));
+
   return [
     ops?.seq ?? 0,
     Number(dirs?.n ?? 0),
     dirs?.last ? new Date(dirs.last).getTime() : 0,
+    Number(drafts?.n ?? 0),
+    drafts?.last ? new Date(drafts.last).getTime() : 0,
   ].join(":");
 }
 
