@@ -176,10 +176,16 @@ constraint, not a feature to add later.
 - `macro_proposal` holds crystallisation candidates, **including declined ones**.
   A declined proposal is never re-offered, and "what they tried to add and
   failed" is a stated field-study measure that only survives if refusals do.
-- `capture_session.setting` is chosen once, before recording, and never updated —
-  not even when a session is resumed. It governs turn-taking and how much goes
-  on screen, so a recording whose halves ran under different rules would not be
-  interpretable under either.
+- `capture_session.setting` is fixed once, at session creation, and never
+  updated — not even when a session is resumed. It governs turn-taking and how
+  much goes on screen, so a recording whose halves ran under different rules
+  would not be interpretable under either. It is **detected, not asked**
+  (`apps/web/src/lib/recorder/detect-setting.ts`): a laptop is `desk`; on a
+  phone the accelerometer separates walking (periodic steps), driving
+  (aperiodic vibration), and a still phone lying flat (`desk`) or propped up
+  (`hands_busy`). With no motion data the default is `driving`. The recorder
+  shows what it inferred and offers a correction; `recording_started` carries
+  `setting_source` so the correction rate is measurable.
 
 ## Where the setting is read
 

@@ -36,12 +36,18 @@ export interface AnalyticsEventMap {
     resumed: boolean;
     wake_lock_active: boolean;
     /**
-     * Where the user said they were. Null when the browser had nothing stored.
+     * Where the person was. Null when nothing could be inferred.
      *
      * The independent variable for everything setting-governed: reply length,
      * whether the cue panel rendered at all, how much went on it.
      */
     setting?: string | null;
+    /**
+     * How the setting was arrived at: read off the device class, inferred from
+     * motion, the default because nothing could be read, or corrected by hand.
+     * The share of `chosen` is how often the detector is wrong enough to fix.
+     */
+    setting_source?: "device" | "motion" | "default" | "chosen" | null;
   };
   recording_stopped: {
     capture_session_id: string;

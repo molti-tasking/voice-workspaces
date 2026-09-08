@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { formatOffset, type CaptureSetting } from "@voicemural/shared";
 // The `/setting` subpath, NOT the package index: the index re-exports
 // retrieval.ts, which imports @voicemural/db, and that drags the Postgres
 // driver into the browser bundle. setting.ts is pure by construction.
 import { SETTINGS, SETTING_PROFILES } from "@voicemural/talkback/setting";
 import { useRecorder } from "@/lib/recorder/use-recorder";
-import { useSetting } from "@/lib/recorder/setting-store";
+import { useDetectedSetting } from "@/lib/recorder/detect-setting";
 import { useTalkback } from "@/lib/talkback/use-talkback";
 import type { TalkbackTurn } from "@/lib/talkback/types";
 import { useCues } from "@/lib/display/use-cues";
@@ -33,9 +34,14 @@ export function RecorderClient() {
   const isRecording = rec.status === "recording";
   const isBusy = rec.status === "requesting" || rec.status === "stopping";
 
-  // Remembered per browser. See setting-store.ts for why this is an external
-  // store rather than state seeded in an effect.
-  const [setting, choose] = useSetting();
+  // Inferred from the device and its motion, not asked. See detect-setting.ts.
+  // A correction holds for this visit only: the next recording is detected
+  // afresh, because the situation is what changed, not the person's mind.
+  const detected = useDetectedSetting({ enabled: !isRecording });
+  const [chosen, choose] = useState<CaptureSetting | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
+  const setting = chosen ?? detected.setting;
+  const source = chosen ? "chosen" : detected.source;
   const profile = SETTING_PROFILES[setting];
 
   // Armed with the recording, for the whole drive — there is no separate
@@ -82,7 +88,16 @@ export function RecorderClient() {
 
         <button
           type="button"
-          onClick={() => (isRecording ? void rec.stop() : void rec.start(setting))}
+          onClick={() => {
+            if (isRecording) {
+              void rec.stop();
+              return;
+            }
+            // iOS gates the accelerometer behind a tap; this is the tap. The
+            // answer arrives for the next recording, and this one starts now.
+            void detected.requestMotion();
+            void rec.start(setting, source);
+          }}
           disabled={isBusy}
           className={[
             "flex size-56 items-center justify-center rounded-full text-2xl font-medium",
@@ -98,11 +113,33 @@ export function RecorderClient() {
         </button>
 
         <p className="h-5 text-center text-sm text-white/40">
-          {isRecording ? profile.hint : "Pick where you are, then start."}
+          {isRecording ? (
+            profile.hint
+          ) : (
+            <>
+              {chosen ? "" : "Looks like: "}
+              <span className="text-white/70">{profile.label}</span>
+              {" · "}
+              <button
+                type="button"
+                onClick={() => setShowPicker((v) => !v)}
+                className="underline-offset-4 hover:underline"
+              >
+                {showPicker ? "done" : "not right?"}
+              </button>
+            </>
+          )}
         </p>
 
-        {!isRecording && (
-          <SettingPicker value={setting} onChange={choose} disabled={isBusy} />
+        {!isRecording && showPicker && (
+          <SettingPicker
+            value={setting}
+            onChange={(next) => {
+              choose(next);
+              setShowPicker(false);
+            }}
+            disabled={isBusy}
+          />
         )}
 
         {TALKBACK && isRecording && talk.turns.length > 0 && (
@@ -179,17 +216,17 @@ export function RecorderClient() {
 }
 
 /**
- * Where you are, asked once, before anything starts.
+ * The correction, for when the detector is wrong.
  *
- * Pre-recording only, and deliberately so. The setting governs turn-taking and
- * how much goes on screen for the whole session, so a mid-recording change
- * would leave a session that ran under two sets of rules and is interpretable
- * under neither. It is also a touch target, and the premise of every setting
- * here is that the user's hands are on something else.
+ * Hidden by default: the setting is read off the device and its motion, and
+ * asking anyway would make choosing a mode the first task of every recording
+ * — a task, for someone whose hands are on something else. Pre-recording
+ * only, deliberately so: the setting governs turn-taking and how much goes on
+ * screen for the whole session, and a mid-recording change would leave a
+ * session that ran under two sets of rules and is interpretable under neither.
  *
  * Four options, one row, no icons: the labels are shorter to read than any
- * pictogram is to decode, and this is the last thing between opening the app
- * and starting to think.
+ * pictogram is to decode.
  */
 function SettingPicker({
   value,

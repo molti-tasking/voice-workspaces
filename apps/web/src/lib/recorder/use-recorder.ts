@@ -270,13 +270,16 @@ export function useRecorder() {
   /**
    * Begin recording.
    *
-   * `setting` is where the user says they are. It reaches the server once, at
-   * session creation, and is immutable thereafter: it governs turn-taking and
-   * how much may go on screen, so a recording whose second half ran under
-   * different rules would not be interpretable. Omitted when the browser has
-   * nothing stored, which the server reads as the historical default.
+   * `setting` is where the person is, as detected or corrected. It reaches the
+   * server once, at session creation, and is immutable thereafter: it governs
+   * turn-taking and how much may go on screen, so a recording whose second
+   * half ran under different rules would not be interpretable. Omitted when
+   * nothing could be inferred, which the server reads as the historical default.
    */
-  const start = useCallback(async (setting?: CaptureSetting) => {
+  const start = useCallback(async (
+    setting?: CaptureSetting,
+    source?: "device" | "motion" | "default" | "chosen",
+  ) => {
     if (runningRef.current) return;
 
     const mimeType = pickMimeType();
@@ -322,6 +325,7 @@ export function useRecorder() {
       // when the screen locks.
       wake_lock_active: wakeLockRef.current !== null,
       setting: setting ?? null,
+      setting_source: source ?? null,
     });
 
     const meta: OpenSessionMeta = {
