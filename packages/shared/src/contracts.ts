@@ -120,6 +120,7 @@ export const JOBS = {
   evaluateRules: "evaluate.rules",
   exportOutlet: "export.outlet",
   detectMacros: "detect.macros",
+  indexMemory: "memory.index",
 } as const;
 
 export const WorkspaceExtractPayload = z.object({ userId: z.string() });

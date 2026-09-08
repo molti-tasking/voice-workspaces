@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { captureSession, eq, getDb } from "@voicemural/db";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
-import { buildContextPassages } from "@voicemural/talkback";
+import { buildTurnContext } from "@voicemural/talkback";
 import { pendingConfirmation } from "@voicemural/db/repertoire";
 import { z } from "zod";
 
@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
  * would mean two versions of the one thing that decides whether the agent knows
  * anything, and only one of them would get fixed.
  *
- * Returns PASSAGES, not a finished prompt block. What was said earlier in this
+ * Returns PASSAGES and THREADS, not a finished prompt block. What was said earlier in this
  * drive is deliberately absent: it used to be read from the `utterance` ledger,
  * which trails live speech by 15-25 seconds because it is written by the batch
  * chunk pipeline — so the driver could ask about something they had just said
@@ -76,15 +76,18 @@ export async function POST(req: Request) {
    * bound that matters, and the client refreshes it — the risk of a re-read of
    * the driver's own transcript, by a holder who already proved ownership of
    * the drive, is not worth ending the conversation over. */
-  const [passages, pending] = await Promise.all([
-    buildContextPassages(payload.userId, payload.captureSessionId, parsed.data.said),
+  const [{ passages, threads }, pending] = await Promise.all([
+    buildTurnContext(payload.userId, payload.captureSessionId, parsed.data.said),
     /* Fails open. An unanswered confirmation is worth asking about, but not at
      * the cost of the turn it would have been asked on. */
     pendingConfirmation(payload.captureSessionId).catch(() => null),
   ]);
 
   return NextResponse.json(
-    { passages, pending },
+    // `threads` is where things stand on the topics this turn touches, from
+    // the memory index; empty without MODEL_EMBED. The container puts it
+    // FIRST in its block — stable state before dated quotes.
+    { passages, threads, pending },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

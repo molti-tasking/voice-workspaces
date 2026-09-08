@@ -9,12 +9,14 @@
     "build": "echo 'worker runs from TypeScript source via tsx'",
     "typecheck": "tsc --noEmit",
     "workspace": "tsx src/scripts/workspace-admin.ts",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "memory": "tsx src/scripts/memory-admin.ts"
   },
   "dependencies": {
     "@voicemural/db": "workspace:*",
     "@voicemural/llm": "workspace:*",
     "@voicemural/shared": "workspace:*",
+    "@voicemural/talkback": "workspace:*",
     "@voicemural/telemetry": "workspace:*",
     "@voicemural/workspace": "workspace:*",
     "dotenv": "^17.4.2",

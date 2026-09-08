@@ -29,7 +29,10 @@
     "talkback:eval": "pnpm --filter @voicemural/talkback eval --",
     "workspace:reparse": "pnpm --filter @voicemural/worker workspace reparse",
     "workspace:rebuild": "pnpm --filter @voicemural/worker workspace rebuild",
-    "workspace:show": "pnpm --filter @voicemural/worker workspace show"
+    "workspace:show": "pnpm --filter @voicemural/worker workspace show",
+    "memory:status": "pnpm --filter @voicemural/worker memory status",
+    "memory:reindex": "pnpm --filter @voicemural/worker memory reindex",
+    "memory:show": "pnpm --filter @voicemural/worker memory show"
   },
   "devDependencies": {
     "turbo": "2.10.8",

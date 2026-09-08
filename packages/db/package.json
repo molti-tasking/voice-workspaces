@@ -14,7 +14,8 @@
     "./repertoire": "./src/repertoire.ts",
     "./display": "./src/display.ts",
     "./board": "./src/board.ts",
-    "./drafts": "./src/drafts.ts"
+    "./drafts": "./src/drafts.ts",
+    "./memory": "./src/memory.ts"
   },
   "scripts": {
     "generate": "drizzle-kit generate",

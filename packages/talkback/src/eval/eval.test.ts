@@ -85,7 +85,14 @@ describe("the turn messages, which mirror bot.py", () => {
     expect(composeContextBlock({ passages: [], summary: "  " })).toBeNull();
   });
 
-  it("put passages first, the drive last, then the background line", () => {
+  it("put threads first, then passages, the drive last, then the background line", () => {
+    const withThreads = composeContextBlock({
+      threads: [{ text: "Topic: Field study\n- Open: how many participants" }],
+      passages: [{ when: "yesterday", text: "call Niklas" }],
+    })!;
+    expect(withThreads.indexOf("Where things stand")).toBe(0);
+    expect(withThreads.indexOf("Topic: Field study")).toBeLessThan(withThreads.indexOf("From their past"));
+
     const block = composeContextBlock({
       passages: [{ when: "yesterday", text: "call Niklas" }],
       summary: "- Decision: x",

@@ -13,6 +13,8 @@
     "MODEL_TRANSCRIBE_LIVE",
     "MODEL_CONVERSE",
     "MODEL_SUMMARISE",
+    // The memory index. Optional; read by the worker (to build) and web (to query).
+    "MODEL_EMBED",
     // The talk-back container's own settings. Listed here even though only
     // apps/pipecat reads most of them, because docker-compose.pipecat.yml
     // interpolates them from the same .env that Turbo hashes.
