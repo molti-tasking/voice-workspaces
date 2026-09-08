@@ -1,4 +1,6 @@
 import { MAX_CONTEXT_CHARS, trimToBudget } from "./budget";
+import { mergePassages } from "./memory";
+import { recallFromMemory } from "./memory-search";
 import { describeWhen, loadDriveSoFar, searchTranscripts } from "./retrieval";
 
 /** One labelled passage from a past drive. */
@@ -34,12 +36,46 @@ export async function buildContextPassages(
   captureSessionId: string,
   said: string,
 ): Promise<ContextPassage[]> {
-  const fromThePast = await searchTranscripts(userId, said, {
-    excludeSessionId: captureSessionId,
-  });
-  if (fromThePast.length === 0) return [];
+  return (await buildTurnContext(userId, captureSessionId, said)).passages;
+}
 
-  const labelled = fromThePast.map((passage) => ({
+/** Where things stand on one topic, for the turn. */
+export interface ContextThread {
+  topicId: string;
+  /** "Topic: … / - … / - Open: …" — compact, labelled lines. */
+  text: string;
+}
+
+export interface TurnContext {
+  passages: ContextPassage[];
+  threads: ContextThread[];
+}
+
+/** Rendered threads may take this much of the turn; passages get the rest. */
+const MAX_THREAD_CHARS = 1200;
+
+/**
+ * Everything recall has for one turn: passages from past drives and the state
+ * of the topics what was said touches.
+ *
+ * Both arms of passage search run in parallel — lexical over `utterance`,
+ * semantic over the memory index — and are merged lexical-first. Threads come
+ * only from the index, because "where things stand" is a folded state and has
+ * no lexical form in the ledger. Without MODEL_EMBED the semantic arm returns
+ * nothing and this is exactly the lexical route it replaced.
+ */
+export async function buildTurnContext(
+  userId: string,
+  captureSessionId: string,
+  said: string,
+): Promise<TurnContext> {
+  const [lexical, memory] = await Promise.all([
+    searchTranscripts(userId, said, { excludeSessionId: captureSessionId }),
+    recallFromMemory(userId, said, { excludeSessionId: captureSessionId }),
+  ]);
+
+  const merged = mergePassages(lexical, memory.passages);
+  const labelled = merged.map((passage) => ({
     when: describeWhen(passage.occurredAt),
     text: passage.text,
   }));
@@ -48,7 +84,15 @@ export async function buildContextPassages(
   // forty seconds of speech is a great deal more prompt than four short ones.
   const rendered = labelled.map((p) => `[${p.when}] ${p.text}`);
   const kept = new Set(trimToBudget(rendered, MAX_CONTEXT_CHARS));
-  return labelled.filter((_, i) => kept.has(rendered[i] ?? ""));
+  const passages = labelled.filter((_, i) => kept.has(rendered[i] ?? ""));
+
+  const threadTexts = memory.threads.map((t) => t.text);
+  const keptThreads = new Set(trimToBudget(threadTexts, MAX_THREAD_CHARS));
+  const threads = memory.threads
+    .filter((t) => keptThreads.has(t.text))
+    .map((t) => ({ topicId: t.topicId, text: t.text }));
+
+  return { passages, threads };
 }
 
 /**

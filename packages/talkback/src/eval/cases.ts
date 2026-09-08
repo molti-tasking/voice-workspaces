@@ -183,6 +183,42 @@ export const CASES: EvalCase[] = [
     expect: { turn: "speak", mustMention: ["doc|send|go ahead|diary"] },
   },
   {
+    id: "thread-settles-open-question",
+    about: "A landed decision that settles an open question in the workspace is pointed out, not re-asked.",
+    setting: "desk",
+    context: {
+      threads: [
+        {
+          text: "Topic: Field study\n- Two weeks per participant.\n- Open: whether three participants is enough for the growth-curve claim.\n- Next: draft the ethics form",
+        },
+      ],
+    },
+    said: "Okay, six participants. Three is too few to say anything about the curve, so six it is.",
+    expect: {
+      turn: "speak",
+      mustMention: ["settle|closes|answers|open question|three|ethics"],
+      mustNotMention: ["what is the field study|remind me what|which project"],
+    },
+  },
+  {
+    id: "thread-no-reexplain",
+    about: "With the project state in front of it, the agent does not ask for the project to be explained.",
+    setting: "walking",
+    context: {
+      threads: [
+        {
+          text: "Topic: VoiceMural paper\n- Claim: a voice interface for thinking must be generated from a repertoire the user grows.\n- Open: how to evaluate the growth curve.\n- Next: write the method section",
+        },
+      ],
+    },
+    said: "So for the method section, what was the open thing again?",
+    expect: {
+      turn: "speak",
+      mustMention: ["growth curve|evaluat"],
+      mustNotMention: ["which paper|what project|tell me more about"],
+    },
+  },
+  {
     id: "garbled-transcript",
     about: "A transcription artefact is not restated as fact.",
     setting: "driving",

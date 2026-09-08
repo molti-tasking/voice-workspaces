@@ -13,10 +13,9 @@
  * inside the Pipecat container against ElevenLabs' own streaming websocket, so
  * the model is chosen there by ELEVENLABS_MODEL_ID rather than here.
  *
- * No `embed` role either. It was provisioned for pgvector retrieval that was
- * never built; retrieval is still lexical (see packages/talkback/src/retrieval.ts).
- * Add it back alongside the embedding job rather than leaving a knob that
- * configures nothing.
+ * `embed` is back, together with the job that uses it. It has NO fallback and
+ * is OPTIONAL: unset, the memory index is never built and talk-back's recall
+ * stays lexical, exactly as before. See packages/llm/src/embed.ts.
  */
 export type ModelRole =
   | "transcribe"
@@ -24,7 +23,8 @@ export type ModelRole =
   | "reasoning"
   | "transcribe_live"
   | "converse"
-  | "summarise";
+  | "summarise"
+  | "embed";
 
 const ROLE_ENV: Record<ModelRole, string> = {
   transcribe: "MODEL_TRANSCRIBE",
@@ -33,6 +33,7 @@ const ROLE_ENV: Record<ModelRole, string> = {
   transcribe_live: "MODEL_TRANSCRIBE_LIVE",
   converse: "MODEL_CONVERSE",
   summarise: "MODEL_SUMMARISE",
+  embed: "MODEL_EMBED",
 };
 
 /**
