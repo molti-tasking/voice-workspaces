@@ -9,7 +9,24 @@
  * reimplementing it, so there is still exactly one copy of the code that
  * decides what the agent can remember.
  */
-export { buildContextPassages, loadDriveSoFarText, type ContextPassage } from "./context";
+export {
+  buildContextPassages,
+  buildTurnContext,
+  loadDriveSoFarText,
+  type ContextPassage,
+  type ContextThread,
+  type TurnContext,
+} from "./context";
+export {
+  contentHash,
+  cutPassages,
+  mergePassages,
+  renderTopicForMemory,
+  type CutOptions,
+  type MemoryPassage,
+  type MemoryUtterance,
+} from "./memory";
+export { QUERY_TIMEOUT_MS, recallFromMemory, type MemoryRecall, type Thread } from "./memory-search";
 export { MAX_CONTEXT_CHARS, trimToBudget } from "./budget";
 export { SUMMARY_PROMPT, foldSummary } from "./summary";
 export {

@@ -664,7 +664,7 @@ class Recall(FrameProcessor):
         # the whole mechanism that stops the prompt growing without bound.
         self._message: dict | None = None
 
-    def _fetch(self, said: str) -> tuple[list[dict], dict | None]:
+    def _fetch(self, said: str) -> tuple[list[dict], list[dict], dict | None]:
         req = urllib.request.Request(
             f"{WEB_URL}/api/realtime/context",
             method="POST",
@@ -673,10 +673,24 @@ class Recall(FrameProcessor):
         )
         with urllib.request.urlopen(req, timeout=5) as res:
             body = json.loads(res.read())
-            return body.get("passages") or [], body.get("pending")
+            return body.get("passages") or [], body.get("threads") or [], body.get("pending")
 
-    def _compose(self, passages: list[dict], pending: dict | None = None) -> str | None:
+    def _compose(
+        self,
+        passages: list[dict],
+        pending: dict | None = None,
+        threads: list[dict] | None = None,
+    ) -> str | None:
         sections: list[str] = []
+        # Where things stand FIRST: it is the stable state the dated quotes
+        # below are episodes of, and the prompt tells the model to build on it
+        # rather than ask for the project again. Mirrored in
+        # packages/talkback/src/eval/messages.ts — change one, change both.
+        if threads:
+            sections.append(
+                "Where things stand, from their earlier sessions:\n"
+                + "\n\n".join(t.get("text", "") for t in threads if t.get("text"))
+            )
         if passages:
             sections.append(
                 "From their past recordings:\n"
@@ -760,15 +774,18 @@ class Recall(FrameProcessor):
                 self._drafts.note_user(frame.text)
 
             passages: list[dict] = []
+            threads: list[dict] = []
             pending: dict | None = None
             if self._ticket:
                 try:
                     # The search query is what was said, not who said it.
-                    passages, pending = await asyncio.to_thread(
+                    passages, threads, pending = await asyncio.to_thread(
                         self._fetch, strip_speaker_tag(frame.text)
                     )
                     if passages:
                         logger.info(f"[recall] {len(passages)} passage(s) from past drives")
+                    if threads:
+                        logger.info(f"[recall] {len(threads)} thread(s) from the workspace")
                     if pending:
                         logger.info(f"[recall] pending confirmation {pending.get('invocationId')}")
                 except Exception as err:
@@ -779,7 +796,7 @@ class Recall(FrameProcessor):
 
             # Composed even when retrieval failed: the running summary is local
             # and still worth putting in front of the model.
-            content = self._compose(passages, pending)
+            content = self._compose(passages, pending, threads)
             if content:
                 # REPLACE, never append. Calling add_message every turn used to
                 # stack a new block onto a context that is never pruned — by turn

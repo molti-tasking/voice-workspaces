@@ -2,6 +2,7 @@ import { relations, sql } from "drizzle-orm";
 import {
   bigserial,
   boolean,
+  customType,
   index,
   integer,
   jsonb,
@@ -200,6 +201,15 @@ export const captureSession = pgTable(
      * different fact from having chosen the default, and worth keeping apart.
      */
     voiceId: text("voice_id"),
+    /**
+     * When this drive's speech was folded into the memory index.
+     *
+     * Set by the worker once the session has ended and its passages are
+     * embedded (see apps/worker/src/jobs/index-memory.ts). NULL means not yet,
+     * or never — the index is optional and off without MODEL_EMBED. Cleared to
+     * re-index after a model change.
+     */
+    memoryIndexedAt: timestamp("memory_indexed_at", { withTimezone: true }),
     /** Active mode/persona at capture time, for reconstructing what was in force. */
     activeModeId: uuid("active_mode_id"),
     activePersonaId: uuid("active_persona_id"),
@@ -970,5 +980,92 @@ export const agentDraft = pgTable(
     // retry must not leave two copies of the same draft on the screen.
     uniqueIndex("agent_draft_session_seq_idx").on(t.captureSessionId, t.seq),
     index("agent_draft_session_idx").on(t.captureSessionId),
+  ],
+);
+
+/* ---------------------------------------------------------------------------
+ * Memory
+ *
+ * What talk-back can be reminded of across drives, by MEANING rather than by
+ * word. Two kinds of entry share one table because they are searched the same
+ * way and differ only in what the text is:
+ *
+ *   passage  a stretch of one past drive's transcript — the same 20-40 second
+ *            window lexical recall quotes, embedded once the drive has ended
+ *            and echo- and hallucination-filtered at index time, so a read
+ *            never has to clean it again.
+ *   topic    where things stand on one workspace topic: its current claims,
+ *            open questions and tasks, rendered from the fold. Re-embedded
+ *            whenever the rendering's hash changes, so the entry is always the
+ *            latest state and never a history.
+ *
+ * DERIVED, never authoritative. Everything here can be rebuilt from `utterance`
+ * and `workspace_op`; `pnpm memory:reindex` does exactly that. Nothing reads it
+ * but recall.
+ *
+ * The vector column is UNTYPED on purpose. Embedding models disagree on
+ * dimension, the likely choice here is self-hosted, and pinning 1536 in a
+ * migration would make a model change a schema change. The cost is that no
+ * HNSW/IVF index can be built — pgvector needs a dimension for that — so
+ * search is an exact scan. At one passage per ~40s of speech that is a few
+ * thousand rows for a whole study, which Postgres scans in milliseconds.
+ * `model` is stored per row and search is restricted to the current model, so
+ * a switch leaves no mixed-dimension comparison and a re-index replaces rows
+ * as it goes.
+ * ------------------------------------------------------------------------- */
+
+export const memoryKindEnum = pgEnum("memory_kind", ["passage", "topic"]);
+
+/** pgvector's `vector` with no dimension — see the note above. */
+const untypedVector = customType<{ data: number[]; driverData: string }>({
+  dataType() {
+    return "vector";
+  },
+  toDriver(value: number[]): string {
+    return `[${value.join(",")}]`;
+  },
+  fromDriver(value: string): number[] {
+    return value
+      .slice(1, -1)
+      .split(",")
+      .map((n) => Number(n));
+  },
+});
+
+export const memoryEntry = pgTable(
+  "memory_entry",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    kind: memoryKindEnum("kind").notNull(),
+    /**
+     * What this entry stands for: `<captureSessionId>:<startOffsetMs>` for a
+     * passage, the topic id for a topic. Unique per user and kind, which is
+     * what makes re-indexing an upsert.
+     */
+    refId: text("ref_id").notNull(),
+    /** The drive a passage came from. Null for a topic, which spans drives. */
+    captureSessionId: uuid("capture_session_id").references(() => captureSession.id, {
+      onDelete: "cascade",
+    }),
+    /** When the speech behind it was said (passage) or the topic last moved. */
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    /** The text that was embedded, already cleaned. Quoted back verbatim. */
+    text: text("text").notNull(),
+    /** Of `text`. A topic is re-embedded only when this changes. */
+    contentHash: text("content_hash").notNull(),
+    /** The model that produced `embedding`. Search matches on this. */
+    model: text("model").notNull(),
+    embedding: untypedVector("embedding").notNull(),
+    utteranceIds: jsonb("utterance_ids").$type<string[]>().notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("memory_entry_user_kind_ref_idx").on(t.userId, t.kind, t.refId),
+    index("memory_entry_user_kind_model_idx").on(t.userId, t.kind, t.model),
+    index("memory_entry_session_idx").on(t.captureSessionId),
   ],
 );

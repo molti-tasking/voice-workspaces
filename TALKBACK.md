@@ -163,6 +163,62 @@ Turn it off with `STT_DIARIZE=false`. The **ledger has no speakers**:
 the live path. A field study with passengers wants that asymmetry in the
 ethics form and the limitations section both.
 
+## Memory: recall by meaning, and where things stand
+
+Recall used to be one thing: a lexical search over `utterance`, widened into a
+20-second window around each hit. It still is, and it still runs first — an
+exact name, project or number is what people most often ask to be reminded of,
+and a word match is never a false friend. But it cannot find a paraphrase, and
+it cannot answer "where were we on the field study", because that is a folded
+state and has no lexical form in the ledger.
+
+With `MODEL_EMBED` set, the worker builds a **memory index** (`memory_entry`)
+with two kinds of row:
+
+- **passage** — every ended drive, cut by `cutPassages` into stretches of ~40s
+  or ~700 characters (a gap of 15s starts a new one), echo- and
+  hallucination-filtered at index time so a read never cleans it again, and
+  embedded once. Ended drives only: the live drive is the container's running
+  summary, and a cut over a finished drive is final.
+- **topic** — every live workspace topic rendered by `renderTopicForMemory` as
+  `Topic: … / - claim / - Open: … / - Next: …`, hashed, and re-embedded only
+  when the hash changes. The index always holds the CURRENT state of a topic
+  and never a history; history is what passages are for.
+
+On each turn `/api/realtime/context` runs both arms in parallel
+(`buildTurnContext`): lexical over the ledger, and one embedding of what was
+said against the index. Passages are merged lexical-first (`mergePassages`);
+the two nearest topics come back as **threads**. The container puts threads
+FIRST in its block — stable state before dated quotes — and `talkback-5` tells
+the model to treat them as the person's own notes: never ask for a project it
+already describes, and say so in one sentence when what was just said settles
+an open question or contradicts a claim. That is the "stop making me explain
+it again" requirement, met by the workspace the paper already builds.
+
+Three properties worth holding onto:
+
+- **Off without `MODEL_EMBED`**, and off is exactly the lexical route it
+  replaced. No fallback role: a chat model is not an embedder.
+- **Bounded on the hot path.** The query embedding has a 700ms timeout
+  (`MEMORY_QUERY_TIMEOUT_MS`); on timeout or error the turn proceeds
+  lexical-only with a warning. A cold self-hosted embedder shows up here first.
+  Both searches are relevance-gated by cosine distance, so a question about
+  nothing in particular gets nothing, as lexical search already does.
+- **Derived, never authoritative.** Everything in `memory_entry` rebuilds from
+  `utterance` and `workspace_op`; `pnpm memory:reindex` does it. The vector
+  column is untyped so a model change is a re-index, not a migration — the
+  cost is an exact scan instead of an HNSW index, which at one passage per 40s
+  of speech is a few thousand rows for a whole study.
+
+```sh
+pnpm memory:status               # rows per user, models in use, drives waiting
+pnpm memory:reindex              # after a MODEL_EMBED change
+pnpm memory:show --user <id>     # the topic texts as the model reads them
+```
+
+**Ethics.** A hosted embedding model receives every passage and every query;
+a self-hosted one keeps them at AU. Same line as `STT_PROVIDER`.
+
 ## Drafts: text you keep rather than hear
 
 Ask for something to take away — "draft me an email to William", "write me a
@@ -474,9 +530,14 @@ wired to the conversation that should not have been.
 - **Mode switching by voice is unbuilt.** A `switch to sceptical` direction is
   classified and recorded like any other, but nothing acts on it: the container
   fetches `/session` once per connection and never re-reads the prompt.
-- **Retrieval is lexical**, so it matches words rather than meaning, and common
-  words dominate. `MODEL_EMBED` and the pgvector path were removed rather than
-  left as a knob configuring nothing — add them back with the embedding job.
+- **Memory has no explicit "decisions" type.** Threads are the workspace's
+  topics, whose `claim` blocks carry decisions alongside ideas and
+  conclusions. If drives show the model needing the distinction, the extractor
+  is where to add it, not the index.
+- **No cross-topic contradiction detection.** The index can say where each
+  topic stands; nothing yet compares topics, or papers, against each other.
+  That is the proactive-thread-tracking item, and it also needs the
+  proactivity engine to deliver anything unasked.
 - **Deepgram mishears accented English** — "I'm not so well, it's very late"
   became "I'm not so well at very late". `language` is hard-coded to `en`;
   Deepgram supports `multi`, worth trying on a Danish/English corpus.

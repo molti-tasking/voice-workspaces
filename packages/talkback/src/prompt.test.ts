@@ -100,6 +100,11 @@ describe("the base prompt's stance", () => {
     expect(SYSTEM_PROMPT).not.toMatch(/I'd need more detail/);
   });
 
+  it("builds on where things stand rather than asking for the project again", () => {
+    expect(SYSTEM_PROMPT).toMatch(/WHERE THINGS STAND/);
+    expect(SYSTEM_PROMPT).toMatch(/Never ask them to explain a project it already describes/);
+  });
+
   it("knows what a [Speaker N] tag means", () => {
     expect(SYSTEM_PROMPT).toContain("[Speaker 1]");
     expect(SYSTEM_PROMPT).toMatch(/answer the person who asked/i);

@@ -15,6 +15,8 @@ import type { ChatMessage } from "@voicemural/llm";
 import { composeSystemPrompt, type ComposeInputs, type ComposedPrompt } from "../prompt";
 
 export interface EvalContext {
+  /** Where things stand on the topics touched, as `/api/realtime/context` returns them. */
+  threads?: { text: string }[];
   /** From past drives, as `/api/realtime/context` returns them. */
   passages?: { when: string; text: string }[];
   /** The container's running summary of the current drive. */
@@ -27,6 +29,12 @@ export interface EvalContext {
 export function composeContextBlock(context: EvalContext | undefined): string | null {
   if (!context) return null;
   const sections: string[] = [];
+  if (context.threads?.length) {
+    sections.push(
+      "Where things stand, from their earlier sessions:\n" +
+        context.threads.map((t) => t.text).join("\n\n"),
+    );
+  }
   if (context.passages?.length) {
     sections.push(
       "From their past recordings:\n" +

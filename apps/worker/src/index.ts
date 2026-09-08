@@ -22,6 +22,9 @@ import { BATCH_SIZE, extractWorkspace } from "./jobs/extract-workspace";
 import { classifyChunk } from "./jobs/classify-utterance";
 import { invokePendingDirectives } from "./jobs/invoke-capability";
 import { MACRO_WINDOW_DAYS, MIN_OCCURRENCES, detectMacros } from "./jobs/detect-macros";
+import { indexMemory } from "./jobs/index-memory";
+import { usersNeedingMemoryIndex } from "@voicemural/db/memory";
+import { hasEmbeddings } from "@voicemural/llm";
 import { usersWithPendingSpeech } from "@voicemural/db/workspace";
 import {
   chunksWithUnclassifiedUtterances,
@@ -68,6 +71,16 @@ const MACRO_INTERVAL_MS = Number(process.env.MACRO_INTERVAL_MS ?? 30 * 60 * 1000
  */
 const CLASSIFY_BACKOFF_BASE_MS = 30_000;
 const CLASSIFY_BACKOFF_MAX_MS = 15 * 60 * 1000;
+
+/**
+ * How often the memory index looks for work.
+ *
+ * Slower than the main sweep because its inputs move slowly: a drive is
+ * indexed once, when it ends, and topics only when an extraction has landed.
+ * Nothing on the live path waits for it — a drive that ended a minute ago is
+ * recalled lexically until its passages exist.
+ */
+const MEMORY_INTERVAL_MS = Number(process.env.MEMORY_INTERVAL_MS ?? 60 * 1000);
 
 async function main() {
   const boss = new PgBoss({
@@ -122,6 +135,27 @@ async function main() {
     expireInSeconds: 900,
     retentionSeconds: 60 * 60 * 24 * 3,
   });
+
+  await boss.createQueue(JOBS.indexMemory, {
+    // A cold self-hosted embedder can take a minute to load.
+    retryLimit: 3,
+    retryDelay: 120,
+    retryBackoff: true,
+    expireInSeconds: 900,
+    retentionSeconds: 60 * 60 * 24 * 3,
+  });
+
+  await boss.work(
+    JOBS.indexMemory,
+    // One at a time: the topic step reads the current entries and upserts, and
+    // two runs for the same user would race on the hash comparison.
+    { batchSize: 1 },
+    async (jobs: Job<{ userId: string }>[]) => {
+      for (const job of jobs) {
+        await indexMemory(job.data.userId);
+      }
+    },
+  );
 
   await boss.work(
     JOBS.workspaceExtract,
@@ -209,6 +243,10 @@ async function main() {
 
   await preflightLiteLLM();
 
+  if (!hasEmbeddings()) {
+    log.info("memory index off: MODEL_EMBED unset, talk-back recall stays lexical");
+  }
+
   /**
    * The web app never enqueues anything — it only writes rows. This sweep is
    * the sole producer, which means a worker outage cannot lose work: chunks
@@ -237,6 +275,7 @@ async function main() {
    * worker that has just come up is exactly when a backlog of directions is
    * most likely to be waiting. */
   let lastMacroSweepAt = 0;
+  let lastMemorySweepAt = 0;
   const sweep = async () => {
     if (sweeping) return;
     sweeping = true;
@@ -289,6 +328,15 @@ async function main() {
       const invoked = await invokePendingDirectives(50);
       if (invoked.fired > 0 || invoked.awaitingConfirmation > 0) {
         log.info("invocations", invoked as unknown as Record<string, unknown>);
+      }
+
+      if (hasEmbeddings() && Date.now() - lastMemorySweepAt >= MEMORY_INTERVAL_MS) {
+        lastMemorySweepAt = Date.now();
+        const users = await usersNeedingMemoryIndex();
+        for (const userId of users) {
+          await boss.send(JOBS.indexMemory, { userId }, { singletonKey: userId });
+        }
+        if (users.length > 0) log.info("queued memory indexing", { users: users.length });
       }
 
       if (Date.now() - lastMacroSweepAt >= MACRO_INTERVAL_MS) {
