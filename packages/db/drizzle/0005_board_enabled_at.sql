@@ -1,0 +1,1 @@
+ALTER TABLE "user" ADD COLUMN "board_enabled_at" timestamp with time zone;

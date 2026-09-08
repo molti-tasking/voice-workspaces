@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import { Link } from "@/components/nav-link";
-import { LayoutGrid, Mic } from "lucide-react";
+import { LayoutGrid, Mic, Waypoints } from "lucide-react";
 import {
   loadSessionUtterances,
   loadTimelineMarkers,
   loadTimelineSessions,
 } from "@voicemural/db/workspace";
 import { AccountMenu } from "@/components/account-menu";
+import { BoardLink } from "@/components/board-link";
 import { currentUser } from "@/lib/session";
 import { ScrollToLatest } from "./scroll-to-latest";
 import { SessionBlock } from "./session-block";
@@ -109,6 +110,14 @@ export default async function TimelinePage({
             <LayoutGrid size={14} aria-hidden />
             Workspace
           </Link>
+          <BoardLink userId={user.id} />
+          <Link
+            href="/trajectory"
+            className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
+          >
+            <Waypoints size={14} aria-hidden />
+            Trajectory
+          </Link>
           <AccountMenu />
         </nav>
       </header>
@@ -131,7 +140,7 @@ export default async function TimelinePage({
         ))}
       </div>
 
-      <TimelineActions />
+      <TimelineActions userId={user.id} />
     </div>
   );
 }
@@ -143,7 +152,7 @@ export default async function TimelinePage({
  * — which is exactly where "and now?" gets asked. Fixed rather than in the
  * header for the same reason.
  */
-function TimelineActions() {
+function TimelineActions({ userId }: { userId: string }) {
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-0 z-20 flex justify-center bg-gradient-to-t from-[var(--color-ink)] via-[var(--color-ink)]/90 to-transparent pt-10 pb-6">
       <nav className="pointer-events-auto flex items-center gap-2 rounded-full border border-[var(--color-line)] bg-[var(--color-ink-soft)]/90 p-1.5 shadow-2xl backdrop-blur">
@@ -154,6 +163,11 @@ function TimelineActions() {
           <LayoutGrid size={15} aria-hidden />
           Workspace
         </Link>
+        <BoardLink
+          userId={userId}
+          size={15}
+          className="flex items-center gap-2 rounded-full px-4 py-2 text-sm text-white/70 hover:bg-white/10 hover:text-white"
+        />
         <Link
           href="/record"
           className="flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-white hover:opacity-90"

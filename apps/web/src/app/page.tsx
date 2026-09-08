@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { listSessionsWithStats } from "@voicemural/db/sessions";
 import { formatOffset } from "@voicemural/shared";
 import { AccountMenu } from "@/components/account-menu";
+import { BoardLink } from "@/components/board-link";
 import { configuredProviders } from "@/lib/auth";
 import { providerName } from "@/lib/providers";
 import { currentUser } from "@/lib/session";
@@ -46,6 +47,7 @@ export default async function HomePage() {
           >
             Workspace
           </Link>
+          <BoardLink userId={user.id} />
           <Link
             href="/record"
             className="rounded-lg bg-accent px-4 py-2 font-medium text-white"

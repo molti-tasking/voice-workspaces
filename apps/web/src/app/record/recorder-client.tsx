@@ -1,10 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { formatOffset } from "@voicemural/shared";
+import { useState } from "react";
+import { formatOffset, type CaptureSetting } from "@voicemural/shared";
+// The `/setting` subpath, NOT the package index: the index re-exports
+// retrieval.ts, which imports @voicemural/db, and that drags the Postgres
+// driver into the browser bundle. setting.ts is pure by construction.
+import { SETTINGS, SETTING_PROFILES } from "@voicemural/talkback/setting";
 import { useRecorder } from "@/lib/recorder/use-recorder";
+import { useDetectedSetting } from "@/lib/recorder/detect-setting";
 import { useTalkback } from "@/lib/talkback/use-talkback";
 import type { TalkbackTurn } from "@/lib/talkback/types";
+import { useCues } from "@/lib/display/use-cues";
+import { CuePanel } from "./cue-panel";
+import { DraftPanel } from "./draft-panel";
 
 /**
  * Whether talk-back is built into this bundle.
@@ -26,6 +35,16 @@ export function RecorderClient() {
   const isRecording = rec.status === "recording";
   const isBusy = rec.status === "requesting" || rec.status === "stopping";
 
+  // Inferred from the device and its motion, not asked. See detect-setting.ts.
+  // A correction holds for this visit only: the next recording is detected
+  // afresh, because the situation is what changed, not the person's mind.
+  const detected = useDetectedSetting({ enabled: !isRecording });
+  const [chosen, choose] = useState<CaptureSetting | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
+  const setting = chosen ?? detected.setting;
+  const source = chosen ? "chosen" : detected.source;
+  const profile = SETTING_PROFILES[setting];
+
   // Armed with the recording, for the whole drive — there is no separate
   // gesture to enter it. Everything it does is downstream of the microphone
   // stream the recorder publishes, so capture is unaffected either way.
@@ -34,6 +53,17 @@ export function RecorderClient() {
     enabled: TALKBACK && isRecording,
   });
   const hearing = talk.status === "speaking";
+
+  // Reads Postgres, never the voice container: the panel keeps filling with
+  // talk-back dead, and survives a reload mid-recording. See the route comment.
+  const cues = useCues({
+    captureSessionId: rec.currentSessionId,
+    budgets: {
+      content: profile.maxContentCues,
+      directions: profile.maxDirectionCues,
+    },
+    enabled: isRecording && profile.displayAllowed,
+  });
 
   return (
     <main className="no-touch-fuss flex min-h-dvh flex-col items-center justify-between p-6">
@@ -62,30 +92,69 @@ export function RecorderClient() {
 
         <button
           type="button"
-          onClick={() => (isRecording ? void rec.stop() : void rec.start())}
+          onClick={() => {
+            if (isRecording) {
+              void rec.stop();
+              return;
+            }
+            // iOS gates the accelerometer behind a tap; this is the tap. The
+            // answer arrives for the next recording, and this one starts now.
+            void detected.requestMotion();
+            void rec.start(setting, source);
+          }}
           disabled={isBusy}
           className={[
-            "flex size-56 items-center justify-center rounded-full text-2xl font-medium",
+            "cursor-pointer flex size-56 items-center justify-center rounded-full text-2xl font-medium",
             "transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
             isRecording
               ? hearing
-                ? "bg-[var(--color-accent)] text-white shadow-[0_0_0_18px_var(--color-accent-soft)]"
-                : "bg-[var(--color-accent)] text-white shadow-[0_0_0_12px_var(--color-accent-soft)]"
-              : "bg-[var(--color-ink-soft)] text-white ring-1 ring-[var(--color-line)]",
+                ? "bg-accent text-white shadow-[0_0_0_18px_var(--color-accent-soft)]"
+                : "bg-accent text-white shadow-[0_0_0_12px_var(--color-accent-soft)]"
+              : "bg-ink-soft text-white ring-1 ring-line",
           ].join(" ")}
         >
           {isBusy ? "…" : isRecording ? "Stop" : "Record"}
         </button>
 
         <p className="h-5 text-center text-sm text-white/40">
-          {isRecording
-            ? "Keep this screen on and the app in front."
-            : "Mount the phone, plug it in, then start."}
+          {isRecording ? (
+            profile.hint
+          ) : (
+            <>
+              {chosen ? "" : "Looks like: "}
+              <span className="text-white/70">{profile.label}</span>
+              {" · "}
+              <button
+                type="button"
+                onClick={() => setShowPicker((v) => !v)}
+                className="cursor-pointer underline-offset-4 hover:underline"
+              >
+                {showPicker ? "done" : "not right?"}
+              </button>
+            </>
+          )}
         </p>
+
+        {!isRecording && showPicker && (
+          <SettingPicker
+            value={setting}
+            onChange={(next) => {
+              choose(next);
+              setShowPicker(false);
+            }}
+            disabled={isBusy}
+          />
+        )}
 
         {TALKBACK && isRecording && talk.turns.length > 0 && (
           <Exchange turns={talk.turns} speaking={talk.status === "speaking"} />
         )}
+
+        {isRecording && <CuePanel cues={cues} />}
+
+        {/* Below the cue panel, because a draft is read deliberately and the
+            glanceable lane must keep the position it has trained. */}
+        {isRecording && <DraftPanel drafts={cues.drafts} />}
       </div>
 
       <footer className="w-full max-w-md space-y-3 text-sm">
@@ -116,15 +185,15 @@ export function RecorderClient() {
 
         {rec.lastUploadError && rec.pendingUploads > 0 && (
           <Notice tone="warn" title="Waiting for signal">
-            {rec.pendingUploads} chunk{rec.pendingUploads === 1 ? "" : "s"} held on this
-            device. They upload automatically — nothing is lost.
+            {rec.pendingUploads} chunk{rec.pendingUploads === 1 ? "" : "s"} held
+            on this device. They upload automatically — nothing is lost.
           </Notice>
         )}
 
         {isRecording && !rec.wakeLockActive && (
           <Notice tone="warn" title="Screen may sleep">
-            This browser would not hold a wake lock. If the screen locks, recording
-            stops — set the display timeout to Never.
+            This browser would not hold a wake lock. If the screen locks,
+            recording stops — set the display timeout to Never.
           </Notice>
         )}
 
@@ -155,6 +224,57 @@ export function RecorderClient() {
 }
 
 /**
+ * The correction, for when the detector is wrong.
+ *
+ * Hidden by default: the setting is read off the device and its motion, and
+ * asking anyway would make choosing a mode the first task of every recording
+ * — a task, for someone whose hands are on something else. Pre-recording
+ * only, deliberately so: the setting governs turn-taking and how much goes on
+ * screen for the whole session, and a mid-recording change would leave a
+ * session that ran under two sets of rules and is interpretable under neither.
+ *
+ * Four options, one row, no icons: the labels are shorter to read than any
+ * pictogram is to decode.
+ */
+function SettingPicker({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: CaptureSetting;
+  onChange: (next: CaptureSetting) => void;
+  disabled: boolean;
+}) {
+  return (
+    <fieldset
+      className="flex w-full max-w-md flex-wrap justify-center gap-1.5"
+      disabled={disabled}
+    >
+      <legend className="sr-only">Where are you?</legend>
+      {SETTINGS.map((option) => {
+        const active = option === value;
+        return (
+          <button
+            key={option}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(option)}
+            className={[
+              "rounded-full px-3.5 py-1.5 text-sm transition-colors disabled:opacity-50",
+              active
+                ? "bg-white/12 text-white ring-1 ring-white/25"
+                : "text-white/40 hover:text-white/70",
+            ].join(" ")}
+          >
+            {SETTING_PROFILES[option].label}
+          </button>
+        );
+      })}
+    </fieldset>
+  );
+}
+
+/**
  * The conversation as it happens.
  *
  * BOTH halves, because only one of them was ever visible and that made the
@@ -169,7 +289,13 @@ export function RecorderClient() {
  * Sided like `/sessions/[id]` — agent tinted and boxed, driver plain — so the
  * live view and the recorded one read the same way.
  */
-function Exchange({ turns, speaking }: { turns: TalkbackTurn[]; speaking: boolean }) {
+function Exchange({
+  turns,
+  speaking,
+}: {
+  turns: TalkbackTurn[];
+  speaking: boolean;
+}) {
   const last = turns[turns.length - 1];
 
   return (
@@ -186,7 +312,9 @@ function Exchange({ turns, speaking }: { turns: TalkbackTurn[]; speaking: boolea
         return (
           <li
             key={turn.id}
-            className={turn.role === "agent" ? "flex justify-start" : "flex justify-end"}
+            className={
+              turn.role === "agent" ? "flex justify-start" : "flex justify-end"
+            }
           >
             <span
               className={[
@@ -242,7 +370,10 @@ function StatusPills({
           which is the difference between a thin answer and a broken one. */}
       {memory === "unavailable" && <Pill label="no memory" tone="warn" />}
       {pending > 0 && (
-        <Pill label={uploading ? `↑ ${pending}` : `${pending} queued`} tone="warn" />
+        <Pill
+          label={uploading ? `↑ ${pending}` : `${pending} queued`}
+          tone="warn"
+        />
       )}
       {pending === 0 && !recording && <Pill label="synced" tone="ok" />}
     </div>
@@ -254,7 +385,9 @@ function Pill({ label, tone }: { label: string; tone: "ok" | "warn" }) {
     <span
       className={[
         "rounded-full px-2 py-0.5 font-mono",
-        tone === "ok" ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-300",
+        tone === "ok"
+          ? "bg-emerald-500/15 text-emerald-300"
+          : "bg-amber-500/15 text-amber-300",
       ].join(" ")}
     >
       {label}

@@ -15,16 +15,49 @@ import { closeDb, eq, getDb } from "@voicemural/db";
 import { user } from "@voicemural/db/schema";
 import {
   appendOps,
+  appendUserOp,
   clearExtractions,
   clearOps,
   loadExtractions,
   loadOps,
+  loadUserOps,
   resetCursor,
   sessionIdsForUtterances,
 } from "@voicemural/db/workspace";
+import type { StoredOp } from "@voicemural/workspace";
 import { foldWorkspace, parseExtractionResponse } from "@voicemural/workspace";
 import { extractWorkspaceFully } from "../jobs/extract-workspace";
 import { log } from "@voicemural/telemetry";
+
+/**
+ * The manual board gestures, which `clearOps` would otherwise delete.
+ *
+ * They are the measurement — whether a person kept or reversed what speech did
+ * to their board — so both rebuild and reparse save them before clearing and
+ * re-append them afterwards. Ids are the client's own, so a same-prompt
+ * rebuild restores every gesture exactly: the block ids they reference are
+ * deterministic and come back identical.
+ *
+ * After a PROMPT_VERSION bump every topic and block id changes (`inputHash`
+ * includes the version), so the restored ops reference ids that no longer
+ * exist. The fold already handles that: a revise whose topic and target are
+ * both unknown has nowhere to land and is skipped, and so is a retire of an
+ * unknown block. The gestures stay in the ledger — the pre-bump measurement is
+ * still readable from `loadUserOps` — and nothing new is needed in the fold.
+ */
+async function restoreUserOps(userId: string, manual: StoredOp[]): Promise<number> {
+  let restored = 0;
+  for (const stored of manual) {
+    const result = await appendUserOp({
+      userId,
+      id: stored.id,
+      op: stored.op,
+      occurredAt: stored.occurredAt,
+    });
+    if (result === "inserted") restored += 1;
+  }
+  return restored;
+}
 
 async function targetUsers(explicit?: string): Promise<string[]> {
   if (explicit) return [explicit];
@@ -46,6 +79,7 @@ async function reparse(userId: string): Promise<void> {
     return;
   }
 
+  const manual = await loadUserOps(userId);
   await clearOps(userId);
 
   let opsTotal = 0;
@@ -74,9 +108,12 @@ async function reparse(userId: string): Promise<void> {
     });
   }
 
+  const restored = await restoreUserOps(userId, manual);
+
   console.log(
     `  ${userId}: ${extractions.length} extractions → ${opsTotal} ops` +
-      (failed > 0 ? ` (${failed} unparseable)` : ""),
+      (failed > 0 ? ` (${failed} unparseable)` : "") +
+      (restored > 0 ? `, ${restored} board gesture(s) restored` : ""),
   );
 }
 
@@ -88,6 +125,7 @@ async function reparse(userId: string): Promise<void> {
  * and pays for fresh calls — only correct after a deliberate PROMPT_VERSION bump.
  */
 async function rebuild(userId: string, force: boolean): Promise<void> {
+  const manual = await loadUserOps(userId);
   await clearOps(userId);
   await resetCursor(userId);
   if (force) await clearExtractions(userId);
@@ -97,9 +135,12 @@ async function rebuild(userId: string, force: boolean): Promise<void> {
   const ops = outcomes.reduce((n, o) => n + o.opsAppended, 0);
   const tokens = outcomes.reduce((n, o) => n + o.totalTokens, 0);
 
+  const restored = await restoreUserOps(userId, manual);
+
   console.log(
     `  ${userId}: ${outcomes.length} batches → ${ops} ops, ` +
-      `${calls} model call(s)${tokens > 0 ? `, ${tokens} tokens` : ""}`,
+      `${calls} model call(s)${tokens > 0 ? `, ${tokens} tokens` : ""}` +
+      (restored > 0 ? `, ${restored} board gesture(s) restored` : ""),
   );
 }
 
@@ -110,7 +151,8 @@ async function show(userId: string): Promise<void> {
   for (const topic of state.topics) {
     console.log(`\n  ## ${topic.title}`);
     for (const block of state.blocksByTopic.get(topic.id) ?? []) {
-      console.log(`    (${block.kind}) ${block.text}`);
+      const kind = block.kind === "task" ? `task/${block.state ?? "open"}` : block.kind;
+      console.log(`    (${kind}) ${block.text}`);
     }
   }
   console.log("");

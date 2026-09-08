@@ -22,6 +22,15 @@ vi.mock("@voicemural/llm", async (importOriginal) => {
   return { ...actual, chat: chatMock };
 });
 
+/** What each extraction reported, so the board's yield counts can be asserted. */
+const captureMock = vi.fn();
+const captureGenerationMock = vi.fn();
+
+vi.mock("@voicemural/telemetry", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@voicemural/telemetry")>();
+  return { ...actual, capture: captureMock, captureGeneration: captureGenerationMock };
+});
+
 const { closeDb, eq, getDb } = await import("@voicemural/db");
 const { audioChunk, captureSession, user, utterance } = await import(
   "@voicemural/db/schema"
@@ -33,7 +42,7 @@ const {
   loadOps,
   resetCursor,
 } = await import("@voicemural/db/workspace");
-const { foldWorkspace } = await import("@voicemural/workspace");
+const { foldWorkspace, transitionsOf } = await import("@voicemural/workspace");
 const { extractWorkspace } = await import("./extract-workspace");
 
 const USER_ID = "test-extract-user";
@@ -240,6 +249,92 @@ describeIfDb("extractWorkspace", () => {
 
     const [stored] = await loadExtractions(USER_ID);
     expect(stored?.parseWarnings.length).toBe(1);
+  });
+
+  it("moves a task through speech, and reports the move", async () => {
+    // Sixteen lines: two batches. The first adds a task in `next`; the second
+    // reports progress on it — the same text, a new state — so the board
+    // should hold one card, in `done`, with a single speech transition.
+    await seedTranscript([
+      ...LINES,
+      "I need to email William about the start date tomorrow.",
+      "That is the first thing.",
+      "Actually, I sent William the email this morning.",
+      "So that one is sorted.",
+      "Now the ethics form.",
+      "It needs a data management plan.",
+      "I should look at the template.",
+      "That is enough for today.",
+    ]);
+
+    const first = JSON.stringify({
+      ops: [
+        { type: "create_topic", id: "new:research-stay", title: "Research stay" },
+        {
+          type: "add_block",
+          topic: "new:research-stay",
+          kind: "task",
+          text: "Email William about the start date.",
+          state: "next",
+          sources: ["*"],
+        },
+      ],
+    });
+    chatMock.mockReset();
+    captureMock.mockReset();
+    captureGenerationMock.mockReset();
+    chatMock.mockResolvedValueOnce(reply(first));
+
+    await extractWorkspace(USER_ID);
+    const after = foldWorkspace(await loadOps(USER_ID));
+    const [card] = [...after.allBlocks.values()].filter((b) => b.kind === "task");
+    expect(card?.state).toBe("next");
+
+    const second = JSON.stringify({
+      ops: [
+        {
+          type: "revise_block",
+          supersedes: card!.id,
+          topic: after.topics[0]!.id,
+          kind: "task",
+          text: "Email William about the start date.",
+          state: "done",
+          sources: ["*"],
+        },
+      ],
+    });
+    chatMock.mockResolvedValueOnce(reply(second));
+    await extractWorkspace(USER_ID);
+
+    const ops = await loadOps(USER_ID);
+    const state = foldWorkspace(ops);
+    const visible = [...state.blocksByTopic.values()].flat().filter((b) => b.kind === "task");
+    expect(visible).toHaveLength(1);
+    expect(visible[0]?.state).toBe("done");
+
+    const transitions = transitionsOf(ops);
+    const moves = transitions.filter((t) => t.from !== null);
+    expect(moves).toHaveLength(1);
+    expect(moves[0]).toMatchObject({ from: "next", to: "done", via: "speech" });
+
+    // Both calls were live, so the yield lands on the generation's properties.
+    expect(captureGenerationMock).toHaveBeenCalledTimes(2);
+    expect(captureGenerationMock.mock.calls[0]?.[0]?.properties).toMatchObject({
+      task_ops: 1,
+      task_transitions: 0,
+    });
+    expect(captureGenerationMock.mock.calls[1]?.[0]?.properties).toMatchObject({
+      task_ops: 1,
+      task_transitions: 1,
+    });
+
+    // Rebuilt from the cache, the same batch reports the same yield.
+    await clearOps(USER_ID);
+    await resetCursor(USER_ID);
+    await extractWorkspace(USER_ID);
+    await extractWorkspace(USER_ID);
+    const cached = captureMock.mock.calls.filter((c) => c[1] === "workspace_extraction_cached");
+    expect(cached.map((c) => c[2]?.task_transitions)).toEqual([0, 1]);
   });
 
   it("does nothing when there is no new speech", async () => {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { captureSession, eq, getDb } from "@voicemural/db";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import { buildContextPassages } from "@voicemural/talkback";
+import { pendingConfirmation } from "@voicemural/db/repertoire";
 import { z } from "zod";
 
 export const runtime = "nodejs";
@@ -29,6 +30,13 @@ export const dynamic = "force-dynamic";
  * `capture_session.userId` rather than trusted from the payload — a guest whose
  * account was upgraded mid-drive holds a ticket naming a user row that no
  * longer exists.
+ *
+ * It also carries any PENDING CONFIRMATION, piggybacked rather than given its
+ * own endpoint. An outbound or irreversible action does not fire until the
+ * person agrees, and the only channel to ask them is the conversation — so the
+ * question has to reach the container on the turn path. A second round trip
+ * here would double the pre-first-token cost on the one route whose entire
+ * rationale is latency, to carry a row that is null almost every turn.
  */
 
 const Body = z.object({
@@ -68,11 +76,15 @@ export async function POST(req: Request) {
    * bound that matters, and the client refreshes it — the risk of a re-read of
    * the driver's own transcript, by a holder who already proved ownership of
    * the drive, is not worth ending the conversation over. */
-  const passages = await buildContextPassages(
-    payload.userId,
-    payload.captureSessionId,
-    parsed.data.said,
-  );
+  const [passages, pending] = await Promise.all([
+    buildContextPassages(payload.userId, payload.captureSessionId, parsed.data.said),
+    /* Fails open. An unanswered confirmation is worth asking about, but not at
+     * the cost of the turn it would have been asked on. */
+    pendingConfirmation(payload.captureSessionId).catch(() => null),
+  ]);
 
-  return NextResponse.json({ passages }, { headers: { "Cache-Control": "no-store" } });
+  return NextResponse.json(
+    { passages, pending },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

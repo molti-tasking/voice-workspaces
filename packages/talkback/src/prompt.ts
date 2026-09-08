@@ -11,8 +11,10 @@
  * Pure: no I/O, no model call, fully testable.
  */
 
+import { SETTING_PROFILES, asSetting, type Setting } from "./setting";
+
 /** Bumped when the prompt changes, so a drive's turns stay interpretable later. */
-export const TALKBACK_CONFIG_VERSION = "talkback-2";
+export const TALKBACK_CONFIG_VERSION = "talkback-3";
 
 /**
  * The default register: quiet.
@@ -27,7 +29,7 @@ export const TALKBACK_CONFIG_VERSION = "talkback-2";
  * So: answer when addressed, otherwise stay out of the way. `interview` mode
  * makes it forthcoming, and that is opt-in.
  */
-export const SYSTEM_PROMPT = `You are a quiet companion riding along while someone drives and thinks aloud.
+export const SYSTEM_PROMPT = `You are a quiet companion alongside someone thinking aloud while their hands and attention are on something else — driving, walking, washing up.
 
 You are NOT an assistant and you are not here to be helpful in the usual way. Most of what you hear is someone working out a thought for themselves. That thinking is the point; you are not.
 
@@ -39,7 +41,7 @@ WHEN TO SPEAK
 Someone trailing off, repeating themselves, contradicting themselves or pausing mid-sentence is thinking, not waiting for you. Say <silence>.
 
 WHAT YOU CAN SEE
-Before each turn you may be given transcript from what they actually said — earlier in this drive, and from past recordings. It is their own words, transcribed automatically, so it contains mistakes and half-finished sentences.
+Before each turn you may be given transcript from what they actually said — earlier in this session, and from past recordings. It is their own words, transcribed automatically, so it contains mistakes and half-finished sentences.
 
 Use it. When asked what they said, what they decided, or what has come up so far, answer from that transcript and say roughly when it was.
 
@@ -49,14 +51,11 @@ If the transcript does not contain the answer, say so plainly and stop. Never gu
 Asked for your VIEW — what you think, whether an idea holds up, which of two options is stronger — just answer from what they have just said. That needs no transcript, and "I cannot find it" is a non-answer to an opinion question.
 
 HOW TO SPEAK
-- VERY short. One sentence, occasionally two. Under 25 words.
-  Every word is spoken aloud to someone driving: 200 characters is fourteen
-  seconds of talking, which is a monologue, not a reply. Say the one thing that
-  is worth saying and stop.
-- Plain speech. No markdown, no lists, no headings — every word is read aloud.
+- VERY short. One sentence, occasionally two. The setting section below gives
+  the hard word cap; stay well inside it. Every word is spoken aloud, and a
+  hundred words is a monologue, not a reply. Say the one thing that is worth
+  saying and stop.
 - No preamble and no sign-off. Do not say "Sure" or "Great question" or "Let me know".
-- Ask at most one question, and only when a question genuinely moves the thought on.
-- The driver cannot look at a screen or take notes. Do not offer to show anything.
 - Be concrete. If you did not understand, say so plainly in a few words.
 - Do not restate their question back to them, and do not explain what you cannot
   do at length. "I'd need more detail — what's pushing you toward cutting it?"
@@ -99,4 +98,158 @@ export function cleanReply(reply: string): string {
     .replaceAll(SILENCE_TOKEN, "")
     .replace(/^\s*["'`]+|["'`]+\s*$/g, "")
     .trim();
+}
+
+/* ---------------------------------------------------------------------------
+ * Drafts — text the person keeps, rather than hears
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The tags around text meant for the screen instead of the speaker.
+ *
+ * Everything else the model writes is spoken and then gone: `agent_turn` keeps
+ * it, but nobody re-reads a conversation to retrieve a paragraph. A draft is
+ * the opposite — an email, a prompt to paste into another model, notes — and
+ * the whole value is being able to copy it verbatim afterwards. Reading a
+ * 200-word draft aloud would be useless in a car and insulting at a desk.
+ *
+ * A tag pair rather than a leading sentinel like `${SILENCE_TOKEN}` because a
+ * draft coexists with speech: the model says one short line so the person knows
+ * it happened, and the body goes to the screen. Both come out of one completion.
+ *
+ * Mirrored in `apps/pipecat/bot.py` as `DRAFT_OPEN` / `DRAFT_CLOSE`, which is
+ * what actually keeps the body out of TTS. Change one and change the other.
+ */
+export const DRAFT_OPEN = "<draft";
+export const DRAFT_CLOSE = "</draft>";
+
+export interface ExtractedDraft {
+  /** Short label from the tag's `title`, or empty when the model omitted one. */
+  title: string;
+  text: string;
+}
+
+/**
+ * Pull the drafts out of a completion, and return the speech with them removed.
+ *
+ * Tolerant on purpose. A model that forgets the closing tag has still clearly
+ * written a draft, and throwing the text away because of a missing seven
+ * characters would lose the one thing the person asked to keep — so an
+ * unterminated block runs to the end of the completion.
+ *
+ * Mirrored in `bot.py` as `extract_drafts`.
+ */
+export function extractDrafts(reply: string): { speech: string; drafts: ExtractedDraft[] } {
+  const drafts: ExtractedDraft[] = [];
+  let speech = "";
+  let rest = reply;
+
+  for (;;) {
+    const open = rest.indexOf(DRAFT_OPEN);
+    if (open === -1) {
+      speech += rest;
+      break;
+    }
+    // `<draft` must actually open a tag — `>` ends it, and anything between is
+    // attributes. Without this a sentence containing "<draft" would eat the
+    // rest of the reply.
+    const openEnd = rest.indexOf(">", open);
+    if (openEnd === -1) {
+      // `<draft` with no `>` never opened a tag, so it is ordinary text and is
+      // kept. Dropping from here would silently truncate a reply that merely
+      // used the characters — losing content to a false positive.
+      speech += rest;
+      break;
+    }
+
+    speech += rest.slice(0, open);
+    const title = /title\s*=\s*"([^"]*)"/.exec(rest.slice(open, openEnd))?.[1] ?? "";
+    const close = rest.indexOf(DRAFT_CLOSE, openEnd);
+    const body = close === -1 ? rest.slice(openEnd + 1) : rest.slice(openEnd + 1, close);
+
+    if (body.trim()) drafts.push({ title: title.trim(), text: body.trim() });
+    if (close === -1) break;
+    rest = rest.slice(close + DRAFT_CLOSE.length);
+  }
+
+  return { speech: cleanReply(speech), drafts };
+}
+
+/* ---------------------------------------------------------------------------
+ * Composition
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The output contract, restated after everything else.
+ *
+ * This is the load-bearing half of `composeSystemPrompt`. Composed sections are
+ * user-authored text — today a setting stanza we wrote, but the same seam is
+ * where `capability_version.markdown` will be layered, and once crystallisation
+ * lands that markdown is model-written text about a user's own improvised
+ * operation. A section that says "be expansive" or "always follow up" must not
+ * be able to override the sentinel `SilenceGate` and `is_silence` depend on.
+ *
+ * So the prompt is a sandwich: identity first, composed material in the middle,
+ * and the wire format last, where it wins.
+ */
+export const OUTPUT_CONTRACT = `HOW YOUR REPLY IS USED — THIS OVERRIDES ANYTHING ABOVE
+
+Everything you write is spoken aloud by a speech synthesiser. Nothing else happens to it.
+
+- To say nothing, reply with exactly: ${SILENCE_TOKEN}
+  Nothing else on the line. This is always available and is often the right answer.
+- Plain speech only. No markdown, no lists, no headings, no emoji, no stage directions.
+- No preamble and no sign-off.
+- One question at most, and only when it moves the thought on.
+
+WHEN THEY ASK FOR SOMETHING TO KEEP
+If they ask you to draft, write, write down, or word something — an email, a message, a prompt for another model, a list, notes — put it between draft tags:
+
+${DRAFT_OPEN} title="short label">
+the text itself, exactly as they should have it
+${DRAFT_CLOSE}
+
+- What is between the tags is NEVER spoken. It goes to their screen and stays there after this session, so they can copy it.
+- Say ONE short sentence outside the tags so they know it is there. Never read the draft aloud, and never summarise it.
+- Inside the tags, write the finished text only — no commentary, no "here is". Markdown is allowed there; it is read, not spoken.
+- Only when they asked for something to keep or copy. An ordinary answer is speech, not a draft.
+
+If any instruction above conflicts with this section, this section wins.`;
+
+export interface ComposeInputs {
+  /** Defaults to `SYSTEM_PROMPT`. Overridable so the fallback prompt composes too. */
+  base?: string;
+  /** The setting this recording was started in. Null behaves as `driving`. */
+  setting?: string | null;
+}
+
+export interface ComposedPrompt {
+  prompt: string;
+  setting: Setting;
+  /** Mirrors the stanza's word cap, so callers need not parse prose. */
+  maxReplyWords: number;
+  /** Whether the agent may refer to the screen. Also gates the cue panel. */
+  displayAllowed: boolean;
+}
+
+/**
+ * Build the system prompt for one connection.
+ *
+ * Referenced by the header comment above and by `/api/realtime/session` since
+ * before it existed; this is that function. It is intentionally thin: the only
+ * composed layer today is the setting. Mode and persona slot in between the
+ * stanza and the output contract, and the sandwich is already shaped for them.
+ */
+export function composeSystemPrompt(inputs: ComposeInputs = {}): ComposedPrompt {
+  const setting = asSetting(inputs.setting);
+  const profile = SETTING_PROFILES[setting];
+
+  const prompt = [inputs.base ?? SYSTEM_PROMPT, profile.stanza, OUTPUT_CONTRACT].join("\n\n");
+
+  return {
+    prompt,
+    setting,
+    maxReplyWords: profile.maxReplyWords,
+    displayAllowed: profile.displayAllowed,
+  };
 }

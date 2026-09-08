@@ -108,6 +108,10 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
       // should not be discovered afterwards from thin answers.
       if (!ticket) patch({ memory: "unavailable" });
 
+      /* One key per agent turn, so every `bot-output` for that reply lands in
+       * the same bubble. Reset when the bot starts speaking again. */
+      let agentTurnKey = `agent-${Date.now()}`;
+
       const next = new PipecatClient({
         transport: new SmallWebRTCTransport({
           /* THE BROWSER NEEDS STUN TOO, and forgetting it fails in a way that
@@ -136,7 +140,10 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
         enableMic: true,
         enableCam: false,
         callbacks: {
-          onBotStartedSpeaking: () => patch({ status: "speaking" }),
+          onBotStartedSpeaking: () => {
+            agentTurnKey = `agent-${Date.now()}`;
+            patch({ status: "speaking" });
+          },
           onBotStoppedSpeaking: () => patch({ status: "listening" }),
           onDisconnected: () => {
             if (!disposed)
@@ -161,25 +168,36 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
         setState((prev) => {
           const turns = [...prev.turns];
           const last = turns[turns.length - 1];
-          // The bot streams one segment as several events, so a matching key
-          // REPLACES rather than appends — otherwise a single sentence arrives
-          // as a column of fragments.
-          if (last && key && last.id === key) {
-            turns[turns.length - 1] = { ...last, text: trimmed };
+
+          /* ACCUMULATE INTO THE CURRENT TURN, and never trust the event to be
+           * emitted once.
+           *
+           * A reply arrives as several `bot-output` events, and on the RTVI 1.x
+           * wire format — which is what Pipecat serves this client — they carry
+           * no stable `segment_id` and the same sentence is emitted more than
+           * once. Keying on the id alone produced a column of duplicate bubbles:
+           * "I'm doing well, thank you." three times for one reply.
+           *
+           * So the turn owns the bubble, not the event. Text already present is
+           * dropped, anything new is appended, and the bubble closes when the
+           * other speaker starts. That is correct for both wire formats and for
+           * whatever the next one does. */
+          if (last && last.id === key) {
+            const already = last.text.includes(trimmed);
+            if (already) return prev;
+            turns[turns.length - 1] = { ...last, text: `${last.text} ${trimmed}`.trim() };
           } else {
-            turns.push({
-              id: key ?? `${role}-${Date.now()}-${turns.length}`,
-              role,
-              text: trimmed,
-            });
+            turns.push({ id: key ?? `${role}-${Date.now()}-${turns.length}`, role, text: trimmed });
           }
+          const merged = turns[turns.length - 1]!;
           return {
             ...prev,
             turns: turns.slice(-MAX_VISIBLE_TURNS),
-            reply: role === "agent" ? trimmed : prev.reply,
+            reply: role === "agent" ? merged.text : prev.reply,
           };
         });
       };
+
 
       next.on(RTVIEvent.UserTranscript, (data: TranscriptData) => {
         // Interim results rewrite themselves several times a second. Only the
@@ -191,11 +209,7 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
         // A turn the silence gate declined never reaches the speaker, so it
         // must not appear here either — the screen should show what was said.
         if (data?.will_be_spoken === false) return;
-        append(
-          "agent",
-          data.text,
-          data.segment_id != null ? `agent-${data.segment_id}` : undefined,
-        );
+        append("agent", data.text, agentTurnKey);
       });
 
       next.on(

@@ -39,7 +39,7 @@ export function GuestButton() {
           router.push("/record");
           router.refresh();
         }}
-        className="w-full rounded-lg bg-[var(--color-accent)] px-5 py-3 font-medium text-white hover:opacity-90 disabled:opacity-60"
+        className="w-full rounded-lg bg-accent px-5 py-3 font-medium text-white hover:opacity-90 disabled:opacity-60"
       >
         {pending ? "Starting…" : "Start recording"}
       </button>
@@ -73,10 +73,11 @@ export function SignInButton({
         capture("sign_in_started", { provider, location });
         void signIn.social({ provider, callbackURL: "/" });
       }}
-      className="w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-ink-soft)] px-5 py-3 font-medium text-white hover:bg-white/10 disabled:opacity-60"
+      className="cursor-pointer w-full rounded-lg border border-line bg-ink-soft px-5 py-3 font-medium text-white hover:bg-white/10 disabled:opacity-60"
     >
-      {pending ? "Redirecting…" : (label ?? `Sign in with ${providerName(provider)}`)}
+      {pending
+        ? "Redirecting…"
+        : (label ?? `Sign in with ${providerName(provider)}`)}
     </button>
   );
 }
-

@@ -3,6 +3,8 @@ import { slugify } from "./fold";
 import { TOPIC_ICONS, normaliseIcon } from "./icons";
 import {
   BlockKind,
+  TaskState,
+  type Block,
   type TranscriptSegment,
   type WorkspaceOp,
   type WorkspaceState,
@@ -14,10 +16,10 @@ import {
  * BUMP THIS whenever SYSTEM_PROMPT or the wire format below changes. The
  * extraction cache is keyed on it, so forgetting means silently serving ops
  * derived from an older prompt — a bug with no symptom until the results look
- * subtly wrong. `prompt-version.test.ts` fails if the prompt text drifts
- * without the version moving.
+ * subtly wrong. The "PROMPT_VERSION discipline" test in `extract.test.ts`
+ * fails if the prompt text drifts without the version moving.
  */
-export const PROMPT_VERSION = "3";
+export const PROMPT_VERSION = "4";
 
 /** Fixed seed sent with every request, so a forced re-run is as stable as the backend allows. */
 export const EXTRACTION_SEED = 7;
@@ -85,6 +87,24 @@ ADD (genuinely new):
   hear: "The stay has to be three to six months."
   → add_block. A constraint, not a refinement of the preference.
 
+# Progress on an existing task
+
+When the speech reports progress on a task the workspace already holds — it got
+done, it got started, it got dropped, it moved up or down the queue — emit
+**revise_block** with kind "task", the SAME text, and the new "state". That is
+the whole op: the state changes, the wording does not.
+
+Never add a second task for the same job. One job is one task, however many
+times it is mentioned.
+
+A mention that changes neither the state nor sharpens the wording is nothing.
+"Still need to email William" about a task already open → no op.
+
+PROGRESS (state changes, text does not):
+  have: (task/next) "Email William about the start date."  [id: b7]
+  hear: "Sent William the email this morning."
+  → {"type":"revise_block","supersedes":"b7","topic":"…","kind":"task","text":"Email William about the start date.","state":"done","sources":["…"]}
+
 ## Topics
 One topic per distinct subject. People jump between topics mid-sentence and
 return to them across days.
@@ -108,6 +128,17 @@ return to them across days.
 - "meta"     — the speaker commenting on their own content rather than adding to
                it ("that is the abstract", "this is the interesting bit",
                "mark that", "remind me to write this up").
+- "task"     — something the speaker has committed to do, or is deciding
+               whether to do. Carries a "state": THE TENSE OF THE SPEECH.
+                 "open"    — "I should…", "at some point", "I need to"
+                 "next"    — "tomorrow", "first thing", "when I get in"
+                 "doing"   — "I'm on it", "I've started", "I'm halfway through"
+                 "done"    — "that's sorted", "sent it", "finished that"
+                 "dropped" — "forget that", "not doing that after all"
+               Parking or deferring a task ("park it till she's back", "not
+               this week") is "open", NOT "dropped". The month test still
+               applies: a task is one they would want on a list, not "I should
+               probably eat something".
 
 ### Facts, because this is the one most often got wrong
 "The research stay has to be at least three and at most six months long" is not
@@ -152,12 +183,16 @@ given to you. For a NEW topic, invent a handle of the form "new:slug".
 {"type":"merge_topics","from":"<topicId>","into":"<topicId>"}
 {"type":"add_block","topic":"<topicId|new:handle>","kind":"claim","text":"...","sources":["<utteranceId>"]}
 {"type":"add_block","topic":"<topicId|new:handle>","kind":"fact","label":"Duration","text":"3-6 months","sources":["<utteranceId>"]}
+{"type":"add_block","topic":"<topicId|new:handle>","kind":"task","text":"Email William about the start date.","state":"next","sources":["<utteranceId>"]}
 {"type":"revise_block","supersedes":"<blockId>","topic":"<topicId|new:handle>","kind":"claim","text":"...","sources":["<utteranceId>"]}
+{"type":"revise_block","supersedes":"<blockId>","topic":"<topicId>","kind":"task","text":"<same text>","state":"done","sources":["<utteranceId>"]}
 {"type":"retire_block","block":"<blockId>"}
 {"type":"move_block","block":"<blockId>","topic":"<topicId>"}
 
 "icon" must be exactly one of:
 ${TOPIC_ICONS.join(", ")}
+
+"state" must be exactly one of: ${TaskState.options.join(", ")}
 
 "sources" lists the utterance ids a block came from — always at least one. This
 is how the workspace traces back to what was actually said.`;
@@ -181,16 +216,36 @@ export function renderState(state: WorkspaceState): string {
   for (const topic of state.topics.slice(0, MAX_TOPICS_IN_PROMPT)) {
     lines.push(`## ${topic.title}  [id: ${topic.id}]`);
     const blocks = state.blocksByTopic.get(topic.id) ?? [];
-    // Most recent first: what was just said is the likeliest thing to be revised.
-    const recent = blocks.slice(-MAX_BLOCKS_PER_TOPIC_IN_PROMPT);
-    if (recent.length === 0) lines.push("  (no blocks yet)");
-    for (const block of recent) {
-      const shown = block.label ? `${block.label}: ${block.text}` : block.text;
-      lines.push(`  - (${block.kind}) ${shown}  [id: ${block.id}]`);
+    const shown = blocksToRender(blocks);
+    if (shown.length === 0) lines.push("  (no blocks yet)");
+    for (const block of shown) {
+      const text = block.label ? `${block.label}: ${block.text}` : block.text;
+      const kind = block.kind === "task" ? `task/${block.state ?? "open"}` : block.kind;
+      lines.push(`  - (${kind}) ${text}  [id: ${block.id}]`);
     }
     lines.push("");
   }
   return lines.join("\n").trimEnd();
+}
+
+/**
+ * Which of a topic's blocks the model gets to see.
+ *
+ * Every live task — open, next, doing — is always rendered, over and above
+ * the per-topic cap. The model can only transition an id it can see, and a
+ * task pushed out of the window by eight newer claims would be one the speech
+ * could never mark done. Finished and dropped tasks go under the ordinary cap
+ * with everything else: they are history, not commitments.
+ */
+function blocksToRender(blocks: readonly Block[]): Block[] {
+  const live = (b: Block) =>
+    b.kind === "task" && b.state !== "done" && b.state !== "dropped";
+  const liveTasks = blocks.filter(live);
+  // Most recent first: what was just said is the likeliest thing to be revised.
+  const recent = blocks.filter((b) => !live(b)).slice(-MAX_BLOCKS_PER_TOPIC_IN_PROMPT);
+  return [...liveTasks, ...recent].sort(
+    (a, b) => a.occurredAt.getTime() - b.occurredAt.getTime() || (a.id < b.id ? -1 : 1),
+  );
 }
 
 export function renderSegments(segments: readonly TranscriptSegment[]): string {
@@ -343,6 +398,7 @@ interface WireOp {
   block?: unknown;
   supersedes?: unknown;
   sources?: unknown;
+  state?: unknown;
 }
 
 /**
@@ -458,6 +514,7 @@ export function parseExtractionResponse(
             topicId,
             kind: kind.data,
             ...labelFor(kind.data, w.label),
+            ...stateFor(kind.data, w.state),
             text,
             spans: toSpans(w.sources),
           });
@@ -480,6 +537,7 @@ export function parseExtractionResponse(
             topicId,
             kind: kind.data,
             ...labelFor(kind.data, w.label),
+            ...stateFor(kind.data, w.state),
             text,
             spans: toSpans(w.sources),
           });
@@ -523,6 +581,20 @@ function labelFor(kind: string, value: unknown): { label?: string } {
   if (kind !== "fact") return {};
   const label = str(value);
   return label ? { label: label.slice(0, 40) } : {};
+}
+
+/**
+ * A task state, but only on a task and only when it is one of the five.
+ *
+ * An invalid state drops the state, never the op: on an add the fold opens the
+ * task, and on a revise it inherits — both better than losing the content over
+ * a word the model made up. Kept off non-task blocks for the same reason as
+ * `labelFor`: a stray field would change the op's identity for no effect.
+ */
+function stateFor(kind: string, value: unknown): { state?: TaskState } {
+  if (kind !== "task") return {};
+  const parsed = TaskState.safeParse(value);
+  return parsed.success ? { state: parsed.data } : {};
 }
 
 function str(value: unknown): string | undefined {

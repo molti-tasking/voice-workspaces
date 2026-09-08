@@ -12,6 +12,8 @@ import type { Block, Topic } from "./types";
  * gone:
  *
  *   - open questions become a leading checklist — they are what is still owed
+ *   - tasks become a checklist too, ticked when done and struck when dropped,
+ *     with the column in parentheses so the board survives the export
  *   - claims become plain paragraphs, the substance
  *   - context becomes a blockquote, subordinate by construction
  *   - meta becomes an italic aside
@@ -37,6 +39,7 @@ export function topicToMarkdown(
   lines.push("");
 
   const questions = blocks.filter((b) => b.kind === "question");
+  const tasks = blocks.filter((b) => b.kind === "task");
   const facts = blocks.filter((b) => b.kind === "fact");
   const claims = blocks.filter((b) => b.kind === "claim");
   const rest = blocks.filter(
@@ -47,6 +50,13 @@ export function topicToMarkdown(
     lines.push("## Open questions");
     lines.push("");
     for (const q of questions) lines.push(`- [ ] ${q.text}`);
+    lines.push("");
+  }
+
+  if (tasks.length > 0) {
+    lines.push("## Tasks");
+    lines.push("");
+    for (const t of tasks) lines.push(taskLine(t));
     lines.push("");
   }
 
@@ -91,6 +101,14 @@ export function workspaceToMarkdown(
     ? `<!-- VoiceMural workspace as of ${options.asOf.toISOString()} -->\n\n`
     : "";
   return header + parts.join("\n");
+}
+
+/** One task as a checklist item that still says which column it was in. */
+function taskLine(task: Block): string {
+  const state = task.state ?? "open";
+  if (state === "done") return `- [x] ${task.text} (done)`;
+  if (state === "dropped") return `- [x] ~~${task.text}~~ (dropped)`;
+  return `- [ ] ${task.text} (${state})`;
 }
 
 /** A pipe inside a cell would split it into two columns. */
