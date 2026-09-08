@@ -4,6 +4,7 @@ import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import {
   SUMMARY_PROMPT,
   TALKBACK_CONFIG_VERSION,
+  asVoiceId,
   composeSystemPrompt,
   foldSummary,
   loadDriveSoFarText,
@@ -59,6 +60,7 @@ export async function POST(req: Request) {
       userId: captureSession.userId,
       startedAt: captureSession.startedAt,
       setting: captureSession.setting,
+      voiceId: captureSession.voiceId,
     })
     .from(captureSession)
     .where(eq(captureSession.id, payload.captureSessionId))
@@ -92,6 +94,10 @@ export async function POST(req: Request) {
       setting: composed.setting,
       maxReplyWords: composed.maxReplyWords,
       displayAllowed: composed.displayAllowed,
+      // The voice chosen for this recording, or null for "use the container's
+      // ELEVENLABS_VOICE_ID fallback". Re-narrowed to the catalogue on the way
+      // out so a retired id stored months ago cannot reach the TTS service.
+      voiceId: asVoiceId(row.voiceId),
       driveSummary,
       // The container computes offsets against this so `agent_turn` shares a
       // clock with `utterance`, which is ms since the drive started.

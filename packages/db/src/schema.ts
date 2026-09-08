@@ -190,6 +190,16 @@ export const captureSession = pgTable(
      * unchanged rather than retroactively reinterpreted.
      */
     setting: captureSettingEnum("setting"),
+    /**
+     * The ElevenLabs voice the system spoke with, chosen before starting.
+     *
+     * Text rather than an enum: voices are named by opaque provider ids and the
+     * catalogue (`@voicemural/talkback/voice`) will change without a schema
+     * migration being the right place to record that. NULL means no choice was
+     * made and the container used its `ELEVENLABS_VOICE_ID` fallback — a
+     * different fact from having chosen the default, and worth keeping apart.
+     */
+    voiceId: text("voice_id"),
     /** Active mode/persona at capture time, for reconstructing what was in force. */
     activeModeId: uuid("active_mode_id"),
     activePersonaId: uuid("active_persona_id"),

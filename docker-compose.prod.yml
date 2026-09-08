@@ -155,6 +155,8 @@ services:
       # deliberately not to MODEL_FAST — see packages/llm/src/config.ts.
       - MODEL_SUMMARISE=${MODEL_SUMMARISE:-}
       - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      # The FALLBACK voice. Per-session voices come from /api/realtime/session
+      # (packages/talkback/src/voice.ts); this is used when a session has none.
       - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
       # Must stay a streaming-capable model. eleven_v3 is HTTP-only and 403s on
       # the websocket, which would make every reply sound chopped.
@@ -183,6 +185,14 @@ services:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      # Live transcription. Default keeps audio at AU; deepgram/assemblyai do
+      # not — see .env.example. Speaker labels need one of the hosted providers.
+      - STT_PROVIDER=${STT_PROVIDER:-litellm}
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
+      - DEEPGRAM_MODEL=${DEEPGRAM_MODEL:-nova-3}
+      - DEEPGRAM_UTTERANCE_END_MS=${DEEPGRAM_UTTERANCE_END_MS:-1000}
+      - ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY:-}
+      - STT_DIARIZE=${STT_DIARIZE:-true}
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -20,6 +20,14 @@ export interface TalkbackTurn {
   id: string;
   role: "you" | "agent";
   text: string;
+  /**
+   * Which voice in the room said it, when the live STT could tell.
+   *
+   * Only ever set once more than one speaker has been heard: `bot.py` tags a
+   * transcript `[Speaker N]` from that point on and the hook lifts the tag out
+   * of the text into this field. Null for the ordinary one-person drive.
+   */
+  speaker?: number | null;
 }
 
 export interface TalkbackState {

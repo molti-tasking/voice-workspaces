@@ -7,8 +7,10 @@ import { formatOffset, type CaptureSetting } from "@voicemural/shared";
 // retrieval.ts, which imports @voicemural/db, and that drags the Postgres
 // driver into the browser bundle. setting.ts is pure by construction.
 import { SETTINGS, SETTING_PROFILES } from "@voicemural/talkback/setting";
+import { VOICES } from "@voicemural/talkback/voice";
 import { useRecorder } from "@/lib/recorder/use-recorder";
 import { useDetectedSetting } from "@/lib/recorder/detect-setting";
+import { useVoice } from "@/lib/recorder/voice-store";
 import { useTalkback } from "@/lib/talkback/use-talkback";
 import type { TalkbackTurn } from "@/lib/talkback/types";
 import { useCues } from "@/lib/display/use-cues";
@@ -44,6 +46,10 @@ export function RecorderClient() {
   const setting = chosen ?? detected.setting;
   const source = chosen ? "chosen" : detected.source;
   const profile = SETTING_PROFILES[setting];
+  // Which voice answers. Only meaningful with talk-back built in, so the picker
+  // is hidden otherwise — but the choice is still sent, so a session recorded
+  // before talk-back was enabled for it carries the voice it would have had.
+  const [voiceId, chooseVoice] = useVoice();
 
   // Armed with the recording, for the whole drive — there is no separate
   // gesture to enter it. Everything it does is downstream of the microphone
@@ -100,7 +106,7 @@ export function RecorderClient() {
             // iOS gates the accelerometer behind a tap; this is the tap. The
             // answer arrives for the next recording, and this one starts now.
             void detected.requestMotion();
-            void rec.start(setting, source);
+            void rec.start(setting, source, voiceId);
           }}
           disabled={isBusy}
           className={[
@@ -144,6 +150,10 @@ export function RecorderClient() {
             }}
             disabled={isBusy}
           />
+        )}
+
+        {TALKBACK && !isRecording && (
+          <VoicePicker value={voiceId} onChange={chooseVoice} disabled={isBusy} />
         )}
 
         {TALKBACK && isRecording && talk.turns.length > 0 && (
@@ -275,6 +285,55 @@ function SettingPicker({
 }
 
 /**
+ * Which voice talks back, asked alongside the setting.
+ *
+ * Pre-recording only, for the same reason as the setting: a drive heard in two
+ * voices is two conditions in one session. Smaller and dimmer than the setting
+ * row because it is the less consequential choice — it changes how the system
+ * sounds, not how it behaves — and the last thing between opening the app and
+ * starting to think should stay one row of four words.
+ */
+function VoicePicker({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  disabled: boolean;
+}) {
+  return (
+    <fieldset
+      className="flex w-full max-w-md flex-wrap items-center justify-center gap-1.5 text-xs"
+      disabled={disabled}
+    >
+      <legend className="sr-only">Which voice?</legend>
+      <span className="mr-1 text-white/30">Voice</span>
+      {VOICES.map((voice) => {
+        const active = voice.id === value;
+        return (
+          <button
+            key={voice.id}
+            type="button"
+            aria-pressed={active}
+            title={voice.hint}
+            onClick={() => onChange(voice.id)}
+            className={[
+              "rounded-full px-3 py-1 transition-colors disabled:opacity-50",
+              active
+                ? "bg-white/12 text-white ring-1 ring-white/25"
+                : "text-white/40 hover:text-white/70",
+            ].join(" ")}
+          >
+            {voice.label}
+          </button>
+        );
+      })}
+    </fieldset>
+  );
+}
+
+/**
  * The conversation as it happens.
  *
  * BOTH halves, because only one of them was ever visible and that made the
@@ -328,6 +387,13 @@ function Exchange({
                 faded ? "opacity-40" : "opacity-100",
               ].join(" ")}
             >
+              {turn.speaker != null && (
+                // Only present once the container has heard more than one
+                // voice. A single driver never sees this.
+                <span className="mr-1.5 font-mono text-[0.7em] uppercase tracking-wide text-white/40">
+                  S{turn.speaker}
+                </span>
+              )}
               {turn.text}
               {speaking && turn === last && turn.role === "agent" && (
                 <span className="ml-1 animate-pulse text-white/40 motion-reduce:animate-none">

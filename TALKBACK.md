@@ -102,9 +102,66 @@ disagree about whether a screen exists.
 `driving` reproduces the stance the base prompt was written with, so a session
 with no setting behaves exactly as before.
 
-**Still no proactivity engine.** `SETTING_PROFILES[s].proactivity` is carried
-and read by nothing but the stanza text. `agentTurnKindEnum` already has
-`proactive_prompt`; nothing writes it.
+### How forthcoming: talkback-4
+
+`talkback-3` said "answer when clearly addressed, otherwise nothing", and on the
+road that produced a companion that declined a loose "right?", asked what you
+meant instead of answering, and let a finished thought pass without a word —
+which reads as not listening. `talkback-4` keeps the length discipline and puts
+the engagement back: a question is always answered on its most likely reading,
+a landed thought may earn one sentence, a stuck person one push. Mid-thought is
+still silence, and "never twice in a row without a reply" is now stated.
+
+HOW OFTEN is the setting's business. `SETTING_PROFILES[s].proactivity` finally
+has a reader: `composeSystemPrompt` appends `PROACTIVITY_STANZAS[level]` after
+the setting stanza — `quiet` in a car, `occasional` walking, `forthcoming` at a
+sink or a desk. None of the three lengthens a reply; the cap is the setting's.
+The sandwich is now identity → setting → proactivity → contract, and
+`prompt.test.ts` pins that order.
+
+**Still no proactivity engine** in the sense of an unprompted turn: there is no
+silence timer in `bot.py`, and nothing writes `agent_turn.kind =
+'proactive_prompt'`. The stanzas govern what the model does with a turn it was
+given; they cannot give it one.
+
+### Which voice
+
+Three ElevenLabs voices are offered on the recorder, from the catalogue in
+`packages/talkback/src/voice.ts` — code, not env, so the choice is recoverable
+per recording. It is stored on `capture_session.voice_id` at start, immutable
+for the drive like the setting, and handed to the container by
+`/api/realtime/session` as `voiceId`. The container never picks: it uses what
+it is given, or `ELEVENLABS_VOICE_ID` when a session carries no choice (every
+recording from before this existed, and every degraded connection). That env
+var therefore stays required — set it to one of the catalogue ids.
+
+The labels are placeholders ("Voice A/B/C") until someone has listened; the id
+is the identity, rename freely. Adding a voice is one line in the catalogue and
+no migration.
+
+### Who is talking
+
+Once the live STT hears a **second voice**, `SpeakerTagger` in `bot.py`
+prefixes every transcript from then on with `[Speaker N]`, numbered in order
+of first appearance so Speaker 1 is the driver. The tag is written into the
+text on purpose — it is the one thing that reaches the LLM, the running
+summary, `agent_turn.respondingToText` and the browser's live exchange alike
+(the recorder lifts it into a small `S2` label). `Recall` strips it before
+searching the ledger. A one-person drive is byte-for-byte what it was before:
+nothing is tagged until there are two.
+
+The prompt has a section for it: a conversation between the people in the car
+is theirs, and the system speaks only when one of them addresses it — and then
+to the one who asked.
+
+**Only the hosted providers can tell.** Deepgram (`diarize=true`) labels every
+word with a speaker index; AssemblyAI (`speaker_labels=true`) labels each turn
+and puts it in `user_id`. Whisper through LiteLLM returns text and nothing else,
+so on the default provider `STT_DIARIZE` is a no-op that logs once at connect.
+Turn it off with `STT_DIARIZE=false`. The **ledger has no speakers**:
+`utterance` is transcribed by batch Whisper, so speaker identity exists only on
+the live path. A field study with passengers wants that asymmetry in the
+ethics form and the limitations section both.
 
 ## Drafts: text you keep rather than hear
 
@@ -266,6 +323,84 @@ black box and bypass the text pipeline `agent_turn` and the filters depend on.
 
 ---
 
+## Evaluating the prompt
+
+The prompt is data the paper depends on, and until now the only way to test a
+change was to drive. There are now three layers, cheapest first.
+
+**1. Unit tests** (`prompt.test.ts`) pin the composition: contract last,
+proactivity between setting and contract, the sentinel surviving a hostile
+section. Free, instant, and they say nothing about what the model does.
+
+**2. The eval harness** — `pnpm talkback:eval` — runs the real conversation
+model over a fixed set of turns in `packages/talkback/src/eval/cases.ts`, each
+built exactly as `bot.py` builds one (`messages.ts` ports `Recall._compose`,
+and a test pins the port). Two verdicts per turn:
+
+- *Deterministic checks* (`checks.ts`): spoke or stayed silent as expected,
+  under the setting's word cap, no preamble, no markdown, one question at most,
+  mentions what it must and never what it must not. A failure here is a defect.
+- *An LLM judge* (`judge.ts`): `MODEL_REASONING` scores the turn 1–5 on
+  turn-decision, brevity, grounding and register with a one-line reason. A low
+  score here is a question, not a defect — read the reply.
+
+```sh
+pnpm talkback:eval                                   # current prompt, all cases
+pnpm talkback:eval -- --base candidate.md --label c7 # a candidate base prompt
+pnpm talkback:eval -- --only stuck,passenger-aside --runs 3
+pnpm talkback:eval -- --out report.json --strict     # exit 1 on any check failure
+```
+
+`--base` swaps the base prompt for a file's contents and leaves the setting
+stanzas and the contract alone — that is the iteration loop. No temperature is
+sent, as the container sends none, so `--runs 3` shows how wide the sampling is
+before one failure is read as a regression. **Add real turns.** When a drive
+turns up a behaviour worth keeping or losing, put the actual words in
+`cases.ts`; the suite is a regression suite, not a benchmark.
+
+**3. Langfuse, over live turns.** With `LANGFUSE_PUBLIC_KEY` and
+`LANGFUSE_SECRET_KEY` set, `bot.py` exports Pipecat's OpenTelemetry spans to
+Langfuse (`setup_langfuse_tracing`): one trace per drive, named by setting,
+with `langfuse.session.id` = the capture session and the prompt version in the
+tags, and the LLM span of every turn carrying the serialised messages — the
+composed prompt, the context block, what was said — and the completion. That
+is exactly what a judge needs to see.
+
+Separately, every LiteLLM request from the container carries `metadata`
+(`session_id`, `tags` with the `configVersion` and `setting:<s>`, `version`),
+so the proxy's own request log attributes spend per drive and per prompt
+version, and any callback the proxy is configured with sees the same keys.
+
+*Is an LLM-as-judge in Langfuse reasonable?* Yes, with a clear view of what it
+can and cannot see. Set up a managed evaluator on the container's LLM
+generations (filter by tag `talkback-4` or by trace name) with `JUDGE_PROMPT`
+from `judge.ts` as the template — one copy of the rubric, pasted — mapping
+`{{input}}` to the generation's messages and `{{output}}` to its completion.
+The judge can then score grounding against exactly what the model saw, and it
+sees `<silence>` as a decision. Compare score distributions across versions as
+the prompt moves; that is the "improve over time" loop, and it needs no
+instrumentation beyond what is here.
+
+What it cannot judge is **timing**. A live turn's quality depends on when it
+arrived — 400ms after a landed thought, or three seconds into the next one —
+and neither the transcript nor the span carries that. `agent_turn`'s latency
+columns are the record; read them alongside. It judges what the model
+produced, not what was heard: the STT's mistakes are upstream. And it reads
+participants' speech on whatever hosts Langfuse — the spans already do, so this
+adds no new flow, but the ethics form should name it, and self-hosting is how
+the line is avoided.
+
+The harness closes the loop from the other side. With the same keys set, each
+evaluated turn is posted through Langfuse's ingestion API as a trace in one
+session (the run id) tagged `talkback-eval` and the label, with the reply
+generation, the judge's generation, the check result and the four scores. Live
+drives and offline runs then sit in one project under one rubric and one
+`version` field. Without the keys nothing is posted and the run says so once.
+
+**Not built, deliberately:** a Langfuse *dataset* of the cases with dataset
+runs. It is the natural next step once the case set stabilises, but today the
+cases change with every drive and a file in the repo is the right home.
+
 ## Testing locally
 
 ```sh
@@ -277,7 +412,8 @@ pnpm dev                # web + worker
 `.env` needs both halves of the switch — `TALKBACK_ENABLED` and
 `NEXT_PUBLIC_TALKBACK_ENABLED`, same value — plus `ELEVENLABS_API_KEY` and
 `ELEVENLABS_VOICE_ID`, which `bot.py` reads with `os.environ[...]` and so crashes
-without.
+without. The voice id is the fallback; the per-session choice comes from the
+recorder (see "Which voice").
 
 ```sh
 pnpm typecheck          # 8 packages
@@ -322,11 +458,19 @@ wired to the conversation that should not have been.
   `activeModeId`, `activePersonaId` and `capability_version.markdown` are still
   unread. `composeSystemPrompt` is shaped for them — they slot between the
   stanza and the output contract — but nothing loads them.
-- **No proactivity.** Nothing writes `agent_turn.kind = 'proactive_prompt'`, and
-  there is no silence timer in `bot.py`. The seeded `interview` mode still
-  carries `silenceBeforePromptMs: 4000` with no engine behind it (and 4s is too
-  eager for a car by this document's own argument — raise it when the engine
-  lands).
+- **No proactivity engine.** The prompt is now forthcoming per setting, but
+  nothing writes `agent_turn.kind = 'proactive_prompt'` and there is no
+  silence timer in `bot.py`: the model can only speak on a turn the VAD gave
+  it. The seeded `interview` mode still carries `silenceBeforePromptMs: 4000`
+  with no engine behind it (and 4s is too eager for a car by this document's
+  own argument — raise it when the engine lands). When it does, it should read
+  `SETTING_PROFILES[s].proactivity`, which the prompt now also reads.
+- **Speakers only on the live path, and only hosted.** Diarization needs
+  Deepgram or AssemblyAI; the Whisper default hears one voice, and the ledger
+  always does. A voice-print approach on AU hardware (pyannote) would close
+  both gaps and is a real dependency to weigh, not a flag.
+- **Voice labels are placeholders.** `voice.ts` names them A/B/C; nothing here
+  can ask ElevenLabs for their names. Listen, rename, keep the ids.
 - **Mode switching by voice is unbuilt.** A `switch to sceptical` direction is
   classified and recorded like any other, but nothing acts on it: the container
   fetches `/session` once per connection and never re-reads the prompt.

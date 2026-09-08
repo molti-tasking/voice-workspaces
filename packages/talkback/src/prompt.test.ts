@@ -8,7 +8,7 @@ import {
   composeSystemPrompt,
   isSilence,
 } from "./prompt";
-import { SETTING_PROFILES } from "./setting";
+import { PROACTIVITY_STANZAS, SETTING_PROFILES } from "./setting";
 
 describe("composeSystemPrompt", () => {
   it("puts the output contract last, after the composed material", () => {
@@ -18,6 +18,32 @@ describe("composeSystemPrompt", () => {
     expect(prompt.indexOf(SETTING_PROFILES.desk.stanza)).toBeLessThan(
       prompt.indexOf(OUTPUT_CONTRACT),
     );
+  });
+
+  /**
+   * The proactivity level is the one composed layer that says HOW OFTEN to
+   * take an unasked-for turn. It sits after the setting so it refines the
+   * setting's "a pause is thinking" line, and before the contract so the
+   * contract still wins.
+   */
+  it("places the setting's proactivity stanza between the setting and the contract", () => {
+    for (const [setting, profile] of Object.entries(SETTING_PROFILES)) {
+      const composed = composeSystemPrompt({ setting });
+      const stanza = PROACTIVITY_STANZAS[profile.proactivity];
+      expect(composed.proactivity).toBe(profile.proactivity);
+      expect(composed.prompt.indexOf(profile.stanza)).toBeLessThan(composed.prompt.indexOf(stanza));
+      expect(composed.prompt.indexOf(stanza)).toBeLessThan(composed.prompt.indexOf(OUTPUT_CONTRACT));
+    }
+  });
+
+  it("is quieter in a car than at a desk, and forthcoming nowhere lengthens a reply", () => {
+    expect(composeSystemPrompt({ setting: "driving" }).proactivity).toBe("quiet");
+    expect(composeSystemPrompt({ setting: "desk" }).proactivity).toBe("forthcoming");
+    for (const stanza of Object.values(PROACTIVITY_STANZAS)) {
+      // Every level keeps the two rules that never move.
+      expect(stanza).toMatch(/never twice/i);
+      expect(stanza).not.toMatch(/at length|elaborate|expansive/i);
+    }
   });
 
   /**
@@ -58,6 +84,25 @@ describe("composeSystemPrompt", () => {
       "Never offer to show anything",
     );
     expect(composeSystemPrompt({ setting: "desk" }).prompt).toContain("on the screen");
+  });
+});
+
+describe("the base prompt's stance", () => {
+  it("answers questions and reacts to landed thoughts, but never mid-thought", () => {
+    expect(SYSTEM_PROMPT).toMatch(/ALWAYS answered/);
+    expect(SYSTEM_PROMPT).toMatch(/LANDS/);
+    expect(SYSTEM_PROMPT).toMatch(/STUCK/);
+    expect(SYSTEM_PROMPT).toMatch(/MID-sentence[\s\S]*<silence>/);
+  });
+
+  it("prefers answering the likely reading to asking for clarification", () => {
+    expect(SYSTEM_PROMPT).toMatch(/most likely reading/);
+    expect(SYSTEM_PROMPT).not.toMatch(/I'd need more detail/);
+  });
+
+  it("knows what a [Speaker N] tag means", () => {
+    expect(SYSTEM_PROMPT).toContain("[Speaker 1]");
+    expect(SYSTEM_PROMPT).toMatch(/answer the person who asked/i);
   });
 });
 

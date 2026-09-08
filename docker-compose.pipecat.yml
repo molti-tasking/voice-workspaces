@@ -23,6 +23,8 @@ services:
       # summary built by a model that invents detail amplifies its own mistakes.
       - MODEL_SUMMARISE=${MODEL_SUMMARISE:-}
       - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      # The FALLBACK voice. Per-session voices come from /api/realtime/session
+      # (packages/talkback/src/voice.ts); this is used when a session has none.
       - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
       # Must stay a streaming-capable model. eleven_v3 is HTTP-only and 403s on
       # the websocket, which would make Pipecat sound chopped for a reason that
@@ -37,6 +39,8 @@ services:
       - DEEPGRAM_MODEL=${DEEPGRAM_MODEL:-nova-3}
       - DEEPGRAM_UTTERANCE_END_MS=${DEEPGRAM_UTTERANCE_END_MS:-1000}
       - ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY:-}
+      # Speaker labels on the live path, hosted providers only. See TALKBACK.md.
+      - STT_DIARIZE=${STT_DIARIZE:-true}
       # The prompt, retrieval and the summary seed all live in the Next app —
       # `/api/realtime/session` once per drive and `/api/realtime/context` once
       # per turn. Inside a container `localhost` is this container, so reach the
