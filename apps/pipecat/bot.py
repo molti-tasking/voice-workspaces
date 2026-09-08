@@ -13,15 +13,18 @@ WHAT IS HERE
               WebSocket transport would lose it.
   STT         Whisper via LiteLLM, VAD-segmented.
   LLM         Whatever MODEL_CONVERSE names, via LiteLLM.
-  TTS         ElevenLabs over its streaming websocket.
+  TTS         ElevenLabs over its streaming websocket, in the voice the
+              session chose (see packages/talkback/src/voice.ts).
+  speakers    `SpeakerTagger` labels transcripts [Speaker N] once a second
+              voice is heard — Deepgram/AssemblyAI only; Whisper cannot.
   summary     A rolling summary of the drive, folded in the background off the
               live STT stream — see `RunningSummary` for why it lives here and
               not in the ledger.
 
 WHAT IS FETCHED, NOT DUPLICATED
-  /api/realtime/session   the system prompt, the summary instruction, a seed
-                          summary for reconnects, and the drive's start time.
-                          Once per connection.
+  /api/realtime/session   the system prompt, the summary instruction, the
+                          voice, a seed summary for reconnects, and the
+                          drive's start time. Once per connection.
   /api/realtime/context   passages from PAST drives matching what was just
                           said. Once per turn.
 
@@ -79,6 +82,11 @@ from pipecat.workers.runner import WorkerRunner
 
 LITELLM_BASE_URL = os.environ["LITELLM_BASE_URL"].rstrip("/")
 LITELLM_API_KEY = os.environ["LITELLM_API_KEY"]
+
+# Read at import so a missing value fails at boot rather than on the first
+# drive. Per-session voices come from `/api/realtime/session`; this is the
+# fallback that every session without one — and every degraded one — uses.
+FALLBACK_VOICE_ID = os.environ["ELEVENLABS_VOICE_ID"]
 
 # Where retrieval lives. Inside a container `localhost` is this container, so
 # the host gateway is what reaches the Next app running on the developer's
@@ -194,13 +202,53 @@ def setup_langfuse_tracing() -> bool:
 # worse than an obviously degraded stand-in: this one announces itself, so a
 # transcript recorded under it is still distinguishable months later when
 # somebody is trying to work out why a drive reads oddly.
-FALLBACK_SYSTEM_PROMPT = """You are a quiet companion riding along while someone drives and thinks aloud.
+FALLBACK_SYSTEM_PROMPT = """You are a thinking companion riding along while someone drives and thinks aloud.
 
 You are running in a DEGRADED mode: the service that supplies your instructions and your memory could not be reached, so you have no access to anything they have said before.
 
-Answer direct questions briefly, in one sentence, under 25 words. Otherwise reply with exactly: <silence>
+Answer any question put to you, even a loose one, in one sentence under 25 words — take the most likely reading rather than asking what they meant. When a thought clearly lands you may say the one thing worth saying, once. Mid-sentence pauses and half-finished thoughts are thinking: reply with exactly: <silence>
 
 Never claim to remember anything. You cannot check the transcript right now, and saying otherwise would invent their own past back at them."""
+
+
+# Whether the live STT should try to tell speakers apart.
+#
+# Only the hosted providers can: Deepgram labels every word with a speaker index
+# and AssemblyAI labels each turn, both as a flag on the stream. Whisper through
+# LiteLLM returns text and nothing else, so on the default provider this is a
+# no-op that logs once at connect. Defaults on because a passenger is the
+# common case rather than the edge case, and the cost is a flag, not a service.
+STT_DIARIZE = os.getenv("STT_DIARIZE", "true").lower() in ("1", "true", "yes")
+
+# What each model call is, for the proxy.
+#
+# LiteLLM strips a request's `metadata` before the upstream call, keeps it on
+# its own request log, and hands it to whatever callbacks the proxy runs. So
+# `session_id` attributes spend to a drive, `tags` and `version` to a prompt
+# version, and `generation_name` separates the conversational turn from the
+# summary fold — without this container knowing what, if anything, the proxy
+# forwards to. The keys are the ones LiteLLM's Langfuse callback reads, should
+# the proxy ever run one; the drive's own Langfuse traces come from the
+# OpenTelemetry exporter below, not from here. See TALKBACK.md, "Evaluating the
+# prompt".
+def litellm_metadata(name: str, session: dict, capture_session_id: str | None) -> dict:
+    tags = ["talkback", name]
+    if session.get("configVersion"):
+        tags.append(str(session["configVersion"]))
+    if session.get("setting"):
+        tags.append(f"setting:{session['setting']}")
+    if session.get("degraded"):
+        tags.append("degraded")
+    meta: dict = {
+        "generation_name": name,
+        "trace_name": name,
+        "tags": tags,
+        "version": session.get("configVersion") or "fallback",
+    }
+    if capture_session_id:
+        meta["session_id"] = capture_session_id
+        meta["trace_metadata"] = {"capture_session_id": capture_session_id}
+    return meta
 
 
 def fetch_session(ticket: str | None) -> dict:
@@ -274,6 +322,9 @@ def build_stt():
             settings=DeepgramSTTService.Settings(
                 model=os.getenv("DEEPGRAM_MODEL", "nova-3"),
                 language="en",
+                # Per-word speaker indices on the raw result. Pipecat does not
+                # read them; `SpeakerTagger` below does.
+                diarize=STT_DIARIZE,
                 # Interim results are what make it feel immediate; the final
                 # transcript is still what reaches the LLM.
                 interim_results=True,
@@ -288,7 +339,16 @@ def build_stt():
     if provider == "assemblyai":
         from pipecat.services.assemblyai.stt import AssemblyAISTTService
 
-        return AssemblyAISTTService(api_key=os.environ["ASSEMBLYAI_API_KEY"])
+        return AssemblyAISTTService(
+            api_key=os.environ["ASSEMBLYAI_API_KEY"],
+            # AssemblyAI puts the speaker label ("A", "B") in `user_id` itself;
+            # `SpeakerTagger` reads it from there. No `speaker_format` — the tag
+            # is written once, downstream, in the one shape the prompt knows.
+            settings=AssemblyAISTTService.Settings(speaker_labels=STT_DIARIZE),
+        )
+
+    if STT_DIARIZE:
+        logger.info("[stt] diarization unavailable with STT_PROVIDER=litellm — one speaker assumed")
 
     # The default, and the only one that keeps audio at AU. Batch, so it needs
     # the VADProcessor above to tell it where an utterance ends.
@@ -336,6 +396,99 @@ class Trace(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+SPEAKER_TAG = re.compile(r"^\[Speaker (\d+)\]\s*")
+
+
+def strip_speaker_tag(text: str) -> str:
+    """The transcript without its `[Speaker N]` prefix, for readers that search."""
+    return SPEAKER_TAG.sub("", text, count=1)
+
+
+class SpeakerTagger(FrameProcessor):
+    """Says who is talking, once there is more than one of them.
+
+    WHAT THE PROVIDERS GIVE. Deepgram, with `diarize=True`, puts an integer
+    `speaker` on every word of the raw result; Pipecat keeps that result on
+    `TranscriptionFrame.result` and otherwise ignores it. AssemblyAI, with
+    `speaker_labels=True`, writes its label ("A", "B") straight into
+    `TranscriptionFrame.user_id`. Whisper gives nothing, so on the default
+    provider this processor sees no speaker and changes nothing.
+
+    WHAT THIS DOES WITH IT. Provider labels are renumbered 1, 2, 3 in order of
+    first appearance, so "Speaker 1" is the voice heard first — on a drive,
+    the driver — whichever index the provider happened to assign. Once a
+    SECOND voice has been heard, every transcript from then on is prefixed
+    `[Speaker N] `, and `user_id` is set to `speaker-N`.
+
+    The prefix is written INTO THE TEXT deliberately, rather than carried as
+    metadata: the text is the one thing that reaches every reader — the LLM via
+    the aggregator, the running summary, the turn record, and the browser's
+    live exchange — and the prompt's "WHEN SEVERAL PEOPLE ARE TALKING" section
+    is written against exactly this shape. Readers that search the ledger
+    (`Recall`) strip it with `strip_speaker_tag` first.
+
+    NOT WRITTEN BEFORE A SECOND VOICE. A one-person drive must read exactly as
+    it did before this existed; a tag on every line of a monologue would be
+    noise in the prompt and on the screen, and would change the model's
+    behaviour on the common case to serve the rare one.
+
+    The ledger is untouched. `utterance` is transcribed by batch Whisper, which
+    has no diarization, so speaker identity lives only in the live path — in
+    `agent_turn.respondingToText` and in this container's summary. That is a
+    known asymmetry, recorded in TALKBACK.md.
+    """
+
+    def __init__(self):
+        super().__init__()
+        # Provider label -> our 1-based number, in order of first appearance.
+        self._labels: dict[str, int] = {}
+
+    @property
+    def speakers_heard(self) -> int:
+        return len(self._labels)
+
+    @staticmethod
+    def _provider_label(frame: TranscriptionFrame) -> str | None:
+        # Deepgram: majority speaker across the words of this result.
+        result = frame.result
+        try:
+            words = result.channel.alternatives[0].words or []
+        except (AttributeError, IndexError, TypeError):
+            words = []
+        counts: dict[int, int] = {}
+        for word in words:
+            speaker = getattr(word, "speaker", None)
+            if speaker is not None:
+                counts[speaker] = counts.get(speaker, 0) + 1
+        if counts:
+            return f"dg:{max(counts, key=lambda k: counts[k])}"
+
+        # AssemblyAI: the label is the user id, when it is not the default one.
+        user_id = getattr(frame, "user_id", "") or ""
+        if user_id and not user_id.startswith("speaker-") and len(user_id) <= 3:
+            return f"aai:{user_id}"
+        return None
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, TranscriptionFrame) and frame.text.strip():
+            label = self._provider_label(frame)
+            if label is not None:
+                if label not in self._labels:
+                    self._labels[label] = len(self._labels) + 1
+                    if len(self._labels) == 2:
+                        logger.info("[speakers] a second voice — tagging transcripts from here on")
+                    elif len(self._labels) > 2:
+                        logger.info(f"[speakers] {len(self._labels)} voices heard")
+                if len(self._labels) > 1:
+                    number = self._labels[label]
+                    frame.user_id = f"speaker-{number}"
+                    frame.text = f"[Speaker {number}] {strip_speaker_tag(frame.text)}"
+
+        await self.push_frame(frame, direction)
+
+
 class RunningSummary(FrameProcessor):
     """A rolling summary of the drive, kept in memory and never persisted.
 
@@ -375,9 +528,10 @@ class RunningSummary(FrameProcessor):
     FOLD_AFTER_CHARS = 600
     FOLD_AFTER_SECONDS = 45
 
-    def __init__(self, summary_prompt: str, seed: str | None):
+    def __init__(self, summary_prompt: str, seed: str | None, metadata: dict | None = None):
         super().__init__()
         self._prompt = summary_prompt
+        self._metadata = metadata or {}
         self._summary = seed
         self._pending: list[str] = []
         self._lock = asyncio.Lock()
@@ -458,6 +612,8 @@ class RunningSummary(FrameProcessor):
                     ],
                     "max_tokens": 300,
                     "temperature": 0,
+                    # For Langfuse, through LiteLLM. Ignored by a proxy without it.
+                    "metadata": self._metadata,
                 }
             ).encode(),
             headers={
@@ -607,7 +763,10 @@ class Recall(FrameProcessor):
             pending: dict | None = None
             if self._ticket:
                 try:
-                    passages, pending = await asyncio.to_thread(self._fetch, frame.text)
+                    # The search query is what was said, not who said it.
+                    passages, pending = await asyncio.to_thread(
+                        self._fetch, strip_speaker_tag(frame.text)
+                    )
                     if passages:
                         logger.info(f"[recall] {len(passages)} passage(s) from past drives")
                     if pending:
@@ -1066,14 +1225,16 @@ def build_pipeline(
     """Assemble one drive's pipeline.
 
     `session` is the bootstrap from `/api/realtime/session` — the prompt, the
-    summary instruction and any seed summary. Fetched once by the caller rather
-    than here so a renegotiation does not pay for it again.
+    summary instruction, the voice and any seed summary. Fetched once by the
+    caller rather than here so a renegotiation does not pay for it again.
 
-    `capture_session_id` is carried only for tracing, where it becomes the
-    conversation id: it is the same key the ledger uses, so a Langfuse trace
-    joins to `capture_session`, `utterance` and `agent_turn` by an id that is
-    already there rather than a correlation anyone has to reconstruct by
-    timestamp.
+    `capture_session_id` is carried only for observability — the tracing
+    conversation id and the LiteLLM metadata session — where it is the same key
+    the ledger uses, so a Langfuse trace joins to `capture_session`, `utterance`
+    and `agent_turn` by an id that is already there rather than a correlation
+    anyone has to reconstruct by timestamp. It arrives from the browser
+    unauthenticated, which is fine for a grouping key and would not be for
+    anything else — authorisation is the ticket's job.
     """
     session = session or {"systemPrompt": FALLBACK_SYSTEM_PROMPT, "degraded": True}
     transport = SmallWebRTCTransport(
@@ -1108,7 +1269,18 @@ def build_pipeline(
             # `got an unexpected keyword argument 'thinking'`, which arrives as
             # an ErrorFrame and simply produces no reply. `extra_body` is the
             # SDK's own escape hatch for non-standard body fields.
-            extra={"extra_body": {"thinking": {"type": "disabled"}}},
+            #
+            # `metadata` rides in the same envelope. LiteLLM strips it before the
+            # upstream call and hands it to its callbacks, so Langfuse sees
+            # every turn of a drive as one session tagged with the prompt
+            # version — which is what makes an LLM-as-judge evaluator over live
+            # turns possible without this container knowing Langfuse exists.
+            extra={
+                "extra_body": {
+                    "thinking": {"type": "disabled"},
+                    "metadata": litellm_metadata("talkback.turn", session, capture_session_id),
+                }
+            },
         ),
         api_key=LITELLM_API_KEY,
         base_url=LITELLM_BASE_URL,
@@ -1118,10 +1290,19 @@ def build_pipeline(
     # is HTTP-only. Streaming is the whole point — one continuous synthesis fed
     # incrementally, rather than a request per sentence, which is what separates
     # speech from stitched fragments.
+    # WHICH VOICE. Chosen on the recorder before the drive started, stored on
+    # `capture_session.voice_id`, and handed over by `/api/realtime/session` —
+    # already narrowed to the catalogue in `packages/talkback/src/voice.ts`, so
+    # this container never decides and never validates. `ELEVENLABS_VOICE_ID`
+    # is the fallback for a session that carries no choice, including every
+    # degraded connection, and it stays REQUIRED so that fallback always exists.
+    voice = session.get("voiceId") or FALLBACK_VOICE_ID
+    logger.info(f"[tts] voice {voice}{'' if session.get('voiceId') else ' (fallback)'}")
+
     tts = ElevenLabsTTSService(
         api_key=os.environ["ELEVENLABS_API_KEY"],
         settings=ElevenLabsTTSService.Settings(
-            voice=os.environ["ELEVENLABS_VOICE_ID"],
+            voice=voice,
             model=os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5"),
         ),
         # NO `optimize_streaming_latency` here, and it is not an oversight: in
@@ -1158,6 +1339,7 @@ def build_pipeline(
     summary = RunningSummary(
         summary_prompt=session.get("summaryPrompt") or "",
         seed=session.get("driveSummary"),
+        metadata=litellm_metadata("talkback.summary", session, capture_session_id),
     )
     # Offsets are measured against the drive's own start, the same clock
     # `utterance` uses — which is what lets the two tables be read as one
@@ -1178,6 +1360,8 @@ def build_pipeline(
             vad,
             Trace("in"),
             stt,
+            # Before the trace, so the log shows the tag the model will see.
+            SpeakerTagger(),
             Trace("stt"),
             # Before Recall: the summary must see this turn's speech, and Recall
             # reads the summary when it composes the block.

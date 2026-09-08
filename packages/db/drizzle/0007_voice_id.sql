@@ -1,0 +1,1 @@
+ALTER TABLE "capture_session" ADD COLUMN "voice_id" text;

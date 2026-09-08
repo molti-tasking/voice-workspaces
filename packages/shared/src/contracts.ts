@@ -46,6 +46,15 @@ export const CaptureSessionCreate = z.object({
   startedAt: z.coerce.date(),
   /** Optional: recordings made before the question existed have none. */
   setting: CaptureSetting.optional(),
+  /**
+   * The voice the system speaks with, as an ElevenLabs voice id.
+   *
+   * A free string here because this package owns the wire format and
+   * `@voicemural/talkback/voice` owns the catalogue; the route narrows it to a
+   * known voice and stores null for anything else. Immutable per recording,
+   * like `setting`, so a drive was heard in one voice throughout.
+   */
+  voiceId: z.string().min(1).max(64).optional(),
   deviceInfo: z
     .object({
       userAgent: z.string().max(512).optional(),

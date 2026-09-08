@@ -163,7 +163,11 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
         text: string,
         key?: string,
       ) => {
-        const trimmed = text.trim();
+        // `[Speaker 2] …` is how the container marks a line once it has heard
+        // more than one voice. Shown as a label rather than read as text.
+        const tagged = /^\[Speaker (\d+)\]\s*/.exec(text);
+        const speaker = tagged ? Number(tagged[1]) : null;
+        const trimmed = (tagged ? text.slice(tagged[0].length) : text).trim();
         if (!trimmed) return;
         setState((prev) => {
           const turns = [...prev.turns];
@@ -187,7 +191,12 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
             if (already) return prev;
             turns[turns.length - 1] = { ...last, text: `${last.text} ${trimmed}`.trim() };
           } else {
-            turns.push({ id: key ?? `${role}-${Date.now()}-${turns.length}`, role, text: trimmed });
+            turns.push({
+              id: key ?? `${role}-${Date.now()}-${turns.length}`,
+              role,
+              text: trimmed,
+              speaker,
+            });
           }
           const merged = turns[turns.length - 1]!;
           return {

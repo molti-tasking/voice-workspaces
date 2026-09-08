@@ -25,13 +25,24 @@ export {
 } from "./prompt";
 export {
   DEFAULT_SETTING,
+  PROACTIVITY_STANZAS,
   SETTINGS,
   SETTING_PROFILES,
   asSetting,
   settingProfile,
+  type Proactivity,
   type Setting,
   type SettingProfile,
 } from "./setting";
+export {
+  DEFAULT_VOICE_ID,
+  VOICES,
+  VOICE_IDS,
+  asVoiceId,
+  isKnownVoice,
+  voiceProfile,
+  type VoiceProfile,
+} from "./voice";
 export { recordAgentTurn, type AgentTurnRecord } from "./agent-turns";
 export {
   contentWords,

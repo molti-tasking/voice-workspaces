@@ -48,6 +48,8 @@ export interface AnalyticsEventMap {
      * The share of `chosen` is how often the detector is wrong enough to fix.
      */
     setting_source?: "device" | "motion" | "default" | "chosen" | null;
+    /** The ElevenLabs voice chosen for talk-back. Null when none was chosen. */
+    voice_id?: string | null;
   };
   recording_stopped: {
     capture_session_id: string;
@@ -82,6 +84,8 @@ export interface AnalyticsEventMap {
     resumed: boolean;
     /** Null for a resumed session, whose setting was fixed when it opened. */
     setting?: string | null;
+    /** The voice stored on the session, narrowed to the catalogue; null if none. */
+    voice_id?: string | null;
   };
   /**
    * Emitted once per session by the worker, after late chunks have settled.

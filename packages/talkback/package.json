@@ -5,11 +5,13 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./setting": "./src/setting.ts"
+    "./setting": "./src/setting.ts",
+    "./voice": "./src/voice.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "eval": "tsx src/eval/run.ts"
   },
   "dependencies": {
     "@voicemural/db": "workspace:*",
@@ -21,6 +23,7 @@
   "devDependencies": {
     "vitest": "4.1.10",
     "typescript": "5.9.3",
-    "@types/node": "24.10.1"
+    "@types/node": "24.10.1",
+    "tsx": "4.20.6"
   }
 }

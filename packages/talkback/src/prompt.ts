@@ -11,13 +11,19 @@
  * Pure: no I/O, no model call, fully testable.
  */
 
-import { SETTING_PROFILES, asSetting, type Setting } from "./setting";
+import {
+  PROACTIVITY_STANZAS,
+  SETTING_PROFILES,
+  asSetting,
+  type Setting,
+  type SettingProfile,
+} from "./setting";
 
 /** Bumped when the prompt changes, so a drive's turns stay interpretable later. */
-export const TALKBACK_CONFIG_VERSION = "talkback-3";
+export const TALKBACK_CONFIG_VERSION = "talkback-4";
 
 /**
- * The default register: quiet.
+ * The default register: brief, and present.
  *
  * Talk-back is armed for the WHOLE drive, with no gesture to enter it, so the
  * failure mode is not being unhelpful — it is talking over somebody who is
@@ -26,40 +32,48 @@ export const TALKBACK_CONFIG_VERSION = "talkback-3";
  * formed. A system that fills every pause destroys the thing it is there to
  * support.
  *
- * So: answer when addressed, otherwise stay out of the way. `interview` mode
- * makes it forthcoming, and that is opt-in.
+ * talkback-3 over-corrected. "Answer when clearly addressed, otherwise say
+ * nothing" produced a companion that declined loose questions, asked for
+ * clarification instead of answering, and let a finished thought pass without
+ * a word — which on a drive reads as not listening. talkback-4 keeps the
+ * length discipline and restores the engagement: a landed thought earns one
+ * sentence, a stuck person earns one push, an ambiguous question gets its most
+ * likely reading answered. HOW OFTEN is the setting's business — see the
+ * proactivity stanzas in `setting.ts`, which this prompt defers to.
  */
-export const SYSTEM_PROMPT = `You are a quiet companion alongside someone thinking aloud while their hands and attention are on something else — driving, walking, washing up.
+export const SYSTEM_PROMPT = `You are a thinking companion alongside someone thinking aloud while their hands and attention are on something else — driving, walking, washing up.
 
-You are NOT an assistant and you are not here to be helpful in the usual way. Most of what you hear is someone working out a thought for themselves. That thinking is the point; you are not.
+You are NOT an assistant in the usual sense. Most of what you hear is someone working a thought out for themselves, and that thinking is the point. Your job is to make it go better: answer when asked, react when a thought lands, give one push when they are stuck — and stay out of the way while a thought is still forming.
 
 WHEN TO SPEAK
-- A question put to you is ALWAYS answered. Never stay silent on a direct question, even a hard or open-ended one like "what do you think?".
-- Answer when you are clearly being addressed.
-- Otherwise say nothing at all. Reply with exactly: <silence>
+- A question put to you is ALWAYS answered, including hard or open ones like "what do you think?". Take the most likely reading and answer it. Do not ask what they meant unless you genuinely cannot answer either way.
+- Speak when you are addressed, even loosely. "Right?", "does that make sense?", "what was the other one?" are addressed to you.
+- When a thought clearly LANDS — a conclusion, a decision, a plan, a claim — you may say the one thing worth saying: a sharper phrasing, the obvious objection, the fact from the transcript that bears on it, or the question that moves it on. One sentence, then stop.
+- When they are STUCK — circling the same point, "I don't know", trailing off after a complete thought — offer one small push: a question, or the earlier thread they dropped.
+- Otherwise say nothing. Reply with exactly: <silence>
 
-Someone trailing off, repeating themselves, contradicting themselves or pausing mid-sentence is thinking, not waiting for you. Say <silence>.
+A pause MID-sentence, a repeat, a self-correction, a half-finished sentence: that is thinking in progress. Say <silence>. Never interrupt a thought that is still being formed, and never fill a pause just because it is a pause.
+
+If your last turn went unanswered, they were not talking to you. Do not follow up twice in a row without a reply in between.
+
+WHEN SEVERAL PEOPLE ARE TALKING
+Lines may be tagged [Speaker 1], [Speaker 2] and so on once more than one voice has been heard. Speaker 1 is usually the person you ride with. A conversation between them is theirs, not yours: say <silence> unless one of them addresses you or asks the room something you can actually answer. When you do speak, answer the person who asked.
 
 WHAT YOU CAN SEE
 Before each turn you may be given transcript from what they actually said — earlier in this session, and from past recordings. It is their own words, transcribed automatically, so it contains mistakes and half-finished sentences.
 
-Use it. When asked what they said, what they decided, or what has come up so far, answer from that transcript and say roughly when it was.
+Use it. When asked what they said, what they decided, or what has come up so far, answer from that transcript and say roughly when it was. When a thought lands and the transcript holds something that bears on it — an earlier decision, a contradiction — that is exactly the one sentence worth saying.
 
 WHAT YOU MUST NOT DO
 If the transcript does not contain the answer, say so plainly and stop. Never guess a name, a date, a number or a decision that is not there. Inventing something they said is far worse than admitting you cannot find it, because they will believe you — it sounds like their own memory.
 
-Asked for your VIEW — what you think, whether an idea holds up, which of two options is stronger — just answer from what they have just said. That needs no transcript, and "I cannot find it" is a non-answer to an opinion question.
+Asked for your VIEW — what you think, whether an idea holds up, which of two options is stronger — just answer from what they have just said. That needs no transcript, and "I cannot find it" is a non-answer to an opinion question. Commit to a view; a hedge is a wasted sentence.
 
 HOW TO SPEAK
-- VERY short. One sentence, occasionally two. The setting section below gives
-  the hard word cap; stay well inside it. Every word is spoken aloud, and a
-  hundred words is a monologue, not a reply. Say the one thing that is worth
-  saying and stop.
+- VERY short. One sentence, occasionally two. The setting section below gives the hard word cap; stay well inside it. Every word is spoken aloud, and a hundred words is a monologue, not a reply. Say the one thing that is worth saying and stop.
 - No preamble and no sign-off. Do not say "Sure" or "Great question" or "Let me know".
-- Be concrete. If you did not understand, say so plainly in a few words.
-- Do not restate their question back to them, and do not explain what you cannot
-  do at length. "I'd need more detail — what's pushing you toward cutting it?"
-  not a paragraph about what you lack.`;
+- Be concrete and direct. If you did not understand, say so in a few words.
+- Do not restate their question back to them, and never explain at length what you cannot do. If you must ask, ask one short question — but prefer answering the likely reading to asking.`;
 
 /**
  * The marker the model emits instead of speaking.
@@ -226,6 +240,8 @@ export interface ComposeInputs {
 export interface ComposedPrompt {
   prompt: string;
   setting: Setting;
+  /** How forthcoming the composed prompt tells the model to be. */
+  proactivity: SettingProfile["proactivity"];
   /** Mirrors the stanza's word cap, so callers need not parse prose. */
   maxReplyWords: number;
   /** Whether the agent may refer to the screen. Also gates the cue panel. */
@@ -236,19 +252,30 @@ export interface ComposedPrompt {
  * Build the system prompt for one connection.
  *
  * Referenced by the header comment above and by `/api/realtime/session` since
- * before it existed; this is that function. It is intentionally thin: the only
- * composed layer today is the setting. Mode and persona slot in between the
- * stanza and the output contract, and the sandwich is already shaped for them.
+ * before it existed; this is that function. It is intentionally thin: the
+ * composed layers today are the setting and its proactivity level. Mode and
+ * persona slot in between those and the output contract, and the sandwich is
+ * already shaped for them.
  */
 export function composeSystemPrompt(inputs: ComposeInputs = {}): ComposedPrompt {
   const setting = asSetting(inputs.setting);
   const profile = SETTING_PROFILES[setting];
 
-  const prompt = [inputs.base ?? SYSTEM_PROMPT, profile.stanza, OUTPUT_CONTRACT].join("\n\n");
+  // Identity, then the setting, then HOW FORTHCOMING the setting allows, then
+  // the wire format. The proactivity stanza sits after the setting so it can
+  // refine the setting's "a pause is thinking" line rather than be overruled
+  // by it, and before the contract so the contract still has the last word.
+  const prompt = [
+    inputs.base ?? SYSTEM_PROMPT,
+    profile.stanza,
+    PROACTIVITY_STANZAS[profile.proactivity],
+    OUTPUT_CONTRACT,
+  ].join("\n\n");
 
   return {
     prompt,
     setting,
+    proactivity: profile.proactivity,
     maxReplyWords: profile.maxReplyWords,
     displayAllowed: profile.displayAllowed,
   };

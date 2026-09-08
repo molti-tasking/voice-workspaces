@@ -27,6 +27,12 @@
     "DEEPGRAM_MODEL",
     "DEEPGRAM_UTTERANCE_END_MS",
     "ASSEMBLYAI_API_KEY",
+    "STT_DIARIZE",
+    // Only the eval harness reads these, to post judge scores. The traces
+    // themselves reach Langfuse via the LiteLLM proxy without them.
+    "LANGFUSE_HOST",
+    "LANGFUSE_PUBLIC_KEY",
+    "LANGFUSE_SECRET_KEY",
     "ELEVENLABS_API_KEY",
     "ELEVENLABS_VOICE_ID",
     "ELEVENLABS_MODEL_ID",

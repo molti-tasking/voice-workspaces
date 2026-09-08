@@ -25,6 +25,26 @@ export type Setting = (typeof SETTINGS)[number];
 /** The setting assumed for recordings made before the question was asked. */
 export const DEFAULT_SETTING: Setting = "driving";
 
+export type Proactivity = "quiet" | "occasional" | "forthcoming";
+
+/**
+ * How often the system may take an unasked-for turn, by level.
+ *
+ * The base prompt says WHAT earns a turn — a landed thought, a stuck person, a
+ * question. These say HOW OFTEN, and they are what separates a car from a
+ * desk. Every level keeps the two rules that never move: nothing mid-thought,
+ * and never twice without a reply in between. None of them lengthens a reply;
+ * the word cap is the setting's.
+ */
+export const PROACTIVITY_STANZAS: Record<Proactivity, string> = {
+  quiet: `HOW FORTHCOMING TO BE
+Sparingly. Most landed thoughts should pass without comment; speak on one only when you have something that genuinely sharpens or corrects it, and let the rest go. One push when they are clearly stuck, then wait. Never twice in a row without a reply.`,
+  occasional: `HOW FORTHCOMING TO BE
+Moderately. A short reaction when a thought lands is welcome, and one nudge when they seem stuck. At most once per thought, and never twice in a row without a reply.`,
+  forthcoming: `HOW FORTHCOMING TO BE
+Readily. Reacting when a thought lands is expected, and a settled pause after a complete thought is an invitation to move it on with one question. Still one sentence, still never mid-thought, still never twice in a row without a reply.`,
+};
+
 export interface SettingProfile {
   /** What a participant would call it. */
   label: string;
@@ -69,11 +89,13 @@ export interface SettingProfile {
   /**
    * How forthcoming the system is allowed to be.
    *
-   * Carried here rather than in the prompt text so that when the proactive
-   * engine lands it reads this rather than inventing a second source of truth.
-   * Today it only tunes the register stanza below.
+   * Read by `composeSystemPrompt`, which appends the matching entry of
+   * `PROACTIVITY_STANZAS` after the setting stanza. Carried as data rather than
+   * folded into the prose so that when a proactive engine (a silence timer, an
+   * unprompted turn) lands it reads this same value rather than inventing a
+   * second source of truth.
    */
-  proactivity: "quiet" | "occasional" | "forthcoming";
+  proactivity: Proactivity;
   /** Appended to the composed system prompt. Prose, because the model reads it. */
   stanza: string;
 }

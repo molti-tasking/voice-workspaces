@@ -46,13 +46,26 @@ export interface ChatResult {
 
 export interface ChatOptions {
   role?: ModelRole;
-  temperature?: number;
+  /**
+   * `null` omits the field entirely. Some models accept only their default —
+   * `claude-sonnet-5` answers 400 to anything but 1 — and the talk-back
+   * container sends none, so an evaluation that wants to sample the same
+   * distribution the drive did has to be able to send none too.
+   */
+  temperature?: number | null;
   maxTokens?: number;
   /** Requests reproducible sampling where the backend supports it. */
   seed?: number;
   /** Ask the backend for a JSON object. Support varies by model. */
   json?: boolean;
   signal?: AbortSignal;
+  /**
+   * Forwarded to LiteLLM as `metadata`, which it hands to its logging
+   * callbacks. With Langfuse configured on the proxy, `session_id`, `tags`,
+   * `trace_id`, `generation_name` and `version` are read from here. Ignored
+   * by a proxy without callbacks; never reaches the upstream model.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 interface ChatCompletionResponse {
@@ -96,7 +109,8 @@ export async function chat(
     body: JSON.stringify({
       model: requestedModel,
       messages,
-      temperature: options.temperature ?? 0.2,
+      ...(options.temperature === null ? {} : { temperature: options.temperature ?? 0.2 }),
+      ...(options.metadata ? { metadata: options.metadata } : {}),
       // Backends disagree about which parameters they accept — Anthropic
       // rejects `seed` outright with a 400, which is non-retryable and would
       // permanently poison every extraction routed to it. Letting LiteLLM drop
