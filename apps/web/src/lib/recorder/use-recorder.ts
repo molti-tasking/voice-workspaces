@@ -11,6 +11,7 @@ import {
   type OpenSessionMeta,
 } from "./idb";
 import { publishStream } from "./mic-bus";
+import type { CaptureSetting } from "@voicemural/shared";
 import { installUploaderTriggers, kickUploader, subscribeUploader } from "./uploader";
 
 /**
@@ -266,7 +267,24 @@ export function useRecorder() {
     [patch],
   );
 
-  const start = useCallback(async () => {
+  /**
+   * Begin recording.
+   *
+   * `setting` is where the person is, as detected or corrected. It reaches the
+   * server once, at session creation, and is immutable thereafter: it governs
+   * turn-taking and how much may go on screen, so a recording whose second
+   * half ran under different rules would not be interpretable. Omitted when
+   * nothing could be inferred, which the server reads as the historical default.
+   *
+   * `voiceId` is the voice the system will speak with, from the catalogue in
+   * `@voicemural/talkback/voice`. Same lifecycle: stated once, stored on the
+   * session, immutable for the drive.
+   */
+  const start = useCallback(async (
+    setting?: CaptureSetting,
+    source?: "device" | "motion" | "default" | "chosen",
+    voiceId?: string,
+  ) => {
     if (runningRef.current) return;
 
     const mimeType = pickMimeType();
@@ -311,6 +329,9 @@ export function useRecorder() {
       // Read after the request settles; false here predicts a drive that ends
       // when the screen locks.
       wake_lock_active: wakeLockRef.current !== null,
+      setting: setting ?? null,
+      setting_source: source ?? null,
+      voice_id: voiceId ?? null,
     });
 
     const meta: OpenSessionMeta = {
@@ -335,6 +356,8 @@ export function useRecorder() {
           id: meta.captureSessionId,
           startedAt: new Date(meta.startedAt).toISOString(),
           deviceInfo: { userAgent: navigator.userAgent, mimeType },
+          setting,
+          voiceId,
         }),
       });
       meta.serverAcked = res.ok;

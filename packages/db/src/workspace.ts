@@ -325,6 +325,78 @@ export async function appendOps(input: AppendOpsInput): Promise<number> {
   return inserted.length;
 }
 
+/**
+ * Append one op a person posted, not the extractor.
+ *
+ * Its own writer because `appendOps` is built around an extraction: it needs
+ * an `extractionId` and refuses a second batch under the same one. A board
+ * gesture has no extraction, so instead the client's `opId` becomes the row's
+ * primary key and the database enforces idempotency — a POST retried after a
+ * dead zone is a no-op, including for `retire_block`, which mints no block id
+ * that could otherwise collide.
+ */
+export async function appendUserOp(input: {
+  userId: string;
+  /** The client's idempotency key, used as `workspace_op.id`. */
+  id: string;
+  op: WorkspaceOp;
+  occurredAt?: Date;
+}): Promise<"inserted" | "duplicate"> {
+  const { type, ...payload } = input.op;
+
+  const inserted = await getDb()
+    .insert(workspaceOp)
+    .values({
+      id: input.id,
+      userId: input.userId,
+      extractionId: null,
+      captureSessionId: null,
+      occurredAt: input.occurredAt ?? new Date(),
+      type,
+      payload: payload as Record<string, unknown>,
+      sourceUtteranceIds: [],
+    })
+    .onConflictDoNothing({ target: workspaceOp.id })
+    .returning({ id: workspaceOp.id });
+
+  return inserted.length > 0 ? "inserted" : "duplicate";
+}
+
+/**
+ * The ops a person posted, in `seq` order.
+ *
+ * What `workspace:rebuild` and `workspace:reparse` must save before they clear
+ * the log and restore after: a rebuild that dropped the manual gestures would
+ * delete the measurement.
+ */
+export async function loadUserOps(userId: string): Promise<StoredOp[]> {
+  const rows = await getDb()
+    .select({
+      id: workspaceOp.id,
+      seq: workspaceOp.seq,
+      occurredAt: workspaceOp.occurredAt,
+      type: workspaceOp.type,
+      payload: workspaceOp.payload,
+    })
+    .from(workspaceOp)
+    .where(
+      and(
+        eq(workspaceOp.userId, userId),
+        isNull(workspaceOp.extractionId),
+        sql`${workspaceOp.payload}->>'via' = 'user'`,
+      ),
+    )
+    .orderBy(asc(workspaceOp.seq));
+
+  return rows.map((r) => ({
+    id: r.id,
+    seq: Number(r.seq),
+    occurredAt: r.occurredAt,
+    op: { type: r.type, ...r.payload } as WorkspaceOp,
+    sourceUtteranceIds: [],
+  }));
+}
+
 /* ---------------------------------------------------------------------------
  * Cursor
  * ------------------------------------------------------------------------- */

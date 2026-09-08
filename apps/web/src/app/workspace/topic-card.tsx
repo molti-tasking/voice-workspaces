@@ -37,6 +37,7 @@ export function TopicCard({
   const Icon = topicIcon(topic.icon);
 
   const questions = blocks.filter((b) => b.kind === "question");
+  const tasks = blocks.filter((b) => b.kind === "task");
   const claims = blocks.filter((b) => b.kind === "claim");
   const facts = blocks.filter((b) => b.kind === "fact");
   const asides = blocks.filter((b) => b.kind === "context" || b.kind === "meta");
@@ -77,6 +78,42 @@ export function TopicCard({
                 <span>{b.text}</span>
               </li>
             ))}
+          </ul>
+        )}
+
+        {/* What was said would get done, with the column it sits in. The
+            board is the place to move these; here they read as a checklist. */}
+        {tasks.length > 0 && (
+          <ul className="space-y-1.5">
+            {tasks.map((b) => {
+              const state = b.state ?? "open";
+              const finished = state === "done" || state === "dropped";
+              return (
+                <li
+                  key={b.id}
+                  className={`flex gap-2 text-sm leading-snug ${faded(b) ? "opacity-30" : ""}`}
+                >
+                  <span aria-hidden className="shrink-0 font-mono text-xs text-white/30">
+                    {finished ? "☑" : "☐"}
+                  </span>
+                  <span className={state === "dropped" ? "text-white/30 line-through" : ""}>
+                    {b.text}
+                  </span>
+                  <span
+                    className={[
+                      "ml-auto shrink-0 font-mono text-[10px]",
+                      state === "done"
+                        ? "text-emerald-300/80"
+                        : state === "open" || state === "dropped"
+                          ? "text-white/30"
+                          : "text-amber-300",
+                    ].join(" ")}
+                  >
+                    {state}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         )}
 
@@ -144,7 +181,10 @@ function RevisionNote({
   block: Block;
   allBlocks: Map<string, Block>;
 }) {
-  const history = revisionChain(block, allBlocks);
+  // A state-only revise — a task moved on the board or by speech — carries
+  // the same text, and "revised · 1 earlier" over identical wording reads as
+  // a bug rather than a history.
+  const history = revisionChain(block, allBlocks).filter((old) => old.text !== block.text);
   if (history.length === 0) return null;
 
   return (

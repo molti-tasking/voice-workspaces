@@ -17,6 +17,7 @@ import {
   foldWorkspace,
   parseExtractionResponse,
   stateDigest,
+  taskOpStats,
   type TranscriptSegment,
 } from "@voicemural/workspace";
 import { capture, captureGeneration, log } from "@voicemural/telemetry";
@@ -128,6 +129,8 @@ export async function extractWorkspace(userId: string): Promise<ExtractionOutcom
   }
 
   const parsed = parseExtractionResponse(rawResponse, { idSeed: inputHash });
+  // Against the pre-extraction fold: what this batch did to the board.
+  const taskStats = taskOpStats(parsed.ops, state);
 
   const last = pending[pending.length - 1]!;
   const sourceIds = pending.map((s) => s.id);
@@ -160,6 +163,8 @@ export async function extractWorkspace(userId: string): Promise<ExtractionOutcom
     rawResponse,
     parseError: parsed.error ?? null,
     parseWarningCount: parsed.warnings.length,
+    taskOps: taskStats.taskOps,
+    taskTransitions: taskStats.taskTransitions,
     liveCall,
   });
 
@@ -196,6 +201,13 @@ interface ExtractionReport {
   rawResponse: string;
   parseError: string | null;
   parseWarningCount: number;
+  /**
+   * Board yield, as counts on the existing events rather than a new one. The
+   * acceptance measure needs "never touched", which only the ledger answers;
+   * PostHog gets yield monitoring, joinable by `extraction_id`.
+   */
+  taskOps: number;
+  taskTransitions: number;
   /** Absent when the extraction cache answered and no model was called. */
   liveCall: ChatResult | undefined;
 }
@@ -224,6 +236,8 @@ function reportExtraction(report: ExtractionReport): void {
     rawResponse,
     parseError,
     parseWarningCount,
+    taskOps,
+    taskTransitions,
     liveCall,
   } = report;
 
@@ -237,6 +251,8 @@ function reportExtraction(report: ExtractionReport): void {
         extraction_id: extractionId,
         segments,
         ops_appended: opsAppended,
+        task_ops: taskOps,
+        task_transitions: taskTransitions,
       });
     } else {
       captureGeneration({
@@ -262,6 +278,8 @@ function reportExtraction(report: ExtractionReport): void {
           segment_count: segments,
           ops_appended: opsAppended,
           parse_warning_count: parseWarningCount,
+          task_ops: taskOps,
+          task_transitions: taskTransitions,
           cache_hit: false,
         },
       });

@@ -13,8 +13,18 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
+import { enableBoard } from "./board";
 import { closeDb, getDb } from "./index";
-import { audioChunk, captureSession, user, utterance } from "./schema";
+import {
+  artifact,
+  audioChunk,
+  captureSession,
+  directive,
+  macroProposal,
+  user,
+  utterance,
+  workspaceOp,
+} from "./schema";
 
 const CHUNK_MS = 10_000;
 const MIME = "audio/wav";
@@ -22,20 +32,156 @@ const MIME = "audio/wav";
 /** A fixed, deterministic session id so re-running replaces rather than piles up. */
 const FIXTURE_SESSION_ID = "00000000-0000-4000-8000-00000000f1a7";
 
-/** Plausible commute monologue, mixing content with the occasional directive. */
-const SCRIPT: { text: string; kind: "content" | "directive" | "unclassified" }[] = [
+/**
+ * Two earlier sessions, so the derived views have a shape rather than a point.
+ *
+ * `/trajectory` needs several moments to draw a trajectory at all, and the
+ * macro detector needs a pattern spanning more than one session before it will
+ * propose anything — so a single fixture drive leaves both looking broken when
+ * they are working correctly.
+ */
+const EARLIER_SESSION_IDS = [
+  "00000000-0000-4000-8000-00000000f1a5",
+  "00000000-0000-4000-8000-00000000f1a6",
+] as const;
+
+/**
+ * A plausible monologue, mixing content with the occasional direction.
+ *
+ * A direction carries the RESTATEMENT the classifier would have written — one
+ * sentence, second person, the thing that could be read back aloud — not the
+ * words that were said. Seeding the raw transcript line here instead was what
+ * made the cue panel look like a truncated transcript when it is meant to show
+ * what the system understood.
+ */
+const SCRIPT: {
+  text: string;
+  kind: "content" | "directive" | "unclassified";
+  /** Only on a directive: verb, object and what would be read back. */
+  as?: { verb: string; object: string; restatement: string };
+}[] = [
   { text: "Right, so the thing I keep circling back to is the Midas touch problem.", kind: "content" },
   { text: "If everything I say is content by default, the failure mode is additive, not destructive.", kind: "content" },
-  { text: "Mark that.", kind: "directive" },
+  {
+    text: "Mark that.",
+    kind: "directive",
+    as: { verb: "mark", object: "the additive failure mode", restatement: "Marking the point about the failure mode being additive." },
+  },
   { text: "Because the alternative is a classifier arms race, and that never converges.", kind: "content" },
   { text: "What Niklas said about watertight seals between projects — that applies here too.", kind: "content" },
   { text: "The repertoire is the contribution, not the recogniser.", kind: "content" },
-  { text: "Make that a thing, call it the asymmetry argument.", kind: "directive" },
+  {
+    text: "Make that a thing, call it the asymmetry argument.",
+    kind: "directive",
+    as: { verb: "name", object: "the asymmetry argument", restatement: "Making that a capability, called the asymmetry argument." },
+  },
   { text: "Actually no, the interesting claim is that you cannot specify the repertoire in advance.", kind: "content" },
   { text: "You only find out what you need after you have needed it a few times.", kind: "content" },
   { text: "Which is exactly why the growth curve is the measurement and not the feature list.", kind: "content" },
-  { text: "Summarise this into the diary when I get in.", kind: "directive" },
-  { text: "And flag the bit about specification in advance, that is the abstract.", kind: "directive" },
+  {
+    text: "Summarise this into the diary when I get in.",
+    kind: "directive",
+    as: { verb: "summarise", object: "this session", restatement: "Writing this session up as a diary entry when you stop." },
+  },
+  {
+    text: "And flag the bit about specification in advance, that is the abstract.",
+    kind: "directive",
+    as: { verb: "flag", object: "specification in advance", restatement: "Flagging the bit about specifying in advance for the abstract." },
+  },
+];
+
+/**
+ * Speech from earlier drives, with the workspace ops it would have produced.
+ *
+ * Ops are written directly rather than extracted, because extraction needs a
+ * model and the whole point of the fixture is that it does not. They carry the
+ * same shape a real extraction produces — a topic created, blocks added, one
+ * claim superseding another — so the fold, the diff and the trajectory all
+ * exercise their real paths.
+ */
+const EARLIER: {
+  session: (typeof EARLIER_SESSION_IDS)[number];
+  daysAgo: number;
+  setting: "driving" | "walking" | "hands_busy" | "desk";
+  lines: { text: string; kind: "content" | "directive" }[];
+  ops: { type: "create_topic" | "add_block" | "revise_block"; payload: Record<string, unknown> }[];
+}[] = [
+  {
+    session: EARLIER_SESSION_IDS[0],
+    daysAgo: 9,
+    setting: "driving",
+    lines: [
+      { text: "The thing I want out of the research stay is not the name of the place.", kind: "content" },
+      { text: "Flag the funding question, I keep forgetting it.", kind: "directive" },
+      { text: "Three to six months feels right, any less and nothing lands.", kind: "content" },
+    ],
+    ops: [
+      { type: "create_topic", payload: { topicId: "fx-stay", title: "Research stay", slug: "research-stay", icon: "Plane" } },
+      { type: "add_block", payload: { blockId: "fx-b1", topicId: "fx-stay", kind: "claim", text: "What matters is not the name of the place.", spans: [] } },
+      { type: "add_block", payload: { blockId: "fx-b2", topicId: "fx-stay", kind: "fact", label: "Duration", text: "Three to six months.", spans: [] } },
+      { type: "add_block", payload: { blockId: "fx-t1", topicId: "fx-stay", kind: "task", state: "next", text: "Email the host lab about a start date.", spans: [] } },
+    ],
+  },
+  {
+    session: EARLIER_SESSION_IDS[1],
+    daysAgo: 4,
+    setting: "walking",
+    lines: [
+      { text: "Actually what matters is who I would be working with, day to day.", kind: "content" },
+      { text: "Flag the funding thing again, it is still open.", kind: "directive" },
+      { text: "The ethics form needs a data management plan before any of this.", kind: "content" },
+    ],
+    ops: [
+      { type: "revise_block", payload: { blockId: "fx-b3", supersedesBlockId: "fx-b1", topicId: "fx-stay", kind: "claim", text: "What matters is who I would work with, day to day.", spans: [] } },
+      // Progress reported in speech: the same text, a new state.
+      { type: "revise_block", payload: { blockId: "fx-t2", supersedesBlockId: "fx-t1", topicId: "fx-stay", kind: "task", state: "done", text: "Email the host lab about a start date.", spans: [] } },
+      { type: "create_topic", payload: { topicId: "fx-ethics", title: "Ethics form", slug: "ethics-form", icon: "Scale" } },
+      { type: "add_block", payload: { blockId: "fx-b4", topicId: "fx-ethics", kind: "question", text: "Does the data management plan have to name the outlet?", spans: [] } },
+    ],
+  },
+];
+
+/**
+ * A board gesture: the person putting a card back where speech moved it from.
+ *
+ * Seeded AFTER the earlier sessions — `seq` is a bigserial, so insertion order
+ * is the ledger order — with a deterministic id, no extraction and no session,
+ * exactly as the board route writes one. This is what makes `/board` show a
+ * reversal, which is the study's primary measure, without anyone clicking.
+ */
+const USER_OPS: { id: string; daysAgo: number; type: "revise_block" | "retire_block"; payload: Record<string, unknown> }[] = [
+  {
+    id: "00000000-0000-4000-8000-00000000f1b1",
+    daysAgo: 3,
+    type: "revise_block",
+    payload: { blockId: "fx-t3", supersedesBlockId: "fx-t2", topicId: "fx-stay", kind: "task", state: "next", text: "Email the host lab about a start date.", via: "user", spans: [] },
+  },
+];
+
+/**
+ * What the extractor would have made of the demo session.
+ *
+ * Seeded because the cue panel's content lane is `diffWorkspace` between the
+ * session's start and now — so a demo session with no ops of its own leaves
+ * the panel showing directions alone, which is precisely what made it read as a
+ * truncated transcript. Kinds are mixed on purpose: a question, a fact with its
+ * label and a couple of claims are what the read density is built to
+ * distinguish.
+ */
+const FIXTURE_OPS: {
+  type: "create_topic" | "add_block";
+  payload: Record<string, unknown>;
+}[] = [
+  { type: "create_topic", payload: { topicId: "fx-midas", title: "Midas touch", slug: "midas-touch", icon: "Puzzle" } },
+  { type: "add_block", payload: { blockId: "fx-m1", topicId: "fx-midas", kind: "claim", text: "Treating everything as content by default makes the failure mode additive rather than destructive.", spans: [] } },
+  { type: "add_block", payload: { blockId: "fx-m2", topicId: "fx-midas", kind: "context", text: "The alternative is a classifier arms race, which does not converge.", spans: [] } },
+  { type: "add_block", payload: { blockId: "fx-m3", topicId: "fx-midas", kind: "task", state: "open", text: "Write up the asymmetry argument.", spans: [] } },
+  { type: "create_topic", payload: { topicId: "fx-rep", title: "Repertoire", slug: "repertoire", icon: "Wrench" } },
+  { type: "add_block", payload: { blockId: "fx-r1", topicId: "fx-rep", kind: "claim", text: "The repertoire is the contribution, not the recogniser.", spans: [] } },
+  { type: "add_block", payload: { blockId: "fx-r2", topicId: "fx-rep", kind: "question", text: "Can the repertoire be specified in advance at all?", spans: [] } },
+  { type: "add_block", payload: { blockId: "fx-r3", topicId: "fx-rep", kind: "fact", label: "Measurement", text: "The growth curve, not the feature list.", spans: [] } },
+  { type: "add_block", payload: { blockId: "fx-r4", topicId: "fx-rep", kind: "task", state: "doing", text: "Summarise this session into the diary.", spans: [] } },
+  { type: "add_block", payload: { blockId: "fx-r5", topicId: "fx-rep", kind: "task", state: "dropped", text: "Build a recogniser for every direction in advance.", spans: [] } },
 ];
 
 export async function seedFixtureSession(userId: string): Promise<void> {
@@ -44,6 +190,22 @@ export async function seedFixtureSession(userId: string): Promise<void> {
   // Replace any prior fixture so re-running is idempotent. Chunks, utterances
   // and artefacts cascade from the session.
   await db.delete(captureSession).where(eq(captureSession.id, FIXTURE_SESSION_ID));
+  for (const id of EARLIER_SESSION_IDS) {
+    await db.delete(captureSession).where(eq(captureSession.id, id));
+  }
+  // Ops do not cascade from a session — `capture_session_id` is `set null`, so
+  // they would survive as orphans and double on every re-run.
+  await db.delete(workspaceOp).where(eq(workspaceOp.userId, userId));
+  // Proposals hang off the user rather than a session, so they too would
+  // survive a re-seed — and the unique (user, form) index would then reject the
+  // replacement silently.
+  await db.delete(macroProposal).where(eq(macroProposal.userId, userId));
+
+  // The fixture is the demo, and the board is part of it.
+  await enableBoard(userId);
+
+  await seedEarlierSessions(userId);
+  await seedUserOps(userId);
 
   const startedAt = new Date(Date.now() - 60 * 60 * 1000);
 
@@ -52,6 +214,10 @@ export async function seedFixtureSession(userId: string): Promise<void> {
     userId,
     startedAt,
     endedAt: new Date(startedAt.getTime() + SCRIPT.length * CHUNK_MS),
+    // `desk` rather than `driving`: the panel exists at all (driving renders
+    // none), and it renders at its `read` density, so the fixture shows the
+    // richer view. Pick `Hands busy` on `/record` to see the glance density.
+    setting: "desk",
     deviceInfo: { fixture: true, note: "Synthesised by pnpm db:fixtures" },
   });
 
@@ -79,16 +245,225 @@ export async function seedFixtureSession(userId: string): Promise<void> {
 
     if (!chunk) throw new Error(`Failed to insert fixture chunk ${index}`);
 
-    await db.insert(utterance).values({
+    const [row] = await db
+      .insert(utterance)
+      .values({
+        captureSessionId: FIXTURE_SESSION_ID,
+        chunkId: chunk.id,
+        // Sits 1s into the chunk, so seeking is visibly distinct from the boundary.
+        startOffsetMs: startOffsetMs + 1000,
+        endOffsetMs: startOffsetMs + CHUNK_MS - 1500,
+        text: line.text,
+        kind: line.kind,
+      })
+      .returning({ id: utterance.id });
+
+    if (row && line.kind === "directive") {
+      await db.insert(directive).values({
+        utteranceId: row.id,
+        captureSessionId: FIXTURE_SESSION_ID,
+        verb: line.as?.verb ?? verbOf(line.text),
+        object: line.as?.object ?? objectOf(line.text),
+        restatement: line.as?.restatement ?? line.text,
+        confidence: 85,
+      });
+    }
+  }
+
+  // Spread across the session rather than stamped at its start, so the cue
+  // panel's diff picks them up the way real extraction would — a batch landing
+  // every eight utterances or so.
+  for (const [index, op] of FIXTURE_OPS.entries()) {
+    await db.insert(workspaceOp).values({
+      userId,
       captureSessionId: FIXTURE_SESSION_ID,
-      chunkId: chunk.id,
-      // Sits 1s into the chunk, so seeking is visibly distinct from the boundary.
-      startOffsetMs: startOffsetMs + 1000,
-      endOffsetMs: startOffsetMs + CHUNK_MS - 1500,
-      text: line.text,
-      kind: line.kind,
+      type: op.type,
+      payload: op.payload,
+      occurredAt: new Date(startedAt.getTime() + (index + 2) * CHUNK_MS),
+      sourceUtteranceIds: [],
     });
   }
+
+  await seedMacroProposal(userId);
+}
+
+/** The two earlier drives, their transcripts, and the ops they produced. */
+async function seedEarlierSessions(userId: string): Promise<void> {
+  const db = getDb();
+
+  for (const drive of EARLIER) {
+    const startedAt = new Date(Date.now() - drive.daysAgo * 24 * 60 * 60 * 1000);
+
+    await db.insert(captureSession).values({
+      id: drive.session,
+      userId,
+      startedAt,
+      endedAt: new Date(startedAt.getTime() + drive.lines.length * CHUNK_MS),
+      setting: drive.setting,
+      deviceInfo: { fixture: true },
+    });
+
+    for (const [index, line] of drive.lines.entries()) {
+      const startOffsetMs = index * CHUNK_MS;
+      const [chunk] = await db
+        .insert(audioChunk)
+        .values({
+          captureSessionId: drive.session,
+          seq: index,
+          startOffsetMs,
+          durationMs: CHUNK_MS,
+          mimeType: MIME,
+          byteSize: 0,
+          checksum: "fixture",
+          storageKey: null,
+          status: "transcribed",
+          transcribedAt: new Date(),
+          audioDiscardedAt: new Date(),
+        })
+        .returning({ id: audioChunk.id });
+
+      if (!chunk) throw new Error("Failed to insert fixture chunk");
+
+      const [row] = await db
+        .insert(utterance)
+        .values({
+          captureSessionId: drive.session,
+          chunkId: chunk.id,
+          startOffsetMs: startOffsetMs + 1000,
+          endOffsetMs: startOffsetMs + CHUNK_MS - 1500,
+          text: line.text,
+          kind: line.kind,
+        })
+        .returning({ id: utterance.id });
+
+      if (row && line.kind === "directive") {
+        await db.insert(directive).values({
+          utteranceId: row.id,
+          captureSessionId: drive.session,
+          verb: verbOf(line.text),
+          object: objectOf(line.text),
+          restatement: line.text,
+          confidence: 80,
+        });
+      }
+    }
+
+    // `seq` is a bigserial: Postgres assigns the total order, and the fold
+    // sorts by it, so inserting in script order is what makes the fixture
+    // deterministic.
+    for (const [index, op] of drive.ops.entries()) {
+      await db.insert(workspaceOp).values({
+        userId,
+        captureSessionId: drive.session,
+        type: op.type,
+        payload: op.payload,
+        occurredAt: new Date(startedAt.getTime() + (index + 1) * CHUNK_MS),
+        sourceUtteranceIds: [],
+      });
+    }
+  }
+}
+
+/** The person's own board gestures, after the drives they respond to. */
+async function seedUserOps(userId: string): Promise<void> {
+  const db = getDb();
+  for (const op of USER_OPS) {
+    await db.insert(workspaceOp).values({
+      id: op.id,
+      userId,
+      extractionId: null,
+      captureSessionId: null,
+      type: op.type,
+      payload: op.payload,
+      occurredAt: new Date(Date.now() - op.daysAgo * 24 * 60 * 60 * 1000),
+      sourceUtteranceIds: [],
+    });
+  }
+}
+
+/**
+ * A macro proposal, as the detector would have produced one.
+ *
+ * Seeded directly because inducing it needs a `reasoning` call, and the point
+ * of the fixture is to work without a model. The shape is exactly what
+ * `detect-macros.ts` writes — including the replay artefact, which is the
+ * verification story: the proposal run against the speech that triggered it, so
+ * the person hears the effect rather than reading the definition.
+ */
+async function seedMacroProposal(userId: string): Promise<void> {
+  const db = getDb();
+
+  const flags = await db
+    .select({
+      utteranceId: directive.utteranceId,
+      captureSessionId: directive.captureSessionId,
+      restatement: directive.restatement,
+      createdAt: directive.createdAt,
+    })
+    .from(directive)
+    .where(eq(directive.verb, "flag"));
+
+  if (flags.length === 0) return;
+
+  const body = [
+    "Pulls together everything you flagged as still open.",
+    "",
+    ...flags.map((f) => `- ${f.restatement}`),
+  ].join("\n");
+
+  const [replay] = await db
+    .insert(artifact)
+    .values({
+      captureSessionId: flags[0]!.captureSessionId,
+      kind: "replay_preview",
+      title: "If this had been running: flag|open",
+      body,
+      spans: flags.map((f) => ({
+        utteranceId: f.utteranceId,
+        startChar: 0,
+        endChar: f.restatement.length,
+      })),
+    })
+    .returning({ id: artifact.id });
+
+  await db.insert(macroProposal).values({
+    userId,
+    canonicalForm: "flag|open",
+    occurrences: flags.map((f) => ({
+      utteranceId: f.utteranceId,
+      captureSessionId: f.captureSessionId,
+      text: f.restatement,
+      occurredAt: f.createdAt.toISOString(),
+    })),
+    sessionCount: new Set(flags.map((f) => f.captureSessionId)).size,
+    proposedName: "open",
+    restatement: "Pulls together everything you flagged as still open.",
+    markdown:
+      "# open\n\nCollect everything flagged as unresolved into one list.\n\n" +
+      "## Behaviour\n- Quote each flagged line verbatim; never paraphrase.\n" +
+      "- Keep the order they were said in.\n- Additive and reversible: fire on weak evidence.\n",
+    params: { reversible: true, confirm: false },
+    replayArtifactId: replay?.id ?? null,
+  });
+}
+
+/**
+ * The verb the classifier would have named, without asking a model.
+ *
+ * Skips the same leading filler the real gate does — "And flag the bit…" is a
+ * flag, not an "and" — so the fixture shows what the pipeline actually
+ * produces rather than something that looks like a bug in it.
+ */
+function verbOf(text: string): string {
+  const filler = new Set(["and", "so", "ok", "okay", "right", "well", "just", "then", "actually"]);
+  const words = text.toLowerCase().replace(/[^\p{L}\s]/gu, "").trim().split(/\s+/);
+  const verb = words.find((word) => word.length > 0 && !filler.has(word)) ?? "";
+  return verb === "make" ? "name" : verb;
+}
+
+/** Everything after the verb, kept short. */
+function objectOf(text: string): string {
+  return text.split(/\s+/).slice(1, 6).join(" ").replace(/[.,]$/, "");
 }
 
 async function main() {
@@ -107,9 +482,12 @@ async function main() {
   }
 
   await seedFixtureSession(firstUser.id);
+  const earlierLines = EARLIER.reduce((n, d) => n + d.lines.length, 0);
+  const earlierOps = EARLIER.reduce((n, d) => n + d.ops.length, 0) + USER_OPS.length;
   console.log(
-    `Fixture session seeded for ${firstUser.email}: ` +
-      `${SCRIPT.length} chunks, ${SCRIPT.length} utterances.`,
+    `Fixtures seeded for ${firstUser.email}: ` +
+      `${EARLIER.length + 1} sessions, ${SCRIPT.length + earlierLines} utterances, ` +
+      `${earlierOps} workspace ops.`,
   );
 }
 

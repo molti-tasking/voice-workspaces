@@ -24,7 +24,7 @@ import { log } from "@voicemural/telemetry";
  * Sent to the Python container in the `/api/realtime/session` response rather
  * than duplicated there, so there is one copy of this text.
  */
-export const SUMMARY_PROMPT = `You maintain a concise, evolving summary of what someone has said aloud while driving and thinking out loud.
+export const SUMMARY_PROMPT = `You maintain a concise, evolving summary of what someone has said aloud while thinking out loud.
 
 Prioritise decisions, unresolved questions, concrete next steps, and the thread of the argument they are working through. Integrate new speech into the prior summary; do not merely append it. Preserve uncertainty and corrections — if they contradicted themselves or changed their mind, that IS the content, not noise to tidy away.
 

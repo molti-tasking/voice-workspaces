@@ -1,4 +1,5 @@
 import { formatOffset, isLikelyHallucination } from "@voicemural/shared";
+import { KindToggle } from "./kind-toggle";
 
 export interface TranscriptRow {
   id: string;
@@ -55,7 +56,8 @@ type Entry =
  * Every agent generation is its own row, never merged, so a drive with several
  * replies can be read turn by turn.
  *
- * A server component: no interactivity to warrant shipping JavaScript.
+ * A server component apart from the one correction control on each user line —
+ * see `KindToggle`, which is the only place `kindOverride` is ever written.
  */
 export function Transcript({
   rows,
@@ -176,7 +178,7 @@ function UserLine({
   const hallucinated = isLikelyHallucination(row.text);
 
   return (
-    <li className="flex gap-3">
+    <li className="group flex gap-3">
       <span
         className="w-12 shrink-0 pt-1 text-right font-mono text-xs text-white/25 tabular-nums"
         title={`${formatOffset(row.startOffsetMs)}–${formatOffset(row.endOffsetMs)}`}
@@ -196,6 +198,10 @@ function UserLine({
         >
           {row.text}
         </p>
+        {/* Nothing to correct on a line nobody said. */}
+        {!suspect && echoOf === undefined && (
+          <KindToggle utteranceId={row.id} kind={kind} />
+        )}
         {/* Said by nobody. The ledger keeps it — it is the verbatim record and
             nothing is deleted — but presenting it as speech would be a lie. */}
         {hallucinated && (

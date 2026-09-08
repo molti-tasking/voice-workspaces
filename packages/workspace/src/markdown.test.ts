@@ -18,8 +18,9 @@ function block(
   text: string,
   label?: string,
   id = `${kind}-${text.slice(0, 8)}`,
+  state?: Block["state"],
 ): Block {
-  return { id, topicId: topic.id, kind, label, text, spans: [], occurredAt: T };
+  return { id, topicId: topic.id, kind, label, text, state, spans: [], occurredAt: T };
 }
 
 const blocks: Block[] = [
@@ -140,6 +141,40 @@ describe("facts as a table", () => {
   it("falls back to a dash for a fact with no label", () => {
     const md = topicToMarkdown(topic, [block("fact", "unlabelled")]);
     expect(md).toContain("| **—** | unlabelled |");
+  });
+});
+
+describe("tasks as a checklist", () => {
+  const withTasks = [
+    block("question", "Where to go for the stay?"),
+    block("task", "Email the host lab about a start date.", undefined, "t1", "next"),
+    block("task", "Book the flights.", undefined, "t2", "done"),
+    block("task", "Apply for the Stanford visit.", undefined, "t3", "dropped"),
+    block("fact", "3-6 months", "Duration"),
+    block("claim", "Wants somewhere warm."),
+  ];
+
+  it("renders each column as a checklist form that survives losing the styling", () => {
+    const md = topicToMarkdown(topic, withTasks);
+    expect(md).toContain("## Tasks");
+    expect(md).toContain("- [ ] Email the host lab about a start date. (next)");
+    expect(md).toContain("- [x] Book the flights. (done)");
+    expect(md).toContain("- [x] ~~Apply for the Stanford visit.~~ (dropped)");
+  });
+
+  it("sits after the questions and before the details", () => {
+    const md = topicToMarkdown(topic, withTasks);
+    expect(md.indexOf("## Open questions")).toBeLessThan(md.indexOf("## Tasks"));
+    expect(md.indexOf("## Tasks")).toBeLessThan(md.indexOf("## Details"));
+  });
+
+  it("reads a task with no state as open", () => {
+    const md = topicToMarkdown(topic, [block("task", "Untagged.", undefined, "t4")]);
+    expect(md).toContain("- [ ] Untagged. (open)");
+  });
+
+  it("omits the section entirely when there are no tasks", () => {
+    expect(topicToMarkdown(topic, blocks)).not.toContain("## Tasks");
   });
 });
 

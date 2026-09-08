@@ -16,6 +16,7 @@
  *
  * Naming: `object_verb_past`, snake_case, properties snake_case too.
  */
+import type { TaskStateName } from "./tasks";
 
 /**
  * Why `recording_*` and `capture_session_*` both exist.
@@ -34,6 +35,21 @@ export interface AnalyticsEventMap {
     /** True when picking up an unfinished session from a previous page load. */
     resumed: boolean;
     wake_lock_active: boolean;
+    /**
+     * Where the person was. Null when nothing could be inferred.
+     *
+     * The independent variable for everything setting-governed: reply length,
+     * whether the cue panel rendered at all, how much went on it.
+     */
+    setting?: string | null;
+    /**
+     * How the setting was arrived at: read off the device class, inferred from
+     * motion, the default because nothing could be read, or corrected by hand.
+     * The share of `chosen` is how often the detector is wrong enough to fix.
+     */
+    setting_source?: "device" | "motion" | "default" | "chosen" | null;
+    /** The ElevenLabs voice chosen for talk-back. Null when none was chosen. */
+    voice_id?: string | null;
   };
   recording_stopped: {
     capture_session_id: string;
@@ -63,7 +79,14 @@ export interface AnalyticsEventMap {
   upload_chunk_dropped: { status: number; seq: number; error_code?: string };
 
   // --- capture session lifecycle, server-side (authoritative) --------------
-  capture_session_opened: { capture_session_id: string; resumed: boolean };
+  capture_session_opened: {
+    capture_session_id: string;
+    resumed: boolean;
+    /** Null for a resumed session, whose setting was fixed when it opened. */
+    setting?: string | null;
+    /** The voice stored on the session, narrowed to the catalogue; null if none. */
+    voice_id?: string | null;
+  };
   /**
    * Emitted once per session by the worker, after late chunks have settled.
    * This — not `recording_stopped` — is the conversion event.
@@ -149,6 +172,10 @@ export interface AnalyticsEventMap {
     extraction_id: string;
     segments: number;
     ops_appended: number;
+    /** Ops that touched a task — the board's yield from this batch. */
+    task_ops: number;
+    /** Of those, the ones that moved a card between columns. */
+    task_transitions: number;
   };
   workspace_extraction_failed: {
     extraction_id: string;
@@ -157,6 +184,96 @@ export interface AnalyticsEventMap {
     /** Individual ops dropped by the parser. */
     parse_warning_count: number;
   };
+  // --- directions, repertoire and macros -----------------------------------
+  /**
+   * Directions found in one chunk.
+   *
+   * `candidates` against `utterances` is the lexical gate's yield, which is how
+   * you tell "the gate is too tight" from "this person gives few directions" —
+   * a distinction invisible from the directive count alone.
+   */
+  directives_detected: {
+    chunk_id: string;
+    directives: number;
+    candidates: number;
+    utterances: number;
+    prompt_version: string;
+    model: string | null;
+  };
+  /** Every fire, including the ones parked awaiting confirmation. */
+  capability_invoked: {
+    capability: string;
+    capability_type: "mode" | "persona" | "action" | "rule";
+    capture_session_id: string;
+    /** Null while awaiting confirmation for an irreversible or outbound action. */
+    confirmed: boolean | null;
+  };
+  /** A recurring improvised operation offered back as a macro. */
+  macro_proposed: {
+    canonical_form: string;
+    occurrences: number;
+    session_count: number;
+    has_replay: boolean;
+  };
+  /**
+   * The growth curve's increments, and its refusals.
+   *
+   * Declines matter as much as acceptances: "what they tried to add and failed"
+   * is a stated field-study measure, and it is only answerable if a refusal is
+   * an event rather than the absence of one.
+   */
+  macro_decided: {
+    canonical_form: string;
+    accepted: boolean;
+    occurrences: number;
+  };
+  repertoire_viewed: {
+    capability_count: number;
+    proposal_count: number;
+    total_invocations: number;
+  };
+  trajectory_viewed: {
+    topic_count: number;
+    bucket_count: number;
+    /** Whether the scrubber was moved off "now" before this render. */
+    has_as_of: boolean;
+  };
+
+  // --- task board ----------------------------------------------------------
+  board_viewed: {
+    card_count: number;
+    open: number;
+    next: number;
+    doing: number;
+    done: number;
+    dropped: number;
+    /** Cards speech moved that the person has neither kept nor reversed yet. */
+    awaiting_review: number;
+  };
+  /**
+   * A manual move. Yield monitoring only: the acceptance measure itself — did
+   * the person keep, reverse or never touch a speech-driven transition — needs
+   * "never touched", which only the ledger can answer, so it is computed from
+   * the ops (`judge` in @voicemural/workspace) rather than from these events.
+   */
+  board_card_moved: {
+    block_id: string;
+    card_id: string;
+    from_state: TaskStateName;
+    to_state: TaskStateName;
+    /** Who last moved this card before now. Null when it was only ever added. */
+    previous_via: "speech" | "user" | null;
+    /** True when this move puts the card back where speech had moved it from. */
+    reverses_speech: boolean;
+    sessions_since_last_transition: number;
+  };
+  board_card_retired: {
+    block_id: string;
+    card_id: string;
+    state: TaskStateName;
+    previous_via: "speech" | "user" | null;
+  };
+
   transcription_failed: {
     chunk_id: string;
     capture_session_id: string;

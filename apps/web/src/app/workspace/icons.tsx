@@ -13,6 +13,7 @@ import {
   Home,
   Info,
   Lightbulb,
+  ListChecks,
   MapPin,
   MessageSquare,
   MessageSquareQuote,
@@ -86,4 +87,5 @@ export const BLOCK_ICONS: Partial<Record<BlockKind, LucideIcon>> = {
   question: CircleHelp,
   context: Info,
   meta: MessageSquareQuote,
+  task: ListChecks,
 };

@@ -13,12 +13,36 @@ export { buildContextPassages, loadDriveSoFarText, type ContextPassage } from ".
 export { MAX_CONTEXT_CHARS, trimToBudget } from "./budget";
 export { SUMMARY_PROMPT, foldSummary } from "./summary";
 export {
+  OUTPUT_CONTRACT,
   SILENCE_TOKEN,
   SYSTEM_PROMPT,
   TALKBACK_CONFIG_VERSION,
   cleanReply,
+  composeSystemPrompt,
   isSilence,
+  type ComposeInputs,
+  type ComposedPrompt,
 } from "./prompt";
+export {
+  DEFAULT_SETTING,
+  PROACTIVITY_STANZAS,
+  SETTINGS,
+  SETTING_PROFILES,
+  asSetting,
+  settingProfile,
+  type Proactivity,
+  type Setting,
+  type SettingProfile,
+} from "./setting";
+export {
+  DEFAULT_VOICE_ID,
+  VOICES,
+  VOICE_IDS,
+  asVoiceId,
+  isKnownVoice,
+  voiceProfile,
+  type VoiceProfile,
+} from "./voice";
 export { recordAgentTurn, type AgentTurnRecord } from "./agent-turns";
 export {
   contentWords,

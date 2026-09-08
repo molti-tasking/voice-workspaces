@@ -155,6 +155,8 @@ services:
       # deliberately not to MODEL_FAST — see packages/llm/src/config.ts.
       - MODEL_SUMMARISE=${MODEL_SUMMARISE:-}
       - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      # The FALLBACK voice. Per-session voices come from /api/realtime/session
+      # (packages/talkback/src/voice.ts); this is used when a session has none.
       - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
       # Must stay a streaming-capable model. eleven_v3 is HTTP-only and 403s on
       # the websocket, which would make every reply sound chopped.
@@ -171,6 +173,26 @@ services:
       # Without it ICE never completes and calls time out looking like a
       # network fault. TURN goes here too if STUN is not enough.
       - ICE_SERVERS=${ICE_SERVERS:-stun:stun.l.google.com:19302}
+      # Prompt observability. Unset (the default) and none of this runs — no
+      # exporter, no spans, no dependency on Langfuse being up. See
+      # `setup_langfuse_tracing` in apps/pipecat/bot.py.
+      #
+      # Worth a decision before setting it in production: the spans carry the
+      # composed prompt and the recalled passages, which are participant speech.
+      # Pointing this at Langfuse Cloud sends that off AU infrastructure — the
+      # same ethics line as STT_PROVIDER, and self-hosting Langfuse is how it is
+      # avoided.
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      # Live transcription. Default keeps audio at AU; deepgram/assemblyai do
+      # not — see .env.example. Speaker labels need one of the hosted providers.
+      - STT_PROVIDER=${STT_PROVIDER:-litellm}
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
+      - DEEPGRAM_MODEL=${DEEPGRAM_MODEL:-nova-3}
+      - DEEPGRAM_UTTERANCE_END_MS=${DEEPGRAM_UTTERANCE_END_MS:-1000}
+      - ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY:-}
+      - STT_DIARIZE=${STT_DIARIZE:-true}
     depends_on:
       migrate:
         condition: service_completed_successfully
