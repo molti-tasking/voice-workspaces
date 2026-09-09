@@ -17,3 +17,7 @@ storage/
 
 .DS_Store
 coverage/
+
+# Python bytecode from local bot.py runs — the container regenerates its own
+__pycache__/
+*.pyc
