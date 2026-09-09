@@ -28,6 +28,18 @@ export const dynamic = "force-dynamic";
  * container has no session — and ownership is re-resolved rather than trusted.
  */
 
+/**
+ * Caps, for the same reason the draft route has them: this is model output
+ * written straight to a column. Kept far above any real turn — spoken replies
+ * are word-capped by the setting profiles, and only a runaway generation
+ * approaches this — because truncated text would stop matching its own echo
+ * in the transcript. A clip at this size is data worth having; a column with
+ * no ceiling is a panel that cannot render.
+ */
+const MAX_TURN_CHARS = 20_000;
+const MAX_CONTEXT_CHARS = 2_000;
+const MAX_ERROR_CHARS = 1_000;
+
 const Body = z.object({
   ticket: z.string().min(1),
   seq: z.number().int().min(0),
@@ -72,6 +84,10 @@ export async function POST(req: Request) {
 
   await recordAgentTurn({
     ...turn,
+    text: turn.text.slice(0, MAX_TURN_CHARS),
+    generatedText: turn.generatedText.slice(0, MAX_TURN_CHARS),
+    respondingToText: turn.respondingToText?.slice(0, MAX_CONTEXT_CHARS),
+    error: turn.error?.slice(0, MAX_ERROR_CHARS),
     captureSessionId: payload.captureSessionId,
     userId: payload.userId,
   });

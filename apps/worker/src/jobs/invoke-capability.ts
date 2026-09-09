@@ -64,9 +64,16 @@ export async function invokePendingDirectives(limit = 50): Promise<InvokeOutcome
         // Retired between classification and here. Record the fire anyway —
         // "they asked for something they had removed" is data — and mark it
         // errored rather than dropping it.
+        //
+        // `capabilityVersionId` is a NOT NULL foreign key into
+        // `capability_version`. It is NOT the capability id — writing that
+        // here violates the FK, the insert throws, the directive keeps
+        // reading as never-invoked, and the sweep re-selects it every five
+        // seconds forever. A retired capability still owns its versions, and
+        // the queue resolves the newest one at selection time.
         await recordInvocation({
           capabilityId: item.capabilityId,
-          capabilityVersionId: item.capabilityId,
+          capabilityVersionId: item.capabilityVersionId,
           captureSessionId: item.captureSessionId,
           triggeringUtteranceId: item.utteranceId,
           confirmed: false,
@@ -117,9 +124,13 @@ export async function invokePendingDirectives(limit = 50): Promise<InvokeOutcome
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.error("invocation failed", { utteranceId: item.utteranceId, err: message });
+      // Same version id as the paths above — the capability's newest version,
+      // never the capability id (an FK violation here would be swallowed by
+      // the catch below and leave the directive pending forever, re-firing on
+      // every sweep).
       await recordInvocation({
         capabilityId: item.capabilityId,
-        capabilityVersionId: item.capabilityId,
+        capabilityVersionId: item.capabilityVersionId,
         captureSessionId: item.captureSessionId,
         triggeringUtteranceId: item.utteranceId,
         confirmed: false,

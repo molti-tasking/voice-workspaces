@@ -8,10 +8,9 @@ export async function GET() {
   try {
     await getDb().execute(sql`select 1`);
     return Response.json({ ok: true });
-  } catch (err) {
-    return Response.json(
-      { ok: false, error: err instanceof Error ? err.message : String(err) },
-      { status: 503 },
-    );
+  } catch {
+    // No err.message in the body: liveness only needs ok/503, and a driver
+    // error string can carry connection details to any unauthenticated caller.
+    return Response.json({ ok: false }, { status: 503 });
   }
 }

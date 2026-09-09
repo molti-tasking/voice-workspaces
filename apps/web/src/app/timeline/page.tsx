@@ -25,6 +25,14 @@ export const metadata: Metadata = {
 const PAGE_SIZE = 3;
 
 /**
+ * Hard ceiling on ?sessions=. The page runs one utterances query per session
+ * and renders the whole result — on a phone, hundreds of drives is ~100k rows
+ * of RSC output — so an unbounded value here is a self-inflicted outage, not
+ * a display preference. 50 drives is already more than anyone reads inline.
+ */
+const MAX_SESSIONS = 50;
+
+/**
  * The ledger, read end to end.
  *
  * Every utterance across every drive on one continuous scroll, **oldest
@@ -54,7 +62,9 @@ export default async function TimelinePage({
 
   const { sessions: sessionsParam } = await searchParams;
   const requested = Number(sessionsParam);
-  const shown = Number.isFinite(requested) && requested > 0 ? requested : PAGE_SIZE;
+  const shown = Number.isFinite(requested) && requested > 0
+    ? Math.min(requested, MAX_SESSIONS)
+    : PAGE_SIZE;
 
   const [allSessions, markers] = await Promise.all([
     loadTimelineSessions(user.id),

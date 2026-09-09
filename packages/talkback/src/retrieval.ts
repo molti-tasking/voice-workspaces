@@ -21,10 +21,11 @@ import { keptIndices, withoutEcho } from "./echo";
  * function signatures here are the ones a tool would wrap, so that change is
  * contained.
  *
- * Search is lexical, not semantic. Phase 5 adds pgvector; until then the tool's
- * shape does not change, only its internals. A caveat worth knowing while it is
- * lexical: it matches words, so asking about "the deadline" finds the word
- * "deadline" and not a paraphrase of it.
+ * This file is the LEXICAL arm. The semantic arm is `memory-search.ts` over
+ * pgvector (`memory_entry`), and `recallFromMemory` there falls back to this
+ * one when no embedding model is configured or the query budget is exceeded.
+ * The lexical arm stays either way: it matches words exactly, so a name, a
+ * project, a number are found by their letters and not by paraphrase.
  */
 
 /** A stretch of transcript, quotable back to the user. */

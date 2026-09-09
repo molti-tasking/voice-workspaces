@@ -40,10 +40,28 @@ export function extensionForMime(mime: string): string {
 export const CaptureSetting = z.enum(["driving", "walking", "hands_busy", "desk"]);
 export type CaptureSetting = z.infer<typeof CaptureSetting>;
 
+/**
+ * Container families we can persist and decode, codec parameters allowed —
+ * `MediaRecorder.isTypeSupported` answers for the bare container, but some
+ * engines then report the chosen type with a `;codecs=…` suffix. Anything
+ * outside these families would be stored under a `.bin` extension the
+ * transcription pipeline would then have to guess at.
+ */
+const KNOWN_AUDIO_MIME = /^audio\/(webm|mp4|mpeg|ogg|wav|x-wav)(;.+)?$/;
+
 export const CaptureSessionCreate = z.object({
   /** Client-generated UUID so the recorder can queue chunks before the server replies. */
   id: z.uuid(),
-  startedAt: z.coerce.date(),
+  /**
+   * Sanity bounds only, not freshness: a drive that starts offline registers
+   * late, so the stamp can trail `now` by as long as the dead zone lasts. A
+   * date outside this window is clock garbage, and garbage here poisons every
+   * `startedAt + offset` computation downstream.
+   */
+  startedAt: z.coerce
+    .date()
+    .refine((d) => d.getTime() > Date.UTC(2024, 0, 1), "startedAt is implausibly old")
+    .refine((d) => d.getTime() < Date.now() + 24 * 60 * 60 * 1000, "startedAt is in the future"),
   /** Optional: recordings made before the question existed have none. */
   setting: CaptureSetting.optional(),
   /**
@@ -76,7 +94,17 @@ export const ChunkUploadMeta = z.object({
   seq: z.coerce.number().int().min(0),
   startOffsetMs: z.coerce.number().int().min(0),
   durationMs: z.coerce.number().int().min(0),
-  mimeType: z.string().min(1).max(128),
+  /**
+   * The container the recorder picked (`pickMimeType`), persisted with the
+   * chunk and used as the transcription request's container assumption. A
+   * free string would let a client claim `audio/mp4` for webm bytes and have
+   * the pipeline decode them under the wrong assumption.
+   */
+  mimeType: z
+    .string()
+    .min(1)
+    .max(128)
+    .refine((v) => KNOWN_AUDIO_MIME.test(v), "unsupported audio container"),
 });
 export type ChunkUploadMeta = z.infer<typeof ChunkUploadMeta>;
 
@@ -116,9 +144,6 @@ export const JOBS = {
   transcribeChunk: "transcribe.chunk",
   classifyUtterance: "classify.utterance",
   workspaceExtract: "workspace.extract",
-  invokeCapability: "invoke.capability",
-  evaluateRules: "evaluate.rules",
-  exportOutlet: "export.outlet",
   detectMacros: "detect.macros",
   indexMemory: "memory.index",
 } as const;
@@ -129,16 +154,15 @@ export type WorkspaceExtractPayload = z.infer<typeof WorkspaceExtractPayload>;
 export const TranscribeChunkPayload = z.object({ chunkId: z.string() });
 export type TranscribeChunkPayload = z.infer<typeof TranscribeChunkPayload>;
 
-export const EvaluateRulesPayload = z.object({ captureSessionId: z.string() });
-export type EvaluateRulesPayload = z.infer<typeof EvaluateRulesPayload>;
-
-/** One chunk's worth of utterances to classify as content or direction. */
-export const ClassifyUtterancePayload = z.object({ chunkId: z.string() });
+/**
+ * One chunk's worth of utterances to classify as content or direction.
+ *
+ * `userId` rides along even though the handler could re-derive it from the
+ * chunk: the classifier needs it for the repertoire vocabulary, and sending
+ * it saves a query on the hot path.
+ */
+export const ClassifyUtterancePayload = z.object({ chunkId: z.string(), userId: z.string() });
 export type ClassifyUtterancePayload = z.infer<typeof ClassifyUtterancePayload>;
-
-/** One detected direction to resolve against the user's repertoire. */
-export const InvokeCapabilityPayload = z.object({ utteranceId: z.string() });
-export type InvokeCapabilityPayload = z.infer<typeof InvokeCapabilityPayload>;
 
 export const DetectMacrosPayload = z.object({ userId: z.string() });
 export type DetectMacrosPayload = z.infer<typeof DetectMacrosPayload>;

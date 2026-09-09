@@ -1,0 +1,2 @@
+CREATE INDEX "invocation_triggering_utterance_idx" ON "invocation" USING btree ("triggering_utterance_id");--> statement-breakpoint
+CREATE INDEX "workspace_op_extraction_idx" ON "workspace_op" USING btree ("extraction_id");

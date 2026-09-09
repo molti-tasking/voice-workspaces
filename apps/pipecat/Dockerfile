@@ -24,5 +24,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # container fetches it from /api/realtime/session at connect time instead.
 COPY apps/pipecat/bot.py /app/apps/pipecat/bot.py
 
+# Not root, matching the uid-1001 convention of the web and worker images.
+# This container holds live participant audio in memory and writes nothing to
+# disk, so it needs no ownership anywhere — just the least privilege it can
+# run with.
+RUN useradd --system --uid 1001 --create-home pipecat
+USER 1001
+
 EXPOSE 7860
 CMD ["python", "apps/pipecat/bot.py"]

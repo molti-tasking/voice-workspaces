@@ -166,7 +166,10 @@ export async function upsertMemoryEntries(userId: string, entries: NewMemoryEntr
  * A drive's passages, replaced wholesale.
  *
  * Delete-then-insert rather than upsert: a re-cut with a different window
- * would otherwise leave the old cut's passages beside the new one's.
+ * would otherwise leave the old cut's passages beside the new one's. All three
+ * statements in one transaction so a crash between them cannot mark a drive
+ * indexed while its passages are half-written — the sweeper would then never
+ * revisit it, and recall would quietly miss the drive forever.
  */
 export async function replaceSessionPassages(
   userId: string,
@@ -174,14 +177,30 @@ export async function replaceSessionPassages(
   entries: NewMemoryEntry[],
 ): Promise<void> {
   const db = getDb();
-  await db
-    .delete(memoryEntry)
-    .where(and(eq(memoryEntry.kind, "passage"), eq(memoryEntry.captureSessionId, captureSessionId)));
-  await upsertMemoryEntries(userId, entries);
-  await db
-    .update(captureSession)
-    .set({ memoryIndexedAt: new Date() })
-    .where(eq(captureSession.id, captureSessionId));
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(memoryEntry)
+      .where(and(eq(memoryEntry.kind, "passage"), eq(memoryEntry.captureSessionId, captureSessionId)));
+    await tx.insert(memoryEntry).values(
+      entries.map((e) => ({
+        userId,
+        kind: e.kind,
+        refId: e.refId,
+        captureSessionId: e.captureSessionId ?? null,
+        occurredAt: e.occurredAt,
+        text: e.text,
+        contentHash: e.contentHash,
+        model: e.model,
+        embedding: e.embedding,
+        utteranceIds: e.utteranceIds ?? [],
+        updatedAt: new Date(),
+      })),
+    );
+    await tx
+      .update(captureSession)
+      .set({ memoryIndexedAt: new Date() })
+      .where(eq(captureSession.id, captureSessionId));
+  });
 }
 
 /** Current topic entries' hashes, so only changed topics are re-embedded. */

@@ -226,21 +226,53 @@ export interface PendingDirective {
   utteranceId: string;
   captureSessionId: string;
   capabilityId: string;
+  /**
+   * The capability's newest version, resolved at selection time.
+   *
+   * `invocation.capability_version_id` is a NOT NULL foreign key, and the
+   * invoker records fires for retired capabilities too ("they asked for
+   * something they had removed" is data). A retired capability keeps its
+   * versions — only a hard delete cascades them away, and a hard-deleted
+   * capability cannot have an invocation recorded at all, so its directives
+   * drop out of this queue rather than retrying forever against a dead FK.
+   */
+  capabilityVersionId: string;
   verb: string;
   restatement: string;
 }
 
 /** Resolved directions with no invocation yet — the invoker's work queue. */
 export async function directivesAwaitingInvocation(limit = 50): Promise<PendingDirective[]> {
-  const rows = await getDb()
+  const db = getDb();
+
+  // Aliased `newest_version`, for the same ambiguity reason as loadRepertoire.
+  const newest = db
+    .select({
+      capabilityId: capabilityVersion.capabilityId,
+      newestVersion: max(capabilityVersion.version).as("newest_version"),
+    })
+    .from(capabilityVersion)
+    .groupBy(capabilityVersion.capabilityId)
+    .as("newest");
+
+  const rows = await db
     .select({
       utteranceId: directive.utteranceId,
       captureSessionId: directive.captureSessionId,
       capabilityId: directive.capabilityId,
+      capabilityVersionId: capabilityVersion.id,
       verb: directive.verb,
       restatement: directive.restatement,
     })
     .from(directive)
+    .innerJoin(newest, eq(newest.capabilityId, directive.capabilityId))
+    .innerJoin(
+      capabilityVersion,
+      and(
+        eq(capabilityVersion.capabilityId, directive.capabilityId),
+        eq(capabilityVersion.version, newest.newestVersion),
+      ),
+    )
     .leftJoin(invocation, eq(invocation.triggeringUtteranceId, directive.utteranceId))
     .where(and(sql`${directive.capabilityId} is not null`, isNull(invocation.id)))
     .orderBy(asc(directive.createdAt))

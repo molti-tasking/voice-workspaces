@@ -17,13 +17,10 @@ const config: NextConfig = {
     "@voicemural/workspace",
   ],
   serverExternalPackages: ["postgres"],
-  experimental: {
-    serverActions: {
-      // Chunks are ~5s of Opus (tens of KB), but a long chunk from a slow
-      // upload retry can be larger. Generous ceiling, still far from unbounded.
-      bodySizeLimit: "25mb",
-    },
-  },
+  // No `experimental.serverActions.bodySizeLimit` here even though chunks are
+  // ~25 MB: that option governs Server Actions, and this app has none — every
+  // mutation is a route handler, whose bodies Next does not cap. Configuring a
+  // mechanism that does not exist only misleads the next reader.
   outputFileTracingRoot: new URL("../../", import.meta.url).pathname,
   async headers() {
     return [

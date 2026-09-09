@@ -14,8 +14,13 @@ import {
   capabilityOrigin,
   capabilityVersion,
   captureSession,
+  extraction,
   invocation,
+  macroProposal,
+  memoryEntry,
   outlet,
+  workspaceCursor,
+  workspaceOp,
 } from "./schema";
 
 export interface GuestMigrationResult {
@@ -50,7 +55,16 @@ export async function migrateGuestData(
   }
 
   return db.transaction(async (tx) => {
-    // 1. Recordings and outlets move wholesale — nothing can collide.
+    // 1. Everything that is a plain ownership reassignment moves wholesale —
+    //    nothing in any of them can collide.
+    //
+    //    This is EVERY table with a direct `user` FK, checked against the
+    //    schema, not just the ones the UI happens to surface: the workspace
+    //    ledger, the extraction cache, declined macro proposals and the
+    //    memory index are all study data that cascades away with the guest
+    //    user otherwise. Manual board gestures (`workspace_op` with
+    //    `via = 'user'`) are the acceptance measure's reversals and cannot be
+    //    re-derived from the transcript.
     const movedSessions = await tx
       .update(captureSession)
       .set({ userId: toUserId })
@@ -61,6 +75,31 @@ export async function migrateGuestData(
       .update(outlet)
       .set({ userId: toUserId })
       .where(eq(outlet.userId, fromUserId));
+
+    await tx
+      .update(workspaceOp)
+      .set({ userId: toUserId })
+      .where(eq(workspaceOp.userId, fromUserId));
+
+    await tx
+      .update(workspaceCursor)
+      .set({ userId: toUserId })
+      .where(eq(workspaceCursor.userId, fromUserId));
+
+    await tx
+      .update(extraction)
+      .set({ userId: toUserId })
+      .where(eq(extraction.userId, fromUserId));
+
+    await tx
+      .update(macroProposal)
+      .set({ userId: toUserId })
+      .where(eq(macroProposal.userId, fromUserId));
+
+    await tx
+      .update(memoryEntry)
+      .set({ userId: toUserId })
+      .where(eq(memoryEntry.userId, fromUserId));
 
     // 2. Find the target's *pristine* starters: seeded, never edited, never
     //    fired. Only these may be displaced — a capability with history is real

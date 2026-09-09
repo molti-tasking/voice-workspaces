@@ -41,6 +41,13 @@
     "TALKBACK_ENABLED",
     "NEXT_PUBLIC_TALKBACK_ENABLED",
     "STORAGE_DIR",
+    // Runtime knobs read by the worker and web. Listed with the rest so the
+    // same .env that Compose interpolates from stays the single source.
+    "KEEP_AUDIO",
+    "TRANSCRIBE_CONCURRENCY",
+    "SWEEP_INTERVAL_MS",
+    "MEMORY_QUERY_TIMEOUT_MS",
+    "LANGFUSE_SERVICE_NAME",
     "BETTER_AUTH_SECRET",
     "BETTER_AUTH_URL",
     "GITHUB_CLIENT_ID",

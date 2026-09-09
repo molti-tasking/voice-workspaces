@@ -111,9 +111,9 @@ const NON_IMPERATIVE_OPENERS = new Set([
   "every", "each", "all", "both", "most", "another", "other",
   // Auxiliaries and copulas — a line opening with one is a question or an
   // inversion, never a bare imperative.
-  "is", "was", "are", "were", "am", "be", "been", "being", "do", "does", "did",
+  "is", "was", "are", "were", "be", "been", "being", "do", "does", "did",
   "have", "has", "had", "will", "would", "should", "might", "must", "shall",
-  "may", "am", "aint",
+  "may", "am",
   // Wh-words and conjunctions.
   "what", "when", "where", "who", "whom", "whose", "why", "how", "which",
   "because", "if", "unless", "although", "though", "whereas", "while", "since",
@@ -141,8 +141,17 @@ const NON_IMPERATIVE_OPENERS = new Set([
  */
 const MAX_IMPERATIVE_WORDS = 12;
 
-/** Polite forms that wrap an imperative in an auxiliary. */
-const POLITE_OPENERS = ["can you", "could you", "would you", "will you", "let us", "lets"];
+/**
+ * Polite forms that wrap an imperative in an auxiliary.
+ *
+ * "let's" is listed beside "let us"/"lets" because `normalise` keeps
+ * apostrophes — "Let's mark that" otherwise reaches none of the three checks
+ * below and is written content with no model call, exactly the silent
+ * direction-loss this gate exists to avoid. A typographic apostrophe (’) does
+ * not survive normalisation, so "Let’s …" falls through to the open rule and
+ * is admitted anyway.
+ */
+const POLITE_OPENERS = ["can you", "could you", "would you", "will you", "let us", "lets", "let's"];
 
 export interface DirectiveGateOptions {
   /**

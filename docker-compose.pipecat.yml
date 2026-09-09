@@ -31,7 +31,7 @@ services:
       # has nothing to do with Pipecat.
       - ELEVENLABS_MODEL_ID=${ELEVENLABS_MODEL_ID:-eleven_turbo_v2_5}
       - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:3000}
-      - PIPECAT_PORT=7860
+      - PIPECAT_PORT=${PIPECAT_PORT:-7860}
       # Live transcription. Default keeps audio at AU; deepgram/assemblyai do
       # not — see the note in .env.example before switching.
       - STT_PROVIDER=${STT_PROVIDER:-litellm}

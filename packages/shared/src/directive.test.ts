@@ -23,6 +23,8 @@ describe("isDirectiveCandidate", () => {
     "Scratch that, I meant the other one.",
     "switch to sceptical",
     "From now on, keep the summaries shorter.",
+    "Let's mark that as settled.",
+    "Let's switch to interview mode.",
   ];
 
   const content = [
