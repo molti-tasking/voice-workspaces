@@ -26,7 +26,7 @@
     "db:fixtures": "pnpm --filter @voicemural/db fixtures",
     "tunnel": "cloudflared tunnel --url http://localhost:3000",
     "spike:talkback": "node scripts/spike-talkback.mjs",
-    "talkback:eval": "pnpm --filter @voicemural/talkback eval --",
+    "talkback:eval": "pnpm --filter @voicemural/talkback eval",
     "workspace:reparse": "pnpm --filter @voicemural/worker workspace reparse",
     "workspace:rebuild": "pnpm --filter @voicemural/worker workspace rebuild",
     "workspace:drain": "pnpm --filter @voicemural/worker workspace drain",

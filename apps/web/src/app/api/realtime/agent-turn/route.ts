@@ -49,6 +49,10 @@ const Body = z.object({
   generatedText: z.string(),
   respondingToText: z.string().optional(),
   bargedIn: z.boolean().optional(),
+  // How far into the turn the person spoke over it, from the container's
+  // `InterruptionFrame`. Was missing here while the column existed, so an
+  // interrupted turn could never say where it was cut.
+  truncatedAtMs: z.number().int().min(0).optional(),
   resolvedModel: z.string().optional(),
   asrMs: z.number().int().optional(),
   ttftMs: z.number().int().optional(),

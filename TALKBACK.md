@@ -289,8 +289,25 @@ microphone through the speaker and is transcribed like any other sound;
 `withoutEcho` tells those lines from yours by comparing against what the agent is
 recorded as saying. When nothing wrote that table, recall returned
 `[yesterday] Yes, I can hear you.` — the system's own reply, handed back as the
-participant's words. Record **once per turn** on `LLMFullResponseEndFrame`, never
-per text frame, and never for a turn `SilenceGate` declined.
+participant's words. Record **once per turn** — on `LLMFullResponseEndFrame`, or
+on `InterruptionFrame` when the person spoke over it — never per text frame, and
+never for a turn `SilenceGate` declined.
+
+**Two people talking, and the record could not say so.** A seven-minute advisor
+conversation (9 Sep 2026) produced five agent turns: "The", "So", "There",
+"<sil", and one that narrated its own rule aloud, speaker tag included. The
+fragments were replies cut off by the next speaker, but `TurnRecorder` never
+sent `bargedIn`, so they were filed as complete turns and the `interrupted`
+badge on `/sessions/[id]` could never light; "<sil" was an interrupted
+`<silence>` that the gate's end-of-response fallback released to TTS.
+`SilenceGate` now records on `InterruptionFrame` with `bargedIn` and
+`truncatedAtMs`, drops a held partial sentinel instead of speaking it, holds a
+reply that opens with `[` until the bracket closes, and strips `[Speaker N]`
+from speech (`strip_speaker_tags`; the tag stays in `generatedText`). The
+"spoke Xs" on an uninterrupted turn is still `len(text) / 14` — the container
+never learns when playback ended — and the page shows it as `~`. The narrated
+rule itself is a prompt failure; `two-people-narrated-rule` in `cases.ts` and
+the `narrated decision` check in `checks.ts` hold the line there.
 
 **Whisper feeds on itself.** It conditions each segment on segments it already
 produced *within the same file*, so one bad guess seeds the next and the decoder
@@ -402,9 +419,9 @@ and a test pins the port). Two verdicts per turn:
 
 ```sh
 pnpm talkback:eval                                   # current prompt, all cases
-pnpm talkback:eval -- --base candidate.md --label c7 # a candidate base prompt
-pnpm talkback:eval -- --only stuck,passenger-aside --runs 3
-pnpm talkback:eval -- --out report.json --strict     # exit 1 on any check failure
+pnpm talkback:eval --base candidate.md --label c7    # a candidate base prompt
+pnpm talkback:eval --only stuck,passenger-aside --runs 3
+pnpm talkback:eval --out report.json --strict        # exit 1 on any check failure
 ```
 
 `--base` swaps the base prompt for a file's contents and leaves the setting
@@ -483,6 +500,17 @@ package: only `next build` does. `packages/talkback`'s index reaches
 `@voicemural/talkback/setting`. Run a build before believing a change to a
 client component is finished.
 
+The container's own decisions — `SilenceGate`, `TurnRecorder` — have pytest
+tests in `apps/pipecat/test_bot.py`. They need Pipecat, which is installed
+only in the image, so they run inside the container:
+
+```sh
+docker cp apps/pipecat/. voice-workspace-pipecat-1:/tmp/pipecat-tests/
+docker exec -u 0 voice-workspace-pipecat-1 sh -c \
+  'pip install -q -r /tmp/pipecat-tests/requirements-dev.txt && chown -R 1001 /tmp/pipecat-tests'
+docker exec -w /tmp/pipecat-tests voice-workspace-pipecat-1 python -m pytest -q
+```
+
 **DB-backed tests skip themselves when Postgres is unreachable.** A green run
 with Postgres down means "skipped", not "passed" — that is exactly how a broken
 analytics mock stayed hidden. Check the counts, not the colour.
@@ -521,6 +549,18 @@ wired to the conversation that should not have been.
   with no engine behind it (and 4s is too eager for a car by this document's
   own argument — raise it when the engine lands). When it does, it should read
   `SETTING_PROFILES[s].proactivity`, which the prompt now also reads.
+
+  **What it should be**, from the 9 Sep 2026 advisor discussion
+  (`Meeting_Notes.md`): session-level, not a silence timer inside a thought.
+  Three turns nobody asks for — an opening ("last time you were on X; the
+  intro of Y has not come up"), a transition when a topic lands, sized to the
+  time left ("that's landed — the next five-minute one is Z"), and a recap on
+  re-entry. It OFFERS and never assigns ("I am the one who prompts. You don't
+  prompt me."), and a declined offer is not repeated. Inputs that exist: the
+  threads the memory index already serves, and per-topic recency in
+  `trajectory.ts`. Inputs that do not: an expected drive length (learnable
+  from past `capture_session` durations), and what a paper should cover, so
+  "you haven't talked about the intro" is computable.
 - **Speakers only on the live path, and only hosted.** Diarization needs
   Deepgram or AssemblyAI; the Whisper default hears one voice, and the ledger
   always does. A voice-print approach on AU hardware (pyannote) would close

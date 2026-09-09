@@ -76,6 +76,21 @@ describe("the deterministic checks", () => {
     expect(result.spoken).toBe("That closes it.");
     expect(result.failures).toContain("sentinel emitted alongside speech");
   });
+
+  it("fails a spoken speaker tag and a narrated decision, as heard on the 9 Sep drive", () => {
+    const narrated = CASES.find((c) => c.id === "two-people-narrated-rule")!;
+    const heard = checkReply(
+      narrated,
+      "[Speaker 2]'s question — whether it'll talk back — is for them to test live, not for me to answer.",
+      25,
+    );
+    expect(heard.failures).toEqual(
+      expect.arrayContaining(["speaker tag spoken", "narrated decision", "must not say: /for them to/"]),
+    );
+    expect(checkReply(narrated, "<silence>", 25).pass).toBe(true);
+    expect(checkReply(narrated, "Yes, I can hear you both.", 25).pass).toBe(true);
+    expect(checkReply(eitherCase, "I'll stay silent on that one.", 25).failures).toContain("narrated decision");
+  });
 });
 
 describe("the turn messages, which mirror bot.py", () => {

@@ -56,6 +56,7 @@ from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     Frame,
     InputAudioRawFrame,
+    InterruptionFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMTextFrame,
@@ -942,6 +943,27 @@ def clean_reply(reply: str) -> str:
     return re.sub(r"^\s*[\"'`]+|[\"'`]+\s*$", "", reply.replace(SILENCE_TOKEN, "")).strip()
 
 
+SPEAKER_TAG = re.compile(r"\[speaker \d+\](?:'s)?\s*", re.IGNORECASE)
+
+
+def strip_speaker_tags(text: str) -> str:
+    """Drop `[Speaker N]` from text bound for TTS.
+
+    The tag is written into transcripts on purpose (see `SpeakerTagger`), and
+    a model that has read it on every line copies it into its own reply —
+    which ElevenLabs renders as "bracket speaker two". Observed on a
+    two-person drive: "[Speaker 2]'s question — whether it'll talk back — is
+    for them to test live, not for me to answer." The tag stays in
+    `generatedText`; only speech loses it.
+
+    Applied per released frame, so a tag split across frames is only caught
+    at the START of a reply, where `SilenceGate` holds an opening `[` until
+    the bracket closes. Mid-reply tags are rarer and arrive whole often
+    enough; the eval's `speaker tag spoken` check is where the rest show up.
+    """
+    return SPEAKER_TAG.sub("", text)
+
+
 class TurnRecorder:
     """Writes down what the agent said, for the filter that reads it back.
 
@@ -975,26 +997,51 @@ class TurnRecorder:
         if text.strip():
             self._responding_to = text
 
-    def record(self, spoken: str, generated: str) -> None:
-        """Fire and forget. A failure here must never cost the driver a reply."""
+    def record(
+        self,
+        spoken: str,
+        generated: str,
+        *,
+        started_ms: int | None = None,
+        barged_in: bool = False,
+    ) -> None:
+        """Fire and forget. A failure here must never cost the driver a reply.
+
+        `started_ms` is the wall clock when the first word was released to
+        TTS, which is when speech began. `barged_in` means the person spoke
+        over the reply: `spoken` is then what had been released — an upper
+        bound on what they heard — and the interruption is the measured end.
+        Both reach `agent_turn`, where the transcript page's `interrupted`
+        badge and the paper's turn-taking record read them. Before they were
+        sent, a reply cut off after one word was filed as a complete turn
+        that said "The".
+        """
         if not self._ticket or not self._started_at_ms or not spoken.strip():
             return
 
         seq, self._seq = self._seq, self._seq + 1
+        now = int(time.time() * 1000)
         # Milliseconds into the drive, on the same clock as `utterance` — which
         # is what lets the two be read as one dialogue, and what the echo filter
         # compares intervals against.
-        offset = max(0, int(time.time() * 1000) - self._started_at_ms)
+        offset = max(0, (started_ms or now) - self._started_at_ms)
         payload = {
             "ticket": self._ticket,
             "seq": seq,
             "startOffsetMs": offset,
-            # Roughly 14 characters a second of speech. An estimate, and marked
-            # as one: the container never learns when playback actually ended.
-            "endOffsetMs": offset + int(len(spoken) / 14 * 1000),
             "text": spoken,
             "generatedText": generated,
         }
+        if barged_in:
+            end = max(offset, now - self._started_at_ms)
+            payload["endOffsetMs"] = end
+            payload["bargedIn"] = True
+            # How far into the turn the cut came — what the page shows as "heard".
+            payload["truncatedAtMs"] = end - offset
+        else:
+            # Roughly 14 characters a second of speech. An estimate, and marked
+            # as one: the container never learns when playback actually ended.
+            payload["endOffsetMs"] = offset + int(len(spoken) / 14 * 1000)
         if self._responding_to:
             payload["respondingToText"] = self._responding_to
 
@@ -1132,9 +1179,21 @@ class SilenceGate(FrameProcessor):
         self._text = ""
         self._spoken = ""
         self._holding = True
+        # Wall clock of the first word released to TTS: the turn's start,
+        # measured, rather than inferred from when generation ended.
+        self._first_spoke_ms: int | None = None
         # Draft suppression, which runs on everything released downstream.
         # `_pending` holds a partial tag straddling two frames; `_in_draft` is
         # true between the tags, where nothing may reach TTS.
+        self._pending = ""
+        self._in_draft = False
+
+    def _reset(self) -> None:
+        """Back to the state before a completion: holding, nothing spoken."""
+        self._text = ""
+        self._spoken = ""
+        self._holding = True
+        self._first_spoke_ms = None
         self._pending = ""
         self._in_draft = False
 
@@ -1188,6 +1247,8 @@ class SilenceGate(FrameProcessor):
         included declined turns would describe a conversation that did not
         happen.
         """
+        if self._first_spoke_ms is None:
+            self._first_spoke_ms = int(time.time() * 1000)
         if self._summary is not None:
             self._summary.note_agent(text)
         # ACCUMULATE ONLY. This runs per released fragment as the reply streams,
@@ -1198,9 +1259,17 @@ class SilenceGate(FrameProcessor):
         self._spoken += text
 
     def _could_become_sentinel(self, text: str) -> bool:
-        """Whether `text` is still a viable prefix of the sentinel."""
+        """Whether `text` is still a viable prefix of the sentinel.
+
+        Also true for an unclosed `[`: a `[Speaker N]` tag the model copied
+        from its transcript, arriving a token at a time. A spoken reply opens
+        with neither `<` nor `[`, so holding costs real replies nothing, and
+        `strip_speaker_tags` takes the tag out once the bracket closes.
+        """
         candidate = re.sub(r"[.\"'`*]", "", text.strip().lower())
         if not candidate:
+            return True
+        if candidate.startswith("[") and "]" not in candidate:
             return True
         return any(
             form.startswith(candidate) for form in (SILENCE_TOKEN, SILENCE_TOKEN.strip("<>"))
@@ -1210,11 +1279,7 @@ class SilenceGate(FrameProcessor):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, LLMFullResponseStartFrame):
-            self._text = ""
-            self._spoken = ""
-            self._holding = True
-            self._pending = ""
-            self._in_draft = False
+            self._reset()
         elif isinstance(frame, LLMTextFrame):
             self._text += frame.text
             if self._holding:
@@ -1226,7 +1291,7 @@ class SilenceGate(FrameProcessor):
                 # lands here too — `<draft` is not a sentinel prefix — and
                 # `_for_speech` is what keeps its body out of TTS.
                 self._holding = False
-                released = self._for_speech(clean_reply(self._text))
+                released = strip_speaker_tags(self._for_speech(clean_reply(self._text)))
                 if released:
                     self._spoke(released)
                     await self.push_frame(LLMTextFrame(text=released), direction)
@@ -1234,22 +1299,40 @@ class SilenceGate(FrameProcessor):
             # Already streaming. Strip any sentinel the model tacked on mid-reply
             # — small models emit one alongside a real sentence often enough that
             # `clean_reply` was written for it.
-            tail = self._for_speech(frame.text.replace(SILENCE_TOKEN, ""))
+            tail = strip_speaker_tags(self._for_speech(frame.text.replace(SILENCE_TOKEN, "")))
             if tail:
                 self._spoke(tail)
                 await self.push_frame(LLMTextFrame(text=tail), direction)
             return
+        elif isinstance(frame, InterruptionFrame):
+            # The person spoke over the reply. Pipecat cancels the generation
+            # and the audio; this is the one moment the container knows for
+            # certain that playback stopped, so the turn is written NOW — what
+            # had been released is the most they can have heard — rather than
+            # on an End frame that, after a cancellation, may never arrive.
+            if self._spoken.strip():
+                logger.info(f"[turn] interrupted after {self._spoken.strip()!r}")
+                if self._recorder is not None:
+                    self._recorder.record(
+                        self._spoken,
+                        self._text,
+                        started_ms=self._first_spoke_ms,
+                        barged_in=True,
+                    )
+            self._reset()
         elif isinstance(frame, LLMFullResponseEndFrame):
             if self._holding:
+                # Nothing was released. A real reply stops being held on its
+                # first frame, so what is here is the sentinel, a prefix of it
+                # (a decline cut off mid-token), an unclosed `[`, or nothing —
+                # and none of those is speech. The branch that used to release
+                # "a reply that is genuinely just 'sil'" is gone: the one time
+                # it fired, on a two-person drive, the reply was an interrupted
+                # `<silence>` and the car heard "sil".
                 if is_silence(self._text):
                     logger.info(f"[silence] declined turn suppressed: {self._text.strip()!r}")
-                else:
-                    # Held to the end without ever resolving — e.g. a reply that
-                    # is genuinely just "sil". Emit it rather than swallow it.
-                    remainder = self._for_speech(clean_reply(self._text))
-                    if remainder:
-                        self._spoke(remainder)
-                        await self.push_frame(LLMTextFrame(text=remainder), direction)
+                elif self._text.strip():
+                    logger.info(f"[silence] truncated decline suppressed: {self._text.strip()!r}")
 
             # Drafts come off the WHOLE completion rather than the stream: the
             # streaming pass only has to keep the body away from TTS, and
@@ -1263,12 +1346,12 @@ class SilenceGate(FrameProcessor):
             # ONE row per turn, written here because this is the only point that
             # knows the whole reply. A suppressed turn leaves `_spoken` empty and
             # records nothing — the echo filter must only ever learn about audio
-            # that actually reached the speaker.
+            # that actually reached the speaker. An interrupted turn was already
+            # written above and `_reset` emptied `_spoken`, so this cannot
+            # write it twice.
             if self._recorder is not None and self._spoken.strip():
-                self._recorder.record(self._spoken, self._text)
-            self._text = ""
-            self._spoken = ""
-            self._holding = True
+                self._recorder.record(self._spoken, self._text, started_ms=self._first_spoke_ms)
+            self._reset()
 
         await self.push_frame(frame, direction)
 

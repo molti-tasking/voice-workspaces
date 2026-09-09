@@ -1,0 +1,5 @@
+# For `test_bot.py`, which needs Pipecat and therefore runs in the container —
+# see the docstring there, or "Testing locally" in TALKBACK.md. Not installed
+# by the Dockerfile: the image stays exactly what the drives run on.
+-r requirements.txt
+pytest==9.1.1
