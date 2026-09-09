@@ -114,3 +114,42 @@ describe("narrated-video hallucinations", () => {
     expect(isLikelyHallucination(said)).toBe(false);
   });
 });
+
+describe("German artefacts", () => {
+  // The corpus is mixed German/English (packages/db/src/schema.ts) and the
+  // ledger auto-detects the language, so Whisper's fabrications come in
+  // whichever language it was decoding.
+  it("catches the German sign-offs", () => {
+    expect(isLikelyHallucination("Danke fürs Zuschauen!")).toBe(true);
+    expect(isLikelyHallucination("Vielen Dank fürs Zuschauen.")).toBe(true);
+    expect(isLikelyHallucination("Untertitel von Amara.org")).toBe(true);
+    expect(isLikelyHallucination("Vergesst nicht zu abonnieren!")).toBe(true);
+  });
+
+  it("catches the German narration openings", () => {
+    expect(
+      isLikelyHallucination(
+        "Hallo und willkommen auf meinem Kanal. Heute zeige ich euch, wie man einen einfachen Kuchen backt.",
+      ),
+    ).toBe(true);
+  });
+
+  it("strips a German sign-off glued to real speech, sentence by sentence", () => {
+    expect(
+      withoutHallucinatedSentences("Wann ist die Sitzung mit dem Betreuer? Danke fürs Zuschauen."),
+    ).toBe("Wann ist die Sitzung mit dem Betreuer?");
+  });
+
+  it("leaves real German speech alone", () => {
+    const said = "Ich denke, wir sollten die Feldstudie im Oktober wiederholen.";
+    expect(isLikelyHallucination(said)).toBe(false);
+    expect(withoutHallucinatedSentences(said)).toBe(said);
+  });
+
+  it("does not fire on German used inside a real sentence", () => {
+    // Same whole-line rule as the English entries.
+    expect(
+      isLikelyHallucination("Ich habe mich bei den Zuschauern fürs Zuschauen bedankt, war eine lange Sendung."),
+    ).toBe(false);
+  });
+});

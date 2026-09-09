@@ -539,8 +539,13 @@ wired to the conversation that should not have been.
   That is the proactive-thread-tracking item, and it also needs the
   proactivity engine to deliver anything unasked.
 - **Deepgram mishears accented English** — "I'm not so well, it's very late"
-  became "I'm not so well at very late". `language` is hard-coded to `en`;
-  Deepgram supports `multi`, worth trying on a Danish/English corpus.
+  became "I'm not so well at very late", on `language=en`. The live path now
+  auto-detects (`multi` on Deepgram; see `STT_LANGUAGE` in .env.example), which
+  also fixed what the hard-coding was hiding: a specific Deepgram language does
+  not mishear other languages, it returns NOTHING for them — a German sentence
+  came back an empty transcript with `en` and as perfect German with `multi`.
+  Whether `multi` also hears accented English better is the open question;
+  worth checking on a Danish/English drive.
 - **Repetition degeneration still reaches retrieval.** The worker detects and
   "repairs" it, but repaired invented text is still invented.
 - **Bluetooth HFP is unmeasured.** Playing TTS with the mic open may flip the

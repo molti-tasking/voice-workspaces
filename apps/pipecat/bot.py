@@ -220,6 +220,23 @@ Never claim to remember anything. You cannot check the transcript right now, and
 # common case rather than the edge case, and the cost is a flag, not a service.
 STT_DIARIZE = os.getenv("STT_DIARIZE", "true").lower() in ("1", "true", "yes")
 
+# Language for the live conversation. Unset = let the provider detect it
+# (Deepgram "multi", AssemblyAI per-turn detection, Whisper auto-detect); set to
+# force ONE BCP-47 code ("en", "de", "nl-NL") — worth doing on a monolingual
+# drive, where detection on a short VAD-cut utterance can misfire.
+#
+# THE BUG THIS CLOSES. language="en" was hard-coded, and a specific Deepgram
+# language does not MISHEAR other languages — it transcribes nothing for them.
+# Verified with a German sentence sent to nova-3: language=en returned an
+# EMPTY transcript, language=multi returned perfect German and
+# languages: ["de"]. So on a Deepgram deployment a German speaker was heard as
+# silence while everyone else was transcribed — "the agent understands
+# everybody except me" was exactly this, not a microphone problem.
+#
+# The durable ledger never had the problem: apps/worker omits `language`, so
+# Whisper auto-detects every drive regardless of this setting.
+STT_LANGUAGE = os.getenv("STT_LANGUAGE") or None
+
 # What each model call is, for the proxy.
 #
 # LiteLLM strips a request's `metadata` before the upstream call, keeps it on
@@ -321,7 +338,15 @@ def build_stt():
             api_key=os.environ["DEEPGRAM_API_KEY"],
             settings=DeepgramSTTService.Settings(
                 model=os.getenv("DEEPGRAM_MODEL", "nova-3"),
-                language="en",
+                # "multi" is nova-2/3 multilingual code-switching: Deepgram
+                # detects the language per word, which is what a mixed
+                # German/English drive needs. A specific code would not bias
+                # recognition — it would silence every other language (see
+                # STT_LANGUAGE). Verified against nova-3 with German speech:
+                # `en` returned an empty transcript, `multi` perfect German
+                # with languages: ["de"], and the websocket accepts
+                # language=multi alongside diarize=true.
+                language=STT_LANGUAGE or "multi",
                 # Per-word speaker indices on the raw result. Pipecat does not
                 # read them; `SpeakerTagger` below does.
                 diarize=STT_DIARIZE,
@@ -339,12 +364,20 @@ def build_stt():
     if provider == "assemblyai":
         from pipecat.services.assemblyai.stt import AssemblyAISTTService
 
+        # Auto-detect the language per turn, or force the one STT_LANGUAGE
+        # names. AssemblyAI's API treats the two settings as mutually
+        # exclusive, so exactly one is passed. Not verified against a live
+        # AssemblyAI stream the way the Deepgram and Whisper paths were — the
+        # fields exist in pipecat 1.7 and match the provider's docs.
+        language_settings = (
+            {"language_code": STT_LANGUAGE} if STT_LANGUAGE else {"language_detection": True}
+        )
         return AssemblyAISTTService(
             api_key=os.environ["ASSEMBLYAI_API_KEY"],
             # AssemblyAI puts the speaker label ("A", "B") in `user_id` itself;
             # `SpeakerTagger` reads it from there. No `speaker_format` — the tag
             # is written once, downstream, in the one shape the prompt knows.
-            settings=AssemblyAISTTService.Settings(speaker_labels=STT_DIARIZE),
+            settings=AssemblyAISTTService.Settings(speaker_labels=STT_DIARIZE, **language_settings),
         )
 
     if STT_DIARIZE:
@@ -352,10 +385,17 @@ def build_stt():
 
     # The default, and the only one that keeps audio at AU. Batch, so it needs
     # the VADProcessor above to tell it where an utterance ends.
+    #
+    # An EMPTY language, not an omitted one: pipecat's OpenAISTTService always
+    # sends a language parameter (it asserts non-None and would default to
+    # English), and on the AU deployment an empty value behaves exactly like
+    # omitting it — Whisper auto-detected and transcribed German perfectly.
+    # Do NOT reach for "auto" here: the proxy accepts it and returns empty
+    # text, which would lose the speech entirely.
     return OpenAISTTService(
         settings=OpenAISTTService.Settings(
             model=os.getenv("MODEL_TRANSCRIBE_LIVE") or os.environ["MODEL_TRANSCRIBE"],
-            language="en",
+            language=STT_LANGUAGE or "",
         ),
         api_key=LITELLM_API_KEY,
         base_url=LITELLM_BASE_URL,
@@ -1454,6 +1494,13 @@ app.add_middleware(
 # One connection per browser tab. Keyed so a renegotiation finds its own peer.
 connections: dict[str, SmallWebRTCConnection] = {}
 
+# A hard ceiling on simultaneous pipelines. Each connection holds a live STT +
+# LLM + TTS chain and PCM buffers in memory, and a connection that never fires
+# `closed` (a vanished client) leaks all of it. This deployment serves one
+# driver at a time; sixteen is already generous, and beyond it the answer is
+# 503 rather than an OOM that takes the current drive down with it.
+MAX_CONNECTIONS = 16
+
 # At import rather than under `__main__`, so it is set up the same way whether
 # the container runs bot.py directly or something wraps it in `uvicorn bot:app`.
 # Spans are created per connection, so this only has to happen before the first
@@ -1475,17 +1522,27 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
     which is all this deployment ever has — and it means the audio never
     traverses a server anyone has to run.
     """
+    # Malformed offers answer 400, not a 500 with a KeyError stack: this
+    # endpoint is publicly routed, and an unauthenticated caller poking at it
+    # should not be able to fill the logs with tracebacks.
+    sdp = (request or {}).get("sdp")
+    kind = (request or {}).get("type")
+    if not sdp or not kind:
+        return JSONResponse({"error": "missing sdp or type"}, status_code=400)
+
     pc_id = request.get("pc_id")
 
     if pc_id and pc_id in connections:
         connection = connections[pc_id]
-        await connection.renegotiate(
-            sdp=request["sdp"], type=request["type"], restart_pc=request.get("restart_pc", False)
-        )
+        await connection.renegotiate(sdp=sdp, type=kind, restart_pc=request.get("restart_pc", False))
         return connection.get_answer()
 
+    if len(connections) >= MAX_CONNECTIONS:
+        logger.warning("refusing offer: %d connections already open", len(connections))
+        return JSONResponse({"error": "server busy"}, status_code=503)
+
     connection = SmallWebRTCConnection(ice_servers=ICE_SERVERS)
-    await connection.initialize(sdp=request["sdp"], type=request["type"])
+    await connection.initialize(sdp=sdp, type=kind)
 
     @connection.event_handler("closed")
     async def on_closed(conn: SmallWebRTCConnection):
@@ -1534,6 +1591,11 @@ async def ice_candidates(request: dict):
 
     for entry in request.get("candidates", []):
         sdp = entry.get("candidate") or ""
+        if not sdp:
+            # An empty candidate (some browsers send one when a port check
+            # fails) would raise inside aiortc's parser and 500 the whole
+            # PATCH — taking the browser's remaining candidates with it.
+            continue
         # aiortc's parser wants the attribute value, not the "candidate:" prefix
         # the browser sends.
         candidate = candidate_from_sdp(sdp.removeprefix("candidate:"))
