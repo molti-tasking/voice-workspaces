@@ -41,11 +41,15 @@ vi.mock("@voicemural/telemetry", () => ({
 const { reportCompletedSessions } = await import("./sweep");
 
 const USER_ID = "test-report-user";
-const S_CLIENT = "00000000-0000-4000-8000-0000000000d1";
-const S_SWEEP = "00000000-0000-4000-8000-0000000000d2";
-const S_RECENT = "00000000-0000-4000-8000-0000000000d3";
-const S_OPEN = "00000000-0000-4000-8000-0000000000d4";
-const S_PENDING = "00000000-0000-4000-8000-0000000000d5";
+// These ids are deliberately OUTSIDE the ranges used by the db package's test
+// suites: `pnpm test` runs every package's suite in parallel against the one
+// dev Postgres, and a fixed id shared with another suite collides on insert
+// whenever both files run at the same moment.
+const S_CLIENT = "00000000-0000-4000-8000-0000000000f1";
+const S_SWEEP = "00000000-0000-4000-8000-0000000000f2";
+const S_RECENT = "00000000-0000-4000-8000-0000000000f3";
+const S_OPEN = "00000000-0000-4000-8000-0000000000f4";
+const S_PENDING = "00000000-0000-4000-8000-0000000000f5";
 
 const describeIfDb = (await isDatabaseReachable()) ? describe : describe.skip;
 

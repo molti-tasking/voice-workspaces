@@ -52,7 +52,10 @@ export function KindToggle({
           ? "Not a direction — this was just thinking"
           : "This was a direction, addressed to the system"
       }
-      className="rounded px-1.5 py-0.5 text-[10px] text-white/0 transition-colors group-hover:text-white/30 hover:!text-white/70 focus-visible:text-white/70 disabled:opacity-40"
+      // `select-none`: invisible or not, a copied transcript must not carry
+      // this label on every line — which is exactly how one was pasted into
+      // a discussion of the tool.
+      className="select-none rounded px-1.5 py-0.5 text-[10px] text-white/0 transition-colors group-hover:text-white/30 hover:!text-white/70 focus-visible:text-white/70 disabled:opacity-40"
     >
       {current === "directive" ? "not a direction" : "mark as direction"}
     </button>

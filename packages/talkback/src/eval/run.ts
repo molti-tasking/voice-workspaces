@@ -2,11 +2,14 @@
  * Run the prompt against the cases and say how it did.
  *
  *   pnpm talkback:eval                          the current prompt, all cases
- *   pnpm talkback:eval -- --only stuck,mid-sentence
- *   pnpm talkback:eval -- --base ./candidate.md --label candidate-7
- *   pnpm talkback:eval -- --runs 3 --no-judge
- *   pnpm talkback:eval -- --setting desk         every case, in one setting
- *   pnpm talkback:eval -- --out report.json --strict
+ *   pnpm talkback:eval --only stuck,mid-sentence
+ *   pnpm talkback:eval --base ./candidate.md --label candidate-7
+ *   pnpm talkback:eval --runs 3 --no-judge
+ *   pnpm talkback:eval --setting desk           every case, in one setting
+ *   pnpm talkback:eval --out report.json --strict
+ *
+ * No `--` before the flags: pnpm 10 forwards them as they are, and passes a
+ * literal `--` through to this parser, which rejects it.
  *
  * `--base` swaps the base prompt for the contents of a file, leaving the
  * setting stanzas and the output contract as they are. That is the iteration

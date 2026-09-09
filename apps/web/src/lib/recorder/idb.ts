@@ -7,13 +7,16 @@
  * losing signal loses the recording.
  *
  * Also holds open-session metadata so a crashed or backgrounded tab can offer
- * to resume rather than stranding a half-recorded drive.
+ * to resume rather than stranding a half-recorded drive, and the session
+ * registration payload so a drive that STARTED offline can be registered when
+ * signal returns — see the REGISTRATION_STORE below.
  */
 
 const DB_NAME = "voicemural";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const CHUNK_STORE = "pendingChunks";
 const SESSION_STORE = "openSessions";
+const REGISTRATION_STORE = "sessionRegistrations";
 
 export interface PendingChunk {
   /** Auto-increment local key; unrelated to the server's chunk id. */
@@ -59,6 +62,9 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(SESSION_STORE)) {
         db.createObjectStore(SESSION_STORE, { keyPath: "captureSessionId" });
+      }
+      if (!db.objectStoreNames.contains(REGISTRATION_STORE)) {
+        db.createObjectStore(REGISTRATION_STORE, { keyPath: "id" });
       }
     };
 
@@ -141,4 +147,44 @@ export async function findOpenSession(): Promise<OpenSessionMeta | null> {
   const all = await tx<OpenSessionMeta[]>(SESSION_STORE, "readonly", (s) => s.getAll());
   if (all.length === 0) return null;
   return all.sort((a, b) => b.startedAt - a.startedAt)[0] ?? null;
+}
+
+/**
+ * The exact body of the `POST /api/capture-sessions` that registered a drive.
+ *
+ * A recording that starts in a dead zone never gets its session row created,
+ * and the chunk route 404s on an unknown session — which the uploader would
+ * otherwise read as a permanent rejection. Storing the payload here (before
+ * the first POST attempt, so it survives both offline starts and page reloads)
+ * lets the uploader re-register when the server finally says `session_not_found`.
+ *
+ * Kept until the registration is acknowledged, then deleted. A few hundred
+ * bytes per drive; the cost of keeping it is nothing next to a drive lost whole.
+ */
+export interface StoredSessionRegistration {
+  id: string;
+  startedAt: string;
+  setting?: string;
+  voiceId?: string;
+  deviceInfo: { userAgent?: string; mimeType?: string; platform?: string };
+}
+
+export async function saveRegistration(body: StoredSessionRegistration): Promise<void> {
+  await tx(REGISTRATION_STORE, "readwrite", (s) => s.put(body));
+}
+
+export async function getRegistration(
+  captureSessionId: string,
+): Promise<StoredSessionRegistration | null> {
+  const row = await tx<StoredSessionRegistration | undefined>(
+    REGISTRATION_STORE,
+    "readonly",
+    (s) => s.get(captureSessionId),
+  );
+  return row ?? null;
+}
+
+/** Called once the server has acknowledged the session row exists. */
+export async function deleteRegistration(captureSessionId: string): Promise<void> {
+  await tx(REGISTRATION_STORE, "readwrite", (s) => s.delete(captureSessionId));
 }

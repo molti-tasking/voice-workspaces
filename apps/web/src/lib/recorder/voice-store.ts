@@ -7,10 +7,9 @@ import { DEFAULT_VOICE_ID, isKnownVoice } from "@voicemural/talkback/voice";
 /**
  * The remembered voice, as an external store.
  *
- * Same shape as `setting-store.ts`, for the same reason: `localStorage` is an
- * external system and `useSyncExternalStore` is how React reads one without a
- * hydration mismatch. Per-browser rather than per-account, like the setting —
- * a voice that suits car speakers may not suit headphones.
+ * `localStorage` is an external system and `useSyncExternalStore` is how React
+ * reads one without a hydration mismatch. Per-browser rather than per-account,
+ * like the setting — a voice that suits car speakers may not suit headphones.
  *
  * A stored id that is no longer in the catalogue falls back to the default
  * rather than being sent: the server would null it anyway, and the picker

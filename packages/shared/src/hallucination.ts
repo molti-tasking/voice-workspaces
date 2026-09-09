@@ -43,6 +43,26 @@ const ARTEFACTS = [
   "you",
   "bye",
   "thank you",
+  // The same stock sign-offs in German. The corpus is mixed German/English
+  // (packages/db/src/schema.ts) and the ledger auto-detects language, so
+  // Whisper hallucinates in whichever language it was decoding — the German
+  // Whisper is known for exactly these YouTube credits. Expected rather than
+  // yet observed verbatim here, unlike the English entries above; added
+  // because a German sign-off passing the filter unmarked reads as something
+  // the participant said, same as the English ones.
+  "danke fürs zuschauen",
+  "vielen dank fürs zuschauen",
+  "bis zum nächsten video",
+  "untertitel von der amaraorg community",
+  "untertitel von amaraorg",
+  "untertitel von",
+  "vergesst nicht zu abonnieren",
+  "nicht vergessen zu abonnieren",
+  // The bare-noise mirrors of "thank you"/"bye" above.
+  "danke",
+  "vielen dank",
+  "danke schön",
+  "tschüss",
 ];
 
 /**
@@ -71,6 +91,13 @@ const NARRATION_OPENINGS = [
    * the agent the driver was narrating a baking video. */
   /^i('ll| will) show you how to make/i,
   /^in this video,? i/i,
+  /* The German cooking-show openings, same judgement as the English ones:
+   * Whisper narrates in the language it was decoding, and this corpus is
+   * mixed German/English. Stock phrases no driver thinking aloud produces,
+   * anchored to the start of a sentence. */
+  /^hallo( zusammen)?,? und willkommen( zurück)? auf meinem kanal/i,
+  /^willkommen( zurück)? auf meinem kanal/i,
+  /^heute zeige ich (?:euch )?wie man/i,
 ];
 
 function normalise(text: string): string {

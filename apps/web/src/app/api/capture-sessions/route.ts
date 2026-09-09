@@ -58,17 +58,52 @@ export async function POST(req: Request) {
     return NextResponse.json({ id, resumed: true });
   }
 
-  await db.insert(captureSession).values({
-    id,
-    userId,
-    startedAt,
-    deviceInfo,
-    setting,
-    voiceId,
-  });
+  // Conflict-safe rather than check-then-insert: two concurrent creates of
+  // the same id (a client retry racing its own timed-out request) would else
+  // both pass the `existing` check above and the loser would surface a unique
+  // violation as a 500 — which the recorder reads as "offline" and retries
+  // forever. Every other write in the system resolves this with
+  // onConflictDoNothing; this route is the odd one out no longer.
+  const inserted = await db
+    .insert(captureSession)
+    .values({
+      id,
+      userId,
+      startedAt,
+      deviceInfo,
+      setting,
+      voiceId,
+    })
+    .onConflictDoNothing({ target: captureSession.id })
+    .returning({ id: captureSession.id });
 
-  // Best-effort by nature: this route is never reached when a drive starts in a
-  // dead zone, and nothing retries it. `capture_session_completed` from the
+  if (inserted.length === 0) {
+    // Lost the race — the concurrent create won. Same reply as the resume
+    // path above, including the ownership refusal if the id is somehow
+    // someone else's.
+    const [row] = await db
+      .select({ userId: captureSession.userId })
+      .from(captureSession)
+      .where(eq(captureSession.id, id))
+      .limit(1);
+
+    if (row?.userId !== userId) {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+
+    capture(
+      userId,
+      "capture_session_opened",
+      { capture_session_id: id, resumed: true },
+      { sessionId: sessionIdFrom(req) },
+    );
+    return NextResponse.json({ id, resumed: true });
+  }
+
+  // Best-effort by nature: when a drive starts in a dead zone this route is
+  // not reached until the uploader replays the registration from IndexedDB
+  // (see ensureSessionRegistered in the recorder's uploader). Even then the
+  // event can be lost with the phone; `capture_session_completed` from the
   // worker is the event to trust for counting drives.
   capture(
     userId,

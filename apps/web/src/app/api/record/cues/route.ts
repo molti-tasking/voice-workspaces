@@ -68,6 +68,16 @@ export async function GET(req: Request) {
     );
   }
 
+  // The polling fallback asks for exactly this (`Accept: application/json`,
+  // see use-cues.ts) — and the fallback could never work without it, because
+  // the stream answer below is `text/event-stream` and the poller would
+  // discard every response. Same payload as one `cues` frame, one shot.
+  if ((req.headers.get("accept") ?? "").includes("application/json")) {
+    return Response.json(await buildCues(userId, session.startedAt, captureSessionId, profile), {
+      headers: { "Cache-Control": "no-store" },
+    });
+  }
+
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({

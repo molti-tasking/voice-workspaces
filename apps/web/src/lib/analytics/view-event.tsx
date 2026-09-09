@@ -22,9 +22,10 @@ export function ViewEvent<K extends AnalyticsEventName>({
   event: K;
   properties: AnalyticsEventMap[K];
 }) {
-  // Fires once per mount. React 19 in development mounts effects twice, and
-  // the timeline remounts this on every infinite-scroll page-in, so without the
-  // guard one visit would report several times.
+  // Fires once per mount — a remount (route change, React 19's dev
+  // double-mount) gets a fresh ref and reports again, which is right: it is a
+  // new view of the page. The ref only collapses re-runs of one mounted
+  // instance, where the payload may not have changed.
   const sent = useRef(false);
   const payload = JSON.stringify(properties);
 

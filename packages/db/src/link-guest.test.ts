@@ -22,9 +22,14 @@ import {
   capability,
   capabilityVersion,
   captureSession,
+  extraction,
   invocation,
+  macroProposal,
+  memoryEntry,
   user,
   utterance,
+  workspaceCursor,
+  workspaceOp,
 } from "./schema";
 
 const GUEST_ID = "test-guest-user";
@@ -228,5 +233,115 @@ describeIfDb("migrateGuestData", () => {
     const result = await migrateGuestData(GUEST_ID, GUEST_ID);
     expect(result.sessionsMoved).toBe(0);
     expect(result.capabilitiesMoved).toBe(0);
+  });
+
+  /**
+   * The tables that are not re-derivable from anything else: the workspace
+   * ledger (manual board gestures especially), the extraction cache, declined
+   * macro proposals and the memory index. Every one of them cascades from
+   * `user`, and none of them was moved before — so the first real sign-in
+   * silently destroyed exactly the data the study measures.
+   */
+  it("moves the workspace ledger, extractions, macro proposals and memory entries", async () => {
+    const db = getDb();
+    await makeGuestWithHistory();
+    await makeUser(TARGET_ID, false);
+    await seedStarterRepertoire(TARGET_ID);
+
+    // An extraction the worker paid for, and the ops it appended.
+    const [extractionRow] = await db
+      .insert(extraction)
+      .values({
+        userId: GUEST_ID,
+        inputHash: "test-input-hash",
+        promptVersion: "4",
+        requestedModel: "test-model",
+        resolvedModel: "test-model",
+        temperature: "0",
+        stateDigest: "test-digest",
+        requestMessages: [{ role: "user", content: "…" }],
+        rawResponse: "{}",
+      })
+      .returning({ id: extraction.id });
+
+    await db.insert(workspaceOp).values([
+      {
+        userId: GUEST_ID,
+        extractionId: extractionRow!.id,
+        captureSessionId: SESSION_ID,
+        occurredAt: new Date(),
+        type: "create_topic",
+        payload: { id: "t1", title: "Guest topic" },
+      },
+      // The manual board gesture — `via: 'user'` — the acceptance measure
+      // counts reversals from. Not derivable from the transcript.
+      {
+        userId: GUEST_ID,
+        occurredAt: new Date(),
+        type: "move_block",
+        payload: { blockId: "b1", to: "done", via: "user" },
+      },
+    ]);
+
+    await db.insert(workspaceCursor).values({
+      userId: GUEST_ID,
+      lastOccurredAt: new Date(),
+    });
+
+    await db.insert(macroProposal).values({
+      userId: GUEST_ID,
+      canonicalForm: "chase|invoice",
+      proposedName: "chase the invoice",
+      restatement: "Chasing the invoice.",
+      markdown: "Chase the invoice.",
+      sessionCount: 2,
+      status: "declined",
+      decidedAt: new Date(),
+    });
+
+    await db.insert(memoryEntry).values({
+      userId: GUEST_ID,
+      kind: "passage",
+      refId: `${SESSION_ID}:0`,
+      captureSessionId: SESSION_ID,
+      occurredAt: new Date(),
+      text: "a passage of the guest's drive",
+      contentHash: "hash",
+      model: "test-embed",
+      embedding: [0.1, 0.2],
+    });
+
+    await migrateGuestData(GUEST_ID, TARGET_ID);
+    // Better Auth deletes the guest row immediately after linking.
+    await db.delete(user).where(eq(user.id, GUEST_ID));
+
+    const ops = await db.select().from(workspaceOp).where(eq(workspaceOp.userId, TARGET_ID));
+    expect(ops).toHaveLength(2);
+
+    const [cursor] = await db
+      .select()
+      .from(workspaceCursor)
+      .where(eq(workspaceCursor.userId, TARGET_ID));
+    expect(cursor).toBeDefined();
+
+    const extractions = await db
+      .select()
+      .from(extraction)
+      .where(eq(extraction.userId, TARGET_ID));
+    expect(extractions).toHaveLength(1);
+
+    // Declined proposals are stated field-study data; they must survive too.
+    const proposals = await db
+      .select()
+      .from(macroProposal)
+      .where(eq(macroProposal.userId, TARGET_ID));
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]?.status).toBe("declined");
+
+    const entries = await db
+      .select()
+      .from(memoryEntry)
+      .where(eq(memoryEntry.userId, TARGET_ID));
+    expect(entries).toHaveLength(1);
   });
 });

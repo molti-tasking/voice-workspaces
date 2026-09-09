@@ -1,4 +1,3 @@
-import { captureSession, eq, getDb } from "@voicemural/db";
 import {
   deleteTopicEntries,
   loadSessionForMemory,
@@ -148,12 +147,4 @@ export async function indexMemory(userId: string): Promise<IndexMemoryResult> {
     log.info("memory: topics refreshed", { userId, ...result });
   }
   return result;
-}
-
-/** For the admin command: mark every drive of a user unindexed, keeping nothing. */
-export async function markAllSessionsUnindexed(userId: string): Promise<void> {
-  await getDb()
-    .update(captureSession)
-    .set({ memoryIndexedAt: null })
-    .where(eq(captureSession.userId, userId));
 }

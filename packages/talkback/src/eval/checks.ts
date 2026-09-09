@@ -29,6 +29,15 @@ const SIGN_OFF = /(let me know|hope that helps|feel free|happy to help)/i;
 const MARKDOWN = /(^|\n)\s*([-*•]\s|#{1,6}\s|\d+\.\s)|\*\*|`/;
 const EMOJI = /\p{Extended_Pictographic}/u;
 const STAGE_DIRECTION = /^\s*[[(*].*[\])*]\s*$|\*[a-z ]+\*/i;
+// Once two voices are heard the model reads `[Speaker N]` on every line and
+// copies it into replies; spoken, that is "bracket speaker two".
+const SPEAKER_TAG = /\[speaker \d+\]/i;
+// A reply that narrates the turn decision instead of making it. Observed on a
+// two-person drive, 9 Sep 2026: "[Speaker 2]'s question — whether it'll talk
+// back — is for them to test live, not for me to answer." Thinking is off in
+// the container, so deliberation that leaks goes straight to TTS.
+const NARRATED_DECISION =
+  /\b(not for me to|for them to (test|answer|decide)|i('ll| will| should| am going to) (stay|remain|keep) (silent|quiet)|no (reply|response) (is )?(needed|required)|(does not|doesn't) (need|require) a (reply|response))\b/i;
 
 export function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
@@ -59,6 +68,8 @@ export function checkReply(kase: EvalCase, rawReply: string, maxReplyWords: numb
     if (MARKDOWN.test(spoken)) failures.push("markdown in speech");
     if (EMOJI.test(spoken)) failures.push("emoji in speech");
     if (STAGE_DIRECTION.test(spoken)) failures.push("stage direction");
+    if (SPEAKER_TAG.test(spoken)) failures.push("speaker tag spoken");
+    if (NARRATED_DECISION.test(spoken)) failures.push("narrated decision");
     const questions = (spoken.match(/\?/g) ?? []).length;
     if (questions > 1) failures.push(`${questions} questions, at most one`);
     if (rawReply.includes("<silence>") && spoken) failures.push("sentinel emitted alongside speech");

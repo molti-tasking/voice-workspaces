@@ -56,6 +56,7 @@ from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     Frame,
     InputAudioRawFrame,
+    InterruptionFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMTextFrame,
@@ -220,6 +221,23 @@ Never claim to remember anything. You cannot check the transcript right now, and
 # common case rather than the edge case, and the cost is a flag, not a service.
 STT_DIARIZE = os.getenv("STT_DIARIZE", "true").lower() in ("1", "true", "yes")
 
+# Language for the live conversation. Unset = let the provider detect it
+# (Deepgram "multi", AssemblyAI per-turn detection, Whisper auto-detect); set to
+# force ONE BCP-47 code ("en", "de", "nl-NL") — worth doing on a monolingual
+# drive, where detection on a short VAD-cut utterance can misfire.
+#
+# THE BUG THIS CLOSES. language="en" was hard-coded, and a specific Deepgram
+# language does not MISHEAR other languages — it transcribes nothing for them.
+# Verified with a German sentence sent to nova-3: language=en returned an
+# EMPTY transcript, language=multi returned perfect German and
+# languages: ["de"]. So on a Deepgram deployment a German speaker was heard as
+# silence while everyone else was transcribed — "the agent understands
+# everybody except me" was exactly this, not a microphone problem.
+#
+# The durable ledger never had the problem: apps/worker omits `language`, so
+# Whisper auto-detects every drive regardless of this setting.
+STT_LANGUAGE = os.getenv("STT_LANGUAGE") or None
+
 # What each model call is, for the proxy.
 #
 # LiteLLM strips a request's `metadata` before the upstream call, keeps it on
@@ -321,7 +339,15 @@ def build_stt():
             api_key=os.environ["DEEPGRAM_API_KEY"],
             settings=DeepgramSTTService.Settings(
                 model=os.getenv("DEEPGRAM_MODEL", "nova-3"),
-                language="en",
+                # "multi" is nova-2/3 multilingual code-switching: Deepgram
+                # detects the language per word, which is what a mixed
+                # German/English drive needs. A specific code would not bias
+                # recognition — it would silence every other language (see
+                # STT_LANGUAGE). Verified against nova-3 with German speech:
+                # `en` returned an empty transcript, `multi` perfect German
+                # with languages: ["de"], and the websocket accepts
+                # language=multi alongside diarize=true.
+                language=STT_LANGUAGE or "multi",
                 # Per-word speaker indices on the raw result. Pipecat does not
                 # read them; `SpeakerTagger` below does.
                 diarize=STT_DIARIZE,
@@ -339,12 +365,20 @@ def build_stt():
     if provider == "assemblyai":
         from pipecat.services.assemblyai.stt import AssemblyAISTTService
 
+        # Auto-detect the language per turn, or force the one STT_LANGUAGE
+        # names. AssemblyAI's API treats the two settings as mutually
+        # exclusive, so exactly one is passed. Not verified against a live
+        # AssemblyAI stream the way the Deepgram and Whisper paths were — the
+        # fields exist in pipecat 1.7 and match the provider's docs.
+        language_settings = (
+            {"language_code": STT_LANGUAGE} if STT_LANGUAGE else {"language_detection": True}
+        )
         return AssemblyAISTTService(
             api_key=os.environ["ASSEMBLYAI_API_KEY"],
             # AssemblyAI puts the speaker label ("A", "B") in `user_id` itself;
             # `SpeakerTagger` reads it from there. No `speaker_format` — the tag
             # is written once, downstream, in the one shape the prompt knows.
-            settings=AssemblyAISTTService.Settings(speaker_labels=STT_DIARIZE),
+            settings=AssemblyAISTTService.Settings(speaker_labels=STT_DIARIZE, **language_settings),
         )
 
     if STT_DIARIZE:
@@ -352,10 +386,17 @@ def build_stt():
 
     # The default, and the only one that keeps audio at AU. Batch, so it needs
     # the VADProcessor above to tell it where an utterance ends.
+    #
+    # An EMPTY language, not an omitted one: pipecat's OpenAISTTService always
+    # sends a language parameter (it asserts non-None and would default to
+    # English), and on the AU deployment an empty value behaves exactly like
+    # omitting it — Whisper auto-detected and transcribed German perfectly.
+    # Do NOT reach for "auto" here: the proxy accepts it and returns empty
+    # text, which would lose the speech entirely.
     return OpenAISTTService(
         settings=OpenAISTTService.Settings(
             model=os.getenv("MODEL_TRANSCRIBE_LIVE") or os.environ["MODEL_TRANSCRIBE"],
-            language="en",
+            language=STT_LANGUAGE or "",
         ),
         api_key=LITELLM_API_KEY,
         base_url=LITELLM_BASE_URL,
@@ -902,6 +943,27 @@ def clean_reply(reply: str) -> str:
     return re.sub(r"^\s*[\"'`]+|[\"'`]+\s*$", "", reply.replace(SILENCE_TOKEN, "")).strip()
 
 
+SPEAKER_TAG = re.compile(r"\[speaker \d+\](?:'s)?\s*", re.IGNORECASE)
+
+
+def strip_speaker_tags(text: str) -> str:
+    """Drop `[Speaker N]` from text bound for TTS.
+
+    The tag is written into transcripts on purpose (see `SpeakerTagger`), and
+    a model that has read it on every line copies it into its own reply —
+    which ElevenLabs renders as "bracket speaker two". Observed on a
+    two-person drive: "[Speaker 2]'s question — whether it'll talk back — is
+    for them to test live, not for me to answer." The tag stays in
+    `generatedText`; only speech loses it.
+
+    Applied per released frame, so a tag split across frames is only caught
+    at the START of a reply, where `SilenceGate` holds an opening `[` until
+    the bracket closes. Mid-reply tags are rarer and arrive whole often
+    enough; the eval's `speaker tag spoken` check is where the rest show up.
+    """
+    return SPEAKER_TAG.sub("", text)
+
+
 class TurnRecorder:
     """Writes down what the agent said, for the filter that reads it back.
 
@@ -935,26 +997,51 @@ class TurnRecorder:
         if text.strip():
             self._responding_to = text
 
-    def record(self, spoken: str, generated: str) -> None:
-        """Fire and forget. A failure here must never cost the driver a reply."""
+    def record(
+        self,
+        spoken: str,
+        generated: str,
+        *,
+        started_ms: int | None = None,
+        barged_in: bool = False,
+    ) -> None:
+        """Fire and forget. A failure here must never cost the driver a reply.
+
+        `started_ms` is the wall clock when the first word was released to
+        TTS, which is when speech began. `barged_in` means the person spoke
+        over the reply: `spoken` is then what had been released — an upper
+        bound on what they heard — and the interruption is the measured end.
+        Both reach `agent_turn`, where the transcript page's `interrupted`
+        badge and the paper's turn-taking record read them. Before they were
+        sent, a reply cut off after one word was filed as a complete turn
+        that said "The".
+        """
         if not self._ticket or not self._started_at_ms or not spoken.strip():
             return
 
         seq, self._seq = self._seq, self._seq + 1
+        now = int(time.time() * 1000)
         # Milliseconds into the drive, on the same clock as `utterance` — which
         # is what lets the two be read as one dialogue, and what the echo filter
         # compares intervals against.
-        offset = max(0, int(time.time() * 1000) - self._started_at_ms)
+        offset = max(0, (started_ms or now) - self._started_at_ms)
         payload = {
             "ticket": self._ticket,
             "seq": seq,
             "startOffsetMs": offset,
-            # Roughly 14 characters a second of speech. An estimate, and marked
-            # as one: the container never learns when playback actually ended.
-            "endOffsetMs": offset + int(len(spoken) / 14 * 1000),
             "text": spoken,
             "generatedText": generated,
         }
+        if barged_in:
+            end = max(offset, now - self._started_at_ms)
+            payload["endOffsetMs"] = end
+            payload["bargedIn"] = True
+            # How far into the turn the cut came — what the page shows as "heard".
+            payload["truncatedAtMs"] = end - offset
+        else:
+            # Roughly 14 characters a second of speech. An estimate, and marked
+            # as one: the container never learns when playback actually ended.
+            payload["endOffsetMs"] = offset + int(len(spoken) / 14 * 1000)
         if self._responding_to:
             payload["respondingToText"] = self._responding_to
 
@@ -1092,9 +1179,21 @@ class SilenceGate(FrameProcessor):
         self._text = ""
         self._spoken = ""
         self._holding = True
+        # Wall clock of the first word released to TTS: the turn's start,
+        # measured, rather than inferred from when generation ended.
+        self._first_spoke_ms: int | None = None
         # Draft suppression, which runs on everything released downstream.
         # `_pending` holds a partial tag straddling two frames; `_in_draft` is
         # true between the tags, where nothing may reach TTS.
+        self._pending = ""
+        self._in_draft = False
+
+    def _reset(self) -> None:
+        """Back to the state before a completion: holding, nothing spoken."""
+        self._text = ""
+        self._spoken = ""
+        self._holding = True
+        self._first_spoke_ms = None
         self._pending = ""
         self._in_draft = False
 
@@ -1148,6 +1247,8 @@ class SilenceGate(FrameProcessor):
         included declined turns would describe a conversation that did not
         happen.
         """
+        if self._first_spoke_ms is None:
+            self._first_spoke_ms = int(time.time() * 1000)
         if self._summary is not None:
             self._summary.note_agent(text)
         # ACCUMULATE ONLY. This runs per released fragment as the reply streams,
@@ -1158,9 +1259,17 @@ class SilenceGate(FrameProcessor):
         self._spoken += text
 
     def _could_become_sentinel(self, text: str) -> bool:
-        """Whether `text` is still a viable prefix of the sentinel."""
+        """Whether `text` is still a viable prefix of the sentinel.
+
+        Also true for an unclosed `[`: a `[Speaker N]` tag the model copied
+        from its transcript, arriving a token at a time. A spoken reply opens
+        with neither `<` nor `[`, so holding costs real replies nothing, and
+        `strip_speaker_tags` takes the tag out once the bracket closes.
+        """
         candidate = re.sub(r"[.\"'`*]", "", text.strip().lower())
         if not candidate:
+            return True
+        if candidate.startswith("[") and "]" not in candidate:
             return True
         return any(
             form.startswith(candidate) for form in (SILENCE_TOKEN, SILENCE_TOKEN.strip("<>"))
@@ -1170,11 +1279,7 @@ class SilenceGate(FrameProcessor):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, LLMFullResponseStartFrame):
-            self._text = ""
-            self._spoken = ""
-            self._holding = True
-            self._pending = ""
-            self._in_draft = False
+            self._reset()
         elif isinstance(frame, LLMTextFrame):
             self._text += frame.text
             if self._holding:
@@ -1186,7 +1291,7 @@ class SilenceGate(FrameProcessor):
                 # lands here too — `<draft` is not a sentinel prefix — and
                 # `_for_speech` is what keeps its body out of TTS.
                 self._holding = False
-                released = self._for_speech(clean_reply(self._text))
+                released = strip_speaker_tags(self._for_speech(clean_reply(self._text)))
                 if released:
                     self._spoke(released)
                     await self.push_frame(LLMTextFrame(text=released), direction)
@@ -1194,22 +1299,40 @@ class SilenceGate(FrameProcessor):
             # Already streaming. Strip any sentinel the model tacked on mid-reply
             # — small models emit one alongside a real sentence often enough that
             # `clean_reply` was written for it.
-            tail = self._for_speech(frame.text.replace(SILENCE_TOKEN, ""))
+            tail = strip_speaker_tags(self._for_speech(frame.text.replace(SILENCE_TOKEN, "")))
             if tail:
                 self._spoke(tail)
                 await self.push_frame(LLMTextFrame(text=tail), direction)
             return
+        elif isinstance(frame, InterruptionFrame):
+            # The person spoke over the reply. Pipecat cancels the generation
+            # and the audio; this is the one moment the container knows for
+            # certain that playback stopped, so the turn is written NOW — what
+            # had been released is the most they can have heard — rather than
+            # on an End frame that, after a cancellation, may never arrive.
+            if self._spoken.strip():
+                logger.info(f"[turn] interrupted after {self._spoken.strip()!r}")
+                if self._recorder is not None:
+                    self._recorder.record(
+                        self._spoken,
+                        self._text,
+                        started_ms=self._first_spoke_ms,
+                        barged_in=True,
+                    )
+            self._reset()
         elif isinstance(frame, LLMFullResponseEndFrame):
             if self._holding:
+                # Nothing was released. A real reply stops being held on its
+                # first frame, so what is here is the sentinel, a prefix of it
+                # (a decline cut off mid-token), an unclosed `[`, or nothing —
+                # and none of those is speech. The branch that used to release
+                # "a reply that is genuinely just 'sil'" is gone: the one time
+                # it fired, on a two-person drive, the reply was an interrupted
+                # `<silence>` and the car heard "sil".
                 if is_silence(self._text):
                     logger.info(f"[silence] declined turn suppressed: {self._text.strip()!r}")
-                else:
-                    # Held to the end without ever resolving — e.g. a reply that
-                    # is genuinely just "sil". Emit it rather than swallow it.
-                    remainder = self._for_speech(clean_reply(self._text))
-                    if remainder:
-                        self._spoke(remainder)
-                        await self.push_frame(LLMTextFrame(text=remainder), direction)
+                elif self._text.strip():
+                    logger.info(f"[silence] truncated decline suppressed: {self._text.strip()!r}")
 
             # Drafts come off the WHOLE completion rather than the stream: the
             # streaming pass only has to keep the body away from TTS, and
@@ -1223,12 +1346,12 @@ class SilenceGate(FrameProcessor):
             # ONE row per turn, written here because this is the only point that
             # knows the whole reply. A suppressed turn leaves `_spoken` empty and
             # records nothing — the echo filter must only ever learn about audio
-            # that actually reached the speaker.
+            # that actually reached the speaker. An interrupted turn was already
+            # written above and `_reset` emptied `_spoken`, so this cannot
+            # write it twice.
             if self._recorder is not None and self._spoken.strip():
-                self._recorder.record(self._spoken, self._text)
-            self._text = ""
-            self._spoken = ""
-            self._holding = True
+                self._recorder.record(self._spoken, self._text, started_ms=self._first_spoke_ms)
+            self._reset()
 
         await self.push_frame(frame, direction)
 
@@ -1454,6 +1577,13 @@ app.add_middleware(
 # One connection per browser tab. Keyed so a renegotiation finds its own peer.
 connections: dict[str, SmallWebRTCConnection] = {}
 
+# A hard ceiling on simultaneous pipelines. Each connection holds a live STT +
+# LLM + TTS chain and PCM buffers in memory, and a connection that never fires
+# `closed` (a vanished client) leaks all of it. This deployment serves one
+# driver at a time; sixteen is already generous, and beyond it the answer is
+# 503 rather than an OOM that takes the current drive down with it.
+MAX_CONNECTIONS = 16
+
 # At import rather than under `__main__`, so it is set up the same way whether
 # the container runs bot.py directly or something wraps it in `uvicorn bot:app`.
 # Spans are created per connection, so this only has to happen before the first
@@ -1475,17 +1605,27 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
     which is all this deployment ever has — and it means the audio never
     traverses a server anyone has to run.
     """
+    # Malformed offers answer 400, not a 500 with a KeyError stack: this
+    # endpoint is publicly routed, and an unauthenticated caller poking at it
+    # should not be able to fill the logs with tracebacks.
+    sdp = (request or {}).get("sdp")
+    kind = (request or {}).get("type")
+    if not sdp or not kind:
+        return JSONResponse({"error": "missing sdp or type"}, status_code=400)
+
     pc_id = request.get("pc_id")
 
     if pc_id and pc_id in connections:
         connection = connections[pc_id]
-        await connection.renegotiate(
-            sdp=request["sdp"], type=request["type"], restart_pc=request.get("restart_pc", False)
-        )
+        await connection.renegotiate(sdp=sdp, type=kind, restart_pc=request.get("restart_pc", False))
         return connection.get_answer()
 
+    if len(connections) >= MAX_CONNECTIONS:
+        logger.warning("refusing offer: %d connections already open", len(connections))
+        return JSONResponse({"error": "server busy"}, status_code=503)
+
     connection = SmallWebRTCConnection(ice_servers=ICE_SERVERS)
-    await connection.initialize(sdp=request["sdp"], type=request["type"])
+    await connection.initialize(sdp=sdp, type=kind)
 
     @connection.event_handler("closed")
     async def on_closed(conn: SmallWebRTCConnection):
@@ -1534,6 +1674,11 @@ async def ice_candidates(request: dict):
 
     for entry in request.get("candidates", []):
         sdp = entry.get("candidate") or ""
+        if not sdp:
+            # An empty candidate (some browsers send one when a port check
+            # fails) would raise inside aiortc's parser and 500 the whole
+            # PATCH — taking the browser's remaining candidates with it.
+            continue
         # aiortc's parser wants the attribute value, not the "candidate:" prefix
         # the browser sends.
         candidate = candidate_from_sdp(sdp.removeprefix("candidate:"))

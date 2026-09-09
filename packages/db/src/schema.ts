@@ -312,9 +312,9 @@ export const utterance = pgTable(
     //
     // `simple` rather than a language configuration on purpose: the corpus is
     // mixed German and English, and stemming everything as one language is
-    // worse than not stemming at all. Phase 5 adds pgvector alongside this; the
-    // lexical arm stays either way, because exact words — a name, a project, a
-    // number — are what people actually ask to be reminded of.
+    // worse than not stemming at all. The semantic arm lives in `memory_entry`
+    // (pgvector); the lexical arm stays either way, because exact words — a
+    // name, a project, a number — are what people actually ask to be reminded of.
     index("utterance_text_search_idx").using(
       "gin",
       sql`to_tsvector('simple', ${t.text})`,
@@ -417,6 +417,11 @@ export const invocation = pgTable(
   (t) => [
     index("invocation_capability_fired_idx").on(t.capabilityId, t.firedAt),
     index("invocation_session_idx").on(t.captureSessionId),
+    // The invoker's queue joins on this: `directivesAwaitingInvocation`
+    // left-joins invocation on `triggering_utterance_id` to find directives
+    // with no fire yet, and `pendingConfirmation` inner-joins it. Without an
+    // index both scan the whole invocation history per sweep.
+    index("invocation_triggering_utterance_idx").on(t.triggeringUtteranceId),
   ],
 );
 
@@ -911,6 +916,10 @@ export const workspaceOp = pgTable(
     index("workspace_op_user_seq_idx").on(t.userId, t.seq),
     index("workspace_op_user_occurred_idx").on(t.userId, t.occurredAt),
     index("workspace_op_session_idx").on(t.captureSessionId),
+    // `appendOps` counts ops per extraction on every append, and the FK
+    // cascade from `clearExtractions` deletes by it — both sequential scans
+    // without this.
+    index("workspace_op_extraction_idx").on(t.extractionId),
   ],
 );
 

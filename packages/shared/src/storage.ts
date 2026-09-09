@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 
@@ -58,7 +58,10 @@ export class FilesystemAudioStorage implements AudioStorage {
     await mkdir(dirname(target), { recursive: true });
     // Write to a temp file then rename, so a crash mid-write cannot leave a
     // truncated chunk that would transcribe into plausible-but-wrong text.
-    const tmp = `${target}.${process.pid}.tmp`;
+    // The name is unique per WRITE, not per process: two racing uploads of the
+    // same key (a client retry whose original is still in flight) would else
+    // share one temp file and interleave into whichever rename lost.
+    const tmp = `${target}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(tmp, data);
     const { rename } = await import("node:fs/promises");
     await rename(tmp, target);

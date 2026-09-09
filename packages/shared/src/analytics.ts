@@ -77,6 +77,12 @@ export interface AnalyticsEventMap {
   };
   /** A chunk the server refused permanently. Each one is lost recording. */
   upload_chunk_dropped: { status: number; seq: number; error_code?: string };
+  /**
+   * The uploader re-created a session that started offline. Measured because
+   * "how many drives began in a dead zone" is the very scenario the local
+   * queue exists for — before this was fixed those drives were lost whole.
+   */
+  upload_session_reregistered: { capture_session_id: string };
 
   // --- capture session lifecycle, server-side (authoritative) --------------
   capture_session_opened: {

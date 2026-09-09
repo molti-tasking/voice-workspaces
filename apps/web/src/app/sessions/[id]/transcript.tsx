@@ -289,7 +289,10 @@ function Meta({ turn, spokeMs }: { turn: AgentTurnRow; spokeMs: number }) {
     turn.asrMs !== null && `heard in ${turn.asrMs}ms`,
     turn.ttftMs !== null && `first word ${turn.ttftMs}ms`,
     turn.speakTtfbMs !== null && `audio ${turn.speakTtfbMs}ms`,
-    spokeMs > 0 && `spoke ${(spokeMs / 1000).toFixed(1)}s`,
+    // `endOffsetMs` is the container's guess from character count — it never
+    // learns when playback ended — except on an interrupted turn, where the
+    // interruption is the measured end and `heard` below carries it.
+    spokeMs > 0 && !turn.bargedIn && `spoke ~${(spokeMs / 1000).toFixed(1)}s`,
     turn.truncatedAtMs !== null && `heard ${(turn.truncatedAtMs / 1000).toFixed(1)}s`,
   ].filter(Boolean);
 

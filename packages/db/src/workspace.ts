@@ -283,46 +283,58 @@ export async function appendOps(input: AppendOpsInput): Promise<number> {
 
   // One extraction contributes its ops exactly once.
   //
-  // pg-boss `singletonKey` stops two workers colliding, but nothing stopped the
-  // worker's sweep and a manual `workspace:rebuild` running at the same moment
-  // — which duplicated every op in the log. The fold happens to tolerate it,
-  // because deterministic ids make the duplicates collide and get ignored, but
-  // the ledger is the record and it should not carry phantom entries.
-  const [existing] = await getDb()
-    .select({ count: sql<number>`count(*)::int` })
-    .from(workspaceOp)
-    .where(eq(workspaceOp.extractionId, input.extractionId));
+  // The count check and the insert must be atomic against the worker's sweep
+  // and a manual `workspace:rebuild` running at the same moment — which
+  // duplicated every op in the log when both passed the count. `workspaceOp.id`
+  // is a random uuid, so duplicate inserts do NOT collide on their own; the
+  // lock on the extraction row is what serialises the two writers. The fold
+  // tolerates duplicates, but the ledger is the record and it should not
+  // carry phantom entries.
+  const insertedCount = await getDb().transaction(async (tx) => {
+    await tx
+      .select({ id: extraction.id })
+      .from(extraction)
+      .where(eq(extraction.id, input.extractionId))
+      .for("update");
 
-  if ((existing?.count ?? 0) > 0) return 0;
+    const [existing] = await tx
+      .select({ count: sql<number>`count(*)::int` })
+      .from(workspaceOp)
+      .where(eq(workspaceOp.extractionId, input.extractionId));
 
-  const rows = input.ops.map(({ type, ...payload }) => {
-    const spans = (payload as { spans?: { utteranceId: string }[] }).spans ?? [];
-    const times = spans
-      .map((s) => input.segmentTimes?.get(s.utteranceId))
-      .filter((d): d is Date => d instanceof Date);
+    if ((existing?.count ?? 0) > 0) return 0;
 
-    return {
-      userId: input.userId,
-      extractionId: input.extractionId,
-      occurredAt:
-        times.length > 0
-          ? new Date(Math.min(...times.map((d) => d.getTime())))
-          : input.occurredAt,
-      captureSessionId: input.captureSessionId,
-      type,
-      payload: payload as Record<string, unknown>,
-      sourceUtteranceIds: spans.length > 0
-        ? spans.map((s) => s.utteranceId)
-        : input.sourceUtteranceIds,
-    };
+    const rows = input.ops.map(({ type, ...payload }) => {
+      const spans = (payload as { spans?: { utteranceId: string }[] }).spans ?? [];
+      const times = spans
+        .map((s) => input.segmentTimes?.get(s.utteranceId))
+        .filter((d): d is Date => d instanceof Date);
+
+      return {
+        userId: input.userId,
+        extractionId: input.extractionId,
+        occurredAt:
+          times.length > 0
+            ? new Date(Math.min(...times.map((d) => d.getTime())))
+            : input.occurredAt,
+        captureSessionId: input.captureSessionId,
+        type,
+        payload: payload as Record<string, unknown>,
+        sourceUtteranceIds: spans.length > 0
+          ? spans.map((s) => s.utteranceId)
+          : input.sourceUtteranceIds,
+      };
+    });
+
+    const inserted = await tx
+      .insert(workspaceOp)
+      .values(rows)
+      .returning({ id: workspaceOp.id });
+
+    return inserted.length;
   });
 
-  const inserted = await getDb()
-    .insert(workspaceOp)
-    .values(rows)
-    .returning({ id: workspaceOp.id });
-
-  return inserted.length;
+  return insertedCount;
 }
 
 /**

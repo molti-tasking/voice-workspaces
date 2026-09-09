@@ -1,6 +1,7 @@
 import { capture } from "@/lib/analytics/client";
 import {
   deleteChunk,
+  getRegistration,
   markAttempt,
   pendingChunks,
   pendingCount,
@@ -83,11 +84,26 @@ async function uploadOne(chunk: PendingChunk): Promise<"ok" | "retry" | "drop"> 
 
   if (res.ok) return "ok";
 
+  // Read once: the body feeds both the re-register check and the drop report.
+  const body = await res.text().catch(() => "");
+
+  // A drive that STARTED in a dead zone never got its session row created.
+  // That 404 is not the chunk's fault and it is not permanent: the registration
+  // payload was saved durably at start() precisely so it could be replayed
+  // here. Without this, the whole drive is dropped chunk by chunk to the one
+  // rejection the queue cannot survive — the canonical "underground car park
+  // before pulling away" case.
+  if (res.status === 404 && errorCodeFrom(body) === "session_not_found") {
+    const outcome = await ensureSessionRegistered(chunk.captureSessionId);
+    // "unknown" is a session recorded before this store existed (or one whose
+    // registration was permanently refused): the old drop behaviour applies.
+    if (outcome !== "unknown") return "retry";
+  }
+
   // 4xx means this chunk will never be accepted as-is. Retrying forever would
   // wedge the queue behind it and block every later chunk, so drop it and keep
   // the rest of the drive. 401 is the exception: the user can sign back in.
   if (res.status >= 400 && res.status < 500 && res.status !== 401 && res.status !== 408) {
-    const body = await res.text().catch(() => "");
     console.error(`Dropping chunk ${chunk.seq}: server rejected it with ${res.status}`, body);
     // Every one of these is a permanently lost piece of a recording, and the
     // console.error above is the only trace it has ever left. Reported so the
@@ -101,6 +117,40 @@ async function uploadOne(chunk: PendingChunk): Promise<"ok" | "retry" | "drop"> 
   }
 
   return "retry";
+}
+
+/**
+ * Re-create a session the server has never heard of.
+ *
+ * - "registered": the row now exists (or already did — the create is
+ *   idempotent); the caller should retry its chunk.
+ * - "pending": offline or the server answered 5xx — retry on the next drain.
+ * - "unknown": no stored registration for this session, so it can never be
+ *   created; the caller must fall back to dropping the chunks.
+ */
+async function ensureSessionRegistered(
+  captureSessionId: string,
+): Promise<"registered" | "pending" | "unknown"> {
+  const registration = await getRegistration(captureSessionId);
+  if (!registration) return "unknown";
+
+  try {
+    const res = await fetch("/api/capture-sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(registration),
+      cache: "no-store",
+    });
+    if (res.ok) {
+      capture("upload_session_reregistered", { capture_session_id: captureSessionId });
+      return "registered";
+    }
+    // 4xx here is a permanent refusal (bad body, forbidden) — as good as not
+    // having the payload at all. Anything else is server trouble: retry.
+    return res.status >= 400 && res.status < 500 ? "unknown" : "pending";
+  } catch {
+    return "pending";
+  }
 }
 
 /** The `error` field of the API's JSON error envelope, when there is one. */

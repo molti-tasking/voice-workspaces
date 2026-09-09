@@ -5,9 +5,11 @@ import { capture } from "@/lib/analytics/client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   clearOpenSession,
+  deleteRegistration,
   enqueueChunk,
   findOpenSession,
   saveOpenSession,
+  saveRegistration,
   type OpenSessionMeta,
 } from "./idb";
 import { publishStream } from "./mic-bus";
@@ -154,6 +156,14 @@ export function useRecorder() {
   const stopChunkRef = useRef<(() => void) | null>(null);
   const metaRef = useRef<OpenSessionMeta | null>(null);
 
+  /* Mirrors of state for the analytics events in start()/stop(). Those
+   * callbacks have stable dependency arrays on purpose (their other deps are
+   * all stable), so reading `state` inside them would capture the
+   * first-render value — `resumed` would always be false and `chunks_pending`
+   * always zero. Refs are the live view those events actually mean. */
+  const resumableRef = useRef<OpenSessionMeta | null>(null);
+  const pendingUploadsRef = useRef(0);
+
   const patch = useCallback((next: Partial<RecorderState>) => {
     setState((prev) => ({ ...prev, ...next }));
   }, []);
@@ -203,13 +213,14 @@ export function useRecorder() {
   /* --- Uploader wiring --------------------------------------------------- */
   useEffect(() => {
     const teardown = installUploaderTriggers();
-    const unsubscribe = subscribeUploader((s) =>
+    const unsubscribe = subscribeUploader((s) => {
+      pendingUploadsRef.current = s.pending;
       patch({
         pendingUploads: s.pending,
         uploading: s.uploading,
         lastUploadError: s.lastError,
-      }),
-    );
+      });
+    });
     return () => {
       teardown();
       unsubscribe();
@@ -220,6 +231,7 @@ export function useRecorder() {
   useEffect(() => {
     void findOpenSession().then((open) => {
       if (!open) return;
+      resumableRef.current = open;
       patch({ resumable: open });
       capture("unfinished_session_detected", { capture_session_id: open.captureSessionId });
     });
@@ -237,6 +249,34 @@ export function useRecorder() {
         } catch (err) {
           patch({ error: err instanceof Error ? err.message : String(err) });
           runningRef.current = false;
+
+          // Tear the recording down exactly as stop() would. Without this the
+          // failure wedges the UI: stop() no-ops once runningRef is false, so
+          // the mic would stay open, the wake lock held and the status stuck
+          // on "recording" until a page reload. The anticipated cause of this
+          // error is iOS suspending capture on screen lock — the one
+          // interruption a drive is most likely to hit.
+          publishStream(null);
+          streamRef.current?.getTracks().forEach((t) => t.stop());
+          streamRef.current = null;
+          void releaseWakeLock();
+          try {
+            await fetch(`/api/capture-sessions/${meta.captureSessionId}/end`, {
+              method: "POST",
+            });
+          } catch {
+            // Best-effort. The worker's sweep closes sessions that go quiet.
+          }
+          await clearOpenSession(meta.captureSessionId);
+          metaRef.current = null;
+          patch({
+            status: "idle",
+            currentSessionId: null,
+            lastSessionId: meta.captureSessionId,
+            lastSessionMs: meta.elapsedMs,
+          });
+          kickUploader();
+          router.refresh();
           break;
         }
 
@@ -264,7 +304,7 @@ export function useRecorder() {
         }
       }
     },
-    [patch],
+    [patch, releaseWakeLock, router],
   );
 
   /**
@@ -325,7 +365,7 @@ export function useRecorder() {
     publishStream(stream);
     capture("recording_started", {
       mime_type: mimeType,
-      resumed: state.resumable !== null,
+      resumed: resumableRef.current !== null,
       // Read after the request settles; false here predicts a drive that ends
       // when the screen locks.
       wake_lock_active: wakeLockRef.current !== null,
@@ -348,25 +388,36 @@ export function useRecorder() {
     // Register the session server-side. If this fails we still record — chunks
     // queue locally and the session can be registered when signal returns.
     // Refusing to record because the network is down would be exactly backwards.
+    //
+    // The registration body is saved durably BEFORE the attempt, so a drive
+    // that starts offline can be registered later by the uploader when a chunk
+    // comes back `session_not_found` — without it, those chunks would be
+    // rejected permanently and the whole drive lost. Deleted once the server
+    // has acknowledged the row exists.
+    const registration = {
+      id: meta.captureSessionId,
+      startedAt: new Date(meta.startedAt).toISOString(),
+      deviceInfo: { userAgent: navigator.userAgent, mimeType },
+      setting,
+      voiceId,
+    };
+    await saveRegistration(registration);
+
     try {
       const res = await fetch("/api/capture-sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: meta.captureSessionId,
-          startedAt: new Date(meta.startedAt).toISOString(),
-          deviceInfo: { userAgent: navigator.userAgent, mimeType },
-          setting,
-          voiceId,
-        }),
+        body: JSON.stringify(registration),
       });
       meta.serverAcked = res.ok;
       await saveOpenSession(meta);
+      if (res.ok) await deleteRegistration(meta.captureSessionId);
     } catch {
       meta.serverAcked = false;
     }
 
     runningRef.current = true;
+    resumableRef.current = null;
     patch({
       status: "recording",
       elapsedMs: 0,
@@ -404,7 +455,7 @@ export function useRecorder() {
         // Anything still queued here is what a dead zone is holding. It rides
         // the durable upload queue, not posthog-js, so it is still reported
         // even if this event never leaves the phone.
-        chunks_pending: state.pendingUploads,
+        chunks_pending: pendingUploadsRef.current,
       });
       try {
         await fetch(`/api/capture-sessions/${meta.captureSessionId}/end`, {
@@ -445,6 +496,7 @@ export function useRecorder() {
       /* best-effort */
     }
     await clearOpenSession(open.captureSessionId);
+    resumableRef.current = null;
     capture("unfinished_session_closed", { capture_session_id: open.captureSessionId });
     patch({ resumable: null });
     kickUploader();

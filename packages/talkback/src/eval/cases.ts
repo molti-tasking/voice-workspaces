@@ -236,6 +236,59 @@ export const CASES: EvalCase[] = [
       mustNotMention: ["you were going to show|you planned to show|how to make a simple"],
     },
   },
+  {
+    id: "two-people-narrated-rule",
+    about:
+      "Real turn, 9 Sep 2026: with two people talking, the model narrated its own rule aloud instead of the sentinel or a short answer.",
+    setting: "driving",
+    history: [
+      {
+        role: "user",
+        content:
+          "[Speaker 2] I don't know if this will look back at some point. Is it going to, or is it just recording?",
+      },
+      {
+        role: "user",
+        content:
+          "[Speaker 1] Yeah, well it's degraded, let's say. I was baking in the prompts of William and I was wondering why it didn't work for a while.",
+      },
+    ],
+    said: "[Speaker 1] So I made them a little bit more proactive, but it's still very defensive. So if we wait a few seconds, you might. Did I say something right?",
+    // What it actually said: "[Speaker 2]'s question — whether it'll talk back —
+    // is for them to test live, not for me to answer." Silence or a short
+    // answer are both fine; explaining the decision is not, and `checks.ts`
+    // fails a spoken speaker tag on its own. Offline the same day, talkback-5
+    // answered `<silence>` three times out of three and the judge failed each
+    // one — "Did I say something right?" is an address. That is the prompt's
+    // defensiveness, the thing the advisor watched; this case only guards the
+    // narration.
+    expect: {
+      turn: "either",
+      mustNotMention: ["for them to", "not for me", "test live"],
+    },
+  },
+  {
+    id: "whats-next-from-threads",
+    about:
+      "Asked what to pick up next, the agent proposes a topic from where things stand rather than asking which projects there are.",
+    setting: "driving",
+    context: {
+      threads: [
+        {
+          text: "Topic: Malleable forms paper\n- Claim: forms should be regenerated from the user's own edits.\n- Open: which two examples carry the argument.\n- Next: rewrite the introduction for EICS",
+        },
+        {
+          text: "Topic: Voice paper evaluation\n- Claim: the evaluation should centre on context switching across projects.\n- Open: how many participants the growth-curve claim needs.\n- Next: draft the study protocol",
+        },
+      ],
+    },
+    said: "OK, that's the intro done. What should I pick up next?",
+    expect: {
+      turn: "speak",
+      mustMention: ["malleable|EICS|examples|evaluation|protocol|participants|voice paper"],
+      mustNotMention: ["which project|what projects|what are you working on|tell me about"],
+    },
+  },
 ];
 
 export function findCases(ids: string[] | null): EvalCase[] {

@@ -110,6 +110,20 @@ export function litellmConfig(): LiteLLMConfig {
   return { baseUrl: baseUrl.replace(/\/+$/, ""), apiKey };
 }
 
+/**
+ * The `x-litellm-response-cost` header, as a number.
+ *
+ * Undefined rather than 0 for anything unparseable. A zero would be
+ * indistinguishable from a genuinely free self-hosted call and would quietly
+ * drag any cost average towards nothing. Shared by chat and transcribe —
+ * both report cost from the same header.
+ */
+export function parseCostHeader(raw: string | null): number | undefined {
+  if (!raw) return undefined;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : undefined;
+}
+
 /** Raised for a non-2xx LiteLLM response, carrying enough detail to triage. */
 /**
  * Upstream failures that a retry cannot fix, however they are dressed up.

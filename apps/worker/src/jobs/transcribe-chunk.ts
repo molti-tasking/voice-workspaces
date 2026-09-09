@@ -6,7 +6,7 @@ import { getStorage } from "@voicemural/shared/storage";
 import { capture, log } from "@voicemural/telemetry";
 
 /** Raised when the failure is transient and pg-boss should retry. */
-export class RetryableJobError extends Error {}
+class RetryableJobError extends Error {}
 
 /**
  * Retain audio after transcription. Off by default — only the transcript is

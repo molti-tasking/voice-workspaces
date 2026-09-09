@@ -235,15 +235,16 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
         },
       );
 
-      /* THE ONE KNOWN HAZARD TO THE LEDGER, stated plainly
-       * because it is a confound in the comparison and not an implementation
-       * detail.
-       *
-       * A transport that accepted an existing MediaStreamTrack would avoid this. It
-       * client owns its capture through its MediaManager and only accepts a
-       * DEVICE id, so a second getUserMedia is unavoidable without subclassing
-       * internals the package does not export. Pinning it to the recorder's own
-       * device at least keeps both on one microphone.
+       /* THE ONE KNOWN HAZARD TO THE LEDGER, stated plainly
+        * because it is a confound in the comparison and not an implementation
+        * detail.
+        *
+        * A transport that accepted an existing MediaStreamTrack would avoid
+        * this. As it stands the client owns its capture through its
+        * MediaManager and only accepts a DEVICE id, so a second getUserMedia is
+        * unavoidable without subclassing internals the package does not
+        * export. Pinning it to the recorder's own device at least keeps both
+        * on one microphone.
        *
        * The risk that creates is the plan's: a second capture can renegotiate
        * the device and perturb the MediaRecorder writing the verbatim ledger.

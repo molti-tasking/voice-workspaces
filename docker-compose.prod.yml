@@ -116,6 +116,10 @@ services:
       # committed. Set to true BEFORE changing CHUNK_MS or MODEL_TRANSCRIBE —
       # once audio is gone the corpus cannot be re-derived.
       - KEEP_AUDIO=${KEEP_AUDIO:-false}
+      # How many chunks the worker transcribes in parallel — really a limit on
+      # how hard it leans on the LiteLLM proxy. .env.example documents
+      # lowering this to 1 when the live conversation's ASR is contending.
+      - TRANSCRIBE_CONCURRENCY=${TRANSCRIBE_CONCURRENCY:-}
       - STORAGE_DIR=/data/storage
       # The worker is where $ai_generation and capture_session_completed come
       # from, so it needs its own PostHog credentials.
@@ -169,7 +173,9 @@ services:
       - ELEVENLABS_MODEL_ID=${ELEVENLABS_MODEL_ID:-eleven_turbo_v2_5}
       # CORS origin for the browser's /offer request.
       - BETTER_AUTH_URL=${BETTER_AUTH_URL}
-      - PIPECAT_PORT=7860
+      # From .env so NEXT_PUBLIC_PIPECAT_URL and this stay in step — they must
+      # match or the browser offers to a port nothing listens on.
+      - PIPECAT_PORT=${PIPECAT_PORT:-7860}
       # Retrieval, the prompt and the summary seed all live in the Next app.
       # The INTERNAL service name, not host.docker.internal: that is a
       # developer-machine escape hatch and resolves to nothing here.

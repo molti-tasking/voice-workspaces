@@ -190,11 +190,16 @@ export async function reportCompletedSessions(limit = 50): Promise<number> {
           where ${audioChunk.captureSessionId} = ${captureSession.id}
             and ${audioChunk.status} in ('stored', 'transcribing')
         )`,
+        // Oldest-ended first inside the candidate subquery: it can return rows
+        // the outer conditions then reject (chunks still working through the
+        // pipeline), and without a deterministic order the same rejected set
+        // can fill the limit on every sweep while reportable drives wait.
         sql`${captureSession.id} in (
           select ${captureSession.id} from ${captureSession}
           where ${captureSession.analyticsEmittedAt} is null
             and ${captureSession.endedAt} is not null
             and ${captureSession.endedAt} < ${settleCutoff.toISOString()}::timestamptz
+          order by ${captureSession.endedAt}
           limit ${limit}
         )`,
       ),

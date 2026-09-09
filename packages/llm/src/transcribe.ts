@@ -1,5 +1,11 @@
 import type { RelativeSegment } from "@voicemural/shared";
-import { LiteLLMError, litellmConfig, modelFor, type ModelRole } from "./config";
+import {
+  LiteLLMError,
+  litellmConfig,
+  modelFor,
+  parseCostHeader,
+  type ModelRole,
+} from "./config";
 import { emitGeneration, type GenerationContext } from "./observe";
 import {
   collapseRepeatedSegments,
@@ -243,11 +249,4 @@ export async function transcribeChunk(
     durationSec: json.duration,
     degenerate,
   };
-}
-
-/** Undefined rather than 0: a zero is indistinguishable from a free call. */
-function parseCostHeader(raw: string | null): number | undefined {
-  if (!raw) return undefined;
-  const value = Number(raw);
-  return Number.isFinite(value) ? value : undefined;
 }
