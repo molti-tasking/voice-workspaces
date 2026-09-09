@@ -4,6 +4,7 @@
  *   pnpm workspace:reparse            re-derive ops from stored responses
  *   pnpm workspace:rebuild            replay the transcript (cache hits, no calls)
  *   pnpm workspace:rebuild --force    bypass the cache after a PROMPT_VERSION bump
+ *   pnpm workspace:drain              extract whatever is pending, from the cursor on
  *   pnpm workspace:show               print the current workspace
  *
  * All accept `--user <id>`; without it they operate on every user.
@@ -144,6 +145,30 @@ async function rebuild(userId: string, force: boolean): Promise<void> {
   );
 }
 
+/**
+ * Extract whatever is pending, from the cursor onwards — no clearing, no
+ * replay.
+ *
+ * The recovery operation for when extraction fell behind: a worker that was
+ * down, a throttle that starved it, a burst of uploads after a tunnel drop.
+ * Runs exactly the batches the sweep would have drained, in the same order,
+ * so the result is indistinguishable from the sweep having kept up.
+ */
+async function drain(userId: string): Promise<void> {
+  const outcomes = await extractWorkspaceFully(userId);
+  if (outcomes.length === 0) {
+    console.log(`  ${userId}: nothing pending`);
+    return;
+  }
+  const calls = outcomes.filter((o) => !o.cacheHit).length;
+  const ops = outcomes.reduce((n, o) => n + o.opsAppended, 0);
+  const tokens = outcomes.reduce((n, o) => n + o.totalTokens, 0);
+  console.log(
+    `  ${userId}: ${outcomes.length} batches → ${ops} ops, ` +
+      `${calls} model call(s)${tokens > 0 ? `, ${tokens} tokens` : ""}`,
+  );
+}
+
 async function show(userId: string): Promise<void> {
   const state = foldWorkspace(await loadOps(userId));
 
@@ -165,8 +190,8 @@ async function main() {
   const userFlag = argv.indexOf("--user");
   const explicitUser = userFlag !== -1 ? argv[userFlag + 1] : undefined;
 
-  if (!command || !["reparse", "rebuild", "show"].includes(command)) {
-    console.error("Usage: workspace-admin <reparse|rebuild|show> [--user <id>] [--force]");
+  if (!command || !["reparse", "rebuild", "drain", "show"].includes(command)) {
+    console.error("Usage: workspace-admin <reparse|rebuild|drain|show> [--user <id>] [--force]");
     process.exit(1);
   }
 
@@ -181,6 +206,7 @@ async function main() {
   for (const userId of users) {
     if (command === "reparse") await reparse(userId);
     else if (command === "rebuild") await rebuild(userId, force);
+    else if (command === "drain") await drain(userId);
     else await show(userId);
   }
 }

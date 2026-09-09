@@ -18,7 +18,7 @@ import {
   requeueStuckChunks,
 } from "./jobs/sweep";
 import { captureException, installGenerationSink, shutdownAnalytics } from "@voicemural/telemetry";
-import { BATCH_SIZE, extractWorkspace } from "./jobs/extract-workspace";
+import { BATCH_SIZE, extractWorkspaceFully } from "./jobs/extract-workspace";
 import { classifyChunk } from "./jobs/classify-utterance";
 import { invokePendingDirectives } from "./jobs/invoke-capability";
 import { MACRO_WINDOW_DAYS, MIN_OCCURRENCES, detectMacros } from "./jobs/detect-macros";
@@ -35,14 +35,27 @@ import { preflightLiteLLM } from "./preflight";
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) throw new Error("DATABASE_URL is not set.");
 
+/**
+ * Number-from-env with an empty-string guard. Coolify exports an empty value
+ * for a variable that was unset, and `Number("")` is 0 — which for the sweep
+ * interval means a busy loop. An unset, empty or non-numeric value all fall
+ * back rather than becoming zero.
+ */
+function positiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 /** How often to look for work. Uploads arrive in bursts after a dead zone. */
-const SWEEP_INTERVAL_MS = Number(process.env.SWEEP_INTERVAL_MS ?? 5000);
+const SWEEP_INTERVAL_MS = positiveIntEnv("SWEEP_INTERVAL_MS", 5000);
 
 /**
  * Transcription concurrency. Each job holds a chunk in memory and waits on
  * LiteLLM, so this is really a limit on how hard we lean on the proxy.
  */
-const TRANSCRIBE_CONCURRENCY = Number(process.env.TRANSCRIBE_CONCURRENCY ?? 4);
+const TRANSCRIBE_CONCURRENCY = positiveIntEnv("TRANSCRIBE_CONCURRENCY", 4);
 
 interface TranscribePayload {
   chunkId: string;
@@ -56,7 +69,7 @@ interface TranscribePayload {
  * each candidate costs a `reasoning` call. Running it every five seconds would
  * spend money to re-derive the same "not yet" over and over.
  */
-const MACRO_INTERVAL_MS = Number(process.env.MACRO_INTERVAL_MS ?? 30 * 60 * 1000);
+const MACRO_INTERVAL_MS = positiveIntEnv("MACRO_INTERVAL_MS", 30 * 60 * 1000);
 
 /**
  * Back-off for a chunk whose classification keeps failing.
@@ -80,13 +93,62 @@ const CLASSIFY_BACKOFF_MAX_MS = 15 * 60 * 1000;
  * Nothing on the live path waits for it — a drive that ended a minute ago is
  * recalled lexically until its passages exist.
  */
-const MEMORY_INTERVAL_MS = Number(process.env.MEMORY_INTERVAL_MS ?? 60 * 1000);
+const MEMORY_INTERVAL_MS = positiveIntEnv("MEMORY_INTERVAL_MS", 60 * 1000);
+
+/**
+ * Throttle windows for `boss.send`. pg-boss's `singletonSeconds` is a slot
+ * throttle — one job per (queue, key) per window — so a window is a RATE
+ * LIMIT, not only a dedupe: make it larger than the pace at which work
+ * legitimately arrives and it silently becomes the throughput cap. Every
+ * window here is sized to "a little longer than one job should take",
+ * never to "how rarely new work may arrive".
+ */
+const TRANSCRIBE_SINGLETON_S = 900;
+const CLASSIFY_SINGLETON_S = 600;
+/** The extract job drains the whole backlog itself (see its handler), so this
+ * covers one drain in flight. At 1200s with a one-batch-per-job handler it was
+ * the throughput cap: a 90-utterance drive meant twelve 20-minute slots.
+ * Observed 2026-09-09 — a captured discussion sat 8-of-90 utterances extracted
+ * until the worker was restarted. */
+const EXTRACT_SINGLETON_S = 300;
+/** Must stay BELOW MEMORY_INTERVAL_MS (default 60s): the interval already
+ * paces these sends, so the window only suppresses the boot burst. At 1200s it
+ * overrode the operator's dial — a 60-second interval indexed once every
+ * twenty minutes. A queued duplicate is a cheap no-op (topics re-embed only
+ * on a content-hash change, passages once), so erring small is safe. */
+const MEMORY_SINGLETON_S = 30;
+/** Same rule as memory: MACRO_INTERVAL_MS paces these; the window kills only
+ * the boot burst and must stay below the interval. */
+const MACROS_SINGLETON_S = 300;
 
 async function main() {
   const boss = new PgBoss({
     connectionString: DATABASE_URL,
     schema: "pgboss",
   });
+
+  /**
+   * Chunks to leave alone for a while, and for how long.
+   *
+   * Bounded by the number of chunks currently failing, which is bounded by the
+   * scan limit — so this cannot grow without limit even during a long outage.
+   *
+   * Declared before any `await`: pg-boss workers begin fetching ~2s after
+   * registration, and the classify handler below reads this map. With it
+   * declared after the awaited queue setup (preflight alone can hold the
+   * event loop for 10s), a restart with a classify backlog would run the
+   * handler before initialisation and die on a TDZ error instead.
+   */
+  const classifyBackoff = new Map<string, { failures: number; nextAttemptAt: number }>();
+
+  const noteClassifyFailure = (chunkId: string) => {
+    const failures = (classifyBackoff.get(chunkId)?.failures ?? 0) + 1;
+    const delay = Math.min(
+      CLASSIFY_BACKOFF_BASE_MS * 2 ** (failures - 1),
+      CLASSIFY_BACKOFF_MAX_MS,
+    );
+    classifyBackoff.set(chunkId, { failures, nextAttemptAt: Date.now() + delay });
+  };
 
   boss.on("error", (err: unknown) => log.error("pg-boss error", { err: String(err) }));
 
@@ -165,7 +227,16 @@ async function main() {
     { batchSize: 1 },
     async (jobs: Job<{ userId: string }>[]) => {
       for (const job of jobs) {
-        await extractWorkspace(job.data.userId);
+        // Drain the whole backlog, not one slice. A handler that took a
+        // single BATCH_SIZE batch left extraction's pace to the send-site
+        // throttle — one batch per window — so a 90-utterance drive meant
+        // twelve 20-minute slots before its workspace existed. Boundedly:
+        // the cap stops one job monopolising the worker when a week of
+        // offline speech is drained at once; the next sweep's job continues.
+        // Batch boundaries are unchanged — extractWorkspaceFully slices in
+        // the same BATCH_SIZE steps — so a rebuild replays identically and
+        // still hits the extraction cache on every batch.
+        await extractWorkspaceFully(job.data.userId, 64);
       }
     },
   );
@@ -218,9 +289,9 @@ async function main() {
       Promise.all(
         jobs.map(async (job): Promise<JobResult> => {
           try {
-            // pg-boss counts attempts from 1 on first delivery. Passing it down
-            // is what separates "three calls were paid for" from "one call was
-            // reported three times" in the cost figures.
+            // pg-boss reports `retryCount` from 0 on first delivery; the +1 is
+            // what makes it 1-based for the cost figures — separating "three
+            // calls were paid for" from "one call reported three times".
             await handleTranscribeChunk(job.data.chunkId, job.retryCount + 1);
             return { id: job.id, status: "completed" };
           } catch (err) {
@@ -253,23 +324,6 @@ async function main() {
    * simply accumulate as `stored` and are picked up on the next start. It also
    * absorbs the burst that arrives when a phone regains signal after a tunnel.
    */
-  /**
-   * Chunks to leave alone for a while, and for how long.
-   *
-   * Bounded by the number of chunks currently failing, which is bounded by the
-   * scan limit — so this cannot grow without limit even during a long outage.
-   */
-  const classifyBackoff = new Map<string, { failures: number; nextAttemptAt: number }>();
-
-  const noteClassifyFailure = (chunkId: string) => {
-    const failures = (classifyBackoff.get(chunkId)?.failures ?? 0) + 1;
-    const delay = Math.min(
-      CLASSIFY_BACKOFF_BASE_MS * 2 ** (failures - 1),
-      CLASSIFY_BACKOFF_MAX_MS,
-    );
-    classifyBackoff.set(chunkId, { failures, nextAttemptAt: Date.now() + delay });
-  };
-
   let sweeping = false;
   /* Starts at zero so the first sweep after a restart runs the detector. A
    * worker that has just come up is exactly when a backlog of directions is
@@ -290,18 +344,33 @@ async function main() {
 
       const chunkIds = await findUntranscribedChunks(50);
       for (const chunkId of chunkIds) {
-        // singletonKey dedupes against a job already queued for this chunk, so
-        // a fast sweep interval cannot pile up duplicates.
-        await boss.send(JOBS.transcribeChunk, { chunkId }, { singletonKey: chunkId });
+        // `singletonKey` alone does NOT dedupe on a `standard`-policy queue —
+        // pg-boss only creates its throttle index when `singletonSeconds` is
+        // set, and without it every 5-second sweep re-sends a job for any
+        // chunk still pending, so a post-tunnel burst mints dozens of
+        // duplicates per chunk. The window covers the queue's whole lifecycle
+        // (expiry 600s plus retries) so a duplicate can only exist once the
+        // handler is presumed stuck — which is requeueStuckChunks' territory.
+        await boss.send(
+          JOBS.transcribeChunk,
+          { chunkId },
+          { singletonKey: chunkId, singletonSeconds: TRANSCRIBE_SINGLETON_S },
+        );
       }
       if (chunkIds.length > 0) log.info("queued chunks", { count: chunkIds.length });
 
       // Workspace extraction runs off the transcript, not the queue: whoever
-      // has enough unconsumed speech gets a job. singletonKey per user keeps a
-      // slow extraction from stacking up behind itself.
+      // has enough unconsumed speech gets a job, and the job drains that
+      // backlog itself, batch by batch. The window is not the pace of
+      // extraction — it only suppresses a re-send while a drain is in flight
+      // (see EXTRACT_SINGLETON_S for the day it was).
       const userIds = await usersWithPendingSpeech(BATCH_SIZE);
       for (const userId of userIds) {
-        await boss.send(JOBS.workspaceExtract, { userId }, { singletonKey: userId });
+        await boss.send(
+          JOBS.workspaceExtract,
+          { userId },
+          { singletonKey: userId, singletonSeconds: EXTRACT_SINGLETON_S },
+        );
       }
       if (userIds.length > 0) log.info("queued workspace extraction", { users: userIds.length });
 
@@ -315,7 +384,7 @@ async function main() {
         await boss.send(
           JOBS.classifyUtterance,
           { chunkId, userId },
-          { singletonKey: chunkId },
+          { singletonKey: chunkId, singletonSeconds: CLASSIFY_SINGLETON_S },
         );
       }
       if (unclassified.length > 0) {
@@ -334,7 +403,14 @@ async function main() {
         lastMemorySweepAt = Date.now();
         const users = await usersNeedingMemoryIndex();
         for (const userId of users) {
-          await boss.send(JOBS.indexMemory, { userId }, { singletonKey: userId });
+          // Pacing is MEMORY_INTERVAL_MS' job; the window must stay below it
+          // or it, not the interval, decides how often indexing happens
+          // (see MEMORY_SINGLETON_S).
+          await boss.send(
+            JOBS.indexMemory,
+            { userId },
+            { singletonKey: userId, singletonSeconds: MEMORY_SINGLETON_S },
+          );
         }
         if (users.length > 0) log.info("queued memory indexing", { users: users.length });
       }
@@ -344,7 +420,15 @@ async function main() {
         const since = new Date(Date.now() - MACRO_WINDOW_DAYS * 24 * 60 * 60 * 1000);
         const candidates = await usersWithUnresolvedDirectives(since, MIN_OCCURRENCES);
         for (const userId of candidates) {
-          await boss.send(JOBS.detectMacros, { userId }, { singletonKey: userId });
+          // Pacing is MACRO_INTERVAL_MS' job — this send runs once per
+          // interval per candidate, not on every sweep. The window only kills
+          // the boot burst (a fresh worker sends immediately, and so would a
+          // second instance), so it must stay below the interval.
+          await boss.send(
+            JOBS.detectMacros,
+            { userId },
+            { singletonKey: userId, singletonSeconds: MACROS_SINGLETON_S },
+          );
         }
         if (candidates.length > 0) {
           log.info("queued macro detection", { users: candidates.length });

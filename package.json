@@ -29,6 +29,7 @@
     "talkback:eval": "pnpm --filter @voicemural/talkback eval --",
     "workspace:reparse": "pnpm --filter @voicemural/worker workspace reparse",
     "workspace:rebuild": "pnpm --filter @voicemural/worker workspace rebuild",
+    "workspace:drain": "pnpm --filter @voicemural/worker workspace drain",
     "workspace:show": "pnpm --filter @voicemural/worker workspace show",
     "memory:status": "pnpm --filter @voicemural/worker memory status",
     "memory:reindex": "pnpm --filter @voicemural/worker memory reindex",
