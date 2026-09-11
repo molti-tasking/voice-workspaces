@@ -1,0 +1,1 @@
+ALTER TABLE "capture_session" ADD COLUMN "stt_language" text;

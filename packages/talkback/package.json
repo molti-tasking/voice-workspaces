@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./setting": "./src/setting.ts",
-    "./voice": "./src/voice.ts"
+    "./voice": "./src/voice.ts",
+    "./language": "./src/language.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

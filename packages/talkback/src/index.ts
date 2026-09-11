@@ -60,6 +60,14 @@ export {
   voiceProfile,
   type VoiceProfile,
 } from "./voice";
+export {
+  STT_LANGUAGES,
+  STT_LANGUAGE_CODES,
+  asSttLanguage,
+  isKnownSttLanguage,
+  sttLanguageProfile,
+  type SttLanguageProfile,
+} from "./language";
 export { recordAgentTurn, type AgentTurnRecord } from "./agent-turns";
 export {
   contentWords,

@@ -122,9 +122,11 @@ export async function handleTranscribeChunk(chunkId: string, attempt = 1): Promi
 
     // The owning user, for attribution. Transcription is the only model
     // surface with no row of its own, so this is the sole chance to record who
-    // a call was made for.
+    // a call was made for — and, since we are here anyway, the drive's chosen
+    // language (capture_session.stt_language; NULL = auto-detect, which is
+    // what "no language passed to Whisper" already meant).
     const [owner] = await db
-      .select({ userId: captureSession.userId })
+      .select({ userId: captureSession.userId, sttLanguage: captureSession.sttLanguage })
       .from(captureSession)
       .where(eq(captureSession.id, chunk.captureSessionId))
       .limit(1);
@@ -133,6 +135,11 @@ export async function handleTranscribeChunk(chunkId: string, attempt = 1): Promi
       filename: `${chunk.seq}.${extensionForMime(chunk.mimeType)}`,
       mimeType: chunk.mimeType,
       prompt: carryForward,
+      // The drive's choice, when it made one. Forcing German on a German
+      // drive also stops short-chunk detection misfiring into English; when
+      // there is no choice, omitting the parameter IS the auto-detect this
+      // pipeline always ran on.
+      language: owner?.sttLanguage ?? undefined,
       context: {
         userId: owner?.userId,
         // One trace per call. The drive goes in sessionId instead: a long drive

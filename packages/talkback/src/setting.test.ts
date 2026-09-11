@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { SETTINGS, SETTING_PROFILES, asSetting, settingProfile } from "./setting";
+import {
+  PROACTIVITY_STANZAS,
+  PROACTIVE_AFTER_SECS,
+  SETTINGS,
+  SETTING_PROFILES,
+  asSetting,
+  settingProfile,
+} from "./setting";
 
 describe("setting profiles", () => {
   it("covers every setting exactly once", () => {
@@ -56,5 +63,20 @@ describe("setting profiles", () => {
     expect(asSetting("nonsense")).toBe("driving");
     expect(settingProfile(undefined)).toBe(SETTING_PROFILES.driving);
     expect(asSetting("desk")).toBe("desk");
+  });
+
+  /**
+   * The proactive engine's patience, mirroring the prompt-level table the
+   * container reads. A car gets the longest silence before an unprompted
+   * turn is even offered; a desk the shortest — the same ordering as
+   * everything else the proactivity level governs, so the engine can never be
+   * more forthcoming than the prompt has already told the model to be.
+   */
+  it("waits longest before an unprompted turn where the least attention is spare", () => {
+    expect(PROACTIVE_AFTER_SECS.quiet).toBeGreaterThan(PROACTIVE_AFTER_SECS.occasional);
+    expect(PROACTIVE_AFTER_SECS.occasional).toBeGreaterThan(PROACTIVE_AFTER_SECS.forthcoming);
+    for (const level of Object.keys(PROACTIVITY_STANZAS)) {
+      expect(PROACTIVE_AFTER_SECS[level as keyof typeof PROACTIVE_AFTER_SECS]).toBeGreaterThan(0);
+    }
   });
 });

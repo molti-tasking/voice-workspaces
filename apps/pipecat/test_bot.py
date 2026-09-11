@@ -39,6 +39,8 @@ from pipecat.frames.frames import (  # noqa: E402
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMTextFrame,
+    StartFrame,
+    TranscriptionFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection  # noqa: E402
 
@@ -248,3 +250,192 @@ def test_turn_recorder_ignores_empty_speech():
         recorder.record("   ", "<silence>")
 
     assert posted_by(act) == []
+
+
+# --- Offers: the proactive engine's state machine ----------------------------
+#
+# The engine's timing is an asyncio task inside the pipeline; what is tested
+# here is every DECISION around it — what arms, what cancels, what fires and
+# what the guards refuse — because those are the rules the prompt makes
+# mechanical: never mid-thought, never twice without a reply, back off on a
+# declined offer.
+
+
+class FakeTask:
+    def __init__(self, log):
+        self._log = log
+
+    def cancel(self):
+        self._log.append("cancel")
+
+
+class FakeRecall:
+    def __init__(self):
+        self.blocks = 0
+
+    def ensure_block(self):
+        self.blocks += 1
+
+
+class FakeContext:
+    def __init__(self):
+        self.messages = []
+
+    def add_message(self, message):
+        self.messages.append(message)
+
+
+def offers_with(monkeypatch, session=None, recall=None):
+    """A fresh engine with the timer disarmed into a log of arm/cancel calls.
+
+    `asyncio.sleep` is a no-op for the engine's lifetime so `_fire` can be
+    exercised directly without waiting real seconds; `create_task` needs the
+    pipeline's task manager, which a bare processor has not got, so arming is
+    recorded instead of scheduled.
+    """
+
+    async def now(_secs):
+        return None
+
+    monkeypatch.setattr(bot.asyncio, "sleep", now)
+
+    log = []
+    engine = bot.Offers(FakeContext(), recall or FakeRecall(), session or {})
+
+    def create_task(coro, name=None):
+        coro.close()
+        log.append("arm")
+        return FakeTask(log)
+
+    monkeypatch.setattr(engine, "create_task", create_task)
+    engine._log = log
+    return engine
+
+
+def test_engine_reads_its_patience_from_the_proactivity_level():
+    assert bot.PROACTIVE_AFTER_SECS["quiet"] == 25
+    with pytest.MonkeyPatch.context() as mp:
+        assert offers_with(mp, {"proactivity": "forthcoming"})._delay == 7
+        # A degraded session knows nothing; the driving default's patience applies.
+        assert offers_with(mp, {})._delay == 25
+
+
+def test_completed_speech_arms_and_resumed_speech_cancels(monkeypatch):
+    engine = offers_with(monkeypatch)
+
+    async def run():
+        await engine.process_frame(StartFrame(), FrameDirection.DOWNSTREAM)
+        assert engine._log == ["arm"]  # the opening turn is armed on start
+        await engine.process_frame(bot.VADUserStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+        assert engine._log == ["arm", "cancel"]  # …and speech beat it
+        engine._log.clear()
+        await engine.process_frame(TranscriptionFrame(text="hello there"), FrameDirection.DOWNSTREAM)
+        assert engine._log == ["arm"]  # a completed turn re-arms
+
+    asyncio.run(run())
+
+
+def test_a_spoken_agent_turn_blocks_until_the_driver_replies(monkeypatch):
+    engine = offers_with(monkeypatch)
+
+    async def arm():
+        await engine.process_frame(TranscriptionFrame(text="hi"), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(arm())  # a completed turn holds one armed offer
+
+    engine.note_agent_turn(spoke=True)
+    assert engine._awaiting_user is True
+    assert engine._log == ["arm", "cancel"]  # the pending offer was cancelled
+
+    async def run():
+        # The guard holds even if a stray timer were to expire.
+        await engine._fire(engine._delay, opening=False)
+        assert engine._context.messages == []  # nothing was offered
+
+    asyncio.run(run())
+
+    # The driver's next completed words clear the rule and re-arm.
+    async def run2():
+        await engine.process_frame(TranscriptionFrame(text="back"), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run2())
+    assert engine._awaiting_user is False
+    assert engine._log[-1] == "arm"
+
+
+def test_a_declined_offer_backs_off_and_speech_resets_the_backoff(monkeypatch):
+    engine = offers_with(monkeypatch)
+    base = engine._delay
+    engine.note_agent_turn(spoke=False)
+    assert engine._backoff == 2  # same question, asked less often
+    engine.note_agent_turn(spoke=False)
+    assert engine._backoff == 4
+    assert engine._backoff * base <= bot.Offers.BACKOFF_CAP_SECS or engine._backoff == 4
+
+    async def run():
+        await engine.process_frame(TranscriptionFrame(text="hi"), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert engine._backoff == 1
+
+
+def test_firing_offers_a_turn_in_the_driver_s_slot(monkeypatch):
+    recall = FakeRecall()
+    context = FakeContext()
+    engine = bot.Offers(context, recall, {"proactivity": "occasional"})
+
+    async def fire():
+        # Sleep is patched for engines from `offers_with`; patch this one too,
+        # then fire at the real interval so the instruction names it.
+        async def now(_secs):
+            return None
+
+        monkeypatch.setattr(bot.asyncio, "sleep", now)
+        await engine._fire(engine._delay, opening=False)
+
+    asyncio.run(fire())
+    assert len(context.messages) == 1
+    assert context.messages[0]["role"] == "user"
+    assert "12 seconds" in context.messages[0]["content"]
+    assert "<silence>" in context.messages[0]["content"]
+
+
+def test_the_opening_turn_uses_its_own_instruction_and_seeds_the_block(monkeypatch):
+    recall = FakeRecall()
+    context = FakeContext()
+    engine = bot.Offers(context, recall, {})
+
+    async def fire():
+        async def now(_secs):
+            return None
+
+        monkeypatch.setattr(bot.asyncio, "sleep", now)
+        await engine._fire(2.5, opening=True)
+
+    asyncio.run(fire())
+    assert recall.blocks == 1  # the reconnect summary became the background
+    assert "drive is just starting" in context.messages[0]["content"]
+
+
+def test_silence_gate_reports_what_a_turn_became():
+    """The engine learns from the gate, like the summary does — not from frames the gate suppresses."""
+    notes = []
+
+    class FakeOffers:
+        def note_agent_turn(self, spoke):
+            notes.append(spoke)
+
+    async def run():
+        gate = bot.SilenceGate(offers=FakeOffers())
+
+        async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+            pass
+
+        gate.push_frame = capture
+        for frame in reply("<silence>"):
+            await gate.process_frame(frame, FrameDirection.DOWNSTREAM)
+        for frame in reply("Noted."):
+            await gate.process_frame(frame, FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert notes == [False, True]

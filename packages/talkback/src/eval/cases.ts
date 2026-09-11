@@ -27,8 +27,15 @@ export interface EvalCase {
   /** Earlier turns, oldest first. `[Speaker N]` tags as the container writes them. */
   history?: { role: "user" | "assistant"; content: string }[];
   context?: EvalContext;
-  /** What was just said. */
-  said: string;
+  /** What was just said. Omitted on an unprompted turn (see `offer`). */
+  said?: string;
+  /**
+   * Present when the case is the proactive engine's turn rather than a reply:
+   * the message list has no driver words, and the engine's instruction stands
+   * in their slot exactly as `Offers` places it. `quietSecs` omitted = the
+   * opening turn at the start of a drive.
+   */
+  offer?: { quietSecs?: number };
   expect: {
     turn: TurnExpectation;
     /** Regex sources, case-insensitive. All must match a spoken reply. */
@@ -287,6 +294,57 @@ export const CASES: EvalCase[] = [
       turn: "speak",
       mustMention: ["malleable|EICS|examples|evaluation|protocol|participants|voice paper"],
       mustNotMention: ["which project|what projects|what are you working on|tell me about"],
+    },
+  },
+
+  /* Unprompted turns from the proactive engine (`Offers` in bot.py). The
+   * nudge stands where the driver's words would stand; the expectations are
+   * on the same mechanical contract as every other turn. */
+  {
+    id: "offer-opening",
+    about: "The engine's opening turn: a few words, or the obvious next step — never a menu of services.",
+    setting: "driving",
+    offer: {},
+    expect: {
+      turn: "speak",
+      mustNotMention: ["how can i help|what would you like|what can i do|at your service"],
+    },
+  },
+  {
+    id: "offer-silence-next-step",
+    about: "Out of a long silence, the engine offers the standing next step once — short, and grounded in where things stand.",
+    setting: "driving",
+    offer: { quietSecs: 25 },
+    history: [
+      { role: "user", content: "Right, the ethics form. I said I'd do the participants section tomorrow, before the pilot." },
+      { role: "assistant", content: "Participants section before the pilot — tomorrow." },
+      { role: "user", content: "Which is fine. It's late now, and I'm not starting it from the car." },
+    ],
+    context: {
+      threads: [
+        {
+          text: "Topic: Ethics form\n- Claim: audio leaves the deployment only for the live conversation.\n- Open: whether interview mode needs its own consent paragraph.\n- Next: draft the participants section before the pilot.",
+        },
+      ],
+    },
+    expect: {
+      turn: "speak",
+      mustMention: ["participants|pilot|consent"],
+    },
+  },
+  {
+    id: "offer-silence-decline",
+    about: "Nothing useful to offer when they have wound down for the drive — the engine's moment is declined.",
+    setting: "driving",
+    offer: { quietSecs: 25 },
+    history: [
+      { role: "user", content: "Okay, that's the agenda for the call sorted. I'm putting the music on now, motorway for the next hour." },
+    ],
+    context: {
+      summary: "They finished planning the call agenda and said they are done thinking for now.",
+    },
+    expect: {
+      turn: "silent",
     },
   },
 ];

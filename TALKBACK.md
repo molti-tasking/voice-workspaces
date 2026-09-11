@@ -119,10 +119,50 @@ sink or a desk. None of the three lengthens a reply; the cap is the setting's.
 The sandwich is now identity → setting → proactivity → contract, and
 `prompt.test.ts` pins that order.
 
-**Still no proactivity engine** in the sense of an unprompted turn: there is no
-silence timer in `bot.py`, and nothing writes `agent_turn.kind =
-'proactive_prompt'`. The stanzas govern what the model does with a turn it was
-given; they cannot give it one.
+### talkback-6: the offer, and the engine that makes it possible
+
+`talkback-5` was still purely reactive — it answered well, but it never brought
+anything, which on the road reads as "helpful only when asked". `talkback-6`
+adds the fifth way to earn a turn: the unprompted **offer**, one sentence when
+you can see the useful thing before they ask for it — the next step they named,
+the open question from WHERE THINGS STAND, the thing they will need in ten
+minutes. The prompt defines helpful narrowly on purpose: *the right sentence at
+the right moment, not a longer answer*, or "more proactive" decays into "talks
+more".
+
+The engine that makes the offer possible is `Offers` in `bot.py`, the "proactive
+engine" this section used to say did not exist. It does not decide what to say;
+it decides when saying something unprompted is even allowed, by making the
+prompt's own rules mechanical:
+
+- **Never mid-thought.** The timer arms on a completed, unanswered final
+  transcript and cancels the instant speech starts again.
+- **Never twice without a reply.** `SilenceGate` reports what each agent turn
+  became — the same call the running summary gets — and a spoken turn blocks
+  further offers until the driver answers.
+- **Declined offers back off.** When the model takes the engine's moment and
+  answers `<silence>`, nothing was worth saying; the delay doubles (capped at
+  120s) rather than asking the same question every interval, and resets on the
+  driver's next words.
+
+The patience is the proactivity level's own: 25s `quiet` (driving), 12s
+`occasional` (walking), 7s `forthcoming` (sink or desk) —
+`PROACTIVE_AFTER_SECS`, mirrored between `setting.ts` and `bot.py`, so the
+engine can never be more forthcoming than the prompt has already told the model
+to be. One more turn exists: the **opening**, one short line ~2.5s after connect
+("I'm here", or on a reconnect, seeded from the drive summary, "want to pick up
+where you left off?"), armed once per connection and cancelled by speech.
+
+Mechanically, an offered turn is a user-role instruction (`OPENING_NUDGE` /
+`SILENCE_NUDGE`, mirrored from `prompt.ts`) added where the driver's words would
+sit, followed by an `LLMRunFrame` — the same frame the user aggregator pushes —
+so the completion runs through the ordinary gate, recorder, drafts and barge-in
+plumbing. An offered turn that speaks is an `agent_turn` like any other; one
+that declines leaves nothing but the `[offers]` log line. The templates keep
+the sentinel available, so every unprompted turn is optional all the way down.
+`PROACTIVE_OFFERS=false` restores the purely reactive behaviour for a study arm.
+The eval suite covers the engine's turns (`offer-*` cases in `cases.ts`), with
+the nudge standing in the driver's slot exactly as the container places it.
 
 ### Which voice
 
@@ -378,9 +418,22 @@ shares `faster-whisper-large-v3` with the chunk pipeline, which is transcribing 
 10s chunk every 10s of the same drive. A streaming provider changes the shape:
 transcription finishes *as* you stop talking rather than starting then.
 
-Two dials worth knowing: `DEEPGRAM_UTTERANCE_END_MS` (1000) is part of that
+Two dials worth knowing: `DEEPGRAM_UTTERANCE_END_MS` (700 since 11 Sep 2026,
+lowered from 1000 with the same trade it always had) is part of that
 0.66s, and prompt size moves LLM TTFB more than anything else — 0.36s on a short
 prompt against 2.2s with full recall injected.
+
+**The largest term was the model, and it moved (11 Sep 2026).** "Responses are
+too slow" re-opened the `MODEL_CONVERSE` question, and the eval harness settled
+it with data rather than the 2025 note: on the talkback-6 prompt, 22 cases, one
+run each, `cavi/medium` took 214ms for a full turn where
+`anthropic/claude-sonnet-5` took 1943ms — and was *better* on the deterministic
+checks (21/22 vs 19/22; sonnet spoke a speaker tag and broke the word cap)
+while weaker on judged grounding (4.38 vs 4.95 — it invents opinion
+justification and restates garble rather than flagging it). The one
+hallucination that matters most, inventing transcript content, both decline.
+Live default is the fast model; the reports live in this decision's history,
+and `pnpm talkback:eval` re-runs it whenever the prompt moves.
 
 **What leaves the deployment.** Only the live conversation goes to Deepgram. The
 ledger is still transcribed by Whisper at AU and `utterance` never contains a

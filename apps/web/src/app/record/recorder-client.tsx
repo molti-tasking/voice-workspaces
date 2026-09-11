@@ -8,9 +8,11 @@ import { formatOffset, type CaptureSetting } from "@voicemural/shared";
 // driver into the browser bundle. setting.ts is pure by construction.
 import { SETTINGS, SETTING_PROFILES } from "@voicemural/talkback/setting";
 import { VOICES } from "@voicemural/talkback/voice";
+import { STT_LANGUAGES } from "@voicemural/talkback/language";
 import { useRecorder } from "@/lib/recorder/use-recorder";
 import { useDetectedSetting } from "@/lib/recorder/detect-setting";
 import { useVoice } from "@/lib/recorder/voice-store";
+import { useSttLanguage } from "@/lib/recorder/language-store";
 import { useTalkback } from "@/lib/talkback/use-talkback";
 import type { TalkbackTurn } from "@/lib/talkback/types";
 import { useCues } from "@/lib/display/use-cues";
@@ -50,6 +52,11 @@ export function RecorderClient() {
   // is hidden otherwise — but the choice is still sent, so a session recorded
   // before talk-back was enabled for it carries the voice it would have had.
   const [voiceId, chooseVoice] = useVoice();
+  // Which language BOTH transcription paths use — the live STT and the ledger
+  // Whisper — so this picker is NOT gated on talk-back: a transcript-only
+  // deployment still transcribes in German when the driver chose German.
+  // Null (Auto) is the default and the right one for the mixed corpus.
+  const [sttLanguage, chooseSttLanguage] = useSttLanguage();
 
   // Armed with the recording, for the whole drive — there is no separate
   // gesture to enter it. Everything it does is downstream of the microphone
@@ -106,7 +113,7 @@ export function RecorderClient() {
             // iOS gates the accelerometer behind a tap; this is the tap. The
             // answer arrives for the next recording, and this one starts now.
             void detected.requestMotion();
-            void rec.start(setting, source, voiceId);
+            void rec.start(setting, source, voiceId, sttLanguage);
           }}
           disabled={isBusy}
           className={[
@@ -154,6 +161,10 @@ export function RecorderClient() {
 
         {TALKBACK && !isRecording && (
           <VoicePicker value={voiceId} onChange={chooseVoice} disabled={isBusy} />
+        )}
+
+        {!isRecording && (
+          <LanguagePicker value={sttLanguage} onChange={chooseSttLanguage} disabled={isBusy} />
         )}
 
         {TALKBACK && isRecording && talk.turns.length > 0 && (
@@ -326,6 +337,74 @@ function VoicePicker({
             ].join(" ")}
           >
             {voice.label}
+          </button>
+        );
+      })}
+    </fieldset>
+  );
+}
+
+/**
+ * Which language the drive is transcribed in, asked alongside the voice.
+ *
+ * Auto first and selected by default, because the corpus is mixed
+ * German/English and detection handles code-switching; a fixed code is the
+ * exception — worth it on a monolingual German drive, where Whisper
+ * detection on a short chunk can misfire into English.
+ *
+ * Consequential in a way the voice is not: it changes what the transcript
+ * CONTAINS, not just how the system sounds, which is also why it is offered
+ * without talk-back. Same dimmed row treatment — one glance, one tap, and the
+ * labels are endonyms so the person they describe can read them.
+ */
+function LanguagePicker({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string | null;
+  onChange: (next: string | null) => void;
+  disabled: boolean;
+}) {
+  const auto = value === null;
+  return (
+    <fieldset
+      className="flex w-full max-w-md flex-wrap items-center justify-center gap-1.5 text-xs"
+      disabled={disabled}
+    >
+      <legend className="sr-only">Which language?</legend>
+      <span className="mr-1 text-white/30">Language</span>
+      <button
+        type="button"
+        aria-pressed={auto}
+        title="Detect per utterance — right for mixed German/English"
+        onClick={() => onChange(null)}
+        className={[
+          "rounded-full px-3 py-1 transition-colors disabled:opacity-50",
+          auto
+            ? "bg-white/12 text-white ring-1 ring-white/25"
+            : "text-white/40 hover:text-white/70",
+        ].join(" ")}
+      >
+        Auto
+      </button>
+      {STT_LANGUAGES.map((language) => {
+        const active = language.code === value;
+        return (
+          <button
+            key={language.code}
+            type="button"
+            aria-pressed={active}
+            title={language.hint}
+            onClick={() => onChange(language.code)}
+            className={[
+              "rounded-full px-3 py-1 transition-colors disabled:opacity-50",
+              active
+                ? "bg-white/12 text-white ring-1 ring-white/25"
+                : "text-white/40 hover:text-white/70",
+            ].join(" ")}
+          >
+            {language.label}
           </button>
         );
       })}

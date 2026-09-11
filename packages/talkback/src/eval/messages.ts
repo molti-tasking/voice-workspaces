@@ -64,7 +64,19 @@ export interface TurnInputs {
   compose: ComposeInputs;
   history?: { role: "user" | "assistant"; content: string }[];
   context?: EvalContext;
-  said: string;
+  /**
+   * What was just said. Absent on an unprompted turn: the engine's nudge
+   * below takes the place of the user message, which is exactly the shape
+   * `Offers` produces in the container — nobody spoke.
+   */
+  said?: string;
+  /**
+   * The proactive engine's instruction, as `Offers` appends it: a user-role
+   * message after the context block, in the slot a driver's words would take.
+   * Exactly one of `said` and `nudge` — a turn has either a speaker or an
+   * engine moment, never both.
+   */
+  nudge?: string;
 }
 
 export interface TurnMessages {
@@ -74,11 +86,16 @@ export interface TurnMessages {
 
 /** The full message list for one turn, in the container's order. */
 export function buildTurnMessages(inputs: TurnInputs): TurnMessages {
+  // The runtime guard the types cannot express: a turn has either a speaker
+  // or an engine moment, never both and never neither.
+  if ((inputs.said === undefined) === (inputs.nudge === undefined)) {
+    throw new Error("a turn needs exactly one of said or nudge");
+  }
   const composed = composeSystemPrompt(inputs.compose);
   const messages: ChatMessage[] = [{ role: "system", content: composed.prompt }];
   for (const turn of inputs.history ?? []) messages.push(turn);
   const block = composeContextBlock(inputs.context);
   if (block) messages.push({ role: "system", content: block });
-  messages.push({ role: "user", content: inputs.said });
+  messages.push({ role: "user", content: inputs.said ?? inputs.nudge! });
   return { composed, messages };
 }

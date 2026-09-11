@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { and, captureSession, desc, eq, getDb } from "@voicemural/db";
 import { CaptureSessionCreate } from "@voicemural/shared";
 import { asVoiceId } from "@voicemural/talkback/voice";
+import { asSttLanguage } from "@voicemural/talkback/language";
 import { capture, sessionIdFrom } from "@/lib/analytics/server";
 import { currentUserId } from "@/lib/session";
 
@@ -33,6 +34,9 @@ export async function POST(req: Request) {
   // that has since been retired must still be able to register its recording.
   // Unknown becomes null, which the container reads as "use the fallback".
   const voiceId = asVoiceId(parsed.data.voiceId);
+  // Same narrowing, different meaning for null: "auto-detect", which both
+  // transcription paths treat as the default anyway.
+  const sttLanguage = asSttLanguage(parsed.data.sttLanguage);
 
   const existing = await db
     .select({ id: captureSession.id, userId: captureSession.userId })
@@ -73,6 +77,7 @@ export async function POST(req: Request) {
       deviceInfo,
       setting,
       voiceId,
+      sttLanguage,
     })
     .onConflictDoNothing({ target: captureSession.id })
     .returning({ id: captureSession.id });
@@ -108,7 +113,7 @@ export async function POST(req: Request) {
   capture(
     userId,
     "capture_session_opened",
-    { capture_session_id: id, resumed: false, setting: setting ?? null, voice_id: voiceId },
+    { capture_session_id: id, resumed: false, setting: setting ?? null, voice_id: voiceId, stt_language: sttLanguage },
     { sessionId: sessionIdFrom(req) },
   );
 

@@ -4,6 +4,7 @@ import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import {
   SUMMARY_PROMPT,
   TALKBACK_CONFIG_VERSION,
+  asSttLanguage,
   asVoiceId,
   composeSystemPrompt,
   foldSummary,
@@ -61,6 +62,7 @@ export async function POST(req: Request) {
       startedAt: captureSession.startedAt,
       setting: captureSession.setting,
       voiceId: captureSession.voiceId,
+      sttLanguage: captureSession.sttLanguage,
     })
     .from(captureSession)
     .where(eq(captureSession.id, payload.captureSessionId))
@@ -92,12 +94,23 @@ export async function POST(req: Request) {
       // Echoed so a turn can be interpreted from the container's own logs, and
       // so `bot.py` need not parse prose to know the reply cap.
       setting: composed.setting,
+      // The setting's proactivity level, so the container's proactive engine
+      // (Offers) times its unprompted turns by the same value that governs how
+      // forthcoming the prompt tells the model to be — one source of truth,
+      // read in two places (PROACTIVE_AFTER_SECS in bot.py / setting.ts).
+      proactivity: composed.proactivity,
       maxReplyWords: composed.maxReplyWords,
       displayAllowed: composed.displayAllowed,
       // The voice chosen for this recording, or null for "use the container's
       // ELEVENLABS_VOICE_ID fallback". Re-narrowed to the catalogue on the way
       // out so a retired id stored months ago cannot reach the TTS service.
       voiceId: asVoiceId(row.voiceId),
+      // The transcription language chosen for this recording, or null for
+      // auto-detect. Re-narrowed for the same reason as the voice: a code the
+      // catalogue no longer offers must fall back to detection, not error the
+      // ASR provider. Empty for every drive recorded before this existed,
+      // which is fine — detection was what those drives were running anyway.
+      sttLanguage: asSttLanguage(row.sttLanguage),
       driveSummary,
       // The container computes offsets against this so `agent_turn` shares a
       // clock with `utterance`, which is ms since the drive started.

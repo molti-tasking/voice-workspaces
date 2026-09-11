@@ -54,15 +54,20 @@ from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
+    CancelFrame,
+    EndFrame,
     Frame,
     InputAudioRawFrame,
     InterruptionFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
+    LLMRunFrame,
     LLMTextFrame,
+    StartFrame,
     TranscriptionFrame,
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
+    VADUserStartedSpeakingFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
@@ -234,8 +239,14 @@ STT_DIARIZE = os.getenv("STT_DIARIZE", "true").lower() in ("1", "true", "yes")
 # silence while everyone else was transcribed — "the agent understands
 # everybody except me" was exactly this, not a microphone problem.
 #
-# The durable ledger never had the problem: apps/worker omits `language`, so
-# Whisper auto-detects every drive regardless of this setting.
+# This is now the FALLBACK, not the only knob: a driver can pick a language on
+# the recorder (Auto / English / Deutsch), the choice is stored on
+# capture_session.stt_language and reaches build_stt via /api/realtime/session,
+# overriding this for that drive. Sessions that state no choice — including
+# every drive recorded before the picker existed, and every degraded
+# connection with no ticket — fall back to this, and to auto-detect when it is
+# unset. The ledger honours the session choice too (apps/worker passes it to
+# Whisper) and auto-detects when there is none.
 STT_LANGUAGE = os.getenv("STT_LANGUAGE") or None
 
 # What each model call is, for the proxy.
@@ -302,7 +313,9 @@ def fetch_session(ticket: str | None) -> dict:
         logger.info(
             f"[session] prompt {len(session.get('systemPrompt') or '')} chars, "
             f"seed summary {len(session.get('driveSummary') or '')} chars, "
-            f"config {session.get('configVersion')}"
+            f"config {session.get('configVersion')}, "
+            f"language {session.get('sttLanguage') or 'auto'}, "
+            f"proactivity {session.get('proactivity') or 'quiet (default)'}"
         )
         return session
     except Exception as err:
@@ -310,7 +323,7 @@ def fetch_session(ticket: str | None) -> dict:
         return {"systemPrompt": FALLBACK_SYSTEM_PROMPT, "degraded": True}
 
 
-def build_stt():
+def build_stt(session_language: str | None = None):
     """Transcription, from whichever provider STT_PROVIDER names.
 
     ASR IS THE WHOLE LATENCY PROBLEM, and this is the dial. Measured on a real
@@ -329,8 +342,19 @@ def build_stt():
     participant audio does leave the deployment, which is an ethics-application
     matter and the reason this is a switch with an AU-hosted default rather than
     a hard-coded vendor.
+
+    LANGUAGE: the session's choice (made on the recorder, stored on
+    capture_session.stt_language, already narrowed to the catalogue by
+    /api/realtime/session) over the STT_LANGUAGE fallback over auto-detect.
+    Logged below so "somehow it only transcribes English" is answerable from
+    the container log rather than from guesswork about which knob won.
     """
     provider = os.getenv("STT_PROVIDER", "litellm").lower()
+    forced = session_language or STT_LANGUAGE
+    logger.info(
+        f"[stt] language {forced or 'auto-detect'}"
+        f"{' (session choice)' if session_language else ' (STT_LANGUAGE fallback)' if forced else ''}"
+    )
 
     if provider == "deepgram":
         from pipecat.services.deepgram.stt import DeepgramSTTService
@@ -347,7 +371,7 @@ def build_stt():
                 # `en` returned an empty transcript, `multi` perfect German
                 # with languages: ["de"], and the websocket accepts
                 # language=multi alongside diarize=true.
-                language=STT_LANGUAGE or "multi",
+                language=forced or "multi",
                 # Per-word speaker indices on the raw result. Pipecat does not
                 # read them; `SpeakerTagger` below does.
                 diarize=STT_DIARIZE,
@@ -365,13 +389,13 @@ def build_stt():
     if provider == "assemblyai":
         from pipecat.services.assemblyai.stt import AssemblyAISTTService
 
-        # Auto-detect the language per turn, or force the one STT_LANGUAGE
-        # names. AssemblyAI's API treats the two settings as mutually
-        # exclusive, so exactly one is passed. Not verified against a live
-        # AssemblyAI stream the way the Deepgram and Whisper paths were — the
-        # fields exist in pipecat 1.7 and match the provider's docs.
+        # Auto-detect the language per turn, or force the one the session or
+        # STT_LANGUAGE names. AssemblyAI's API treats the two settings as
+        # mutually exclusive, so exactly one is passed. Not verified against a
+        # live AssemblyAI stream the way the Deepgram and Whisper paths were —
+        # the fields exist in pipecat 1.7 and match the provider's docs.
         language_settings = (
-            {"language_code": STT_LANGUAGE} if STT_LANGUAGE else {"language_detection": True}
+            {"language_code": forced} if forced else {"language_detection": True}
         )
         return AssemblyAISTTService(
             api_key=os.environ["ASSEMBLYAI_API_KEY"],
@@ -396,7 +420,7 @@ def build_stt():
     return OpenAISTTService(
         settings=OpenAISTTService.Settings(
             model=os.getenv("MODEL_TRANSCRIBE_LIVE") or os.environ["MODEL_TRANSCRIBE"],
-            language=STT_LANGUAGE or "",
+            language=forced or "",
         ),
         api_key=LITELLM_API_KEY,
         base_url=LITELLM_BASE_URL,
@@ -766,6 +790,20 @@ class Recall(FrameProcessor):
 
         return block
 
+    def ensure_block(self) -> None:
+        """Materialise the context block now, if no turn has composed one yet.
+
+        The opening offer needs somewhere to stand: on a reconnect the seed
+        summary is the whole difference between "I'm here" and "want to pick
+        up where you left off?". A no-op once any real turn has landed — the
+        block exists, and the next compose replaces it anyway.
+        """
+        if self._message is None:
+            content = self._compose([], None, [])
+            if content:
+                self._message = {"role": "system", "content": content}
+                self._context.add_message(self._message)
+
     def _reflow(self) -> None:
         """Bound the history, and park the context block beside the current turn.
 
@@ -875,6 +913,191 @@ DRAFT_CLOSE = "</draft>"
 # start with `<`, which is what lets a normal spoken reply stop being a
 # candidate on its very first frame — see SilenceGate's latency note.
 _TAG_PREFIXES = (SILENCE_TOKEN, DRAFT_OPEN, DRAFT_CLOSE)
+
+# --- The proactive engine ----------------------------------------------------
+#
+# The complaint this closes: the companion answered well but never brought
+# anything — purely reactive, "too responsive". The engine (`Offers` below)
+# creates moments an unprompted turn is allowed in; the model still decides
+# whether to take them, via the sentinel as always. The prompt's own offer
+# stance (talkback-6) is what makes it take them.
+
+# Off by env for a study arm that needs the purely-reactive behaviour back.
+PROACTIVE_OFFERS = os.getenv("PROACTIVE_OFFERS", "true").lower() in ("1", "true", "yes")
+
+# How many seconds of quiet may follow a completed, unanswered thought before
+# the engine offers a turn, by proactivity level.
+#
+# Mirrors PROACTIVE_AFTER_SECS in packages/talkback/src/setting.ts — change
+# one, change both.
+PROACTIVE_AFTER_SECS = {"quiet": 25, "occasional": 12, "forthcoming": 7}
+
+# The two instructions, injected as user-role messages in the driver's slot.
+# A user message rather than an append to Recall's block because the resulting
+# shape — history, context block, instruction — is the exact shape of every
+# normal turn, which keeps it valid behind every provider on the proxy
+# (a block-only append would end some payloads with no user message at all).
+#
+# Mirrors OPENING_NUDGE/SILENCE_NUDGE in packages/talkback/src/prompt.ts —
+# change one, change both.
+OPENING_NUDGE = (
+    "(The drive is just starting and they have not spoken yet. Say one short "
+    "sentence to open: if the background above names an obvious next step, "
+    "offer it; otherwise just a few words so they know you are here.)"
+)
+SILENCE_NUDGE = (
+    "(An unprompted moment: they have been quiet for {secs} seconds since their "
+    "last words. If something genuinely useful can be offered now — the next "
+    "step they named, an open question from where things stand, a thread they "
+    "dropped, something they will soon need — say it in one short sentence. If "
+    "nothing is genuinely useful, reply <silence>.)"
+)
+
+
+class Offers(FrameProcessor):
+    """The proactive engine: unprompted turns, offered out of silence.
+
+    WHEN it may fire — three guards, all of them the prompt's own rules made
+    mechanical:
+
+    1. Never mid-thought. The timer arms on a final TranscriptionFrame (a
+       completed, answered-by-nothing utterance) and cancels the instant
+       speech starts again. A pause that is thinking never becomes an
+       invitation.
+    2. Never twice without a reply in between. Once the agent has spoken —
+       opening, answer or offer — nothing further is offered until the driver
+       says something. `SilenceGate` reports what each agent turn became; a
+       spoken turn sets the flag, the driver's next words clear it.
+    3. Declined offers back off. When the model takes the engine's moment and
+       answers `<silence>`, nothing was worth saying, so the same interval
+       would ask the same question again. The delay doubles, capped, and
+       resets on the driver's next words.
+
+    WHAT fires: a user-role instruction (the mirrored templates above) added
+    to the context, then an `LLMRunFrame` — the same frame the user aggregator
+    pushes to run a normal turn — so the completion, the gate, the recorder
+    and the barge-in plumbing are all the normal ones. An offered turn that
+    speaks is an `agent_turn` like any other; one that declines leaves no
+    trace but this log.
+
+    WHY A TIMER PER OFFER rather than a loop: each silence is armed fresh
+    from the frames that ended it, so the interval always reflects the current
+    proactivity level and backoff, and a cancelled timer is simply never
+    replaced — no idle wakeups on a drive that never stops talking.
+    """
+
+    # The opening turn's grace: long enough for the pipeline to settle and
+    # for a driver already talking to cancel it, short enough that "I'm here"
+    # is still the first thing that happens.
+    OPENING_GRACE_SECS = 2.5
+    # A declined offer never waits longer than this to try again.
+    BACKOFF_CAP_SECS = 120
+
+    def __init__(self, context: LLMContext, recall: "Recall", session: dict):
+        super().__init__()
+        self._context = context
+        self._recall = recall
+        # The setting's proactivity level, arrived via /api/realtime/session —
+        # the same value that governs how forthcoming the prompt is allowed to
+        # be. Missing (a degraded connection) falls back to the driving
+        # default's patience.
+        self._delay = PROACTIVE_AFTER_SECS.get(
+            session.get("proactivity") or "quiet", PROACTIVE_AFTER_SECS["quiet"]
+        )
+        self._task: asyncio.Task | None = None
+        # True from the moment the agent speaks until the driver's next words.
+        self._awaiting_user = False
+        # Multiplier on `_delay` after declined offers. 1 is the base.
+        self._backoff = 1
+        self._opened = False
+
+    # -- state, driven by frames and by SilenceGate --------------------------
+
+    def note_agent_turn(self, spoke: bool) -> None:
+        """What an agent turn became, reported by `SilenceGate`.
+
+        Called from the gate rather than observed as a frame because the gate
+        is the only place that knows whether anything was actually released to
+        the speaker — the same reason `RunningSummary.note_agent` is called
+        from there. A declined turn never happened as far as the driver is
+        concerned, so it must not count as the "reply" the never-twice rule
+        waits for — but it IS a declined offer, so it backs off.
+        """
+        if not PROACTIVE_OFFERS:
+            return
+        if spoke:
+            self._awaiting_user = True
+            self._cancel()
+        else:
+            self._backoff = min(self._backoff * 2, max(1, self.BACKOFF_CAP_SECS // self._delay))
+            self._arm(self._delay * self._backoff)
+
+    def _cancel(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+
+    def _arm(self, delay: float, opening: bool = False) -> None:
+        self._cancel()
+        self._task = self.create_task(self._fire(delay, opening), name="offers:timer")
+
+    # -- the offer itself -----------------------------------------------------
+
+    async def _fire(self, delay: float, opening: bool) -> None:
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            # Speech started, the agent spoke, or the pipeline went down
+            # while we waited. The moment is gone; nothing to clean up.
+            raise
+
+        if self._awaiting_user:
+            return
+
+        if opening:
+            self._opened = True
+            instruction = OPENING_NUDGE
+            # A reconnect can know where the drive stood: materialise the
+            # block from the seed summary so "pick up where you left off?" is
+            # possible. A no-op on a drive that already has one.
+            self._recall.ensure_block()
+        else:
+            instruction = SILENCE_NUDGE.replace("{secs}", str(int(delay)))
+
+        # The engine has now had its turn. If the model speaks, the
+        # never-twice rule holds until the driver replies; if it declines,
+        # note_agent_turn backs off and re-arms.
+        self._context.add_message({"role": "user", "content": instruction})
+        logger.info(
+            f"[offers] {'opening the drive' if opening else f'{int(delay)}s of quiet'} — offering a turn"
+        )
+        await self.push_frame(LLMRunFrame())
+
+    # -- frame plumbing -------------------------------------------------------
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if PROACTIVE_OFFERS:
+            if isinstance(frame, StartFrame):
+                if not self._opened:
+                    self._arm(self.OPENING_GRACE_SECS, opening=True)
+            elif isinstance(frame, (VADUserStartedSpeakingFrame, UserStartedSpeakingFrame)):
+                # Speech beats everything: a cancelled moment is the design
+                # working, not a missed opportunity.
+                self._cancel()
+            elif isinstance(frame, TranscriptionFrame) and frame.text.strip():
+                self._backoff = 1
+                self._awaiting_user = False
+                self._arm(self._delay)
+            elif isinstance(frame, (EndFrame, CancelFrame)):
+                self._cancel()
+
+        await self.push_frame(frame, direction)
+
+    async def cleanup(self):
+        self._cancel()
+        await super().cleanup()
 
 
 def extract_drafts(reply: str) -> tuple[str, list[dict]]:
@@ -1171,11 +1394,13 @@ class SilenceGate(FrameProcessor):
         summary: RunningSummary | None = None,
         recorder: TurnRecorder | None = None,
         drafts: DraftRecorder | None = None,
+        offers: "Offers | None" = None,
     ):
         super().__init__()
         self._summary = summary
         self._recorder = recorder
         self._drafts = drafts
+        self._offers = offers
         self._text = ""
         self._spoken = ""
         self._holding = True
@@ -1319,6 +1544,12 @@ class SilenceGate(FrameProcessor):
                         started_ms=self._first_spoke_ms,
                         barged_in=True,
                     )
+            # Partial words or none: either way the driver heard the agent try,
+            # which is what the never-twice rule keys on, not how much of it
+            # landed. A turn interrupted before its first word never reached
+            # the speaker at all, so it counts as not having happened.
+            if self._offers is not None:
+                self._offers.note_agent_turn(bool(self._spoken.strip()))
             self._reset()
         elif isinstance(frame, LLMFullResponseEndFrame):
             if self._holding:
@@ -1351,6 +1582,13 @@ class SilenceGate(FrameProcessor):
             # write it twice.
             if self._recorder is not None and self._spoken.strip():
                 self._recorder.record(self._spoken, self._text, started_ms=self._first_spoke_ms)
+            # The proactive engine needs the same fact the summary does: what
+            # the turn BECAME. A spoken turn (including a declined-looking one
+            # that released words) sets the awaiting-reply rule; a decline
+            # re-arms with backoff. Reported from here for the same reason as
+            # `note_agent` — this is the only place that knows.
+            if self._offers is not None:
+                self._offers.note_agent_turn(bool(self._spoken.strip()))
             self._reset()
 
         await self.push_frame(frame, direction)
@@ -1389,7 +1627,7 @@ def build_pipeline(
         ),
     )
 
-    stt = build_stt()
+    stt = build_stt(session.get("sttLanguage"))
 
     # NO temperature, and this is not an oversight. claude-sonnet-5 accepts only
     # temperature=1; LiteLLM answers 400 for anything else, and the error is
@@ -1494,6 +1732,13 @@ def build_pipeline(
         user_params=LLMUserAggregatorParams(vad_analyzer=silero()),
     )
 
+    # The proactive engine. After Recall so it can ask it to materialise the
+    # context block, and before the user aggregator so the `LLMRunFrame` it
+    # pushes to run an unprompted turn flows into the aggregator's own run
+    # path — the same one a normal turn takes.
+    recall = Recall(context, summary, ticket, recorder, drafts)
+    offers = Offers(context, recall, session)
+
     pipeline = Pipeline(
         [
             transport.input(),
@@ -1506,14 +1751,15 @@ def build_pipeline(
             # Before Recall: the summary must see this turn's speech, and Recall
             # reads the summary when it composes the block.
             summary,
-            Recall(context, summary, ticket, recorder, drafts),
+            recall,
+            offers,
             aggregator.user(),
             llm,
             # Between the LLM and TTS deliberately: the aggregator downstream
             # still records what the model generated, so a declined turn is
             # visible in the context as a turn that happened, while never
             # reaching the speaker.
-            SilenceGate(summary, recorder, drafts),
+            SilenceGate(summary, recorder, drafts, offers),
             tts,
             transport.output(),
             aggregator.assistant(),

@@ -140,6 +140,27 @@ describe("the turn messages, which mirror bot.py", () => {
     expect(composed.maxReplyWords).toBe(35);
   });
 
+  /**
+   * An unprompted turn has the engine's instruction where the driver's words
+   * would be — the shape `Offers` produces in the container. Nobody spoke, so
+   * the check the reply runs against is the same one every turn runs against.
+   */
+  it("place the engine's nudge in the driver's slot on an unprompted turn", () => {
+    const { messages } = buildTurnMessages({
+      compose: { setting: "driving" },
+      history: [{ role: "user", content: "earlier" }, { role: "assistant", content: "mm" }],
+      context: { summary: "- x" },
+      nudge: "(An unprompted moment.)",
+    });
+    expect(messages.map((m) => m.role)).toEqual(["system", "user", "assistant", "system", "user"]);
+    expect(messages.at(-1)!.content).toBe("(An unprompted moment.)");
+  });
+
+  it("refuse a turn that has both or neither a speaker and a nudge", () => {
+    expect(() => buildTurnMessages({ compose: {}, said: "hi", nudge: "(x)" })).toThrow(/exactly one/);
+    expect(() => buildTurnMessages({ compose: {} })).toThrow(/exactly one/);
+  });
+
   it("swap in a candidate base prompt and keep the contract last", () => {
     const { messages } = buildTurnMessages({ compose: { base: "CANDIDATE" }, said: "x" });
     expect(messages[0]!.content.startsWith("CANDIDATE")).toBe(true);

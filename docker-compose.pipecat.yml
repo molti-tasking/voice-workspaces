@@ -39,8 +39,15 @@ services:
       - DEEPGRAM_MODEL=${DEEPGRAM_MODEL:-nova-3}
       - DEEPGRAM_UTTERANCE_END_MS=${DEEPGRAM_UTTERANCE_END_MS:-1000}
       - ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY:-}
+      # Fallback live-path language when a session states none (they arrive
+      # per drive via /api/realtime/session). Unset = auto-detect.
+      - STT_LANGUAGE=${STT_LANGUAGE:-}
       # Speaker labels on the live path, hosted providers only. See TALKBACK.md.
       - STT_DIARIZE=${STT_DIARIZE:-true}
+      # The proactive engine: unprompted turns out of silence. Unset = on;
+      # STT_DIARIZE-style, forwarded here so the study can switch it off per
+      # deployment without a rebuild.
+      - PROACTIVE_OFFERS=${PROACTIVE_OFFERS:-true}
       # The prompt, retrieval and the summary seed all live in the Next app —
       # `/api/realtime/session` once per drive and `/api/realtime/context` once
       # per turn. Inside a container `localhost` is this container, so reach the

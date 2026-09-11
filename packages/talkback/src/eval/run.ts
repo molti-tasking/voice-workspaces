@@ -32,7 +32,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chat } from "@voicemural/llm";
-import { TALKBACK_CONFIG_VERSION } from "../prompt";
+import { OPENING_NUDGE, TALKBACK_CONFIG_VERSION, renderSilenceNudge } from "../prompt";
 import { SETTINGS, type Setting } from "../setting";
 import { findCases, type EvalCase } from "./cases";
 import { checkReply, type CheckResult } from "./checks";
@@ -164,11 +164,20 @@ async function runTurn(
   runId: string,
 ): Promise<TurnReport> {
   const setting = args.setting ?? kase.setting;
+  // An unprompted case carries the engine's instruction in the driver's slot
+  // instead of their words — same shape the container produces, so the model
+  // is judged on the system it will actually run in.
+  const nudge = kase.offer
+    ? kase.offer.quietSecs
+      ? renderSilenceNudge(kase.offer.quietSecs)
+      : OPENING_NUDGE
+    : undefined;
   const { composed, messages } = buildTurnMessages({
     compose: { base: args.base, setting },
     history: kase.history,
     context: kase.context,
     said: kase.said,
+    nudge,
   });
 
   const traceId = newTraceId();

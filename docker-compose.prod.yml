@@ -204,7 +204,12 @@ services:
       - DEEPGRAM_MODEL=${DEEPGRAM_MODEL:-nova-3}
       - DEEPGRAM_UTTERANCE_END_MS=${DEEPGRAM_UTTERANCE_END_MS:-1000}
       - ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY:-}
+      # Fallback live-path language when a session states none (per-drive
+      # choices arrive via /api/realtime/session). Unset = auto-detect.
+      - STT_LANGUAGE=${STT_LANGUAGE:-}
       - STT_DIARIZE=${STT_DIARIZE:-true}
+      # The proactive engine: unprompted turns out of silence. Unset = on.
+      - PROACTIVE_OFFERS=${PROACTIVE_OFFERS:-true}
     depends_on:
       migrate:
         condition: service_completed_successfully

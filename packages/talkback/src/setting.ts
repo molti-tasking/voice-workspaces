@@ -45,6 +45,27 @@ Moderately. A short reaction when a thought lands is welcome, and one nudge when
 Readily. Reacting when a thought lands is expected, and a settled pause after a complete thought is an invitation to move it on with one question. Still one sentence, still never mid-thought, still never twice in a row without a reply.`,
 };
 
+/**
+ * How many seconds of silence may follow a completed, unanswered thought
+ * before the proactive engine (`Offers` in `bot.py`) hands the model an
+ * unprompted turn.
+ *
+ * This is the "proactive engine" the `proactivity` field above was kept as
+ * data for: it reads this table rather than inventing its own tuning, so the
+ * level that governs prompted turns also governs unprompted ones. The numbers
+ * are long on purpose — a pause that is thinking must never be read as an
+ * invitation, and the engine fires only once per silence, with the model free
+ * to decline via the sentinel. A declined offer backs off exponentially
+ * rather than repeating the same question every interval.
+ *
+ * MIRRORED in `bot.py` as `PROACTIVE_AFTER_SECS` — change one, change both.
+ */
+export const PROACTIVE_AFTER_SECS: Record<Proactivity, number> = {
+  quiet: 25,
+  occasional: 12,
+  forthcoming: 7,
+};
+
 export interface SettingProfile {
   /** What a participant would call it. */
   label: string;
@@ -90,10 +111,10 @@ export interface SettingProfile {
    * How forthcoming the system is allowed to be.
    *
    * Read by `composeSystemPrompt`, which appends the matching entry of
-   * `PROACTIVITY_STANZAS` after the setting stanza. Carried as data rather than
-   * folded into the prose so that when a proactive engine (a silence timer, an
-   * unprompted turn) lands it reads this same value rather than inventing a
-   * second source of truth.
+   * `PROACTIVITY_STANZAS` after the setting stanza. Carried as data rather
+   * than folded into the prose because the proactive engine (`Offers` in
+   * `bot.py`) reads this same value — through `PROACTIVE_AFTER_SECS` — rather
+   * than inventing a second source of truth.
    */
   proactivity: Proactivity;
   /** Appended to the composed system prompt. Prose, because the model reads it. */

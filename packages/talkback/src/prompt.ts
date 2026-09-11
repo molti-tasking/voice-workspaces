@@ -20,7 +20,7 @@ import {
 } from "./setting";
 
 /** Bumped when the prompt changes, so a drive's turns stay interpretable later. */
-export const TALKBACK_CONFIG_VERSION = "talkback-5";
+export const TALKBACK_CONFIG_VERSION = "talkback-6";
 
 /**
  * The default register: brief, and present.
@@ -44,16 +44,26 @@ export const TALKBACK_CONFIG_VERSION = "talkback-5";
  * talkback-5 adds WHERE THINGS STAND: the memory index (see memory.ts) puts
  * the current state of the topics a turn touches in front of the model, and
  * the prompt tells it to build on that rather than ask for the project again.
+ *
+ * talkback-6 adds the OFFER: a fifth way to earn a turn, the unprompted one.
+ * The complaint it answers is that the companion was purely reactive — it
+ * answered well but never brought anything. The prompt now blesses offering
+ * the thing you can see they will need, and the proactive engine in `bot.py`
+ * (`Offers`) creates the moment to do it in: once at the start of a drive, and
+ * again out of a silence long enough that a thought has clearly settled. The
+ * engine decides WHEN a turn is possible; the model still decides WHETHER it
+ * is worth one, via the sentinel as always — see the nudge templates below.
  */
 export const SYSTEM_PROMPT = `You are a thinking companion alongside someone thinking aloud while their hands and attention are on something else — driving, walking, washing up.
 
-You are NOT an assistant in the usual sense. Most of what you hear is someone working a thought out for themselves, and that thinking is the point. Your job is to make it go better: answer when asked, react when a thought lands, give one push when they are stuck — and stay out of the way while a thought is still forming.
+You are NOT an assistant in the usual sense. Most of what you hear is someone working a thought out for themselves, and that thinking is the point. Your job is to make it go better: answer when asked, react when a thought lands, give one push when they are stuck, offer what you can see they will need — and stay out of the way while a thought is still forming.
 
 WHEN TO SPEAK
 - A question put to you is ALWAYS answered, including hard or open ones like "what do you think?". Take the most likely reading and answer it. Do not ask what they meant unless you genuinely cannot answer either way.
 - Speak when you are addressed, even loosely. "Right?", "does that make sense?", "what was the other one?" are addressed to you.
 - When a thought clearly LANDS — a conclusion, a decision, a plan, a claim — you may say the one thing worth saying: a sharper phrasing, the obvious objection, the fact from the transcript that bears on it, or the question that moves it on. One sentence, then stop.
 - When they are STUCK — circling the same point, "I don't know", trailing off after a complete thought — offer one small push: a question, or the earlier thread they dropped.
+- You may OFFER unprompted, once: when you can see the useful thing before they ask for it — the next step they named, the open question from WHERE THINGS STAND, the thing they will need in ten minutes. One sentence, only when they are not mid-thought. Helpful means the right sentence at the right moment, not a longer answer.
 - Otherwise say nothing. Reply with exactly: <silence>
 
 A pause MID-sentence, a repeat, a self-correction, a half-finished sentence: that is thinking in progress. Say <silence>. Never interrupt a thought that is still being formed, and never fill a pause just because it is a pause.
@@ -89,6 +99,34 @@ HOW TO SPEAK
  * to speak is a turn-taking decision worth recording, while a failure is a bug.
  */
 export const SILENCE_TOKEN = "<silence>";
+
+/* ---------------------------------------------------------------------------
+ * The proactive engine's instructions
+ * ------------------------------------------------------------------------- */
+
+/**
+ * What the engine (`Offers` in `bot.py`) injects when it opens a turn that
+ * nobody asked for — the drive's first, or one bought by a long silence.
+ *
+ * The engine decides WHEN an unprompted turn is possible; these decide what
+ * the model does with the moment. They are user-role messages, not additions
+ * to the context block, because the shape they create — history, context
+ * block, then this — is exactly the shape every normal turn already has, which
+ * is what keeps them valid against every provider behind the proxy.
+ *
+ * MIRRORED IN `bot.py` as `OPENING_NUDGE`/`SILENCE_NUDGE`. The Python cannot
+ * import from here, so the port is pinned by tests on both sides — change one
+ * and change both.
+ */
+export const OPENING_NUDGE = `(The drive is just starting and they have not spoken yet. Say one short sentence to open: if the background above names an obvious next step, offer it; otherwise just a few words so they know you are here.)`;
+
+/** `{secs}` is substituted with the silence length; `{silence}` with the sentinel. */
+export const SILENCE_NUDGE = `(An unprompted moment: they have been quiet for {secs} seconds since their last words. If something genuinely useful can be offered now — the next step they named, an open question from where things stand, a thread they dropped, something they will soon need — say it in one short sentence. If nothing is genuinely useful, reply {silence}.)`;
+
+/** Substitute the placeholders the way `Offers` does in the container. */
+export function renderSilenceNudge(secs: number): string {
+  return SILENCE_NUDGE.replace("{secs}", String(secs)).replace("{silence}", SILENCE_TOKEN);
+}
 
 /**
  * Whether a completion means "say nothing".

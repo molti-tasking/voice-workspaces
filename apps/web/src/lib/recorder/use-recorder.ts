@@ -319,11 +319,17 @@ export function useRecorder() {
    * `voiceId` is the voice the system will speak with, from the catalogue in
    * `@voicemural/talkback/voice`. Same lifecycle: stated once, stored on the
    * session, immutable for the drive.
+   *
+   * `sttLanguage` is the language BOTH transcription paths will use, from
+   * `@voicemural/talkback/language`. Null — the default — means auto-detect.
+   * Same lifecycle again, and for the same reason: a drive whose second half
+   * was transcribed under a different assumption is not interpretable.
    */
   const start = useCallback(async (
     setting?: CaptureSetting,
     source?: "device" | "motion" | "default" | "chosen",
     voiceId?: string,
+    sttLanguage?: string | null,
   ) => {
     if (runningRef.current) return;
 
@@ -372,6 +378,7 @@ export function useRecorder() {
       setting: setting ?? null,
       setting_source: source ?? null,
       voice_id: voiceId ?? null,
+      stt_language: sttLanguage ?? null,
     });
 
     const meta: OpenSessionMeta = {
@@ -400,6 +407,8 @@ export function useRecorder() {
       deviceInfo: { userAgent: navigator.userAgent, mimeType },
       setting,
       voiceId,
+      // Null is normal (auto-detect); undefined on the wire keeps zod happy.
+      sttLanguage: sttLanguage ?? undefined,
     };
     await saveRegistration(registration);
 
