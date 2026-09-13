@@ -1,11 +1,11 @@
-import { LayoutGrid, ListTree, Sparkles, Waypoints } from "lucide-react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { boardEnabledAt } from "@voicemural/db/board";
 import { loadOps } from "@voicemural/db/workspace";
 import { foldBoard, judge } from "@voicemural/workspace";
-import { AccountMenu } from "@/components/account-menu";
+import { AppDock } from "@/components/app-dock";
 import { Link } from "@/components/nav-link";
+import { NavMenu } from "@/components/nav-menu";
 import { ViewEvent } from "@/lib/analytics/view-event";
 import { parseInstant } from "@/lib/instant";
 import { currentUser } from "@/lib/session";
@@ -74,7 +74,7 @@ export default async function BoardPage({
   ).length;
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-10">
+    <div className="mx-auto max-w-6xl px-6 pt-10 pb-40">
       <ViewEvent
         event="board_viewed"
         properties={{
@@ -101,43 +101,7 @@ export default async function BoardPage({
           </p>
         </div>
 
-        <nav className="flex items-center gap-4 text-sm">
-          <Link
-            href="/workspace"
-            className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
-          >
-            <LayoutGrid size={14} aria-hidden />
-            Workspace
-          </Link>
-          <Link
-            href="/trajectory"
-            className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
-          >
-            <Waypoints size={14} aria-hidden />
-            Trajectory
-          </Link>
-          <Link
-            href="/repertoire"
-            className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
-          >
-            <Sparkles size={14} aria-hidden />
-            Repertoire
-          </Link>
-          <Link
-            href="/timeline"
-            className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
-          >
-            <ListTree size={14} aria-hidden />
-            Timeline
-          </Link>
-          <Link
-            href="/record"
-            className="rounded-lg bg-accent px-4 py-2 font-medium text-white"
-          >
-            Record
-          </Link>
-          <AccountMenu />
-        </nav>
+        <NavMenu />
       </header>
 
       {board.cards.length === 0 ? (
@@ -153,6 +117,8 @@ export default async function BoardPage({
           )}
         />
       )}
+
+      <AppDock />
     </div>
   );
 }

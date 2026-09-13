@@ -1,10 +1,35 @@
 "use client";
 
-import { LogOut, UserRound } from "lucide-react";
+import {
+  BookOpenCheck,
+  ListTree,
+  LogOut,
+  Sparkles,
+  UserRound,
+  Waypoints,
+  type LucideIcon,
+} from "lucide-react";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { capture, resetIdentity } from "@/lib/analytics/client";
 import { signIn, signOut } from "@/lib/auth-client";
 import { type SocialProvider, providerName } from "@/lib/providers";
+import { Link } from "./nav-link";
+
+/**
+ * Everything that is not one of the dock's two surfaces.
+ *
+ * Three readings of the whole corpus — the ledger end to end, topics over
+ * time, what the system has learned to do — plus the session list and the
+ * study sheet. None of them is somewhere a participant goes mid-task, which is
+ * exactly why they are here and not in the dock.
+ */
+const LINKS: { href: string; label: string; hint: string; Icon: LucideIcon }[] = [
+  { href: "/", label: "Sessions", hint: "Every drive, newest first", Icon: BookOpenCheck },
+  { href: "/timeline", label: "Timeline", hint: "The ledger, read end to end", Icon: ListTree },
+  { href: "/trajectory", label: "Trajectory", hint: "Topics over time", Icon: Waypoints },
+  { href: "/repertoire", label: "Repertoire", hint: "What it has learned to do", Icon: Sparkles },
+];
 
 export type AccountUser = {
   name: string | null;
@@ -32,13 +57,13 @@ function AvatarFallback({ user }: { user: AccountUser }) {
 }
 
 /**
- * Avatar and account dropdown.
+ * Avatar, navigation and account dropdown.
  *
  * Deliberately absent from `/record`: that screen is operated at a glance from a
  * car cradle, and a tappable menu in the corner is a hazard there rather than a
  * convenience.
  */
-export function AccountMenuClient({
+export function NavMenuClient({
   user,
   providers,
 }: {
@@ -62,6 +87,7 @@ export function AccountMenuClient({
    */
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const pathname = usePathname();
 
   useEffect(() => {
     if (!open) return;
@@ -89,7 +115,7 @@ export function AccountMenuClient({
         aria-expanded={open}
         aria-label={user.isGuest ? "Guest account" : (user.email ?? "Account")}
         onClick={() => setOpen((v) => !v)}
-        className="flex size-8 items-center justify-center overflow-hidden rounded-full border border-[var(--color-line)] bg-[var(--color-ink-soft)] text-xs font-medium text-white/70 hover:border-white/30 hover:text-white"
+        className="vm-glass flex size-9 cursor-pointer items-center justify-center overflow-hidden rounded-full text-xs font-medium text-white/70 hover:text-white"
       >
         {user.image && failedSrc !== user.image ? (
           // Provider avatars are arbitrary remote hosts, so this stays a plain
@@ -116,7 +142,7 @@ export function AccountMenuClient({
       {open && (
         <div
           role="menu"
-          className="absolute right-0 z-50 mt-2 w-72 overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-ink-soft)] shadow-2xl shadow-black/50"
+          className="vm-glass vm-rise absolute right-0 z-50 mt-2 w-72 overflow-hidden rounded-2xl"
         >
           <div className="border-b border-[var(--color-line)] px-4 py-3">
             <p className="truncate text-sm font-medium">
@@ -128,6 +154,34 @@ export function AccountMenuClient({
               {user.isGuest ? "Recordings tied to this browser" : user.email}
             </p>
           </div>
+
+          <ul className="border-b border-[var(--color-line)] py-1.5">
+            {LINKS.map(({ href, label, hint, Icon }) => {
+              // Exact match for "/" — every path starts with it, and a prefix
+              // test would light up Sessions on every page in the app.
+              const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+              return (
+                <li key={href}>
+                  <Link
+                    href={href}
+                    role="menuitem"
+                    aria-current={active ? "page" : undefined}
+                    onClick={() => setOpen(false)}
+                    className={[
+                      "flex items-start gap-3 px-4 py-2 text-sm",
+                      active ? "text-white" : "text-white/70 hover:bg-white/5 hover:text-white",
+                    ].join(" ")}
+                  >
+                    <Icon size={15} aria-hidden className="mt-0.5 shrink-0 opacity-70" />
+                    <span>
+                      {label}
+                      <span className="block text-xs text-white/35">{hint}</span>
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
 
           {user.isGuest ? (
             <div className="px-4 py-3">

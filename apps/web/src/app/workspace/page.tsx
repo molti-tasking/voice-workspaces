@@ -1,11 +1,11 @@
-import { ListTree, Sparkles, Waypoints, X } from "lucide-react";
+import { X } from "lucide-react";
 import type { Metadata } from "next";
 import { listSessionsWithStats } from "@voicemural/db/sessions";
 import { loadOps } from "@voicemural/db/workspace";
 import { diffWorkspace, foldWorkspace } from "@voicemural/workspace";
-import { AccountMenu } from "@/components/account-menu";
-import { BoardLink } from "@/components/board-link";
+import { AppDock } from "@/components/app-dock";
 import { Link } from "@/components/nav-link";
+import { NavMenu } from "@/components/nav-menu";
 import { SurveyHost } from "@/components/survey-host";
 import { ViewEvent } from "@/lib/analytics/view-event";
 import { parseInstant } from "@/lib/instant";
@@ -73,7 +73,7 @@ export default async function WorkspacePage({
   );
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-10">
+    <div className="mx-auto max-w-6xl px-6 pt-10 pb-40">
       <ViewEvent
         event="workspace_viewed"
         properties={{
@@ -125,43 +125,7 @@ export default async function WorkspacePage({
           </p>
         </div>
 
-        <nav className="flex items-center gap-4 text-sm">
-          <BoardLink userId={user.id} />
-          <Link
-            href="/trajectory"
-            className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
-          >
-            <Waypoints size={14} aria-hidden />
-            Trajectory
-          </Link>
-          <Link
-            href="/repertoire"
-            className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
-          >
-            <Sparkles size={14} aria-hidden />
-            Repertoire
-          </Link>
-          <Link
-            href="/timeline"
-            className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
-          >
-            <ListTree size={14} aria-hidden />
-            Timeline
-          </Link>
-          <Link
-            href="/"
-            className="text-white/40 underline-offset-4 hover:underline"
-          >
-            Sessions
-          </Link>
-          <Link
-            href="/record"
-            className="rounded-lg bg-[var(--color-accent)] px-4 py-2 font-medium text-white"
-          >
-            Record
-          </Link>
-          <AccountMenu />
-        </nav>
+        <NavMenu />
       </header>
 
       {diff && (
@@ -210,6 +174,8 @@ export default async function WorkspacePage({
           ))}
         </div>
       )}
+
+      <AppDock />
     </div>
   );
 }
