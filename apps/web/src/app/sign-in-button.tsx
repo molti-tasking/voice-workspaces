@@ -1,8 +1,8 @@
 "use client";
 
-import type { AnalyticsEventMap } from "@voicemural/shared";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import type { AnalyticsEventMap } from "@voicemural/shared";
 import { capture } from "@/lib/analytics/client";
 import { signIn } from "@/lib/auth-client";
 import { type SocialProvider, providerName } from "@/lib/providers";

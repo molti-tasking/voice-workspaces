@@ -1,14 +1,14 @@
-import type { Metadata } from "next";
 import { ArrowRight, LayoutGrid, ListTree } from "lucide-react";
-import { Link } from "@/components/nav-link";
+import type { Metadata } from "next";
 import { loadOps } from "@voicemural/db/workspace";
 import { buildTrajectory } from "@voicemural/workspace";
+import { topicIcon } from "@/app/workspace/icons";
 import { AccountMenu } from "@/components/account-menu";
 import { BoardLink } from "@/components/board-link";
+import { Link } from "@/components/nav-link";
+import { ViewEvent } from "@/lib/analytics/view-event";
 import { parseInstant } from "@/lib/instant";
 import { currentUser } from "@/lib/session";
-import { ViewEvent } from "@/lib/analytics/view-event";
-import { topicIcon } from "@/app/workspace/icons";
 import { Stream } from "./stream";
 
 export const dynamic = "force-dynamic";

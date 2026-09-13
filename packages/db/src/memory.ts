@@ -5,8 +5,8 @@
  * merged live in @voicemural/talkback (`memory.ts`), which knows nothing about
  * a database; the embedding call lives in @voicemural/llm. This file moves rows.
  */
-import { and, desc, eq, getDb, isNull, sql } from "./index";
 import { agentTurn, captureSession, memoryEntry, utterance } from "./schema";
+import { and, desc, eq, getDb, isNull, sql } from "./index";
 
 export type MemoryKind = "passage" | "topic";
 

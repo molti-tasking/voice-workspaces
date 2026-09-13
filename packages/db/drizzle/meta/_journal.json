@@ -71,6 +71,13 @@
       "when": 1788955920694,
       "tag": "0009_blue_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789143900093,
+      "tag": "0010_flimsy_crystal",
+      "breakpoints": true
     }
   ]
 }

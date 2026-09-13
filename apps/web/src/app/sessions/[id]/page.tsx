@@ -2,14 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, asc, eq, getDb } from "@voicemural/db";
+import { loadSessionDrafts } from "@voicemural/db/drafts";
 import { agentTurn, audioChunk, captureSession, utterance } from "@voicemural/db/schema";
 import { findCoverageGaps, formatOffset } from "@voicemural/shared";
-import { loadSessionDrafts } from "@voicemural/db/drafts";
-import { currentUser } from "@/lib/session";
-import { SessionDrafts } from "./session-drafts";
-import { AutoRefresh } from "./auto-refresh";
-import { Transcript, type AgentTurnRow, type TranscriptRow } from "./transcript";
 import { ViewEvent } from "@/lib/analytics/view-event";
+import { currentUser } from "@/lib/session";
+import { AutoRefresh } from "./auto-refresh";
+import { SessionDrafts } from "./session-drafts";
+import { Transcript, type AgentTurnRow, type TranscriptRow } from "./transcript";
 
 export const dynamic = "force-dynamic";
 

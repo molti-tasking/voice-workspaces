@@ -7,8 +7,8 @@
  * UI on purpose. Participants are enabled one at a time via `pnpm db:studio` or
  * `UPDATE "user" SET board_enabled_at = now() WHERE id = …`.
  */
-import { eq, getDb } from "./index";
 import { user } from "./schema";
+import { eq, getDb } from "./index";
 
 /** When the board was enabled for this user, or null while it is hidden. */
 export async function boardEnabledAt(userId: string): Promise<Date | null> {

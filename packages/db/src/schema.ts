@@ -200,7 +200,23 @@ export const captureSession = pgTable(
      * made and the container used its `ELEVENLABS_VOICE_ID` fallback — a
      * different fact from having chosen the default, and worth keeping apart.
      */
-    voiceId: text("voice_id"),
+     voiceId: text("voice_id"),
+    /**
+     * The transcription language chosen before starting, as a BCP-47 code from
+     * `@voicemural/talkback/language`.
+     *
+     * Text rather than an enum, like `voiceId`: the catalogue will grow
+     * without a schema migration being the right place to record that. NULL
+     * means no choice was made and BOTH transcription paths auto-detect —
+     * "let the ASR figure it out", which is the default and the right one for
+     * a mixed corpus, and a different fact from having chosen a language.
+     *
+     * Read by the live path (`/api/realtime/session` → bot.py) and by the
+     * ledger worker (apps/worker/src/jobs/transcribe-chunk.ts), so a drive
+     * that stated German is transcribed in German everywhere, not only while
+     * talking back.
+     */
+    sttLanguage: text("stt_language"),
     /**
      * When this drive's speech was folded into the memory index.
      *

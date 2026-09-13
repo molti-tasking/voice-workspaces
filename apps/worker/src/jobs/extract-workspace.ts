@@ -8,6 +8,7 @@ import {
   sessionIdsForUtterances,
 } from "@voicemural/db/workspace";
 import { chat, modelFor, type ChatMessage, type ChatResult } from "@voicemural/llm";
+import { capture, captureGeneration, log } from "@voicemural/telemetry";
 import {
   EXTRACTION_SEED,
   EXTRACTION_TEMPERATURE,
@@ -20,7 +21,6 @@ import {
   taskOpStats,
   type TranscriptSegment,
 } from "@voicemural/workspace";
-import { capture, captureGeneration, log } from "@voicemural/telemetry";
 
 /**
  * Utterances per extraction. Both the trigger threshold and the take size.

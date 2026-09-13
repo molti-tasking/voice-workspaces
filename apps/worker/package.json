@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "workspace": "tsx src/scripts/workspace-admin.ts",
     "test": "vitest run --passWithNoTests",
-    "memory": "tsx src/scripts/memory-admin.ts"
+    "memory": "tsx src/scripts/memory-admin.ts",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@voicemural/db": "workspace:*",

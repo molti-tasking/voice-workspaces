@@ -1,8 +1,8 @@
 "use client";
 
 import { Download } from "lucide-react";
-import { capture } from "@/lib/analytics/client";
 import { useState } from "react";
+import { capture } from "@/lib/analytics/client";
 
 /**
  * Download a topic as a Markdown file.

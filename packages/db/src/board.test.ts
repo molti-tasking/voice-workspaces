@@ -11,11 +11,11 @@ import { config } from "dotenv";
 config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true });
 
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { closeDb, eq, getDb, sql } from "./index";
-import { isDatabaseReachable } from "./testing";
 import { boardEnabledAt, enableBoard } from "./board";
-import { appendOps, appendUserOp, loadOps, loadUserOps } from "./workspace";
 import { extraction, user, workspaceOp } from "./schema";
+import { isDatabaseReachable } from "./testing";
+import { appendOps, appendUserOp, loadOps, loadUserOps } from "./workspace";
+import { closeDb, eq, getDb, sql } from "./index";
 
 const USER_ID = "test-board-user";
 const OP_ID = "00000000-0000-4000-8000-00000000b0a1";

@@ -1,9 +1,9 @@
+import type { Metadata, Viewport } from "next";
 import { ViewTransitions } from "next-view-transitions";
 import { NavDirectionTracker } from "@/components/nav-link";
-import type { Metadata, Viewport } from "next";
+import { ServiceWorker } from "@/components/service-worker";
 import { PostHogIdentity } from "@/lib/analytics/identity";
 import { PostHogPageview } from "@/lib/analytics/pageview";
-import { ServiceWorker } from "@/components/service-worker";
 import { SITE, siteUrl } from "@/lib/site";
 import "./globals.css";
 

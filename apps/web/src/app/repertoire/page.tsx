@@ -1,6 +1,5 @@
-import type { Metadata } from "next";
 import { LayoutGrid, ListTree, Waypoints } from "lucide-react";
-import { Link } from "@/components/nav-link";
+import type { Metadata } from "next";
 import { artifact, getDb, inArray } from "@voicemural/db";
 import {
   invocationStats,
@@ -11,8 +10,9 @@ import {
 } from "@voicemural/db/repertoire";
 import { AccountMenu } from "@/components/account-menu";
 import { BoardLink } from "@/components/board-link";
-import { currentUser } from "@/lib/session";
+import { Link } from "@/components/nav-link";
 import { ViewEvent } from "@/lib/analytics/view-event";
+import { currentUser } from "@/lib/session";
 import { CapabilityCard, type CapabilityView } from "./capability-card";
 import { GrowthCurve, type GrowthPoint } from "./growth-curve";
 import { ProposalCard, type Proposal } from "./proposal-card";

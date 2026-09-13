@@ -5,31 +5,31 @@ config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true }
 
 import { PgBoss, type Job, type JobResult, type JobWithMetadata } from "pg-boss";
 import { closeDb } from "@voicemural/db";
+import { usersNeedingMemoryIndex } from "@voicemural/db/memory";
+import {
+  chunksWithUnclassifiedUtterances,
+  usersWithUnresolvedDirectives,
+} from "@voicemural/db/repertoire";
+import { usersWithPendingSpeech } from "@voicemural/db/workspace";
+import { hasEmbeddings } from "@voicemural/llm";
 import { JOBS } from "@voicemural/shared";
 import { log } from "@voicemural/telemetry";
-import {
-  findUntranscribedChunks,
-  handleTranscribeChunk,
-} from "./jobs/transcribe-chunk";
+import { captureException, installGenerationSink, shutdownAnalytics } from "@voicemural/telemetry";
+import { classifyChunk } from "./jobs/classify-utterance";
+import { MACRO_WINDOW_DAYS, MIN_OCCURRENCES, detectMacros } from "./jobs/detect-macros";
+import { BATCH_SIZE, extractWorkspaceFully } from "./jobs/extract-workspace";
+import { indexMemory } from "./jobs/index-memory";
+import { invokePendingDirectives } from "./jobs/invoke-capability";
 import {
   closeIdleSessions,
   discardTranscribedAudio,
   reportCompletedSessions,
   requeueStuckChunks,
 } from "./jobs/sweep";
-import { captureException, installGenerationSink, shutdownAnalytics } from "@voicemural/telemetry";
-import { BATCH_SIZE, extractWorkspaceFully } from "./jobs/extract-workspace";
-import { classifyChunk } from "./jobs/classify-utterance";
-import { invokePendingDirectives } from "./jobs/invoke-capability";
-import { MACRO_WINDOW_DAYS, MIN_OCCURRENCES, detectMacros } from "./jobs/detect-macros";
-import { indexMemory } from "./jobs/index-memory";
-import { usersNeedingMemoryIndex } from "@voicemural/db/memory";
-import { hasEmbeddings } from "@voicemural/llm";
-import { usersWithPendingSpeech } from "@voicemural/db/workspace";
 import {
-  chunksWithUnclassifiedUtterances,
-  usersWithUnresolvedDirectives,
-} from "@voicemural/db/repertoire";
+  findUntranscribedChunks,
+  handleTranscribeChunk,
+} from "./jobs/transcribe-chunk";
 import { preflightLiteLLM } from "./preflight";
 
 const DATABASE_URL = process.env.DATABASE_URL;

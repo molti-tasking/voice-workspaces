@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { and, captureSession, eq, getDb, utterance } from "@voicemural/db";
 import { currentUserId } from "@/lib/session";
-import { z } from "zod";
 
 export const runtime = "nodejs";
 

@@ -1,8 +1,8 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useEffect } from "react";
 import posthog from "posthog-js";
+import { useEffect } from "react";
 
 /**
  * Routes where session replay is worth its cost.

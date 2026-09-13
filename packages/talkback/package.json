@@ -6,12 +6,14 @@
   "exports": {
     ".": "./src/index.ts",
     "./setting": "./src/setting.ts",
-    "./voice": "./src/voice.ts"
+    "./voice": "./src/voice.ts",
+    "./language": "./src/language.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "eval": "tsx src/eval/run.ts"
+    "eval": "tsx src/eval/run.ts",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@voicemural/db": "workspace:*",

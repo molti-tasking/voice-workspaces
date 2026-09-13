@@ -1,10 +1,10 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { anonymous } from "better-auth/plugins/anonymous";
-import type { AuthProvider } from "@voicemural/shared";
 import { eq, getDb, schema } from "@voicemural/db";
 import { migrateGuestData } from "@voicemural/db/link-guest";
 import { seedStarterRepertoire } from "@voicemural/db/seed";
+import type { AuthProvider } from "@voicemural/shared";
 import { capture, mergeGuestIntoUser, setPersonProperties } from "@/lib/analytics/server";
 import type { SocialProvider } from "@/lib/providers";
 

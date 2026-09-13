@@ -1,7 +1,7 @@
 "use client";
 
-import type { AnalyticsEventMap, AnalyticsEventName } from "@voicemural/shared";
 import posthog from "posthog-js";
+import type { AnalyticsEventMap, AnalyticsEventName } from "@voicemural/shared";
 
 /**
  * Browser-side capture, typed against the shared taxonomy.

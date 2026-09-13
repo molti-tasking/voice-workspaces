@@ -1,7 +1,7 @@
 "use client";
 
-import { usePipecatTalkback } from "./use-pipecat";
 import type { TalkbackOptions, TalkbackState } from "./types";
+import { usePipecatTalkback } from "./use-pipecat";
 
 /**
  * Talk-back.

@@ -73,6 +73,20 @@ export const CaptureSessionCreate = z.object({
    * like `setting`, so a drive was heard in one voice throughout.
    */
   voiceId: z.string().min(1).max(64).optional(),
+  /**
+   * The language the drive is transcribed in, as a BCP-47 code.
+   *
+   * Same shape and same narrowing as `voiceId` — the catalogue lives in
+   * `@voicemural/talkback/language`, the route nulls anything it does not
+   * name. Null/auto-detect is the default and the right one for a mixed
+   * corpus; forcing a code is for a monolingual drive, where detection on a
+   * short utterance can misfire. Immutable per recording, and it governs BOTH
+   * transcription paths — the live STT and the ledger Whisper.
+   *
+   * Max 35 is BCP-47's own outer bound (grandfathered tags); the catalogue's
+   * codes are all two letters.
+   */
+  sttLanguage: z.string().min(2).max(35).optional(),
   deviceInfo: z
     .object({
       userAgent: z.string().max(512).optional(),

@@ -1,10 +1,10 @@
+import { PostHog } from "posthog-node";
 import type {
   AnalyticsEventMap,
   AnalyticsEventName,
   PersonProperties,
   PersonPropertiesOnce,
 } from "@voicemural/shared";
-import { PostHog } from "posthog-node";
 
 /**
  * Server-side PostHog, constructed on first use.

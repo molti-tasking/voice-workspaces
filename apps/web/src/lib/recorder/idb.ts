@@ -166,6 +166,7 @@ export interface StoredSessionRegistration {
   startedAt: string;
   setting?: string;
   voiceId?: string;
+  sttLanguage?: string;
   deviceInfo: { userAgent?: string; mimeType?: string; platform?: string };
 }
 

@@ -1,3 +1,4 @@
+import { isNotNull } from "drizzle-orm";
 import { and, eq, getDb, isNull, lt, sql } from "@voicemural/db";
 import {
   account,
@@ -10,7 +11,6 @@ import {
 } from "@voicemural/db/schema";
 import type { AuthProvider } from "@voicemural/shared";
 import { getStorage } from "@voicemural/shared/storage";
-import { isNotNull } from "drizzle-orm";
 import { capture, log, setPersonProperties } from "@voicemural/telemetry";
 
 /** See transcribe-chunk.ts — audio is transient unless this is set. */

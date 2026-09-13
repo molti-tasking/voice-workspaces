@@ -9,13 +9,13 @@
 import { config } from "dotenv";
 config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true });
 
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
-import { closeDb, getDb } from "./index";
-import { isDatabaseReachable } from "./testing";
-import { listSessionsWithStats } from "./sessions";
-import { loadTimelineSessions } from "./workspace";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { audioChunk, captureSession, user, utterance } from "./schema";
+import { listSessionsWithStats } from "./sessions";
+import { isDatabaseReachable } from "./testing";
+import { loadTimelineSessions } from "./workspace";
+import { closeDb, getDb } from "./index";
 
 const USER_ID = "test-stats-user";
 const OTHER_ID = "test-stats-other";

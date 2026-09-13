@@ -12,10 +12,8 @@
 import { config } from "dotenv";
 config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true });
 
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { inArray } from "drizzle-orm";
-import { closeDb, getDb } from "./index";
-import { isDatabaseReachable } from "./testing";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
   acceptMacroProposal,
   capabilityNames,
@@ -41,6 +39,8 @@ import {
   user,
   utterance,
 } from "./schema";
+import { isDatabaseReachable } from "./testing";
+import { closeDb, getDb } from "./index";
 
 const USER_ID = "test-repertoire-user";
 const SESSION_A = "00000000-0000-4000-8000-0000000000d1";

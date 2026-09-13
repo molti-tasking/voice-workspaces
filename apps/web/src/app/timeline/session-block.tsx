@@ -1,11 +1,13 @@
-import { MarkerLink } from "./marker-link";
 import { ArrowUpRight, CircleDot } from "lucide-react";
-import { formatOffset } from "@voicemural/shared";
 import type {
+  TimelineAgentTurn,
   TimelineMarker,
   TimelineSession,
   TimelineUtterance,
 } from "@voicemural/db/workspace";
+import { formatOffset } from "@voicemural/shared";
+import { AgentTurnBubble } from "@/components/agent-turn-bubble";
+import { MarkerLink } from "./marker-link";
 
 /**
  * One drive on the ledger.
@@ -18,14 +20,16 @@ export function SessionBlock({
   session,
   utterances,
   markers,
+  agentTurns = [],
 }: {
   session: TimelineSession;
   utterances: TimelineUtterance[];
   markers: TimelineMarker[];
+  agentTurns?: TimelineAgentTurn[];
 }) {
   // Merge into one stream so a marker lands between the utterance it consumed
   // and the next one, rather than floating at the end of the session.
-  const items = interleave(utterances, markers);
+  const items = interleave(utterances, markers, agentTurns);
 
   return (
     <section id={`session-${session.id}`} className="scroll-mt-20">
@@ -57,12 +61,43 @@ export function SessionBlock({
               key={`m-${item.marker.extractionId}`}
               marker={item.marker}
             />
+          ) : item.kind === "agent" ? (
+            <AgentRow key={`a-${item.turn.id}`} turn={item.turn} />
           ) : (
             <UtteranceRow key={item.utterance.id} utterance={item.utterance} />
           ),
         )}
       </ol>
     </section>
+  );
+}
+
+/**
+ * One agent turn, in the timeline's gutter.
+ *
+ * Right-aligned against the left-aligned utterances so the two sides of a
+ * conversation are distinguishable without reading, and drawn with the same
+ * bubble `/sessions/[id]` uses — the whole point of extracting it.
+ */
+function AgentRow({ turn }: { turn: TimelineAgentTurn }) {
+  return (
+    <li className="flex gap-3 py-0.5">
+      <span className="w-12 shrink-0 pt-1 text-right font-mono text-[10px] text-white/20 tabular-nums">
+        {turn.occurredAt.toLocaleTimeString(undefined, {
+          hour: "2-digit",
+          minute: "2-digit",
+        })}
+      </span>
+      <div className="min-w-0 flex-1 text-right">
+        <AgentTurnBubble
+          seq={turn.seq}
+          text={turn.text}
+          generatedText={turn.generatedText}
+          bargedIn={turn.bargedIn}
+          error={turn.error}
+        />
+      </div>
+    </li>
   );
 }
 
@@ -139,18 +174,32 @@ function MarkerRow({ marker }: { marker: TimelineMarker }) {
 
 type Item =
   | { kind: "utterance"; at: number; utterance: TimelineUtterance }
-  | { kind: "marker"; at: number; marker: TimelineMarker };
+  | { kind: "marker"; at: number; marker: TimelineMarker }
+  | { kind: "agent"; at: number; turn: TimelineAgentTurn };
 
-/** Utterances and markers on one stream, markers after the utterance they consumed. */
+/**
+ * Utterances, agent turns and markers on one stream.
+ *
+ * Markers sort after the utterance they consumed; agent turns sort by when they
+ * were spoken. Agent turns are resolved to wall-clock in the loader, because
+ * this page's axis is absolute time across every drive while `agent_turn`
+ * stores offsets into one.
+ */
 function interleave(
   utterances: TimelineUtterance[],
   markers: TimelineMarker[],
+  agentTurns: TimelineAgentTurn[] = [],
 ): Item[] {
   const items: Item[] = [
     ...utterances.map((u) => ({
       kind: "utterance" as const,
       at: u.occurredAt.getTime(),
       utterance: u,
+    })),
+    ...agentTurns.map((t) => ({
+      kind: "agent" as const,
+      at: t.occurredAt.getTime(),
+      turn: t,
     })),
     ...markers.map((m) => ({
       kind: "marker" as const,

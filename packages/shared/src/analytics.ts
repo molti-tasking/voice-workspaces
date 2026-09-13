@@ -50,6 +50,12 @@ export interface AnalyticsEventMap {
     setting_source?: "device" | "motion" | "default" | "chosen" | null;
     /** The ElevenLabs voice chosen for talk-back. Null when none was chosen. */
     voice_id?: string | null;
+    /**
+     * The transcription language chosen for the drive, narrowed to the
+     * catalogue. Null is auto-detect — and, unlike `voice_id`, a real choice
+     * the picker offers rather than an absence of one.
+     */
+    stt_language?: string | null;
   };
   recording_stopped: {
     capture_session_id: string;
@@ -92,6 +98,8 @@ export interface AnalyticsEventMap {
     setting?: string | null;
     /** The voice stored on the session, narrowed to the catalogue; null if none. */
     voice_id?: string | null;
+    /** The transcription language stored on the session; null = auto-detect. */
+    stt_language?: string | null;
   };
   /**
    * Emitted once per session by the worker, after late chunks have settled.

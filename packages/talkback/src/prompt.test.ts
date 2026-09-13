@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  OPENING_NUDGE,
   OUTPUT_CONTRACT,
-  extractDrafts,
+  SILENCE_NUDGE,
   SILENCE_TOKEN,
   SYSTEM_PROMPT,
   cleanReply,
   composeSystemPrompt,
+  extractDrafts,
   isSilence,
+  renderSilenceNudge,
 } from "./prompt";
 import { PROACTIVITY_STANZAS, SETTING_PROFILES } from "./setting";
 
@@ -105,9 +108,43 @@ describe("the base prompt's stance", () => {
     expect(SYSTEM_PROMPT).toMatch(/Never ask them to explain a project it already describes/);
   });
 
+  /**
+   * talkback-6's addition: the unprompted turn. The prompt must bless offering
+   * without being asked — the engine creates the moment, but this stance is
+   * what makes the model take it — and it must keep the definition of
+   * helpfulness narrow, or "more proactive" decays into "talks more".
+   */
+  it("permits one unprompted offer, and defines helpful as the right sentence rather than a longer answer", () => {
+    expect(SYSTEM_PROMPT).toMatch(/OFFER unprompted, once/);
+    expect(SYSTEM_PROMPT).toMatch(/right sentence at the right moment, not a longer answer/);
+    // The offer is still bounded by the same rules as every other turn.
+    expect(SYSTEM_PROMPT).toMatch(/not mid-thought/);
+  });
+
   it("knows what a [Speaker N] tag means", () => {
     expect(SYSTEM_PROMPT).toContain("[Speaker 1]");
     expect(SYSTEM_PROMPT).toMatch(/answer the person who asked/i);
+  });
+});
+
+describe("the proactive engine's instructions, which bot.py mirrors", () => {
+  it("keeps every unprompted turn optional: both templates offer the sentinel", () => {
+    expect(SILENCE_NUDGE).toContain("{silence}");
+    expect(renderSilenceNudge(25)).toContain("<silence>");
+    // The opening turn is the one place the model has nothing to decline
+    // against, so the template must be small enough that "a few words" is the
+    // ceiling, not the floor.
+    expect(OPENING_NUDGE).toMatch(/one short sentence/);
+    expect(OPENING_NUDGE).not.toContain("{secs}");
+  });
+
+  it("substitutes the silence length and nothing else", () => {
+    const rendered = renderSilenceNudge(12);
+    expect(rendered).toContain("12 seconds");
+    expect(rendered).not.toContain("{secs}");
+    expect(rendered).not.toContain("{silence}");
+    // The nudge never asserts the driver said anything — it reports quiet.
+    expect(rendered).toMatch(/quiet for 12 seconds/);
   });
 });
 

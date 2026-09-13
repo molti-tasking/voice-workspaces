@@ -1,5 +1,5 @@
-import Link from "next/link";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { listSessionsWithStats } from "@voicemural/db/sessions";
 import { formatOffset } from "@voicemural/shared";
 import { AccountMenu } from "@/components/account-menu";
