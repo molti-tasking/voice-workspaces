@@ -1,24 +1,61 @@
-import type { BoardCard as Card, JudgedTransition } from "@voicemural/workspace";
+"use client";
+
+import { draggable } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
+import { useEffect, useRef, useState } from "react";
+import type { TaskState } from "@voicemural/workspace";
 import { topicIcon } from "@/app/workspace/icons";
-import { CardActions } from "./card-actions";
+import type { CardView } from "./card-view";
+import type { DragData } from "./drag";
 
 /**
  * One card: the task, where it came from, and how it got to this column.
  *
- * The marker under the text is the thing this page exists to show. A card
- * speech moved says so, until the person either leaves it long enough to count
- * as kept or moves it themselves — and when they do, the card says which way.
- * The evaluation counts these from the ledger; the card just makes the count
- * legible to the person it is about.
+ * The marker under the text is the thing this page exists to show — see
+ * `markerFor` in card-view.ts, where it is computed and tested. The card only
+ * renders it.
  *
- * A server component apart from the buttons.
+ * A client component since the board gained drag and drop. It draws from
+ * `CardView` rather than the fold's `BoardCard`, so the revision history and
+ * the full block never cross into the browser.
  */
-export function BoardCard({ card, outcome }: { card: Card; outcome?: JudgedTransition }) {
-  const Icon = topicIcon(card.topic.icon);
-  const { block } = card;
+export function BoardCard({ card }: { card: CardView }) {
+  const ref = useRef<HTMLElement | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const Icon = topicIcon(card.topicIcon);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    return draggable({
+      element,
+      // Read back by the board's monitor. `from` is here so a drop onto the
+      // card's own column can be discarded without a round trip.
+      getInitialData: (): DragData => ({
+        cardId: card.cardId,
+        blockId: card.blockId,
+        from: card.state,
+      }),
+      onDragStart: () => setDragging(true),
+      onDrop: () => setDragging(false),
+    });
+  }, [card.cardId, card.blockId, card.state]);
 
   return (
-    <article className="rounded-xl border border-[var(--color-line)] bg-[var(--color-ink-soft)]/40 p-3">
+    <article
+      ref={ref}
+      /*
+       * The whole card drags, as on every board this resembles. The buttons
+       * inside still take a click — a native drag only begins once the pointer
+       * moves — so the accessible path is not shadowed by the convenient one.
+       */
+      className={[
+        "rounded-xl border border-line bg-ink-soft/40 p-3",
+        "cursor-grab active:cursor-grabbing",
+        // Left in place at reduced opacity rather than removed: taking it out
+        // of the column would reflow every other card under the cursor.
+        dragging ? "opacity-40" : "",
+      ].join(" ")}
+    >
       <header className="mb-1.5 flex items-center gap-1.5 text-[11px] text-white/30">
         {/*
           `topicIcon` selects from a module-level map of Lucide components, so
@@ -27,49 +64,27 @@ export function BoardCard({ card, outcome }: { card: Card; outcome?: JudgedTrans
         */}
         {/* eslint-disable-next-line react-hooks/static-components */}
         <Icon size={12} aria-hidden className="shrink-0" />
-        <span className="min-w-0 truncate">{card.topic.title}</span>
+        <span className="min-w-0 truncate">{card.topicTitle}</span>
         <StateChip state={card.state} />
       </header>
 
-      <p className="text-sm leading-snug">{block.text}</p>
+      <p className="text-sm leading-snug">{card.text}</p>
 
       <p className="mt-1.5 text-[11px] text-white/30">
-        said{" "}
-        {block.occurredAt.toLocaleDateString(undefined, { day: "numeric", month: "short" })} ·{" "}
-        {block.spans.length} utterance{block.spans.length === 1 ? "" : "s"}
+        said {card.said} · {card.spanCount} utterance
+        {card.spanCount === 1 ? "" : "s"}
       </p>
 
-      <Marker card={card} outcome={outcome} />
-
-      <CardActions blockId={block.id} state={card.state} />
+      {card.marker && (
+        <p className="mt-1 font-mono text-[10px] text-amber-300/70">
+          {card.marker}
+        </p>
+      )}
     </article>
   );
 }
 
-/** How the card got here, in the person's terms. */
-function Marker({ card, outcome }: { card: Card; outcome?: JudgedTransition }) {
-  const last = card.lastTransition;
-  const previous = card.history[card.history.length - 2];
-  let text: string | null = null;
-
-  if (last.via === "speech" && last.from !== null) {
-    text = outcome?.outcome === "kept" ? "moved here by speech · kept" : "moved here by speech";
-  } else if (last.via === "user" && previous?.via === "speech") {
-    text = last.to === previous.from ? "you moved it back" : "you moved it on";
-  } else if (last.via === "user") {
-    text = "you moved it";
-  }
-
-  if (card.staleSessions >= 2) {
-    const stale = `untouched for ${card.staleSessions} drives`;
-    text = text ? `${text} · ${stale}` : stale;
-  }
-
-  if (!text) return null;
-  return <p className="mt-1 font-mono text-[10px] text-amber-300/70">{text}</p>;
-}
-
-function StateChip({ state }: { state: Card["state"] }) {
+function StateChip({ state }: { state: TaskState }) {
   const tone =
     state === "done"
       ? "text-emerald-300/80"
@@ -78,5 +93,9 @@ function StateChip({ state }: { state: Card["state"] }) {
         : state === "open"
           ? "text-white/50"
           : "text-amber-300";
-  return <span className={`ml-auto shrink-0 font-mono text-[10px] ${tone}`}>{state}</span>;
+  return (
+    <span className={`ml-auto shrink-0 font-mono text-[10px] ${tone}`}>
+      {state}
+    </span>
+  );
 }

@@ -3,13 +3,14 @@ import { notFound } from "next/navigation";
 import { LayoutGrid, ListTree, Sparkles, Waypoints } from "lucide-react";
 import { boardEnabledAt } from "@voicemural/db/board";
 import { loadOps } from "@voicemural/db/workspace";
-import { TaskState, foldBoard, judge } from "@voicemural/workspace";
+import { foldBoard, judge } from "@voicemural/workspace";
 import { AccountMenu } from "@/components/account-menu";
 import { Link } from "@/components/nav-link";
 import { ViewEvent } from "@/lib/analytics/view-event";
 import { parseInstant } from "@/lib/instant";
 import { currentUser } from "@/lib/session";
-import { BoardCard } from "./board-card";
+import { BoardSurface } from "./board-surface";
+import { toCardView } from "./card-view";
 
 export const dynamic = "force-dynamic";
 
@@ -131,7 +132,7 @@ export default async function BoardPage({
           </Link>
           <Link
             href="/record"
-            className="rounded-lg bg-[var(--color-accent)] px-4 py-2 font-medium text-white"
+            className="rounded-lg bg-accent px-4 py-2 font-medium text-white"
           >
             Record
           </Link>
@@ -142,27 +143,15 @@ export default async function BoardPage({
       {board.cards.length === 0 ? (
         <EmptyState hasOps={ops.length > 0} />
       ) : (
-        <div className="grid gap-4 md:grid-cols-5">
-          {TaskState.options.map((state) => (
-            <section key={state} className="min-w-0">
-              <h2 className="mb-2 flex items-baseline gap-2 text-[11px] tracking-wide text-white/30 uppercase">
-                {state}
-                <span className="font-mono text-[10px] text-white/20">
-                  {board.columns[state].length}
-                </span>
-              </h2>
-              <div className="space-y-3">
-                {board.columns[state].map((card) => (
-                  <BoardCard
-                    key={card.cardId}
-                    card={card}
-                    outcome={outcomeByBlock.get(card.lastTransition.blockId)}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
+        /* The fold stays here. `BoardSurface` is a client component because a
+           drop target and an optimistically-moved card are one piece of state,
+           but what crosses is `CardView[]` — no revision history, no blocks,
+           no transitions. Columns are rebuilt from `state` on the other side. */
+        <BoardSurface
+          cards={board.cards.map((card) =>
+            toCardView(card, outcomeByBlock.get(card.lastTransition.blockId)),
+          )}
+        />
       )}
     </div>
   );
@@ -170,7 +159,7 @@ export default async function BoardPage({
 
 function EmptyState({ hasOps }: { hasOps: boolean }) {
   return (
-    <div className="rounded-xl border border-dashed border-[var(--color-line)] p-10 text-center">
+    <div className="rounded-xl border border-dashed border-line p-10 text-center">
       <p className="mb-1 font-medium">Nothing on the board yet</p>
       <p className="text-sm text-white/40">
         {hasOps

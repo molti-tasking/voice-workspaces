@@ -323,6 +323,30 @@ def fetch_session(ticket: str | None) -> dict:
         return {"systemPrompt": FALLBACK_SYSTEM_PROMPT, "degraded": True}
 
 
+def deepgram_utterance_end_ms() -> int:
+    """`DEEPGRAM_UTTERANCE_END_MS`, never below the value Deepgram accepts.
+
+    Clamped rather than validated at boot: a drive already in progress is worth
+    more than a strict reading of the config, and the log line says plainly what
+    was ignored. See the call site for what an unclamped value costs.
+    """
+    minimum = 1000
+    raw = os.getenv("DEEPGRAM_UTTERANCE_END_MS", str(minimum))
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(f"[stt] DEEPGRAM_UTTERANCE_END_MS={raw!r} is not a number, using {minimum}")
+        return minimum
+    if value < minimum:
+        logger.warning(
+            f"[stt] DEEPGRAM_UTTERANCE_END_MS={value} is below Deepgram's minimum of "
+            f"{minimum}; using {minimum}. Below it the websocket is refused with a 400 "
+            f"and nothing is ever transcribed."
+        )
+        return minimum
+    return value
+
+
 def build_stt(session_language: str | None = None):
     """Transcription, from whichever provider STT_PROVIDER names.
 
@@ -382,7 +406,15 @@ def build_stt(session_language: str | None = None):
                 # Deepgram's own endpointing. Left near Silero's `stop_secs` so
                 # the two backends still feel alike — this is the dial to move
                 # if it starts cutting people off mid-thought.
-                utterance_end_ms=int(os.getenv("DEEPGRAM_UTTERANCE_END_MS", "1000")),
+                #
+                # CLAMPED, because below 1000 Deepgram REJECTS THE WEBSOCKET with
+                # a bare 400 and the drive then looks exactly like a dead
+                # microphone: the transport connects, VAD fires, audio flows, and
+                # no transcript ever arrives, so the agent never answers. Measured
+                # against the live API — 999 is refused, 1000 accepted. Tuning
+                # this down for latency is the obvious thing to try and it
+                # silently costs the whole conversation.
+                utterance_end_ms=deepgram_utterance_end_ms(),
             ),
         )
 

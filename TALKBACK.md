@@ -349,6 +349,15 @@ never learns when playback ended — and the page shows it as `~`. The narrated
 rule itself is a prompt failure; `two-people-narrated-rule` in `cases.ts` and
 the `narrated decision` check in `checks.ts` hold the line there.
 
+**`DEEPGRAM_UTTERANCE_END_MS` below 1000 kills live STT outright.** Deepgram
+refuses the websocket with a bare `400 Unexpected error when initializing
+websocket connection`, and the drive then looks exactly like a dead microphone:
+the transport connects, VAD fires, `[in]`/`[stt]` audio frames climb, and no
+transcript ever arrives, so the agent never answers. Measured against the live
+API — 999 refused, 1000 accepted. Tuning it down for latency is the obvious
+thing to try and it costs the whole conversation. `deepgram_utterance_end_ms()`
+now clamps and warns, so the value can only make replies slower, never absent.
+
 **Whisper feeds on itself.** It conditions each segment on segments it already
 produced *within the same file*, so one bad guess seeds the next and the decoder
 locks into `"I will show you how to make a simple, easy, and easy to make I will
