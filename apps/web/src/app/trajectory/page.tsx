@@ -1,11 +1,11 @@
-import { ArrowRight, LayoutGrid, ListTree } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import type { Metadata } from "next";
 import { loadOps } from "@voicemural/db/workspace";
 import { buildTrajectory } from "@voicemural/workspace";
 import { topicIcon } from "@/app/workspace/icons";
-import { AccountMenu } from "@/components/account-menu";
-import { BoardLink } from "@/components/board-link";
+import { AppDock } from "@/components/app-dock";
 import { Link } from "@/components/nav-link";
+import { NavMenu } from "@/components/nav-menu";
 import { ViewEvent } from "@/lib/analytics/view-event";
 import { parseInstant } from "@/lib/instant";
 import { currentUser } from "@/lib/session";
@@ -57,7 +57,7 @@ export default async function TrajectoryPage({
   const trajectory = buildTrajectory(ops, { bucket, asOf });
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-10">
+    <div className="mx-auto max-w-6xl px-6 pt-10 pb-40">
       <ViewEvent
         event="trajectory_viewed"
         properties={{
@@ -81,30 +81,7 @@ export default async function TrajectoryPage({
           </p>
         </div>
 
-        <nav className="flex items-center gap-4 text-sm">
-          <Link
-            href="/workspace"
-            className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
-          >
-            <LayoutGrid size={14} aria-hidden />
-            Workspace
-          </Link>
-          <BoardLink userId={user.id} />
-          <Link
-            href="/timeline"
-            className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
-          >
-            <ListTree size={14} aria-hidden />
-            Timeline
-          </Link>
-          <Link
-            href="/record"
-            className="rounded-lg bg-[var(--color-accent)] px-4 py-2 font-medium text-white"
-          >
-            Record
-          </Link>
-          <AccountMenu />
-        </nav>
+        <NavMenu />
       </header>
 
       {trajectory.buckets.length === 0 ? (
@@ -121,6 +98,8 @@ export default async function TrajectoryPage({
           </div>
         </>
       )}
+
+      <AppDock />
     </div>
   );
 }

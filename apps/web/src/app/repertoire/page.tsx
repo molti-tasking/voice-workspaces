@@ -1,4 +1,3 @@
-import { LayoutGrid, ListTree, Waypoints } from "lucide-react";
 import type { Metadata } from "next";
 import { artifact, getDb, inArray } from "@voicemural/db";
 import {
@@ -8,9 +7,9 @@ import {
   loadCapabilityVersions,
   loadRepertoire,
 } from "@voicemural/db/repertoire";
-import { AccountMenu } from "@/components/account-menu";
-import { BoardLink } from "@/components/board-link";
+import { AppDock } from "@/components/app-dock";
 import { Link } from "@/components/nav-link";
+import { NavMenu } from "@/components/nav-menu";
 import { ViewEvent } from "@/lib/analytics/view-event";
 import { currentUser } from "@/lib/session";
 import { CapabilityCard, type CapabilityView } from "./capability-card";
@@ -128,7 +127,7 @@ export default async function RepertoirePage() {
   const totalFires = stats.reduce((n, s) => n + s.fires, 0);
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-10">
+    <div className="mx-auto max-w-6xl px-6 pt-10 pb-40">
       <ViewEvent
         event="repertoire_viewed"
         properties={{
@@ -148,31 +147,7 @@ export default async function RepertoirePage() {
           </p>
         </div>
 
-        <nav className="flex items-center gap-4 text-sm">
-          <Link
-            href="/workspace"
-            className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
-          >
-            <LayoutGrid size={14} aria-hidden />
-            Workspace
-          </Link>
-          <BoardLink userId={user.id} />
-          <Link
-            href="/trajectory"
-            className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
-          >
-            <Waypoints size={14} aria-hidden />
-            Trajectory
-          </Link>
-          <Link
-            href="/timeline"
-            className="flex items-center gap-1.5 text-white/40 underline-offset-4 hover:underline"
-          >
-            <ListTree size={14} aria-hidden />
-            Timeline
-          </Link>
-          <AccountMenu />
-        </nav>
+        <NavMenu />
       </header>
 
       {proposals.length > 0 && (
@@ -218,6 +193,8 @@ export default async function RepertoirePage() {
           })}
         </div>
       )}
+
+      <AppDock />
     </div>
   );
 }

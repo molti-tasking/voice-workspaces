@@ -5,6 +5,7 @@ import { and, asc, eq, getDb } from "@voicemural/db";
 import { loadSessionDrafts } from "@voicemural/db/drafts";
 import { agentTurn, audioChunk, captureSession, utterance } from "@voicemural/db/schema";
 import { findCoverageGaps, formatOffset } from "@voicemural/shared";
+import { AppDock } from "@/components/app-dock";
 import { ViewEvent } from "@/lib/analytics/view-event";
 import { currentUser } from "@/lib/session";
 import { AutoRefresh } from "./auto-refresh";
@@ -99,7 +100,7 @@ export default async function SessionPage({
   const drafts = await loadSessionDrafts(id);
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10">
+    <div className="mx-auto max-w-3xl px-6 pt-10 pb-40">
       <AutoRefresh pending={untranscribed.length} />
       <ViewEvent
         event="transcript_viewed"
@@ -165,6 +166,8 @@ export default async function SessionPage({
       <SessionDrafts drafts={drafts} />
 
       <Transcript rows={rows} turns={turns} />
+
+      <AppDock />
     </div>
   );
 }

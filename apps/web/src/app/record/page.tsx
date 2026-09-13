@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { AppDock } from "@/components/app-dock";
 import { currentUser } from "@/lib/session";
 import { RecorderClient } from "./recorder-client";
 
@@ -16,5 +17,13 @@ export const metadata: Metadata = {
 export default async function RecordPage() {
   const user = await currentUser();
   if (!user) redirect("/");
-  return <RecorderClient />;
+  return (
+    <>
+      <RecorderClient />
+      {/* The dock is here so a drive can be left without being stopped — that
+          is the whole reason capture was hoisted above the router. It renders
+          its navigation only on this route; the transport is the big button. */}
+      <AppDock />
+    </>
+  );
 }
