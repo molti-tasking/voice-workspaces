@@ -8,7 +8,6 @@
  * it runs inside a transaction.
  */
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { getDb } from "./index";
 import {
   capability,
   capabilityOrigin,
@@ -22,6 +21,7 @@ import {
   workspaceCursor,
   workspaceOp,
 } from "./schema";
+import { getDb } from "./index";
 
 export interface GuestMigrationResult {
   sessionsMoved: number;

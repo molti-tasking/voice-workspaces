@@ -7,9 +7,9 @@
  */
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { closeDb, getDb } from "./index";
-import { capability, capabilityOrigin, capabilityVersion, user } from "./schema";
 import { and, eq } from "drizzle-orm";
+import { capability, capabilityOrigin, capabilityVersion, user } from "./schema";
+import { closeDb, getDb } from "./index";
 
 interface StarterCapability {
   type: "mode" | "persona" | "action" | "rule";

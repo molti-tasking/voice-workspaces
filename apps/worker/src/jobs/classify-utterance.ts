@@ -25,6 +25,7 @@ import {
 } from "@voicemural/db/repertoire";
 import { chat, modelFor } from "@voicemural/llm";
 import { isDirectiveCandidate } from "@voicemural/shared";
+import { capture, log } from "@voicemural/telemetry";
 import {
   CLASSIFY_PROMPT_VERSION,
   CLASSIFY_TEMPERATURE,
@@ -32,7 +33,6 @@ import {
   parseClassificationResponse,
   type ClassifyCandidate,
 } from "@voicemural/workspace";
-import { capture, log } from "@voicemural/telemetry";
 
 /**
  * Confidence written for a line the gate rejected outright.

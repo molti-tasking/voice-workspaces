@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { captureSession, eq, getDb } from "@voicemural/db";
 import { recordDraft } from "@voicemural/db/drafts";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
-import { z } from "zod";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

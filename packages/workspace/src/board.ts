@@ -110,7 +110,11 @@ function transitionsFrom(
   for (const stored of relevant) {
     const { op } = stored;
     let block: Block | undefined;
-    let from: TaskState | null = null;
+    // No initialiser, matching `to` below: every branch that reaches the push
+    // assigns it, and the `default` case continues. A `= null` here was dead —
+    // read by nothing, and it hid that fact from the compiler's own
+    // definite-assignment check.
+    let from: TaskState | null;
     let to: TaskState | "retired";
 
     switch (op.type) {

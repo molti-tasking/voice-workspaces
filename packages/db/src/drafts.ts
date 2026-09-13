@@ -9,8 +9,8 @@
  * the conversation is ephemeral.
  */
 import { asc, eq } from "drizzle-orm";
-import { getDb } from "./index";
 import { agentDraft } from "./schema";
+import { getDb } from "./index";
 
 export interface Draft {
   id: string;

@@ -2,7 +2,6 @@
 
 import { draggable } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import { useEffect, useRef, useState } from "react";
-import type { TaskState } from "@voicemural/workspace";
 import { topicIcon } from "@/app/workspace/icons";
 import type { CardView } from "./card-view";
 import type { DragData } from "./drag";

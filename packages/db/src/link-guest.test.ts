@@ -11,12 +11,9 @@
 import { config } from "dotenv";
 config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true });
 
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { and, eq, inArray } from "drizzle-orm";
-import { closeDb, getDb } from "./index";
-import { isDatabaseReachable } from "./testing";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { migrateGuestData } from "./link-guest";
-import { seedStarterRepertoire } from "./seed";
 import {
   audioChunk,
   capability,
@@ -31,6 +28,9 @@ import {
   workspaceCursor,
   workspaceOp,
 } from "./schema";
+import { seedStarterRepertoire } from "./seed";
+import { isDatabaseReachable } from "./testing";
+import { closeDb, getDb } from "./index";
 
 const GUEST_ID = "test-guest-user";
 const TARGET_ID = "test-target-user";

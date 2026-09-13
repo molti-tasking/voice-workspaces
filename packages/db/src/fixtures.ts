@@ -14,7 +14,6 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import { enableBoard } from "./board";
-import { closeDb, getDb } from "./index";
 import {
   artifact,
   audioChunk,
@@ -25,6 +24,7 @@ import {
   utterance,
   workspaceOp,
 } from "./schema";
+import { closeDb, getDb } from "./index";
 
 const CHUNK_MS = 10_000;
 const MIME = "audio/wav";

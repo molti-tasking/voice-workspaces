@@ -9,8 +9,8 @@
  * conversation is ephemeral") applies to the screen too.
  */
 import { and, asc, desc, eq, gte, max, sql } from "drizzle-orm";
-import { getDb } from "./index";
 import { agentDraft, captureSession, directive, utterance, workspaceOp } from "./schema";
+import { getDb } from "./index";
 
 export interface LiveSession {
   id: string;

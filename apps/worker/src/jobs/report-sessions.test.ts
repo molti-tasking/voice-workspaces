@@ -25,8 +25,8 @@ config({ path: new URL("../../../../.env", import.meta.url).pathname, quiet: tru
 import { inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeDb, getDb } from "@voicemural/db";
-import { isDatabaseReachable } from "@voicemural/db/testing";
 import { audioChunk, captureSession, user, utterance } from "@voicemural/db/schema";
+import { isDatabaseReachable } from "@voicemural/db/testing";
 
 const captured: { event: string; distinctId: string; properties: Record<string, unknown> }[] = [];
 

@@ -1,16 +1,16 @@
-import type { Metadata } from "next";
-import { Link } from "@/components/nav-link";
 import { ListTree, Sparkles, Waypoints, X } from "lucide-react";
-import { loadOps } from "@voicemural/db/workspace";
+import type { Metadata } from "next";
 import { listSessionsWithStats } from "@voicemural/db/sessions";
+import { loadOps } from "@voicemural/db/workspace";
 import { diffWorkspace, foldWorkspace } from "@voicemural/workspace";
 import { AccountMenu } from "@/components/account-menu";
 import { BoardLink } from "@/components/board-link";
+import { Link } from "@/components/nav-link";
+import { SurveyHost } from "@/components/survey-host";
+import { ViewEvent } from "@/lib/analytics/view-event";
 import { parseInstant } from "@/lib/instant";
 import { currentUser } from "@/lib/session";
 import { TopicCard } from "./topic-card";
-import { ViewEvent } from "@/lib/analytics/view-event";
-import { SurveyHost } from "@/components/survey-host";
 
 export const dynamic = "force-dynamic";
 

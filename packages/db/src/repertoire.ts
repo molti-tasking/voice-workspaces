@@ -6,7 +6,6 @@
  * so it can be tested without a database.
  */
 import { and, asc, count, desc, eq, gte, inArray, isNull, max, sql } from "drizzle-orm";
-import { getDb } from "./index";
 import {
   audioChunk,
   capability,
@@ -18,6 +17,7 @@ import {
   macroProposal,
   utterance,
 } from "./schema";
+import { getDb } from "./index";
 
 /* ---------------------------------------------------------------------------
  * The repertoire

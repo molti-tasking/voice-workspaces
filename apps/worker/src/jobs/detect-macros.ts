@@ -18,13 +18,14 @@
  *    output is offered to a human; caching it there would poison a table whose
  *    determinism the workspace depends on.
  */
+import { artifact, getDb } from "@voicemural/db";
 import {
   existingCanonicalForms,
   proposeMacro,
   unresolvedDirectives,
 } from "@voicemural/db/repertoire";
-import { artifact, getDb } from "@voicemural/db";
 import { chat } from "@voicemural/llm";
+import { capture, log } from "@voicemural/telemetry";
 import {
   buildMacroPrompt,
   mineRecurring,
@@ -32,7 +33,6 @@ import {
   MIN_OCCURRENCES,
   type MacroCandidate,
 } from "@voicemural/workspace";
-import { capture, log } from "@voicemural/telemetry";
 
 export { MIN_OCCURRENCES };
 

@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import {
   PipecatClient,
   RTVIEvent,
@@ -9,6 +8,7 @@ import {
   type TranscriptData,
 } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
+import { useEffect, useState } from "react";
 import { subscribeStream } from "@/lib/recorder/mic-bus";
 import {
   MAX_VISIBLE_TURNS,

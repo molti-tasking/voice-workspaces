@@ -26,7 +26,8 @@
     "seed": "tsx src/seed.ts",
     "fixtures": "tsx src/fixtures.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@voicemural/shared": "workspace:*",

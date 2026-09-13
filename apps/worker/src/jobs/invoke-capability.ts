@@ -12,13 +12,13 @@
  * anything irreversible or outbound confirms first — and that confirmation may
  * wait for a pause rather than interrupting a thought.
  */
+import { getDb, artifact, eq, utterance } from "@voicemural/db";
 import {
   directivesAwaitingInvocation,
   loadRepertoire,
   recordInvocation,
 } from "@voicemural/db/repertoire";
 import { capture, log } from "@voicemural/telemetry";
-import { getDb, artifact, eq, utterance } from "@voicemural/db";
 
 export interface InvokeOutcome {
   fired: number;

@@ -5,32 +5,29 @@
  * @voicemural/workspace, which knows nothing about a database. That split is
  * what lets the workspace toolkit run against any transcript.
  */
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  getDb,
-  gt,
-  inArray,
-  isNull,
-  or,
-  sql,
-} from "./index";
+import type {
+  StoredOp,
+  TranscriptSegment,
+  WorkspaceOp,
+} from "@voicemural/workspace";
 import {
   agentTurn,
-  audioChunk,
   captureSession,
   extraction,
   utterance,
   workspaceCursor,
   workspaceOp,
 } from "./schema";
-import type {
-  StoredOp,
-  TranscriptSegment,
-  WorkspaceOp,
-} from "@voicemural/workspace";
+import {
+  and,
+  asc,
+  eq,
+  getDb,
+  inArray,
+  isNull,
+  or,
+  sql,
+} from "./index";
 
 /* ---------------------------------------------------------------------------
  * Reading the log

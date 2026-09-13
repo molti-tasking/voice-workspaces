@@ -12,7 +12,7 @@
 import { config } from "dotenv";
 config({ path: new URL("../../../../.env", import.meta.url).pathname, quiet: true });
 
-import { closeDb, eq, getDb } from "@voicemural/db";
+import { closeDb, getDb } from "@voicemural/db";
 import { user } from "@voicemural/db/schema";
 import {
   appendOps,
@@ -25,10 +25,10 @@ import {
   resetCursor,
   sessionIdsForUtterances,
 } from "@voicemural/db/workspace";
+import { log } from "@voicemural/telemetry";
 import type { StoredOp } from "@voicemural/workspace";
 import { foldWorkspace, parseExtractionResponse } from "@voicemural/workspace";
 import { extractWorkspaceFully } from "../jobs/extract-workspace";
-import { log } from "@voicemural/telemetry";
 
 /**
  * The manual board gestures, which `clearOps` would otherwise delete.

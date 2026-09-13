@@ -1,0 +1,54 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": [
+        "scripts/*.mjs",
+        "eslint.config.mjs",
+        "eslint.base.mjs"
+      ],
+      "project": [
+        "scripts/**/*.mjs",
+        "eslint*.mjs"
+      ]
+    },
+    "apps/web": {
+      "entry": [
+        "src/app/**/{page,layout,route,not-found,error,loading,template,default}.{ts,tsx}",
+        "src/app/**/{icon,apple-icon,opengraph-image,twitter-image,sitemap,robots,manifest}.{ts,tsx}",
+        "src/**/*.test.{ts,tsx}",
+        "eslint.config.mjs",
+        "postcss.config.mjs",
+        "next.config.ts"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}"
+      ]
+    },
+    "apps/worker": {
+      "entry": [
+        "src/index.ts",
+        "src/scripts/*.ts",
+        "src/**/*.test.ts"
+      ],
+      "project": [
+        "src/**/*.ts"
+      ]
+    },
+    "packages/*": {
+      "entry": [
+        "src/index.ts",
+        "src/**/*.test.ts"
+      ],
+      "project": [
+        "src/**/*.ts"
+      ]
+    }
+  },
+  "ignore": [
+    "**/drizzle/**"
+  ],
+  "ignoreDependencies": [
+    "tailwindcss"
+  ]
+}

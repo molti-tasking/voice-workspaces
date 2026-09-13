@@ -1,6 +1,6 @@
+import { LayoutGrid, ListTree, Sparkles, Waypoints } from "lucide-react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { LayoutGrid, ListTree, Sparkles, Waypoints } from "lucide-react";
 import { boardEnabledAt } from "@voicemural/db/board";
 import { loadOps } from "@voicemural/db/workspace";
 import { foldBoard, judge } from "@voicemural/workspace";

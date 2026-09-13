@@ -6,16 +6,16 @@ import { formatOffset, type CaptureSetting } from "@voicemural/shared";
 // The `/setting` subpath, NOT the package index: the index re-exports
 // retrieval.ts, which imports @voicemural/db, and that drags the Postgres
 // driver into the browser bundle. setting.ts is pure by construction.
+import { STT_LANGUAGES } from "@voicemural/talkback/language";
 import { SETTINGS, SETTING_PROFILES } from "@voicemural/talkback/setting";
 import { VOICES } from "@voicemural/talkback/voice";
-import { STT_LANGUAGES } from "@voicemural/talkback/language";
-import { useRecorder } from "@/lib/recorder/use-recorder";
-import { useDetectedSetting } from "@/lib/recorder/detect-setting";
-import { useVoice } from "@/lib/recorder/voice-store";
-import { useSttLanguage } from "@/lib/recorder/language-store";
-import { useTalkback } from "@/lib/talkback/use-talkback";
-import type { TalkbackTurn } from "@/lib/talkback/types";
 import { useCues } from "@/lib/display/use-cues";
+import { useDetectedSetting } from "@/lib/recorder/detect-setting";
+import { useSttLanguage } from "@/lib/recorder/language-store";
+import { useRecorder } from "@/lib/recorder/use-recorder";
+import { useVoice } from "@/lib/recorder/voice-store";
+import type { TalkbackTurn } from "@/lib/talkback/types";
+import { useTalkback } from "@/lib/talkback/use-talkback";
 import { CuePanel } from "./cue-panel";
 import { DraftPanel } from "./draft-panel";
 

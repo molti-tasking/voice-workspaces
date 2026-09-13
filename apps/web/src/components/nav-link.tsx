@@ -1,7 +1,7 @@
 "use client";
 
-import { Link as TransitionLink } from "next-view-transitions";
 import { usePathname } from "next/navigation";
+import { Link as TransitionLink } from "next-view-transitions";
 import { useEffect, type ComponentProps } from "react";
 
 /**

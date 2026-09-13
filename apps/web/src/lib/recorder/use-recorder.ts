@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { capture } from "@/lib/analytics/client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { CaptureSetting } from "@voicemural/shared";
+import { capture } from "@/lib/analytics/client";
 import {
   clearOpenSession,
   deleteRegistration,
@@ -13,7 +14,6 @@ import {
   type OpenSessionMeta,
 } from "./idb";
 import { publishStream } from "./mic-bus";
-import type { CaptureSetting } from "@voicemural/shared";
 import { installUploaderTriggers, kickUploader, subscribeUploader } from "./uploader";
 
 /**

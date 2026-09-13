@@ -1,5 +1,5 @@
-import { count, desc, eq, getDb, inArray, sql, sum } from "./index";
 import { audioChunk, captureSession, utterance } from "./schema";
+import { count, desc, eq, getDb, inArray, sql, sum } from "./index";
 
 export interface SessionWithStats {
   id: string;

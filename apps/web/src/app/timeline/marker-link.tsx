@@ -1,8 +1,8 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { capture } from "@/lib/analytics/client";
 import { Link } from "@/components/nav-link";
+import { capture } from "@/lib/analytics/client";
 
 /**
  * The timeline's marker pill, wrapped so the click can be recorded.

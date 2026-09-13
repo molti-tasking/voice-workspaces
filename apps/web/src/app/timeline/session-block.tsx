@@ -1,13 +1,13 @@
-import { MarkerLink } from "./marker-link";
 import { ArrowUpRight, CircleDot } from "lucide-react";
-import { formatOffset } from "@voicemural/shared";
 import type {
   TimelineAgentTurn,
   TimelineMarker,
   TimelineSession,
   TimelineUtterance,
 } from "@voicemural/db/workspace";
+import { formatOffset } from "@voicemural/shared";
 import { AgentTurnBubble } from "@/components/agent-turn-bubble";
+import { MarkerLink } from "./marker-link";
 
 /**
  * One drive on the ledger.
