@@ -76,7 +76,7 @@ export async function POST(req: Request) {
    * bound that matters, and the client refreshes it — the risk of a re-read of
    * the driver's own transcript, by a holder who already proved ownership of
    * the drive, is not worth ending the conversation over. */
-  const [{ passages, threads }, pending] = await Promise.all([
+  const [{ passages, threads, board }, pending] = await Promise.all([
     buildTurnContext(payload.userId, payload.captureSessionId, parsed.data.said),
     /* Fails open. An unanswered confirmation is worth asking about, but not at
      * the cost of the turn it would have been asked on. */
@@ -85,9 +85,11 @@ export async function POST(req: Request) {
 
   return NextResponse.json(
     // `threads` is where things stand on the topics this turn touches, from
-    // the memory index; empty without MODEL_EMBED. The container puts it
-    // FIRST in its block — stable state before dated quotes.
-    { passages, threads, pending },
+    // the memory index; empty without MODEL_EMBED. `board` is the live fold of
+    // the task board — the only part of the turn that answers "what should I do
+    // next" with something actionable. The container orders them: board first,
+    // then threads, then dated quotes.
+    { passages, threads, board: board.text, pending },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

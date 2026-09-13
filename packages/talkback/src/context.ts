@@ -1,3 +1,5 @@
+import { loadOps } from "@voicemural/db/workspace";
+import { buildBoardContext, type BoardContext } from "./board-context";
 import { MAX_CONTEXT_CHARS, trimToBudget } from "./budget";
 import { mergePassages } from "./memory";
 import { recallFromMemory } from "./memory-search";
@@ -49,6 +51,16 @@ export interface ContextThread {
 export interface TurnContext {
   passages: ContextPassage[];
   threads: ContextThread[];
+  /**
+   * What they have said they would do, and where each of those stands.
+   *
+   * The third arm, and the concrete one. `threads` is prose distilled from past
+   * sessions and `passages` are quotes; this is the live fold of the op log, so
+   * it is the only part of the turn that can answer "what should I do next"
+   * with something the person could actually go and do. See board-context.ts
+   * for why it is sight-only.
+   */
+  board: BoardContext;
 }
 
 /** Rendered threads may take this much of the turn; passages get the rest. */
@@ -69,9 +81,13 @@ export async function buildTurnContext(
   captureSessionId: string,
   said: string,
 ): Promise<TurnContext> {
-  const [lexical, memory] = await Promise.all([
+  // Three arms in parallel. The board fold is pure CPU over ops already in
+  // Postgres, so it costs one query rather than a model call, and running it
+  // alongside the two searches keeps it off the turn's critical path.
+  const [lexical, memory, ops] = await Promise.all([
     searchTranscripts(userId, said, { excludeSessionId: captureSessionId }),
     recallFromMemory(userId, said, { excludeSessionId: captureSessionId }),
+    loadOps(userId),
   ]);
 
   const merged = mergePassages(lexical, memory.passages);
@@ -92,7 +108,7 @@ export async function buildTurnContext(
     .filter((t) => keptThreads.has(t.text))
     .map((t) => ({ topicId: t.topicId, text: t.text }));
 
-  return { passages, threads };
+  return { passages, threads, board: buildBoardContext(ops) };
 }
 
 /**

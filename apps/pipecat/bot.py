@@ -761,7 +761,7 @@ class Recall(FrameProcessor):
         # the whole mechanism that stops the prompt growing without bound.
         self._message: dict | None = None
 
-    def _fetch(self, said: str) -> tuple[list[dict], list[dict], dict | None]:
+    def _fetch(self, said: str) -> tuple[list[dict], list[dict], dict | None, str | None]:
         req = urllib.request.Request(
             f"{WEB_URL}/api/realtime/context",
             method="POST",
@@ -770,16 +770,33 @@ class Recall(FrameProcessor):
         )
         with urllib.request.urlopen(req, timeout=5) as res:
             body = json.loads(res.read())
-            return body.get("passages") or [], body.get("threads") or [], body.get("pending")
+            return (
+                body.get("passages") or [],
+                body.get("threads") or [],
+                body.get("pending"),
+                # Pre-rendered by `buildBoardContext`, not assembled here: the
+                # column order, the staleness wording and the prompt budget are
+                # one decision, and splitting it across two languages is how the
+                # two would drift.
+                body.get("board"),
+            )
 
     def _compose(
         self,
         passages: list[dict],
         pending: dict | None = None,
         threads: list[dict] | None = None,
+        board: str | None = None,
     ) -> str | None:
         sections: list[str] = []
-        # Where things stand FIRST: it is the stable state the dated quotes
+        # THE BOARD FIRST, ahead even of where things stand. It is the most
+        # concrete thing in the turn — what they committed to, and which column
+        # each of those sits in — and it is the only section that can answer
+        # "what should I do next" with something they could go and do. Threads
+        # are prose about it; passages are quotes underneath that.
+        if board:
+            sections.append(board)
+        # Where things stand next: it is the stable state the dated quotes
         # below are episodes of, and the prompt tells the model to build on it
         # rather than ask for the project again. Mirrored in
         # packages/talkback/src/eval/messages.ts — change one, change both.
@@ -831,7 +848,7 @@ class Recall(FrameProcessor):
         block exists, and the next compose replaces it anyway.
         """
         if self._message is None:
-            content = self._compose([], None, [])
+            content = self._compose([], None, [], None)
             if content:
                 self._message = {"role": "system", "content": content}
                 self._context.add_message(self._message)
@@ -887,16 +904,22 @@ class Recall(FrameProcessor):
             passages: list[dict] = []
             threads: list[dict] = []
             pending: dict | None = None
+            # Initialised alongside the others, and not only inside the try: a
+            # degraded drive has no ticket and never enters it, and a fetch that
+            # raises leaves it unbound. Either way `_compose` below reads it.
+            board: str | None = None
             if self._ticket:
                 try:
                     # The search query is what was said, not who said it.
-                    passages, threads, pending = await asyncio.to_thread(
+                    passages, threads, pending, board = await asyncio.to_thread(
                         self._fetch, strip_speaker_tag(frame.text)
                     )
                     if passages:
                         logger.info(f"[recall] {len(passages)} passage(s) from past drives")
                     if threads:
                         logger.info(f"[recall] {len(threads)} thread(s) from the workspace")
+                    if board:
+                        logger.info(f"[board] {board.count(chr(10) + '- ')} live task(s) in view")
                     if pending:
                         logger.info(f"[recall] pending confirmation {pending.get('invocationId')}")
                 except Exception as err:
@@ -907,7 +930,7 @@ class Recall(FrameProcessor):
 
             # Composed even when retrieval failed: the running summary is local
             # and still worth putting in front of the model.
-            content = self._compose(passages, pending, threads)
+            content = self._compose(passages, pending, threads, board)
             if content:
                 # REPLACE, never append. Calling add_message every turn used to
                 # stack a new block onto a context that is never pruned — by turn

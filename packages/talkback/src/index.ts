@@ -28,6 +28,11 @@ export {
 } from "./memory";
 export { QUERY_TIMEOUT_MS, recallFromMemory, type MemoryRecall, type Thread } from "./memory-search";
 export { MAX_CONTEXT_CHARS, trimToBudget } from "./budget";
+export {
+  MAX_BOARD_CHARS,
+  buildBoardContext,
+  type BoardContext,
+} from "./board-context";
 export { SUMMARY_PROMPT, foldSummary } from "./summary";
 export {
   OUTPUT_CONTRACT,
