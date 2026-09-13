@@ -5,6 +5,7 @@ import {
   loadSessionUtterances,
   loadTimelineMarkers,
   loadTimelineSessions,
+  loadTimelineAgentTurns,
 } from "@voicemural/db/workspace";
 import { AccountMenu } from "@/components/account-menu";
 import { BoardLink } from "@/components/board-link";
@@ -62,9 +63,10 @@ export default async function TimelinePage({
 
   const { sessions: sessionsParam } = await searchParams;
   const requested = Number(sessionsParam);
-  const shown = Number.isFinite(requested) && requested > 0
-    ? Math.min(requested, MAX_SESSIONS)
-    : PAGE_SIZE;
+  const shown =
+    Number.isFinite(requested) && requested > 0
+      ? Math.min(requested, MAX_SESSIONS)
+      : PAGE_SIZE;
 
   const [allSessions, markers] = await Promise.all([
     loadTimelineSessions(user.id),
@@ -82,9 +84,12 @@ export default async function TimelinePage({
   const visible = allSessions.slice(Math.max(0, allSessions.length - shown));
   const hasEarlier = visible.length < allSessions.length;
 
-  const utterancesBySession = await Promise.all(
-    visible.map((s) => loadSessionUtterances(user.id, s.id)),
-  );
+  const [utterancesBySession, agentTurns] = await Promise.all([
+    Promise.all(visible.map((s) => loadSessionUtterances(user.id, s.id))),
+    // One query for every drive rather than one per drive: turns are few, and
+    // the page already runs an utterance query per session.
+    loadTimelineAgentTurns(user.id),
+  ]);
 
   const latest = allSessions[allSessions.length - 1]!;
 
@@ -93,13 +98,19 @@ export default async function TimelinePage({
       <ScrollToLatest targetId={`session-${latest.id}`} />
       <ViewEvent
         event="timeline_viewed"
-        properties={{ session_count: allSessions.length, marker_count: markers.length }}
+        properties={{
+          session_count: allSessions.length,
+          marker_count: markers.length,
+        }}
       />
       {shown > PAGE_SIZE && (
         // Paging in earlier drives is the one real interaction on this page,
         // and it no longer shows up as a pageview now that capture is keyed on
         // pathname alone.
-        <ViewEvent event="timeline_page_loaded" properties={{ sessions_shown: shown }} />
+        <ViewEvent
+          event="timeline_page_loaded"
+          properties={{ sessions_shown: shown }}
+        />
       )}
 
       <header className="mb-8 flex flex-wrap items-baseline justify-between gap-4">
@@ -146,6 +157,9 @@ export default async function TimelinePage({
                 m.occurredAt >= session.startedAt &&
                 m.occurredAt <= (session.endedAt ?? new Date(8.64e15)),
             )}
+            agentTurns={agentTurns.filter(
+              (t) => t.captureSessionId === session.id,
+            )}
           />
         ))}
       </div>
@@ -173,11 +187,6 @@ function TimelineActions({ userId }: { userId: string }) {
           <LayoutGrid size={15} aria-hidden />
           Workspace
         </Link>
-        <BoardLink
-          userId={userId}
-          size={15}
-          className="flex items-center gap-2 rounded-full px-4 py-2 text-sm text-white/70 hover:bg-white/10 hover:text-white"
-        />
         <Link
           href="/record"
           className="flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
@@ -185,6 +194,11 @@ function TimelineActions({ userId }: { userId: string }) {
           <Mic size={15} aria-hidden />
           Record
         </Link>
+        <BoardLink
+          userId={userId}
+          size={15}
+          className="flex items-center gap-2 rounded-full px-4 py-2 text-sm text-white/70 hover:bg-white/10 hover:text-white"
+        />
       </nav>
     </div>
   );

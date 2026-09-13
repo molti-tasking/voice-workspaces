@@ -5,8 +5,20 @@
  * @voicemural/workspace, which knows nothing about a database. That split is
  * what lets the workspace toolkit run against any transcript.
  */
-import { and, asc, desc, eq, getDb, gt, inArray, isNull, or, sql } from "./index";
 import {
+  and,
+  asc,
+  desc,
+  eq,
+  getDb,
+  gt,
+  inArray,
+  isNull,
+  or,
+  sql,
+} from "./index";
+import {
+  agentTurn,
   audioChunk,
   captureSession,
   extraction,
@@ -14,7 +26,11 @@ import {
   workspaceCursor,
   workspaceOp,
 } from "./schema";
-import type { StoredOp, TranscriptSegment, WorkspaceOp } from "@voicemural/workspace";
+import type {
+  StoredOp,
+  TranscriptSegment,
+  WorkspaceOp,
+} from "@voicemural/workspace";
 
 /* ---------------------------------------------------------------------------
  * Reading the log
@@ -86,7 +102,10 @@ export async function loadPendingSegments(
       captureSessionId: utterance.captureSessionId,
     })
     .from(utterance)
-    .innerJoin(captureSession, eq(utterance.captureSessionId, captureSession.id))
+    .innerJoin(
+      captureSession,
+      eq(utterance.captureSessionId, captureSession.id),
+    )
     .where(
       and(
         eq(captureSession.userId, userId),
@@ -107,7 +126,9 @@ export async function loadPendingSegments(
 }
 
 /** All of a user's transcript as segments, for a full rebuild. */
-export async function loadAllSegments(userId: string): Promise<TranscriptSegment[]> {
+export async function loadAllSegments(
+  userId: string,
+): Promise<TranscriptSegment[]> {
   const occurredAt = sql<Date>`${captureSession.startedAt} + make_interval(secs => ${utterance.startOffsetMs} / 1000.0)`;
 
   const rows = await getDb()
@@ -119,7 +140,10 @@ export async function loadAllSegments(userId: string): Promise<TranscriptSegment
       occurredAt,
     })
     .from(utterance)
-    .innerJoin(captureSession, eq(utterance.captureSessionId, captureSession.id))
+    .innerJoin(
+      captureSession,
+      eq(utterance.captureSessionId, captureSession.id),
+    )
     .where(eq(captureSession.userId, userId))
     .orderBy(asc(occurredAt), asc(utterance.id));
 
@@ -179,7 +203,9 @@ export async function findCachedExtraction(
       createdAt: extraction.createdAt,
     })
     .from(extraction)
-    .where(and(eq(extraction.userId, userId), eq(extraction.inputHash, inputHash)))
+    .where(
+      and(eq(extraction.userId, userId), eq(extraction.inputHash, inputHash)),
+    )
     .limit(1);
 
   return row ?? null;
@@ -305,7 +331,8 @@ export async function appendOps(input: AppendOpsInput): Promise<number> {
     if ((existing?.count ?? 0) > 0) return 0;
 
     const rows = input.ops.map(({ type, ...payload }) => {
-      const spans = (payload as { spans?: { utteranceId: string }[] }).spans ?? [];
+      const spans =
+        (payload as { spans?: { utteranceId: string }[] }).spans ?? [];
       const times = spans
         .map((s) => input.segmentTimes?.get(s.utteranceId))
         .filter((d): d is Date => d instanceof Date);
@@ -320,9 +347,10 @@ export async function appendOps(input: AppendOpsInput): Promise<number> {
         captureSessionId: input.captureSessionId,
         type,
         payload: payload as Record<string, unknown>,
-        sourceUtteranceIds: spans.length > 0
-          ? spans.map((s) => s.utteranceId)
-          : input.sourceUtteranceIds,
+        sourceUtteranceIds:
+          spans.length > 0
+            ? spans.map((s) => s.utteranceId)
+            : input.sourceUtteranceIds,
       };
     });
 
@@ -428,7 +456,9 @@ export async function advanceCursor(
 }
 
 export async function resetCursor(userId: string): Promise<void> {
-  await getDb().delete(workspaceCursor).where(eq(workspaceCursor.userId, userId));
+  await getDb()
+    .delete(workspaceCursor)
+    .where(eq(workspaceCursor.userId, userId));
 }
 
 /** Drop a user's derived workspace. Ops only — the transcript is untouched. */
@@ -494,7 +524,9 @@ export interface TimelineMarker {
  * comparing a chunk's session id against its own and returning zero for
  * everything. Re-deriving the counts here would mean re-deriving that bug.
  */
-export async function loadTimelineSessions(userId: string): Promise<TimelineSession[]> {
+export async function loadTimelineSessions(
+  userId: string,
+): Promise<TimelineSession[]> {
   const { listSessionsWithStats } = await import("./sessions");
   const sessions = await listSessionsWithStats(userId, 500);
 
@@ -534,7 +566,10 @@ export async function loadSessionUtterances(
       kindOverride: utterance.kindOverride,
     })
     .from(utterance)
-    .innerJoin(captureSession, eq(utterance.captureSessionId, captureSession.id))
+    .innerJoin(
+      captureSession,
+      eq(utterance.captureSessionId, captureSession.id),
+    )
     .where(
       and(
         eq(captureSession.userId, userId),
@@ -559,7 +594,75 @@ export async function loadSessionUtterances(
  * still a point on the ledger, and hiding it would make the workspace look like
  * it updated less often than it did. The UI renders those dimmed.
  */
-export async function loadTimelineMarkers(userId: string): Promise<TimelineMarker[]> {
+/**
+ * One turn the system took, placed on the timeline's wall clock.
+ *
+ * `agent_turn` stores offsets into a drive, because that is the clock the
+ * ledger and the echo filter share. The timeline runs on absolute time across
+ * every drive, so the offset is resolved against the session's start here —
+ * once, in SQL, rather than in the component that draws it.
+ */
+export interface TimelineAgentTurn {
+  id: string;
+  captureSessionId: string;
+  occurredAt: Date;
+  seq: number;
+  text: string;
+  generatedText: string;
+  bargedIn: boolean;
+  error: string | null;
+}
+
+/**
+ * Every agent turn across every drive, for the timeline.
+ *
+ * Without this the timeline rendered a drive as a monologue: the person's words
+ * with the replies silently missing, while `/sessions/[id]` showed the same
+ * drive as a conversation. Two views of one conversation that disagree are
+ * worse than one view, because nothing on the page says which is incomplete.
+ */
+export async function loadTimelineAgentTurns(
+  userId: string,
+): Promise<TimelineAgentTurn[]> {
+  const rows = await getDb()
+    .select({
+      id: agentTurn.id,
+      captureSessionId: agentTurn.captureSessionId,
+      startedAt: captureSession.startedAt,
+      startOffsetMs: agentTurn.startOffsetMs,
+      seq: agentTurn.seq,
+      text: agentTurn.text,
+      generatedText: agentTurn.generatedText,
+      bargedIn: agentTurn.bargedIn,
+      error: agentTurn.error,
+    })
+    .from(agentTurn)
+    .innerJoin(
+      captureSession,
+      eq(captureSession.id, agentTurn.captureSessionId),
+    )
+    .where(eq(captureSession.userId, userId))
+    // Session start THEN offset: `startOffsetMs` is relative to its own drive,
+    // so ordering by it alone interleaves drives at random. The component
+    // re-sorts what it renders, but a loader that returns rows in a meaningless
+    // order is a trap for the next caller.
+    .orderBy(asc(captureSession.startedAt), asc(agentTurn.startOffsetMs));
+
+  return rows.map((r) => ({
+    id: r.id,
+    captureSessionId: r.captureSessionId,
+    occurredAt: new Date(r.startedAt.getTime() + r.startOffsetMs),
+    seq: r.seq,
+    text: r.text,
+    generatedText: r.generatedText,
+    bargedIn: r.bargedIn,
+    error: r.error,
+  }));
+}
+
+export async function loadTimelineMarkers(
+  userId: string,
+): Promise<TimelineMarker[]> {
   const db = getDb();
 
   const extractions = await db
@@ -595,7 +698,10 @@ export async function loadTimelineMarkers(userId: string): Promise<TimelineMarke
     const rows = await db
       .select({ id: utterance.id, occurredAt })
       .from(utterance)
-      .innerJoin(captureSession, eq(utterance.captureSessionId, captureSession.id))
+      .innerJoin(
+        captureSession,
+        eq(utterance.captureSessionId, captureSession.id),
+      )
       .where(inArray(utterance.id, lastIds));
     for (const r of rows) times.set(r.id, new Date(r.occurredAt));
   }
@@ -644,7 +750,9 @@ export async function loadTimelineMarkers(userId: string): Promise<TimelineMarke
 }
 
 /** Users with transcribed speech that extraction has not yet consumed. */
-export async function usersWithPendingSpeech(minSegments: number): Promise<string[]> {
+export async function usersWithPendingSpeech(
+  minSegments: number,
+): Promise<string[]> {
   const occurredAt = sql`${captureSession.startedAt} + make_interval(secs => ${utterance.startOffsetMs} / 1000.0)`;
 
   const rows = await getDb()
@@ -654,8 +762,14 @@ export async function usersWithPendingSpeech(minSegments: number): Promise<strin
       sessionEnded: sql<boolean>`bool_or(${captureSession.endedAt} is not null)`,
     })
     .from(utterance)
-    .innerJoin(captureSession, eq(utterance.captureSessionId, captureSession.id))
-    .leftJoin(workspaceCursor, eq(workspaceCursor.userId, captureSession.userId))
+    .innerJoin(
+      captureSession,
+      eq(utterance.captureSessionId, captureSession.id),
+    )
+    .leftJoin(
+      workspaceCursor,
+      eq(workspaceCursor.userId, captureSession.userId),
+    )
     .where(
       or(
         isNull(workspaceCursor.lastOccurredAt),

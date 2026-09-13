@@ -1,4 +1,5 @@
 import { formatOffset, isLikelyHallucination } from "@voicemural/shared";
+import { AgentTurnBubble } from "@/components/agent-turn-bubble";
 import { KindToggle } from "./kind-toggle";
 
 export interface TranscriptRow {
@@ -229,49 +230,27 @@ function UserLine({
 }
 
 function AgentLine({ turn }: { turn: AgentTurnRow }) {
-  const spoke = turn.endOffsetMs - turn.startOffsetMs;
-  // What was generated but never heard, because the driver interrupted.
-  const unheard =
-    turn.bargedIn && turn.generatedText.length > turn.text.length
-      ? turn.generatedText.slice(turn.text.length).trim()
-      : null;
-
   return (
     <li className="flex gap-3">
       <span
         className="w-12 shrink-0 pt-1 text-right font-mono text-xs text-white/25 tabular-nums"
-        title={`${formatOffset(turn.startOffsetMs)}–${formatOffset(turn.endOffsetMs)}`}
+        title={`${formatOffset(turn.startOffsetMs)}\u2013${formatOffset(turn.endOffsetMs)}`}
       >
         {formatOffset(turn.startOffsetMs)}
       </span>
 
+      {/* The bubble is shared with /timeline so one conversation reads the same
+          in both places; only the gutter differs, because the two views run on
+          different clocks. See components/agent-turn-bubble.tsx. */}
       <div className="min-w-0 flex-1 text-right">
-        <div className="inline-block max-w-full rounded-lg rounded-tr-sm border border-sky-400/25 bg-sky-400/10 px-3 py-1.5 text-left">
-          <div className="mb-1 flex items-center gap-2 text-[10px] font-medium uppercase tracking-wide text-sky-300/70">
-            <span>agent · turn {turn.seq + 1}</span>
-            {turn.bargedIn && <span className="text-amber-300/80">interrupted</span>}
-            {turn.error && <span className="text-red-300/80">failed</span>}
-          </div>
-
-          {turn.text ? (
-            <p className="text-sky-50">{turn.text}</p>
-          ) : (
-            <p className="italic text-white/40">
-              {turn.bargedIn ? "cut off before anything was heard" : "nothing was spoken"}
-            </p>
-          )}
-
-          {/* Generated but never reached the driver. Shown struck through rather
-              than hidden: the difference between the two is the turn-taking
-              data, and hiding it would make an interrupted turn look complete. */}
-          {unheard && (
-            <p className="mt-1 text-sm text-white/30 line-through decoration-white/20">
-              {unheard}
-            </p>
-          )}
-
-          <Meta turn={turn} spokeMs={spoke} />
-        </div>
+        <AgentTurnBubble
+          seq={turn.seq}
+          text={turn.text}
+          generatedText={turn.generatedText}
+          bargedIn={turn.bargedIn}
+          error={turn.error}
+        />
+        <Meta turn={turn} spokeMs={turn.endOffsetMs - turn.startOffsetMs} />
       </div>
     </li>
   );
