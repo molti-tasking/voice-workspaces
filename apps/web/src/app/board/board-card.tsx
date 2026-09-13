@@ -65,7 +65,6 @@ export function BoardCard({ card }: { card: CardView }) {
         {/* eslint-disable-next-line react-hooks/static-components */}
         <Icon size={12} aria-hidden className="shrink-0" />
         <span className="min-w-0 truncate">{card.topicTitle}</span>
-        <StateChip state={card.state} />
       </header>
 
       <p className="text-sm leading-snug">{card.text}</p>
@@ -81,21 +80,5 @@ export function BoardCard({ card }: { card: CardView }) {
         </p>
       )}
     </article>
-  );
-}
-
-function StateChip({ state }: { state: TaskState }) {
-  const tone =
-    state === "done"
-      ? "text-emerald-300/80"
-      : state === "dropped"
-        ? "text-white/30 line-through"
-        : state === "open"
-          ? "text-white/50"
-          : "text-amber-300";
-  return (
-    <span className={`ml-auto shrink-0 font-mono text-[10px] ${tone}`}>
-      {state}
-    </span>
   );
 }
