@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { listSessionsWithStats } from "@voicemural/db/sessions";
 import { formatOffset } from "@voicemural/shared";
-import { AccountMenu } from "@/components/account-menu";
-import { BoardLink } from "@/components/board-link";
+import { AppDock } from "@/components/app-dock";
+import { NavMenu } from "@/components/nav-menu";
 import { configuredProviders } from "@/lib/auth";
 import { providerName } from "@/lib/providers";
 import { currentUser } from "@/lib/session";
@@ -35,27 +35,12 @@ export default async function HomePage() {
   const sessions = await listSessionsWithStats(user.id);
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10">
+    <div className="mx-auto max-w-3xl px-6 pt-10 pb-40">
       <header className="mb-10 flex items-baseline justify-between">
         <div>
           <h1 className="text-2xl font-semibold">VoiceMural</h1>
         </div>
-        <div className="flex items-center gap-4 text-sm">
-          <Link
-            href="/workspace"
-            className="text-white/40 underline-offset-4 hover:underline"
-          >
-            Workspace
-          </Link>
-          <BoardLink userId={user.id} />
-          <Link
-            href="/record"
-            className="rounded-lg bg-accent px-4 py-2 font-medium text-white"
-          >
-            Record
-          </Link>
-          <AccountMenu />
-        </div>
+        <NavMenu />
       </header>
 
       {canUpgrade && (
@@ -119,6 +104,8 @@ export default async function HomePage() {
           ))}
         </ul>
       )}
+
+      <AppDock />
     </div>
   );
 }

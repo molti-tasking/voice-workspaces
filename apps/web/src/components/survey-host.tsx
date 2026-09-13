@@ -83,8 +83,12 @@ export function SurveyHost({
   const allAnswered = survey.questions.every((q, i) => answers[questionId(survey, i)]);
 
   return (
-    // `bottom-24` clears the timeline's fixed pill bar, which sits at z-20.
-    <div className="fixed right-4 bottom-24 z-30 w-[min(22rem,calc(100vw-2rem))]">
+    // `bottom-36` clears the dock, which is ~125px tall with its safe-area
+    // padding and sits at z-40 on every signed-in page. Staying BELOW the dock
+    // in the stack is deliberate: a survey that covered the record button
+    // would be the one thing on screen a participant cannot dismiss by
+    // starting to drive.
+    <div className="fixed right-4 bottom-36 z-30 w-[min(22rem,calc(100vw-2rem))]">
       <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-ink-soft)] p-4 shadow-2xl shadow-black/40">
         {submitted ? (
           <p className="text-sm text-emerald-300">Thank you — that helps.</p>

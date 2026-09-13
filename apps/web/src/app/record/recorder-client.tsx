@@ -2,31 +2,21 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { formatOffset, type CaptureSetting } from "@voicemural/shared";
+import { formatOffset } from "@voicemural/shared";
 // The `/setting` subpath, NOT the package index: the index re-exports
 // retrieval.ts, which imports @voicemural/db, and that drags the Postgres
 // driver into the browser bundle. setting.ts is pure by construction.
-import { STT_LANGUAGES } from "@voicemural/talkback/language";
-import { SETTINGS, SETTING_PROFILES } from "@voicemural/talkback/setting";
-import { VOICES } from "@voicemural/talkback/voice";
+import { SETTING_PROFILES } from "@voicemural/talkback/setting";
+import { TALKBACK_ENABLED, useCapture } from "@/components/capture-provider";
+import {
+  LanguagePicker,
+  SettingPicker,
+  VoicePicker,
+} from "@/components/capture-settings";
 import { useCues } from "@/lib/display/use-cues";
-import { useDetectedSetting } from "@/lib/recorder/detect-setting";
-import { useSttLanguage } from "@/lib/recorder/language-store";
-import { useRecorder } from "@/lib/recorder/use-recorder";
-import { useVoice } from "@/lib/recorder/voice-store";
 import type { TalkbackTurn } from "@/lib/talkback/types";
-import { useTalkback } from "@/lib/talkback/use-talkback";
 import { CuePanel } from "./cue-panel";
 import { DraftPanel } from "./draft-panel";
-
-/**
- * Whether talk-back is built into this bundle.
- *
- * A build-time flag, like the PostHog token, because it decides whether the
- * conversational path exists at all for a participant. Unset means the recorder
- * behaves exactly as it did before: no socket, no worklet, nothing to go wrong.
- */
-const TALKBACK = process.env.NEXT_PUBLIC_TALKBACK_ENABLED === "true";
 
 /**
  * The recorder screen.
@@ -35,36 +25,22 @@ const TALKBACK = process.env.NEXT_PUBLIC_TALKBACK_ENABLED === "true";
  * state legible in peripheral vision, and no interaction that requires reading.
  */
 export function RecorderClient() {
-  const rec = useRecorder();
-  const isRecording = rec.status === "recording";
-  const isBusy = rec.status === "requesting" || rec.status === "stopping";
+  // The recorder itself lives above the router now (see capture-provider.tsx),
+  // so a drive survives walking over to the board and back. This screen is the
+  // full view onto it, not its owner.
+  const {
+    recorder: rec,
+    talkback: talk,
+    isRecording,
+    isBusy,
+    setting,
+    source,
+    startRecording,
+    stopRecording,
+  } = useCapture();
 
-  // Inferred from the device and its motion, not asked. See detect-setting.ts.
-  // A correction holds for this visit only: the next recording is detected
-  // afresh, because the situation is what changed, not the person's mind.
-  const detected = useDetectedSetting({ enabled: !isRecording });
-  const [chosen, choose] = useState<CaptureSetting | null>(null);
   const [showPicker, setShowPicker] = useState(false);
-  const setting = chosen ?? detected.setting;
-  const source = chosen ? "chosen" : detected.source;
   const profile = SETTING_PROFILES[setting];
-  // Which voice answers. Only meaningful with talk-back built in, so the picker
-  // is hidden otherwise — but the choice is still sent, so a session recorded
-  // before talk-back was enabled for it carries the voice it would have had.
-  const [voiceId, chooseVoice] = useVoice();
-  // Which language BOTH transcription paths use — the live STT and the ledger
-  // Whisper — so this picker is NOT gated on talk-back: a transcript-only
-  // deployment still transcribes in German when the driver chose German.
-  // Null (Auto) is the default and the right one for the mixed corpus.
-  const [sttLanguage, chooseSttLanguage] = useSttLanguage();
-
-  // Armed with the recording, for the whole drive — there is no separate
-  // gesture to enter it. Everything it does is downstream of the microphone
-  // stream the recorder publishes, so capture is unaffected either way.
-  const talk = useTalkback({
-    captureSessionId: rec.currentSessionId,
-    enabled: TALKBACK && isRecording,
-  });
   const hearing = talk.status === "speaking";
 
   // Reads Postgres, never the voice container: the panel keeps filling with
@@ -79,18 +55,18 @@ export function RecorderClient() {
   });
 
   return (
-    <main className="no-touch-fuss flex min-h-dvh flex-col items-center justify-between p-6">
-      <header className="flex w-full max-w-md items-center justify-between text-sm text-white/50">
-        <Link href="/" className="underline-offset-4 hover:underline">
-          Workspace
-        </Link>
+    // `pb-40` clears the dock: leaving mid-drive is the point of hoisting the
+    // recorder, so the dock is on this screen too — with its own record button
+    // suppressed, because the 224px one below is the transport here.
+    <main className="no-touch-fuss flex min-h-dvh flex-col items-center justify-between p-6 pb-40">
+      <header className="flex w-full max-w-md items-center justify-end text-sm text-white/50">
         <StatusPills
           pending={rec.pendingUploads}
           uploading={rec.uploading}
           wakeLock={rec.wakeLockActive}
           recording={isRecording}
-          talkback={TALKBACK && isRecording ? talk.status : null}
-          memory={TALKBACK && isRecording ? talk.memory : null}
+          talkback={TALKBACK_ENABLED && isRecording ? talk.status : null}
+          memory={TALKBACK_ENABLED && isRecording ? talk.memory : null}
         />
       </header>
 
@@ -107,13 +83,13 @@ export function RecorderClient() {
           type="button"
           onClick={() => {
             if (isRecording) {
-              void rec.stop();
+              // One tap, no confirmation: this target is 224px and is meant to
+              // be hit without looking. The dock's 64px button arms first —
+              // see `STOP_ARM_MS` there.
+              stopRecording();
               return;
             }
-            // iOS gates the accelerometer behind a tap; this is the tap. The
-            // answer arrives for the next recording, and this one starts now.
-            void detected.requestMotion();
-            void rec.start(setting, source, voiceId, sttLanguage);
+            startRecording();
           }}
           disabled={isBusy}
           className={[
@@ -134,7 +110,7 @@ export function RecorderClient() {
             profile.hint
           ) : (
             <>
-              {chosen ? "" : "Looks like: "}
+              {source === "chosen" ? "" : "Looks like: "}
               <span className="text-white/70">{profile.label}</span>
               {" · "}
               <button
@@ -148,26 +124,13 @@ export function RecorderClient() {
           )}
         </p>
 
-        {!isRecording && showPicker && (
-          <SettingPicker
-            value={setting}
-            onChange={(next) => {
-              choose(next);
-              setShowPicker(false);
-            }}
-            disabled={isBusy}
-          />
-        )}
+        {!isRecording && showPicker && <SettingPicker />}
 
-        {TALKBACK && !isRecording && (
-          <VoicePicker value={voiceId} onChange={chooseVoice} disabled={isBusy} />
-        )}
+        {!isRecording && <VoicePicker />}
 
-        {!isRecording && (
-          <LanguagePicker value={sttLanguage} onChange={chooseSttLanguage} disabled={isBusy} />
-        )}
+        {!isRecording && <LanguagePicker />}
 
-        {TALKBACK && isRecording && talk.turns.length > 0 && (
+        {TALKBACK_ENABLED && isRecording && talk.turns.length > 0 && (
           <Exchange turns={talk.turns} speaking={talk.status === "speaking"} />
         )}
 
@@ -241,174 +204,6 @@ export function RecorderClient() {
         )}
       </footer>
     </main>
-  );
-}
-
-/**
- * The correction, for when the detector is wrong.
- *
- * Hidden by default: the setting is read off the device and its motion, and
- * asking anyway would make choosing a mode the first task of every recording
- * — a task, for someone whose hands are on something else. Pre-recording
- * only, deliberately so: the setting governs turn-taking and how much goes on
- * screen for the whole session, and a mid-recording change would leave a
- * session that ran under two sets of rules and is interpretable under neither.
- *
- * Four options, one row, no icons: the labels are shorter to read than any
- * pictogram is to decode.
- */
-function SettingPicker({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: CaptureSetting;
-  onChange: (next: CaptureSetting) => void;
-  disabled: boolean;
-}) {
-  return (
-    <fieldset
-      className="flex w-full max-w-md flex-wrap justify-center gap-1.5"
-      disabled={disabled}
-    >
-      <legend className="sr-only">Where are you?</legend>
-      {SETTINGS.map((option) => {
-        const active = option === value;
-        return (
-          <button
-            key={option}
-            type="button"
-            aria-pressed={active}
-            onClick={() => onChange(option)}
-            className={[
-              "rounded-full px-3.5 py-1.5 text-sm transition-colors disabled:opacity-50",
-              active
-                ? "bg-white/12 text-white ring-1 ring-white/25"
-                : "text-white/40 hover:text-white/70",
-            ].join(" ")}
-          >
-            {SETTING_PROFILES[option].label}
-          </button>
-        );
-      })}
-    </fieldset>
-  );
-}
-
-/**
- * Which voice talks back, asked alongside the setting.
- *
- * Pre-recording only, for the same reason as the setting: a drive heard in two
- * voices is two conditions in one session. Smaller and dimmer than the setting
- * row because it is the less consequential choice — it changes how the system
- * sounds, not how it behaves — and the last thing between opening the app and
- * starting to think should stay one row of four words.
- */
-function VoicePicker({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  disabled: boolean;
-}) {
-  return (
-    <fieldset
-      className="flex w-full max-w-md flex-wrap items-center justify-center gap-1.5 text-xs"
-      disabled={disabled}
-    >
-      <legend className="sr-only">Which voice?</legend>
-      <span className="mr-1 text-white/30">Voice</span>
-      {VOICES.map((voice) => {
-        const active = voice.id === value;
-        return (
-          <button
-            key={voice.id}
-            type="button"
-            aria-pressed={active}
-            title={voice.hint}
-            onClick={() => onChange(voice.id)}
-            className={[
-              "rounded-full px-3 py-1 transition-colors disabled:opacity-50",
-              active
-                ? "bg-white/12 text-white ring-1 ring-white/25"
-                : "text-white/40 hover:text-white/70",
-            ].join(" ")}
-          >
-            {voice.label}
-          </button>
-        );
-      })}
-    </fieldset>
-  );
-}
-
-/**
- * Which language the drive is transcribed in, asked alongside the voice.
- *
- * Auto first and selected by default, because the corpus is mixed
- * German/English and detection handles code-switching; a fixed code is the
- * exception — worth it on a monolingual German drive, where Whisper
- * detection on a short chunk can misfire into English.
- *
- * Consequential in a way the voice is not: it changes what the transcript
- * CONTAINS, not just how the system sounds, which is also why it is offered
- * without talk-back. Same dimmed row treatment — one glance, one tap, and the
- * labels are endonyms so the person they describe can read them.
- */
-function LanguagePicker({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: string | null;
-  onChange: (next: string | null) => void;
-  disabled: boolean;
-}) {
-  const auto = value === null;
-  return (
-    <fieldset
-      className="flex w-full max-w-md flex-wrap items-center justify-center gap-1.5 text-xs"
-      disabled={disabled}
-    >
-      <legend className="sr-only">Which language?</legend>
-      <span className="mr-1 text-white/30">Language</span>
-      <button
-        type="button"
-        aria-pressed={auto}
-        title="Detect per utterance — right for mixed German/English"
-        onClick={() => onChange(null)}
-        className={[
-          "rounded-full px-3 py-1 transition-colors disabled:opacity-50",
-          auto
-            ? "bg-white/12 text-white ring-1 ring-white/25"
-            : "text-white/40 hover:text-white/70",
-        ].join(" ")}
-      >
-        Auto
-      </button>
-      {STT_LANGUAGES.map((language) => {
-        const active = language.code === value;
-        return (
-          <button
-            key={language.code}
-            type="button"
-            aria-pressed={active}
-            title={language.hint}
-            onClick={() => onChange(language.code)}
-            className={[
-              "rounded-full px-3 py-1 transition-colors disabled:opacity-50",
-              active
-                ? "bg-white/12 text-white ring-1 ring-white/25"
-                : "text-white/40 hover:text-white/70",
-            ].join(" ")}
-          >
-            {language.label}
-          </button>
-        );
-      })}
-    </fieldset>
   );
 }
 
