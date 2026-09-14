@@ -19,7 +19,21 @@
  * page that contains nothing.
  */
 
-const VERSION = "v1";
+/**
+ * This deploy's identifier, passed on the registration URL.
+ *
+ * It has to arrive from outside: this file is served verbatim from `public/`,
+ * so nothing in it changes between deploys, and a browser only reinstalls a
+ * worker whose script differs. A hardcoded version meant the cache below was
+ * never rotated and `/offline` was precached exactly once, on a visitor's
+ * first ever load — after the next deploy that document referenced script
+ * chunks that no longer existed, and it stayed that way forever.
+ *
+ * Registering `/sw.js?v=<build>` changes the script URL each deploy, which
+ * both triggers the reinstall and names the cache the `activate` handler
+ * below then purges.
+ */
+const VERSION = new URL(self.location.href).searchParams.get("v") || "dev";
 const CACHE = `voicemural-static-${VERSION}`;
 
 /** The offline fallback and the assets it needs to render without a network. */

@@ -132,6 +132,17 @@ function buildAuth() {
     },
     socialProviders: socialProviders(),
     /**
+     * Where a failed sign-in lands.
+     *
+     * Better Auth's default is its own `/api/auth/error`, which is a bare page
+     * with no way back into the app — and on a phone, mid-OAuth, it reads as
+     * "nothing happened". The home page already knows how to show both the
+     * landing view and a guest's session list, so it is the one place that is
+     * right to arrive at whether or not a session survived the failure. It
+     * renders the `?error=` code Better Auth appends.
+     */
+    onAPIError: { errorURL: "/" },
+    /**
      * Merge providers that resolve to the same verified email onto one user.
      *
      * Without this, signing in with Google on the phone and GitHub on the laptop
@@ -163,7 +174,27 @@ function buildAuth() {
          * dangerous moment in the auth flow.
          */
         onLinkAccount: async ({ anonymousUser, newUser }) => {
-          const result = await migrateGuestData(anonymousUser.user.id, newUser.user.id);
+          let result;
+          try {
+            result = await migrateGuestData(anonymousUser.user.id, newUser.user.id);
+          } catch (err) {
+            // Deliberately fatal. The guest user is deleted immediately after
+            // this hook returns, and every domain table cascades from it, so
+            // the only way to keep the recordings is to refuse the sign-in —
+            // throwing here happens before the delete. A blocked sign-in is
+            // recoverable by a human; a cascade is not.
+            //
+            // Both ids go in the log because they are what a manual recovery
+            // needs, and after the failure the guest cookie still works: the
+            // person can carry on recording while this is sorted out.
+            console.error("Guest migration failed — sign-in refused to protect the recordings", {
+              from: anonymousUser.user.id,
+              to: newUser.user.id,
+              err,
+            });
+            throw err;
+          }
+
           console.log("Migrated guest data on sign-in", {
             from: anonymousUser.user.id,
             to: newUser.user.id,

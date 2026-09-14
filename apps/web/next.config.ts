@@ -6,6 +6,23 @@ import type { NextConfig } from "next";
 // the variables directly and no file is present.
 loadEnv({ path: new URL("../../.env", import.meta.url).pathname, quiet: true });
 
+/**
+ * Identifies this build, and is used for nothing but the service worker.
+ *
+ * The worker caches under it and is registered under it, so a deploy — and
+ * only a deploy — rotates its cache. Without that the cache name was a literal
+ * `"v1"`: the worker's own bytes never changed from one deploy to the next, so
+ * the browser never reinstalled it, and the `/offline` document precached on
+ * somebody's first-ever visit went on being served months later — still
+ * referencing script chunks that had long since been deleted. A worker that
+ * can never be updated is the same trap the `Cache-Control` header below
+ * avoids, one level down.
+ *
+ * A timestamp, because the build image has no git to take a SHA from. Set
+ * `BUILD_ID` to pin it where a deploy already has an identifier worth reusing.
+ */
+const BUILD_ID = process.env.BUILD_ID?.trim() || `b${Date.now().toString(36)}`;
+
 const config: NextConfig = {
   // Workspace packages ship TypeScript source rather than a build artefact,
   // so Next compiles them directly. This removes a per-package build step and
@@ -17,6 +34,9 @@ const config: NextConfig = {
     "@voicemural/workspace",
   ],
   serverExternalPackages: ["postgres"],
+  // Inlined into the client bundle at build time, which is what makes the
+  // registration URL in `components/service-worker.tsx` change per deploy.
+  env: { NEXT_PUBLIC_BUILD_ID: BUILD_ID },
   // No `experimental.serverActions.bodySizeLimit` here even though chunks are
   // ~25 MB: that option governs Server Actions, and this app has none — every
   // mutation is a route handler, whose bodies Next does not cap. Configuring a

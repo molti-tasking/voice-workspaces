@@ -22,9 +22,16 @@ export const metadata: Metadata = {
   alternates: { canonical: "/" },
 };
 
-export default async function HomePage() {
+export default async function HomePage({
+  searchParams,
+}: {
+  // Better Auth redirects failed sign-ins here with `?error=<code>`; see
+  // `onAPIError` in lib/auth.ts.
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const { error } = await searchParams;
   const user = await currentUser();
-  if (!user) return <Landing />;
+  if (!user) return <Landing error={error} />;
 
   // `isAnonymous` is added to the user model by the anonymous plugin.
   const isGuest =
@@ -42,6 +49,8 @@ export default async function HomePage() {
         </div>
         <NavMenu />
       </header>
+
+      <SignInProblem code={error} />
 
       {canUpgrade && (
         <div className="mb-8 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
@@ -110,6 +119,44 @@ export default async function HomePage() {
   );
 }
 
+/**
+ * What went wrong, in the words of someone who was not expecting to read a
+ * code. Rendered on the home page because that is where `onAPIError.errorURL`
+ * sends a failed sign-in.
+ *
+ * The codes are Better Auth's own, appended to the redirect. Anything not
+ * listed still gets a banner: an unexplained failure is worth saying out loud,
+ * and silence is what made this hard to diagnose in the first place.
+ */
+function SignInProblem({ code }: { code?: string }) {
+  if (!code) return null;
+
+  const explanations: Record<string, string> = {
+    account_already_linked_to_different_user:
+      "That account is already attached to a different VoiceMural user. Sign in with the provider you used the first time.",
+    "email_doesn't_match":
+      "The email on that account does not match the one we were linking to.",
+    email_not_found:
+      "That provider did not give us a verified email address, which is what we match accounts on.",
+    unable_to_link_account:
+      "We could not attach that provider to your account.",
+    no_code: "The provider sent us back without an authorisation code.",
+  };
+
+  return (
+    <div className="mb-8 rounded-xl border border-red-500/30 bg-red-500/10 p-4">
+      <p className="mb-1 font-medium text-red-100">Sign-in did not complete</p>
+      <p className="text-sm text-white/60">
+        {explanations[code] ??
+          "Something went wrong on our side and the sign-in was stopped."}{" "}
+        Nothing you have recorded has been lost — it is still here, and you can
+        carry on recording while this is sorted out.
+      </p>
+      <p className="mt-2 font-mono text-xs text-white/30">{code}</p>
+    </div>
+  );
+}
+
 function EmptyState() {
   return (
     <div className="rounded-xl border border-dashed border-line p-8 text-center">
@@ -155,10 +202,11 @@ function StructuredData() {
   );
 }
 
-function Landing() {
+function Landing({ error }: { error?: string }) {
   return (
     <main className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center px-6">
       <StructuredData />
+      <SignInProblem code={error} />
       <h1 className="mb-3 text-3xl font-semibold">VoiceMural</h1>
       <p className="mb-8 text-white/60">
         Speech is a good medium for formulating difficult problems and a poor
