@@ -9,6 +9,7 @@ import {
   BOARD_TOOLS,
   SUMMARY_PROMPT,
   TALKBACK_CONFIG_VERSION,
+  TITLE_PROMPT,
   asSttLanguage,
   asVoiceId,
   composeSystemPrompt,
@@ -105,6 +106,12 @@ export async function POST(req: Request) {
     {
       systemPrompt: composed.prompt,
       summaryPrompt: SUMMARY_PROMPT,
+      // The live topic title, folded in the container next to the summary and
+      // pushed to the browser as an RTVI server message. Sent here for the same
+      // reason as the summary instruction: one copy of the text, in TypeScript.
+      // An older web app that does not send this leaves the container's
+      // `TopicTitle` inert, which is the right failure — no board, no calls.
+      titlePrompt: TITLE_PROMPT,
       // Echoed so a turn can be interpreted from the container's own logs, and
       // so `bot.py` need not parse prose to know the reply cap.
       setting: composed.setting,

@@ -129,6 +129,25 @@ body {
   }
 }
 
+/* --- The topic board flipping ---------------------------------------------
+   THIS DELIBERATELY BREAKS THE "OPACITY ONLY" RULE the cue panel above sets,
+   and the reason it is allowed to is upstream of the CSS: the container's title
+   prompt returns the CURRENT title unchanged while the subject holds, so this
+   fires only when the conversation genuinely turns — a handful of times an hour
+   rather than continuously — and each fold lasts 70ms. A subject changing is
+   the one event on this screen that is worth a look, and a cross-fade cannot
+   say "this changed" to someone glancing sideways at it. A cut can be mistaken
+   for a title that was always there; a flap cannot.
+
+   The fold is from the TOP edge, because that is where a real flap is hinged:
+   the leaf drops into place rather than spinning in the middle. */
+@keyframes vm-flap {
+  from {
+    transform: rotateX(-80deg);
+    transform-origin: top center;
+  }
+}
+
 /* Someone who has asked for less motion gets a plain cut. */
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-old(root),
@@ -139,6 +158,13 @@ body {
      `animation`, and the panel is the one surface where an unwanted animation
      would fire repeatedly for an entire recording. */
   [style*="vm-cue-in"] {
+    animation: none !important;
+  }
+  /* And the board's fold, for the same reason — the inline `animation` is what
+     replays it, so only this can cancel it. The ticking through the alphabet is
+     stopped in topic-board.tsx, which checks the same query: between them the
+     title changes as a plain cut. */
+  [style*="vm-flap"] {
     animation: none !important;
   }
 }
