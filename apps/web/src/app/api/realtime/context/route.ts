@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { captureSession, eq, getDb } from "@voicemural/db";
-import { pendingConfirmation } from "@voicemural/db/repertoire";
+import {
+  pendingConfirmation,
+  settleInvocation,
+  type PendingConfirmation,
+} from "@voicemural/db/repertoire";
+import { resolveSpokenAnswer, type SpokenAnswer } from "@voicemural/shared";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import { buildTurnContext } from "@voicemural/talkback";
 
@@ -39,10 +44,29 @@ export const dynamic = "force-dynamic";
  * rationale is latency, to carry a row that is null almost every turn.
  */
 
+/*
+ * AND IT SETTLES THE ANSWER, on the same round trip, for the same reason.
+ *
+ * When the agent's last turn asked about a parked action, the container sends
+ * that invocation's id as `answering` with the driver's next words. Those
+ * words are resolved lexically (`resolveSpokenAnswer`) and a yes or no is
+ * written BEFORE the pending row is read. The order is the point: settled
+ * first, the question the driver just answered cannot be put back in front of
+ * the model for the very turn that answers it. A separate settle endpoint
+ * racing this one would re-ask a question the driver had just said yes to.
+ *
+ * Unclear settles nothing; the action stays pending and can be asked once more
+ * (`MAX_CONFIRMATION_ASKS`). Settling does not fire anything — no outlet runs
+ * on `confirmed = true` yet — so this records the decision the study measures,
+ * and the action itself waits for outlets to exist.
+ */
+
 const Body = z.object({
   ticket: z.string().min(1),
   /** What the driver just said, which is the search query. */
   said: z.string().min(1).max(2000),
+  /** The invocation the agent's previous turn asked about, if it asked. */
+  answering: z.uuid().optional(),
 });
 
 export async function POST(req: Request) {
@@ -76,11 +100,9 @@ export async function POST(req: Request) {
    * bound that matters, and the client refreshes it — the risk of a re-read of
    * the driver's own transcript, by a holder who already proved ownership of
    * the drive, is not worth ending the conversation over. */
-  const [{ passages, threads, board }, pending] = await Promise.all([
+  const [{ passages, threads, board }, { settled, pending }] = await Promise.all([
     buildTurnContext(payload.userId, payload.captureSessionId, parsed.data.said),
-    /* Fails open. An unanswered confirmation is worth asking about, but not at
-     * the cost of the turn it would have been asked on. */
-    pendingConfirmation(payload.captureSessionId).catch(() => null),
+    settleThenReadPending(payload.captureSessionId, parsed.data.said, parsed.data.answering),
   ]);
 
   return NextResponse.json(
@@ -89,7 +111,35 @@ export async function POST(req: Request) {
     // the task board — the only part of the turn that answers "what should I do
     // next" with something actionable. The container orders them: board first,
     // then threads, then dated quotes.
-    { passages, threads, board: board.text, pending },
+    { passages, threads, board: board.text, pending, settled },
     { headers: { "Cache-Control": "no-store" } },
   );
+}
+
+/**
+ * Both halves fail open, separately. An unanswered confirmation is worth
+ * asking about, but not at the cost of the turn it would have been asked on;
+ * and a settle that fails leaves the action pending, which is what "unclear"
+ * does anyway.
+ */
+async function settleThenReadPending(
+  captureSessionId: string,
+  said: string,
+  answering: string | undefined,
+): Promise<{ settled: SpokenAnswer | null; pending: PendingConfirmation | null }> {
+  let settled: SpokenAnswer | null = null;
+  if (answering) {
+    settled = resolveSpokenAnswer(said);
+    if (settled !== "unclear") {
+      const wrote = await settleInvocation(answering, settled === "yes", captureSessionId).catch(
+        () => false,
+      );
+      // Already settled, another drive's, or the write failed: report what was
+      // heard only when it took effect, so the container never believes a yes
+      // landed that did not.
+      if (!wrote) settled = null;
+    }
+  }
+  const pending = await pendingConfirmation(captureSessionId).catch(() => null);
+  return { settled, pending };
 }

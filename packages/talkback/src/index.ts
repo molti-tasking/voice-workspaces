@@ -73,7 +73,14 @@ export {
   sttLanguageProfile,
   type SttLanguageProfile,
 } from "./language";
-export { recordAgentTurn, type AgentTurnRecord } from "./agent-turns";
+export {
+  recordAgentDecision,
+  recordAgentTurn,
+  type AgentDecisionOutcome,
+  type AgentDecisionRecord,
+  type AgentDecisionTrigger,
+  type AgentTurnRecord,
+} from "./agent-turns";
 export {
   contentWords,
   describeWhen,

@@ -26,7 +26,13 @@ WHAT IS FETCHED, NOT DUPLICATED
                           voice, a seed summary for reconnects, and the
                           drive's start time. Once per connection.
   /api/realtime/context   passages from PAST drives matching what was just
-                          said. Once per turn.
+                          said, and any parked action to ask about — settling
+                          the last ask first. Once per turn.
+
+WHAT IS WRITTEN BACK
+  /api/realtime/agent-turn  what reached the speaker. The echo filter's input.
+  /api/realtime/decision    every moment the model was given to speak and what
+                            it became — spoken, declined, or talked over.
 
 WHAT IS NOT HERE. Retrieval and echo filtering run in TypeScript against the
 ledger. A second implementation in Python would be a second thing to keep
@@ -39,6 +45,7 @@ import os
 import re
 import time
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -63,12 +70,14 @@ from pipecat.frames.frames import (
     LLMFullResponseStartFrame,
     LLMRunFrame,
     LLMTextFrame,
+    MetricsFrame,
     StartFrame,
     TranscriptionFrame,
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
     VADUserStartedSpeakingFrame,
 )
+from pipecat.metrics.metrics import LLMUsageMetricsData, TTFBMetricsData
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -761,11 +770,21 @@ class Recall(FrameProcessor):
         # the whole mechanism that stops the prompt growing without bound.
         self._message: dict | None = None
 
-    def _fetch(self, said: str) -> tuple[list[dict], list[dict], dict | None, str | None]:
+    def _fetch(
+        self, said: str, answering: str | None = None
+    ) -> tuple[list[dict], list[dict], dict | None, str | None, str | None]:
+        body: dict = {"ticket": self._ticket, "said": said}
+        # The invocation the agent's last turn asked about. The route resolves
+        # these words as the answer and settles it BEFORE reading what is still
+        # pending, so the question just answered is never put back in front of
+        # the model on the turn that answered it. Which words count as yes is
+        # decided there, in TypeScript, once — not here.
+        if answering:
+            body["answering"] = answering
         req = urllib.request.Request(
             f"{WEB_URL}/api/realtime/context",
             method="POST",
-            data=json.dumps({"ticket": self._ticket, "said": said}).encode(),
+            data=json.dumps(body).encode(),
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=5) as res:
@@ -779,6 +798,7 @@ class Recall(FrameProcessor):
                 # one decision, and splitting it across two languages is how the
                 # two would drift.
                 body.get("board"),
+                body.get("settled"),
             )
 
     def _compose(
@@ -828,12 +848,21 @@ class Recall(FrameProcessor):
         # asymmetry the whole design rests on is that additive things fire
         # freely while irreversible things ask — and asking in the middle of
         # somebody's sentence is its own kind of damage.
+        #
+        # The second ask is worded to be let go of. The route stops sending the
+        # action after two asks (MAX_CONFIRMATION_ASKS in repertoire.ts); this
+        # is what stops the model spending the repeat at the first pause.
         if pending and pending.get("restatement"):
             ask = (
                 "They earlier asked for this, and it has not happened yet because it "
                 f"cannot be undone: {pending['restatement']}\n"
-                "If they are between thoughts, ask in one short sentence whether to go "
-                "ahead. If they are mid-thought, say nothing and it will keep."
+                + (
+                    "You have already asked about it once. Ask one more time only if they "
+                    "have plainly finished a thought; otherwise leave it and it will keep."
+                    if (pending.get("askedCount") or 0) > 0
+                    else "If they are between thoughts, ask in one short sentence whether to go "
+                    "ahead. If they are mid-thought, say nothing and it will keep."
+                )
             )
             block = f"{block}\n\n{ask}" if block else ask
 
@@ -900,6 +929,12 @@ class Recall(FrameProcessor):
             # request that produced it.
             if self._drafts is not None:
                 self._drafts.note_user(frame.text)
+            # Taken whether or not the fetch below happens or succeeds: these
+            # are the ONE set of words that could answer the ask, and the next
+            # set cannot.
+            answering = (
+                self._recorder.take_awaiting_answer() if self._recorder is not None else None
+            )
 
             passages: list[dict] = []
             threads: list[dict] = []
@@ -911,8 +946,8 @@ class Recall(FrameProcessor):
             if self._ticket:
                 try:
                     # The search query is what was said, not who said it.
-                    passages, threads, pending, board = await asyncio.to_thread(
-                        self._fetch, strip_speaker_tag(frame.text)
+                    passages, threads, pending, board, settled = await asyncio.to_thread(
+                        self._fetch, strip_speaker_tag(frame.text), answering
                     )
                     if passages:
                         logger.info(f"[recall] {len(passages)} passage(s) from past drives")
@@ -920,13 +955,24 @@ class Recall(FrameProcessor):
                         logger.info(f"[recall] {len(threads)} thread(s) from the workspace")
                     if board:
                         logger.info(f"[board] {board.count(chr(10) + '- ')} live task(s) in view")
+                    if answering:
+                        logger.info(f"[confirm] answer to {answering}: {settled or 'unclear'}")
                     if pending:
-                        logger.info(f"[recall] pending confirmation {pending.get('invocationId')}")
+                        logger.info(
+                            f"[recall] pending confirmation {pending.get('invocationId')}"
+                            f" (asked {pending.get('askedCount') or 0}x)"
+                        )
                 except Exception as err:
                     # Never fatal. An agent that has forgotten the past is worth
                     # far more than one that stops talking, and the capture
                     # ledger is untouched either way.
                     logger.warning(f"[recall] failed, continuing without it: {err}")
+
+            # What the model is about to be asked to answer, for the decision
+            # record: this turn is ABOUT the parked action when the ask is in
+            # front of it, whether or not the model ends up asking.
+            if self._recorder is not None and pending:
+                self._recorder.note_pending(pending.get("invocationId"))
 
             # Composed even when retrieval failed: the running summary is local
             # and still worth putting in front of the model.
@@ -977,8 +1023,20 @@ _TAG_PREFIXES = (SILENCE_TOKEN, DRAFT_OPEN, DRAFT_CLOSE)
 # whether to take them, via the sentinel as always. The prompt's own offer
 # stance (talkback-6) is what makes it take them.
 
-# Off by env for a study arm that needs the purely-reactive behaviour back.
+# The FALLBACK for whether offers run. A study arm is a property of the drive,
+# not of this container — one container serves every participant — so the
+# drive's own `studyCondition.proactiveOffers` from /api/realtime/session
+# decides. This only applies when there is no such answer: a degraded
+# connection, whose drive is already off the study's record.
 PROACTIVE_OFFERS = os.getenv("PROACTIVE_OFFERS", "true").lower() in ("1", "true", "yes")
+
+
+def offers_enabled(session: dict) -> bool:
+    """Whether this drive's condition runs the proactive engine."""
+    condition = session.get("studyCondition")
+    if session.get("degraded") or not isinstance(condition, dict):
+        return PROACTIVE_OFFERS
+    return bool(condition.get("proactiveOffers", PROACTIVE_OFFERS))
 
 # How many seconds of quiet may follow a completed, unanswered thought before
 # the engine offers a turn, by proactivity level.
@@ -1031,9 +1089,13 @@ class Offers(FrameProcessor):
     WHAT fires: a user-role instruction (the mirrored templates above) added
     to the context, then an `LLMRunFrame` — the same frame the user aggregator
     pushes to run a normal turn — so the completion, the gate, the recorder
-    and the barge-in plumbing are all the normal ones. An offered turn that
-    speaks is an `agent_turn` like any other; one that declines leaves no
-    trace but this log.
+    and the barge-in plumbing are all the normal ones. The recorder is told
+    first that the moment is an offer, so an offered turn that speaks is an
+    `agent_turn` of kind `proactive_prompt`, and one that declines is an
+    `agent_decision` saying so rather than a log line.
+
+    WHETHER it runs at all is the drive's study condition (`offers_enabled`),
+    read once per connection.
 
     WHY A TIMER PER OFFER rather than a loop: each silence is armed fresh
     from the frames that ended it, so the interval always reflects the current
@@ -1048,10 +1110,18 @@ class Offers(FrameProcessor):
     # A declined offer never waits longer than this to try again.
     BACKOFF_CAP_SECS = 120
 
-    def __init__(self, context: LLMContext, recall: "Recall", session: dict):
+    def __init__(
+        self,
+        context: LLMContext,
+        recall: "Recall",
+        session: dict,
+        recorder: "TurnRecorder | None" = None,
+    ):
         super().__init__()
         self._context = context
         self._recall = recall
+        self._recorder = recorder
+        self._enabled = offers_enabled(session)
         # The setting's proactivity level, arrived via /api/realtime/session —
         # the same value that governs how forthcoming the prompt is allowed to
         # be. Missing (a degraded connection) falls back to the driving
@@ -1078,7 +1148,7 @@ class Offers(FrameProcessor):
         concerned, so it must not count as the "reply" the never-twice rule
         waits for — but it IS a declined offer, so it backs off.
         """
-        if not PROACTIVE_OFFERS:
+        if not self._enabled:
             return
         if spoke:
             self._awaiting_user = True
@@ -1122,6 +1192,8 @@ class Offers(FrameProcessor):
         # The engine has now had its turn. If the model speaks, the
         # never-twice rule holds until the driver replies; if it declines,
         # note_agent_turn backs off and re-arms.
+        if self._recorder is not None:
+            self._recorder.note_offer("opening" if opening else "silence_offer")
         self._context.add_message({"role": "user", "content": instruction})
         logger.info(
             f"[offers] {'opening the drive' if opening else f'{int(delay)}s of quiet'} — offering a turn"
@@ -1133,7 +1205,7 @@ class Offers(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
-        if PROACTIVE_OFFERS:
+        if self._enabled:
             if isinstance(frame, StartFrame):
                 if not self._opened:
                     self._arm(self.OPENING_GRACE_SECS, opening=True)
@@ -1242,8 +1314,33 @@ def strip_speaker_tags(text: str) -> str:
     return SPEAKER_TAG.sub("", text)
 
 
+@dataclass(frozen=True)
+class Cue:
+    """What the model is being asked to respond to, and since when.
+
+    `trigger` is one of the `agent_decision_trigger` values. `subject_key` is
+    what the moment is about when it is about one thing — the parked
+    invocation for a confirmation. `at_ms` is wall clock, the moment the cue
+    arose: the driver's final words, or the offer timer firing.
+    """
+
+    trigger: str
+    subject_key: str | None = None
+    at_ms: int | None = None
+
+
+# Unprompted moments: the engine made them, nobody spoke. A turn taken in one
+# is a `proactive_prompt`, whatever it says.
+OFFER_TRIGGERS = ("opening", "silence_offer", "agenda", "macro_offer")
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
 class TurnRecorder:
-    """Writes down what the agent said, for the filter that reads it back.
+    """Writes down what the agent said, for the filter that reads it back —
+    and what it chose not to say, for the study.
 
     🔴 NOT bookkeeping. `agent_turn` is what the echo filter consults: the
     agent's voice reaches the microphone through the speaker, is transcribed
@@ -1257,13 +1354,38 @@ class TurnRecorder:
 
     It is also the paper's turn-taking record. A live conversation cannot be
     replayed, so these rows are the only evidence it happened.
+
+    TWO TABLES, KEPT APART. Every completion the gate sees end becomes an
+    `agent_decision` — spoke, declined, or talked over. Only one that reached
+    the speaker also becomes an `agent_turn`. A declined turn must never be
+    written to `agent_turn`: the echo filter would then discard the driver's
+    own words for resembling a sentence the car never played.
+
+    THE CUE. The processors that see a moment arise — `Recall` for the
+    driver's words, `Offers` for the timer — tell this object; the gate
+    snapshots it when a completion starts, so a later cue cannot relabel a
+    turn already in flight.
     """
 
-    def __init__(self, ticket: str | None, started_at_ms: int | None):
+    def __init__(
+        self,
+        ticket: str | None,
+        started_at_ms: int | None,
+        config_version: str | None = None,
+    ):
         self._ticket = ticket
         self._started_at_ms = started_at_ms
+        # Echoed from /api/realtime/session: the version of the prompt this
+        # container is actually running, which a web deploy mid-drive does
+        # not change.
+        self._config_version = config_version
         self._seq = 0
+        self._decision_seq = 0
         self._responding_to: str | None = None
+        self._cue = Cue("user_turn")
+        # The invocation the last spoken turn asked about, until the driver's
+        # next words are sent as its answer — or a later turn moves on.
+        self._awaiting_answer: str | None = None
 
     def note_user(self, text: str) -> None:
         """What the driver just said, told to us from upstream.
@@ -1274,6 +1396,29 @@ class TurnRecorder:
         """
         if text.strip():
             self._responding_to = text
+            self._cue = Cue("user_turn", None, _now_ms())
+
+    def note_pending(self, invocation_id: str | None) -> None:
+        """The driver's turn carries a parked action to ask about.
+
+        Only a turn the driver started can: the ask arrives with /context,
+        which only their words fetch. Keeps the moment's clock — the ask did
+        not make the moment, their words did.
+        """
+        if invocation_id and self._cue.trigger == "user_turn":
+            self._cue = Cue("confirmation", invocation_id, self._cue.at_ms)
+
+    def note_offer(self, trigger: str) -> None:
+        """The proactive engine is about to run a turn nobody asked for."""
+        self._cue = Cue(trigger, None, _now_ms())
+
+    def cue(self) -> Cue:
+        return self._cue
+
+    def take_awaiting_answer(self) -> str | None:
+        """The invocation an answer now would settle, handed over once."""
+        invocation_id, self._awaiting_answer = self._awaiting_answer, None
+        return invocation_id
 
     def record(
         self,
@@ -1282,8 +1427,11 @@ class TurnRecorder:
         *,
         started_ms: int | None = None,
         barged_in: bool = False,
+        cue: Cue | None = None,
+        metrics: dict | None = None,
     ) -> None:
-        """Fire and forget. A failure here must never cost the driver a reply.
+        """A turn that reached the speaker. Fire and forget: a failure here
+        must never cost the driver a reply.
 
         `started_ms` is the wall clock when the first word was released to
         TTS, which is when speech began. `barged_in` means the person spoke
@@ -1293,22 +1441,29 @@ class TurnRecorder:
         badge and the paper's turn-taking record read them. Before they were
         sent, a reply cut off after one word was filed as a complete turn
         that said "The".
+
+        `metrics` is what the gate saw of the LLM's own timing for this
+        completion: `ttftMs`, `promptTokens`, `completionTokens`,
+        `requestedModel`, each only when measured.
         """
         if not self._ticket or not self._started_at_ms or not spoken.strip():
             return
 
+        cue = cue or self._cue
         seq, self._seq = self._seq, self._seq + 1
-        now = int(time.time() * 1000)
+        now = _now_ms()
         # Milliseconds into the drive, on the same clock as `utterance` — which
         # is what lets the two be read as one dialogue, and what the echo filter
         # compares intervals against.
         offset = max(0, (started_ms or now) - self._started_at_ms)
+        kind = self._kind(cue, generated if barged_in else spoken)
         payload = {
             "ticket": self._ticket,
             "seq": seq,
             "startOffsetMs": offset,
             "text": spoken,
             "generatedText": generated,
+            "kind": kind,
         }
         if barged_in:
             end = max(offset, now - self._started_at_ms)
@@ -1320,26 +1475,111 @@ class TurnRecorder:
             # Roughly 14 characters a second of speech. An estimate, and marked
             # as one: the container never learns when playback actually ended.
             payload["endOffsetMs"] = offset + int(len(spoken) / 14 * 1000)
-        if self._responding_to:
+        # Only a turn the driver's words prompted answers them. An offer
+        # answers nothing, and filing it against their last line — often
+        # minutes old — would make the transcript say it did.
+        if self._responding_to and cue.trigger not in OFFER_TRIGGERS:
             payload["respondingToText"] = self._responding_to
+        if self._config_version:
+            payload["configVersion"] = self._config_version
+        latency = self._latency(cue, started_ms or now)
+        if latency is not None:
+            # From the moment to the first word released: what "did it feel
+            # fast" was about. Not the moment to audio — the TTS's own delay
+            # happens downstream of anything this container can time per turn.
+            payload["totalLatencyMs"] = latency
+        for key in ("ttftMs", "promptTokens", "completionTokens", "requestedModel"):
+            if metrics and metrics.get(key) is not None:
+                payload[key] = metrics[key]
+
+        # Whatever this turn was, it is now the last thing the driver heard.
+        # An ask makes their next words its answer; anything else means their
+        # next words answer that instead.
+        self._awaiting_answer = cue.subject_key if kind == "confirmation_request" else None
+
+        decision = self._decision(cue, "interrupted" if barged_in else "spoke", latency)
+        self._send(payload, decision)
+
+    def decline(self, *, interrupted: bool = False, cue: Cue | None = None) -> None:
+        """A completion that reached nobody: the model declined, or the driver
+        spoke before its first word. Writes a decision and NO turn.
+        """
+        if not self._ticket or not self._started_at_ms:
+            return
+        cue = cue or self._cue
+        latency = self._latency(cue, _now_ms()) if not interrupted else None
+        self._send(None, self._decision(cue, "interrupted" if interrupted else "declined", latency))
+
+    @staticmethod
+    def _kind(cue: Cue, said: str) -> str:
+        if cue.trigger in OFFER_TRIGGERS:
+            return "proactive_prompt"
+        # The ask was in front of the model, but it is told to let the question
+        # keep while they are mid-thought — so only a turn that asks something
+        # counts as the ask. Lexical and coarse, and lopsided the safe way: a
+        # missed ask costs a re-ask; a false one would take the driver's next
+        # words as an answer to a question never put.
+        if cue.trigger == "confirmation" and "?" in said:
+            return "confirmation_request"
+        return "reply"
+
+    @staticmethod
+    def _latency(cue: Cue, until_ms: int) -> int | None:
+        return max(0, until_ms - cue.at_ms) if cue.at_ms else None
+
+    def _decision(self, cue: Cue, outcome: str, latency: int | None) -> dict:
+        seq, self._decision_seq = self._decision_seq, self._decision_seq + 1
+        started_at_ms = self._started_at_ms or 0
+        decision = {
+            "ticket": self._ticket,
+            "seq": seq,
+            "offsetMs": max(0, (cue.at_ms or _now_ms()) - started_at_ms),
+            "trigger": cue.trigger,
+            "outcome": outcome,
+        }
+        if self._config_version:
+            decision["configVersion"] = self._config_version
+        if latency is not None:
+            decision["latencyMs"] = latency
+        if cue.subject_key:
+            decision["subjectKey"] = cue.subject_key
+        return decision
+
+    def _send(self, turn: dict | None, decision: dict) -> None:
+        """Both writes, in ONE task, turn first.
+
+        Sequential on purpose: the decision points at the turn's row, and the
+        turn route hands back that id. Two independent tasks would race the
+        foreign key; this way a lost turn only costs the decision its pointer.
+        """
 
         async def send() -> None:
+            turn_id = None
+            if turn is not None:
+                try:
+                    response = await asyncio.to_thread(self._post, "agent-turn", turn)
+                    turn_id = (response or {}).get("id")
+                except Exception as err:
+                    logger.warning(f"[turn] not recorded, echo filter will be blind: {err}")
+            if turn_id:
+                decision["agentTurnId"] = turn_id
             try:
-                await asyncio.to_thread(self._post, payload)
+                await asyncio.to_thread(self._post, "decision", decision)
             except Exception as err:
-                logger.warning(f"[turn] not recorded, echo filter will be blind: {err}")
+                logger.warning(f"[decision] not recorded: {err}")
 
         asyncio.create_task(send())
 
-    def _post(self, payload: dict) -> None:
+    def _post(self, route: str, payload: dict) -> dict | None:
         req = urllib.request.Request(
-            f"{WEB_URL}/api/realtime/agent-turn",
+            f"{WEB_URL}/api/realtime/{route}",
             method="POST",
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=5):
-            pass
+        with urllib.request.urlopen(req, timeout=5) as res:
+            raw = res.read()
+            return json.loads(raw) if raw else None
 
 
 def _partial_tail(text: str, token: str) -> str:
@@ -1450,12 +1690,17 @@ class SilenceGate(FrameProcessor):
         recorder: TurnRecorder | None = None,
         drafts: DraftRecorder | None = None,
         offers: "Offers | None" = None,
+        llm_name: str | None = None,
     ):
         super().__init__()
         self._summary = summary
         self._recorder = recorder
         self._drafts = drafts
         self._offers = offers
+        # Whose metrics are this completion's. Every upstream service's
+        # MetricsFrame passes through here — the STT's included — so they are
+        # told apart by the processor that measured them.
+        self._llm_name = llm_name
         self._text = ""
         self._spoken = ""
         self._holding = True
@@ -1467,6 +1712,13 @@ class SilenceGate(FrameProcessor):
         # true between the tags, where nothing may reach TTS.
         self._pending = ""
         self._in_draft = False
+        # Between a completion's start and its end or interruption. An
+        # InterruptionFrame outside one is the driver starting to talk while
+        # the agent had nothing in flight, which is not a decision about anything.
+        self._in_response = False
+        # The recorder's cue as it stood when this completion started.
+        self._cue: "Cue | None" = None
+        self._turn_metrics: dict = {}
 
     def _reset(self) -> None:
         """Back to the state before a completion: holding, nothing spoken."""
@@ -1476,6 +1728,28 @@ class SilenceGate(FrameProcessor):
         self._first_spoke_ms = None
         self._pending = ""
         self._in_draft = False
+        self._in_response = False
+        self._cue = None
+        self._turn_metrics = {}
+
+    def _note_metrics(self, frame: MetricsFrame) -> None:
+        """Keep this completion's LLM timing and token counts.
+
+        Pipecat measures them and pushes them downstream as frames, which
+        nothing read: the latency columns on `agent_turn` were always empty.
+        The LLM's frames arrive between its response start and end, so the
+        reset at start is what keeps one turn's numbers off the next.
+        """
+        for data in frame.data:
+            if self._llm_name and data.processor != self._llm_name:
+                continue
+            if isinstance(data, TTFBMetricsData):
+                self._turn_metrics["ttftMs"] = int(data.value * 1000)
+            elif isinstance(data, LLMUsageMetricsData):
+                self._turn_metrics["promptTokens"] = data.value.prompt_tokens
+                self._turn_metrics["completionTokens"] = data.value.completion_tokens
+            if data.model:
+                self._turn_metrics["requestedModel"] = data.model
 
     def _for_speech(self, chunk: str) -> str:
         """Strip draft blocks out of streaming text, tag-safe across frames.
@@ -1560,6 +1834,11 @@ class SilenceGate(FrameProcessor):
 
         if isinstance(frame, LLMFullResponseStartFrame):
             self._reset()
+            self._in_response = True
+            if self._recorder is not None:
+                self._cue = self._recorder.cue()
+        elif isinstance(frame, MetricsFrame):
+            self._note_metrics(frame)
         elif isinstance(frame, LLMTextFrame):
             self._text += frame.text
             if self._holding:
@@ -1598,7 +1877,15 @@ class SilenceGate(FrameProcessor):
                         self._text,
                         started_ms=self._first_spoke_ms,
                         barged_in=True,
+                        cue=self._cue,
+                        metrics=self._turn_metrics,
                     )
+            elif self._in_response and self._recorder is not None:
+                # Talked over before a word came out — or while a decline was
+                # still being held. Nothing reached the speaker, so no turn;
+                # but the moment was there and the driver took it back, which
+                # is what efficient dismissal looks like from the inside.
+                self._recorder.decline(interrupted=True, cue=self._cue)
             # Partial words or none: either way the driver heard the agent try,
             # which is what the never-twice rule keys on, not how much of it
             # landed. A turn interrupted before its first word never reached
@@ -1635,8 +1922,19 @@ class SilenceGate(FrameProcessor):
             # that actually reached the speaker. An interrupted turn was already
             # written above and `_reset` emptied `_spoken`, so this cannot
             # write it twice.
+            #
+            # A decline writes its DECISION instead — the silence the agent
+            # chose, which used to exist only as the log line above.
             if self._recorder is not None and self._spoken.strip():
-                self._recorder.record(self._spoken, self._text, started_ms=self._first_spoke_ms)
+                self._recorder.record(
+                    self._spoken,
+                    self._text,
+                    started_ms=self._first_spoke_ms,
+                    cue=self._cue,
+                    metrics=self._turn_metrics,
+                )
+            elif self._recorder is not None and self._in_response:
+                self._recorder.decline(cue=self._cue)
             # The proactive engine needs the same fact the summary does: what
             # the turn BECAME. A spoken turn (including a declined-looking one
             # that released words) sets the awaiting-reply rule; a decline
@@ -1777,7 +2075,9 @@ def build_pipeline(
     # Offsets are measured against the drive's own start, the same clock
     # `utterance` uses — which is what lets the two tables be read as one
     # dialogue, and what the echo filter compares intervals against.
-    recorder = TurnRecorder(ticket, session.get("startedAtEpochMs"))
+    recorder = TurnRecorder(
+        ticket, session.get("startedAtEpochMs"), session.get("configVersion")
+    )
     drafts = DraftRecorder(ticket, session.get("startedAtEpochMs"))
     # A SECOND analyzer, deliberately, not the same instance: this one drives
     # turn completion and interruption in the aggregator, and the two keep
@@ -1792,7 +2092,8 @@ def build_pipeline(
     # pushes to run an unprompted turn flows into the aggregator's own run
     # path — the same one a normal turn takes.
     recall = Recall(context, summary, ticket, recorder, drafts)
-    offers = Offers(context, recall, session)
+    offers = Offers(context, recall, session, recorder)
+    logger.info(f"[study] condition {session.get('studyCondition') or 'none (degraded)'}")
 
     pipeline = Pipeline(
         [
@@ -1814,7 +2115,7 @@ def build_pipeline(
             # still records what the model generated, so a declined turn is
             # visible in the context as a turn that happened, while never
             # reaching the speaker.
-            SilenceGate(summary, recorder, drafts, offers),
+            SilenceGate(summary, recorder, drafts, offers, llm_name=llm.name),
             tts,
             transport.output(),
             aggregator.assistant(),

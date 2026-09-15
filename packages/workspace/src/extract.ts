@@ -18,8 +18,15 @@ import {
  * derived from an older prompt — a bug with no symptom until the results look
  * subtly wrong. The "PROMPT_VERSION discipline" test in `extract.test.ts`
  * fails if the prompt text drifts without the version moving.
+ *
+ * "5" changed the INPUT, not the text: directions are no longer sent (see
+ * CLASSIFY_WAIT_MS in apps/worker/src/jobs/extract-workspace.ts). A batch that
+ * held one hashes differently anyway, but a batch without one would otherwise
+ * hit a cache entry made under a pipeline that let directions through, and a
+ * rebuild would mix the two. Nothing re-extracts on a bump by itself; only
+ * `pnpm workspace:rebuild --force` pays for fresh calls.
  */
-export const PROMPT_VERSION = "4";
+export const PROMPT_VERSION = "5";
 
 /** Fixed seed sent with every request, so a forced re-run is as stable as the backend allows. */
 export const EXTRACTION_SEED = 7;

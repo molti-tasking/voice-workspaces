@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { captureSession, eq, getDb } from "@voicemural/db";
+import { resolveStudyCondition } from "@voicemural/shared";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import {
   SUMMARY_PROMPT,
@@ -63,6 +64,7 @@ export async function POST(req: Request) {
       setting: captureSession.setting,
       voiceId: captureSession.voiceId,
       sttLanguage: captureSession.sttLanguage,
+      studyCondition: captureSession.studyCondition,
     })
     .from(captureSession)
     .where(eq(captureSession.id, payload.captureSessionId))
@@ -116,6 +118,13 @@ export async function POST(req: Request) {
       // clock with `utterance`, which is ms since the drive started.
       startedAtEpochMs: new Date(row.startedAt).getTime(),
       configVersion: TALKBACK_CONFIG_VERSION,
+      // The study condition frozen onto THIS drive when it opened — not the
+      // participant's current template, which may have moved to the next
+      // phase since. Resolved, so the container reads flags and never
+      // defaults. A drive from before conditions existed reads as the
+      // defaults, which is what it ran under unless the container's
+      // PROACTIVE_OFFERS said otherwise.
+      studyCondition: resolveStudyCondition(row.studyCondition).condition,
     },
     { headers: { "Cache-Control": "no-store" } },
   );

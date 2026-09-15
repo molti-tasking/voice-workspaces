@@ -7,6 +7,8 @@
  */
 import { and, asc, count, desc, eq, gte, inArray, isNull, max, sql } from "drizzle-orm";
 import {
+  agentDecision,
+  agentTurn,
   audioChunk,
   capability,
   capabilityOrigin,
@@ -311,18 +313,42 @@ export async function recordInvocation(input: RecordInvocationInput): Promise<st
 export interface PendingConfirmation {
   invocationId: string;
   restatement: string;
+  /** How many times the agent has already asked about it in this drive. */
+  askedCount: number;
 }
 
 /**
- * The oldest unanswered confirmation in a session, if any.
+ * How many times one pending action may be asked about per drive: the ask,
+ * and one repeat.
  *
- * Read on the per-turn context path, so it is deliberately one indexed row and
- * no join beyond the directive that produced it.
+ * Without a cap the same question was re-injected on every turn until
+ * answered, and a driver who let it pass once ("say nothing and it will keep")
+ * heard it again at the next pause, and the next. Letting a question pass
+ * twice is an answer of sorts. The action stays unsettled rather than refused
+ * — see `settleInvocation` for what happens to it at the end of the drive.
+ */
+export const MAX_CONFIRMATION_ASKS = 2;
+
+/**
+ * The oldest unanswered confirmation in a session that may still be asked
+ * about, if any.
+ *
+ * Read on the per-turn context path. The common case — nothing parked — is one
+ * indexed query. Only a drive with something parked pays for the second, which
+ * counts the asks already spoken, so a question that has used up its asks
+ * steps aside for the next one rather than blocking it for the rest of the drive.
+ *
+ * An ask is an `agent_decision` about the invocation whose turn was stored as a
+ * `confirmation_request`. A turn spoken while the ask was merely in front of the
+ * model, about something else, is not an ask — the prompt tells it to let the
+ * question keep while they are mid-thought, and that must not use up the question.
  */
 export async function pendingConfirmation(
   captureSessionId: string,
+  maxAsks: number = MAX_CONFIRMATION_ASKS,
 ): Promise<PendingConfirmation | null> {
-  const rows = await getDb()
+  const db = getDb();
+  const rows = await db
     .select({ invocationId: invocation.id, restatement: directive.restatement })
     .from(invocation)
     .innerJoin(directive, eq(directive.utteranceId, invocation.triggeringUtteranceId))
@@ -334,20 +360,69 @@ export async function pendingConfirmation(
       ),
     )
     .orderBy(asc(invocation.firedAt))
-    .limit(1);
+    .limit(10);
 
-  return rows[0] ?? null;
+  if (rows.length === 0) return null;
+
+  const asks = await db
+    .select({ subjectKey: agentDecision.subjectKey, n: count() })
+    .from(agentDecision)
+    .innerJoin(agentTurn, eq(agentTurn.id, agentDecision.agentTurnId))
+    .where(
+      and(
+        eq(agentDecision.captureSessionId, captureSessionId),
+        inArray(
+          agentDecision.subjectKey,
+          rows.map((r) => r.invocationId),
+        ),
+        eq(agentTurn.kind, "confirmation_request"),
+      ),
+    )
+    .groupBy(agentDecision.subjectKey);
+  const asked = new Map(asks.map((a) => [a.subjectKey, a.n]));
+
+  for (const row of rows) {
+    const askedCount = asked.get(row.invocationId) ?? 0;
+    if (askedCount < maxAsks) return { ...row, askedCount };
+  }
+  return null;
 }
 
-/** Settle a pending confirmation. Never deletes: a refusal is data. */
+/**
+ * Settle a pending confirmation. Never deletes: a refusal is data.
+ *
+ * Returns whether this call settled it — false when it was already settled, or
+ * when `captureSessionId` is given and the invocation belongs to another drive.
+ * The container names the invocation it asked about, so the route passes the
+ * ticket's drive to stop one drive's "yes" settling another's action.
+ *
+ * WHAT HAPPENS TO AN ACTION NOBODY ANSWERS. It stays `confirmed IS NULL` for
+ * good. Nothing closes it at the end of the drive, and that is the decision,
+ * not an omission:
+ * - Writing `false` would record a refusal the person never made, in the column
+ *   the analysis reads refusals from.
+ * - It cannot resurface. `pendingConfirmation` is scoped to one drive, so the
+ *   next drive never asks about the last one's parked actions.
+ * - "Asked and never answered" is distinguishable from "still waiting" by the
+ *   session having ended, which is how `study:export` reports it.
+ */
 export async function settleInvocation(
   invocationId: string,
   confirmed: boolean,
-): Promise<void> {
-  await getDb()
+  captureSessionId?: string,
+): Promise<boolean> {
+  const rows = await getDb()
     .update(invocation)
     .set({ confirmed })
-    .where(and(eq(invocation.id, invocationId), isNull(invocation.confirmed)));
+    .where(
+      and(
+        eq(invocation.id, invocationId),
+        isNull(invocation.confirmed),
+        captureSessionId ? eq(invocation.captureSessionId, captureSessionId) : undefined,
+      ),
+    )
+    .returning({ id: invocation.id });
+  return rows.length > 0;
 }
 
 export interface InvocationStat {

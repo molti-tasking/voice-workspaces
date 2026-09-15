@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { boardEnabledAt } from "@voicemural/db/board";
 import { loadOps } from "@voicemural/db/workspace";
-import { foldBoard, judge } from "@voicemural/workspace";
+import { KEPT_AFTER_SESSIONS, foldBoard, judge } from "@voicemural/workspace";
 import { AppDock } from "@/components/app-dock";
 import { Link } from "@/components/nav-link";
 import { NavMenu } from "@/components/nav-menu";
@@ -18,12 +18,6 @@ export const metadata: Metadata = {
   title: "Board",
   robots: { index: false, follow: false },
 };
-
-/**
- * How many later drives a speech-driven move must survive untouched to count
- * as kept. Two: one commute is easy to miss; two is a choice.
- */
-const KEPT_AFTER_SESSIONS = 2;
 
 /**
  * The task board: what the person has said they would do, by tense.

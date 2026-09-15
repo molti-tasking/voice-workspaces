@@ -11,6 +11,7 @@
     "workspace": "tsx src/scripts/workspace-admin.ts",
     "test": "vitest run --passWithNoTests",
     "memory": "tsx src/scripts/memory-admin.ts",
+    "study": "tsx src/scripts/study-admin.ts",
     "lint": "eslint ."
   },
   "dependencies": {
