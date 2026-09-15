@@ -527,7 +527,7 @@ describe("PROMPT_VERSION discipline", () => {
     // When this fails: bump PROMPT_VERSION, then update the hash below.
     //
     // The version can also move with the fingerprint unchanged, when what is
-    // SENT changes rather than the wording — "5" stopped sending directions.
+    // SENT changes rather than the wording — "5" stopped sending handled directions.
     const fingerprint = createHash("sha256").update(SYSTEM_PROMPT).digest("hex").slice(0, 16);
 
     expect({ PROMPT_VERSION, fingerprint }).toEqual({

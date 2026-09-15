@@ -12,7 +12,7 @@ config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true }
 
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { boardEnabledAt, enableBoard } from "./board";
-import { extraction, user, workspaceOp } from "./schema";
+import { captureSession, extraction, user, workspaceOp } from "./schema";
 import { isDatabaseReachable } from "./testing";
 import { appendOps, appendUserOp, loadOps, loadUserOps } from "./workspace";
 import { closeDb, eq, getDb, sql } from "./index";
@@ -88,6 +88,26 @@ describeIfDb("board", () => {
     const manual = await loadUserOps(USER_ID);
     expect(manual).toHaveLength(1);
     expect(manual[0]?.id).toBe(OP_ID);
+  });
+
+  /**
+   * A rebuild clears the log and restores what `loadUserOps` saved. The agent's
+   * edits cannot be re-derived from anything, so leaving them out would erase
+   * what it did — and its drive, which acceptance is counted from, with it.
+   */
+  it("saves the agent's edits for a rebuild too, with the drive they happened in", async () => {
+    const session = "00000000-0000-4000-8000-00000000b0a2";
+    await getDb().insert(captureSession).values({ id: session, userId: USER_ID, startedAt: new Date() });
+    await appendUserOp({
+      userId: USER_ID,
+      id: OP_ID,
+      op: { type: "retire_block", blockId: "b1", via: "agent" },
+      captureSessionId: session,
+    });
+
+    const saved = await loadUserOps(USER_ID);
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ id: OP_ID, captureSessionId: session, op: { via: "agent" } });
   });
 
   it("is hidden until enabled, and keeps the first date once it is", async () => {

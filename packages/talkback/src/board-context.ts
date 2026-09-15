@@ -10,18 +10,25 @@
  * something had gone untouched for three drives. That is not a prompt problem
  * and no amount of "be more proactive" fixes it.
  *
- * SIGHT ONLY. Nothing here writes. The agent may name a task, say where it
- * stands and propose a move out loud; the move itself still happens through
- * speech extraction or the person's own hand on `/board`. When the agent does
- * get to write, its ops carry `via: "agent"` as a third category alongside
- * `speech` and `user`, so `judge()` can score them separately rather than
- * having them contaminate the speech-versus-person comparison the study rests
- * on. Rendering deliberately carries no block ids yet: an id the agent cannot
- * act on is prompt noise, and worse, it leaks into speech.
+ * SIGHT, AND NOW A HANDLE TO ACT WITH. Nothing here writes, but the agent can:
+ * its board tools (BOARD_TOOLS) move, add, reword and drop cards, and their
+ * ops carry `via: "agent"` as a third category alongside `speech` and `user`,
+ * so `judge()` scores them separately rather than having them contaminate the
+ * speech-versus-person comparison the study rests on. So each card now carries
+ * the short handle those tools take (`cardHandle`), and the topics are listed,
+ * because a task added by voice has to land in one. The prompt keeps the
+ * handles out of speech.
  *
  * Pure apart from the fold it is handed. No I/O here — the caller loads the ops.
  */
-import { foldBoard, type Board, type BoardCard, type StoredOp } from "@voicemural/workspace";
+import {
+  cardHandle,
+  foldBoard,
+  foldWorkspace,
+  type Board,
+  type BoardCard,
+  type StoredOp,
+} from "@voicemural/workspace";
 import { trimToBudget } from "./budget";
 
 /**
@@ -33,7 +40,10 @@ import { trimToBudget } from "./budget";
  * board of forty cards would otherwise quietly double the pre-first-token cost
  * of every turn for the sake of thirty cards nobody asked about.
  */
-export const MAX_BOARD_CHARS = 900;
+export const MAX_BOARD_CHARS = 1100;
+
+/** Most topics named for a new task to land in; the most recently touched first. */
+const MAX_TOPICS = 8;
 
 /** Untouched for this many drives before it is worth mentioning unprompted. */
 const STALE_AFTER_SESSIONS = 2;
@@ -49,7 +59,7 @@ const STALE_AFTER_SESSIONS = 2;
 const LIVE_COLUMNS = ["doing", "next", "open"] as const;
 
 export interface BoardContext {
-  /** Rendered block, or null when there is no live task worth sending. */
+  /** Rendered block. Null only when the board is not being shown at all. */
   text: string | null;
   /** For the analytics on the route — how much of the board was shown. */
   shown: number;
@@ -57,18 +67,19 @@ export interface BoardContext {
 }
 
 /**
- * One line per task: the column, the task, and how long it has sat.
+ * One line per task: the column, the task, the handle to act on it with, its
+ * topic, and how long it has sat.
  *
  * Deliberately flat and short. This competes for the same prompt budget as
  * recall, and a task is a sentence — it needs no structure beyond the column
  * it is in.
  */
 function renderCard(card: BoardCard): string {
-  const stale =
-    card.staleSessions >= STALE_AFTER_SESSIONS
-      ? ` (untouched for ${card.staleSessions} drives)`
-      : "";
-  return `- [${card.state}] ${card.block.text}${stale}`;
+  const notes = [`card ${cardHandle(card.cardId)}`, card.topic.title];
+  if (card.staleSessions >= STALE_AFTER_SESSIONS) {
+    notes.push(`untouched for ${card.staleSessions} drives`);
+  }
+  return `- [${card.state}] ${card.block.text} (${notes.join(" · ")})`;
 }
 
 /**
@@ -80,16 +91,20 @@ function renderCard(card: BoardCard): string {
  */
 export function buildBoardContext(ops: readonly StoredOp[]): BoardContext {
   const board: Board = foldBoard(ops);
+  const topics = foldWorkspace(ops)
+    .topics.slice(0, MAX_TOPICS)
+    .map((t) => t.title);
+  const topicLine = topics.length ? `\nTheir topics: ${topics.join(" · ")}` : "";
 
   const live = LIVE_COLUMNS.flatMap((state) => board.columns[state]);
-  if (live.length === 0) return { text: null, shown: 0, total: board.cards.length };
+  const kept = trimToBudget(live.map(renderCard), MAX_BOARD_CHARS);
 
-  const rendered = live.map(renderCard);
-  const kept = trimToBudget(rendered, MAX_BOARD_CHARS);
-  if (kept.length === 0) return { text: null, shown: 0, total: board.cards.length };
-
+  // An empty board is still a board: the agent can add to it, and "nothing is
+  // open" is the answer to "what's on my board" rather than silence about it.
   return {
-    text: `Their task board right now:\n${kept.join("\n")}`,
+    text: kept.length
+      ? `Their task board right now:\n${kept.join("\n")}${topicLine}`
+      : `Their task board right now: nothing open.${topicLine}`,
     shown: kept.length,
     total: board.cards.length,
   };

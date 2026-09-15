@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { captureSession, eq, getDb } from "@voicemural/db";
+import { boardEnabledAt } from "@voicemural/db/board";
 import { resolveStudyCondition } from "@voicemural/shared";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import {
+  BOARD_EDITING,
+  BOARD_TOOLS,
   SUMMARY_PROMPT,
   TALKBACK_CONFIG_VERSION,
   asSttLanguage,
@@ -87,7 +90,16 @@ export async function POST(req: Request) {
   const driveSoFar = await loadDriveSoFarText(payload.captureSessionId).catch(() => "");
   const driveSummary = driveSoFar ? await foldSummary(null, driveSoFar) : null;
 
-  const composed = composeSystemPrompt({ setting: row.setting });
+  // The board, and the agent's hands on it, only where the person has a board.
+  // Decided once per connection, because the tools are registered once per
+  // connection: a board switched on mid-drive shows up in the turn context
+  // (the context route checks every turn) but the agent can only read it
+  // until the next drive, which the base prompt handles.
+  const boardEditable = (await boardEnabledAt(payload.userId).catch(() => null)) !== null;
+  const composed = composeSystemPrompt({
+    setting: row.setting,
+    sections: boardEditable ? [BOARD_EDITING] : [],
+  });
 
   return NextResponse.json(
     {
@@ -125,6 +137,10 @@ export async function POST(req: Request) {
       // defaults, which is what it ran under unless the container's
       // PROACTIVE_OFFERS said otherwise.
       studyCondition: resolveStudyCondition(row.studyCondition).condition,
+      // OpenAI-format function tools for the container to register as they
+      // are. Empty when the board is off, and then the prompt says nothing
+      // about editing it either. Every call comes back to /api/realtime/board.
+      tools: boardEditable ? BOARD_TOOLS : [],
     },
     { headers: { "Cache-Control": "no-store" } },
   );

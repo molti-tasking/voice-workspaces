@@ -82,6 +82,7 @@ export default async function SessionPage({
       ttftMs: agentTurn.ttftMs,
       speakTtfbMs: agentTurn.speakTtfbMs,
       totalLatencyMs: agentTurn.totalLatencyMs,
+      toolCalls: agentTurn.toolCalls,
       error: agentTurn.error,
     })
     .from(agentTurn)

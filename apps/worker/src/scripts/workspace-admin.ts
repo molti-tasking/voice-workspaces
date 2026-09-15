@@ -54,6 +54,7 @@ async function restoreUserOps(userId: string, manual: StoredOp[]): Promise<numbe
       id: stored.id,
       op: stored.op,
       occurredAt: stored.occurredAt,
+      captureSessionId: stored.captureSessionId,
     });
     if (result === "inserted") restored += 1;
   }

@@ -19,6 +19,19 @@ import type { EvalContext } from "./messages";
 
 export type TurnExpectation = "silent" | "speak" | "either";
 
+/**
+ * A board as `buildBoardContext` renders it, with the handles the tools take.
+ * Written out rather than folded from ops: the case must show exactly what the
+ * model saw, and a change to the rendering should be a visible edit here.
+ */
+const BOARD = [
+  "Their task board right now:",
+  "- [next] Write up the asymmetry argument. (card 1225b3 · Voice paper)",
+  "- [next] Email William about the start date. (card 9b04e1 · Research stay)",
+  "- [open] Build the evaluation system. (card 7a31c0 · Voice paper)",
+  "Their topics: Voice paper · Research stay",
+].join("\n");
+
 export interface EvalCase {
   id: string;
   /** Why this case exists, in one line. Shown next to a failure. */
@@ -42,6 +55,15 @@ export interface EvalCase {
     mustMention?: string[];
     /** Regex sources, case-insensitive. None may match a spoken reply. */
     mustNotMention?: string[];
+    /**
+     * For a case whose context shows the board — where the agent has its board
+     * tools, as it does live. An object: the model must call this tool, each
+     * named argument matching its regex (case-insensitive); nothing need be
+     * spoken on that step, since the reply comes after the tool answers. `null`:
+     * it must NOT call a tool. Absent: a call is a failure too, so an old case
+     * cannot quietly start editing boards.
+     */
+    toolCall?: { name: string; args?: Record<string, string> } | null;
   };
 }
 
@@ -360,6 +382,104 @@ export const CASES: EvalCase[] = [
     },
     expect: {
       turn: "silent",
+    },
+  },
+  // --- 15 Sep 2026 pilot drives, in their own words (talkback-9) ------------
+  {
+    id: "board-remove-drops",
+    about: "Asked to remove a task, the agent drops it — with the tool, at once, without asking.",
+    setting: "desk",
+    history: [{ role: "assistant", content: "I think you should write up the asymmetry argument." }],
+    context: { board: BOARD },
+    // 15 Sep 2026: "Got it, I'll mark that as dropped." — and the card stayed.
+    said: "Let's remove this asymmetry argument. I don't even understand it.",
+    expect: { turn: "either", toolCall: { name: "move_task", args: { card: "^1225b3$", column: "^dropped$" } } },
+  },
+  {
+    id: "board-delete-now",
+    about: "Pressed to delete a card itself, the agent does it rather than explaining why it cannot.",
+    setting: "desk",
+    history: [{ role: "user", content: "But I can still see the ticket on the board." }],
+    context: { board: BOARD },
+    // 15 Sep 2026: "I cannot move or delete anything on the board myself."
+    said: "No, I want you to delete it now. The asymmetry one. You are supposed to do things like this autonomously in the background.",
+    expect: { turn: "either", toolCall: { name: "move_task", args: { card: "^1225b3$", column: "^dropped$" } } },
+  },
+  {
+    id: "board-mark-done",
+    about: "\"Mark it done\" moves the card to done.",
+    setting: "walking",
+    context: { board: BOARD },
+    said: "I sent the email to William this morning, so mark that one done.",
+    expect: { turn: "either", toolCall: { name: "move_task", args: { card: "^9b04e1$", column: "^done$" } } },
+  },
+  {
+    id: "board-add-task",
+    about: "Asked to put a task on the board, the agent adds it, in the topic it belongs to.",
+    setting: "driving",
+    context: { board: BOARD },
+    said: "Put booking the flights to Stanford on next, for the research stay.",
+    expect: {
+      turn: "either",
+      toolCall: { name: "add_task", args: { text: "flight", topic: "research stay", column: "^next$" } },
+    },
+  },
+  {
+    id: "board-not-a-task",
+    about: "\"That was never a task\" takes the card off the board; it is not the same as dropping it.",
+    setting: "desk",
+    context: { board: BOARD },
+    said: "The evaluation system one was never really a task, it's the whole project. Take it off the board.",
+    expect: { turn: "either", toolCall: { name: "remove_task", args: { card: "^7a31c0$" } } },
+  },
+  {
+    id: "board-reword",
+    about: "Asked to reword a card, the agent changes its words and nothing else.",
+    setting: "desk",
+    context: { board: BOARD },
+    said: "Rename the asymmetry one to: draft the asymmetry section.",
+    expect: {
+      turn: "either",
+      toolCall: { name: "reword_task", args: { card: "^1225b3$", text: "draft the asymmetry section" } },
+    },
+  },
+  {
+    id: "board-mention-no-edit",
+    about: "A task mentioned while thinking aloud is not a request: the board is left alone.",
+    setting: "desk",
+    context: { board: BOARD },
+    said: "Reading the Mark paper yesterday changed how I see the asymmetry argument, the interruption cost is the real point.",
+    expect: { turn: "either", toolCall: null },
+  },
+  {
+    id: "paste-a-file",
+    about: "Offered a document at a desk, the agent does not invent a chat to paste it into.",
+    setting: "desk",
+    // Observed: "Go ahead and paste it." then "…paste the markdown file into the chat on your screen".
+    said: "I don't remember. May I paste some Markdown file somewhere to paste the context and you help me to understand the evaluation plan?",
+    expect: {
+      turn: "speak",
+      mustMention: ["read|describ|tell me|aloud|out loud"],
+      mustNotMention: ["go ahead and paste|paste it|into the chat|upload it|on your screen"],
+    },
+  },
+  {
+    id: "repeat-mistranscribed",
+    about: "A request to hear the question again, as live ASR mangled it, gets the question — not \"go ahead\".",
+    setting: "desk",
+    history: [
+      { role: "user", content: "Yeah. Let's do this." },
+      {
+        role: "assistant",
+        content: "Do you want to start by listing all the courses you're considering, or the deadlines you're already worried about?",
+      },
+    ],
+    // Live ASR's words; the driver said "Can you repeat the question?". Observed reply: "Go ahead."
+    said: "Can I repeat the question?",
+    expect: {
+      turn: "speak",
+      mustMention: ["course|deadline"],
+      mustNotMention: ["^go ahead"],
     },
   },
 ];

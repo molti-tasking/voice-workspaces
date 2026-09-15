@@ -25,6 +25,10 @@ const { isDatabaseReachable } = await import("@voicemural/db/testing");
 const { refreshPersonProperties } = await import("./sweep");
 
 const USER_ID = "test-sweep-participant";
+// Fixed ids are per test file, and files run in parallel against one
+// database: this once reused report-sessions.test.ts's S_CLIENT, and each file
+// intermittently failed on the other's row.
+const SESSION_ID = "00000000-0000-4000-8000-00000000a5e1";
 const describeIfDb = (await isDatabaseReachable()) ? describe : describe.skip;
 
 describeIfDb("refreshPersonProperties", () => {
@@ -34,7 +38,7 @@ describeIfDb("refreshPersonProperties", () => {
     await db.delete(user).where(eq(user.id, USER_ID));
     await db.insert(user).values({ id: USER_ID, name: "T", email: `${USER_ID}@test.local` });
     await db.insert(captureSession).values({
-      id: "00000000-0000-4000-8000-0000000000f1",
+      id: SESSION_ID,
       userId: USER_ID,
       startedAt: new Date("2026-09-01T08:00:00Z"),
     });

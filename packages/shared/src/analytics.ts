@@ -265,27 +265,47 @@ export interface AnalyticsEventMap {
     awaiting_review: number;
   };
   /**
-   * A manual move. Yield monitoring only: the acceptance measure itself — did
-   * the person keep, reverse or never touch a speech-driven transition — needs
-   * "never touched", which only the ledger can answer, so it is computed from
-   * the ops (`judge` in @voicemural/workspace) rather than from these events.
+   * A move made on the board page or by the talk-back agent. Yield monitoring
+   * only: the acceptance measure itself — did the person keep, reverse or
+   * never touch a machine-made transition — needs "never touched", which only
+   * the ledger can answer, so it is computed from the ops (`judge` in
+   * @voicemural/workspace) rather than from these events.
    */
   board_card_moved: {
     block_id: string;
     card_id: string;
     from_state: TaskStateName;
     to_state: TaskStateName;
+    /** Who made this move: the person on the board page, or the agent asked aloud. */
+    by: "user" | "agent";
     /** Who last moved this card before now. Null when it was only ever added. */
-    previous_via: "speech" | "user" | null;
+    previous_via: "speech" | "user" | "agent" | null;
     /** True when this move puts the card back where speech had moved it from. */
     reverses_speech: boolean;
+    /** True when this move puts the card back where the agent had moved it from. */
+    reverses_agent: boolean;
     sessions_since_last_transition: number;
   };
   board_card_retired: {
     block_id: string;
     card_id: string;
     state: TaskStateName;
-    previous_via: "speech" | "user" | null;
+    by: "user" | "agent";
+    previous_via: "speech" | "user" | "agent" | null;
+  };
+  /** A task the agent put on the board because it was asked to. */
+  board_card_added: {
+    card_id: string;
+    state: TaskStateName;
+    by: "agent";
+    /** Whether the task needed a new topic to live in. */
+    topic_created: boolean;
+  };
+  /** A task the agent reworded because it was asked to. Ids only: the words are content. */
+  board_card_reworded: {
+    card_id: string;
+    block_id: string;
+    by: "agent";
   };
 
   transcription_failed: {

@@ -33,6 +33,8 @@ WHAT IS WRITTEN BACK
   /api/realtime/agent-turn  what reached the speaker. The echo filter's input.
   /api/realtime/decision    every moment the model was given to speak and what
                             it became — spoken, declined, or talked over.
+  /api/realtime/board       a board edit the agent was asked to make, as a tool
+                            call. What the call means is decided there.
 
 WHAT IS NOT HERE. Retrieval and echo filtering run in TypeScript against the
 ledger. A second implementation in Python would be a second thing to keep
@@ -44,7 +46,9 @@ import json
 import os
 import re
 import time
+import urllib.error
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -69,6 +73,7 @@ from pipecat.frames.frames import (
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMRunFrame,
+    FunctionCallsStartedFrame,
     LLMTextFrame,
     MetricsFrame,
     StartFrame,
@@ -77,6 +82,8 @@ from pipecat.frames.frames import (
     UserStoppedSpeakingFrame,
     VADUserStartedSpeakingFrame,
 )
+from pipecat.adapters.schemas.function_schema import FunctionSchema
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.metrics.metrics import LLMUsageMetricsData, TTFBMetricsData
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
@@ -88,6 +95,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.openai.stt import OpenAISTTService
 from pipecat.transports.base_transport import TransportParams
@@ -330,6 +338,31 @@ def fetch_session(ticket: str | None) -> dict:
     except Exception as err:
         logger.warning(f"[session] unreachable, running degraded: {err}")
         return {"systemPrompt": FALLBACK_SYSTEM_PROMPT, "degraded": True}
+
+
+def user_turn_stop_timeout_secs() -> float:
+    """How long after the driver's last sound a turn is ended regardless.
+
+    Pipecat ends a turn when its turn model judges the utterance finished. When
+    it does not — a trailing "and the", or a final transcript landing after the
+    VAD stop, which Pipecat warns about at startup with our stop_secs=0.5 — a
+    fallback ends the turn after `user_turn_stop_timeout` of silence. Its
+    default is 5.0s, and on the 15 Sep 2026 pilot drive half the replies took
+    5.3-6.6s from the driver's words to the first spoken word while the model's
+    own first token took 0.3-0.5s: the fallback, every time. A reply that late
+    answers what was said two lines ago.
+
+    2.0 by default. Ending a turn early does not make the agent talk over a
+    thinker: the completion still runs through the prompt's "mid-thought, reply
+    <silence>" rule and SilenceGate, so the cost is a declined completion, not
+    an interruption. Clamped to 1-5s; `USER_TURN_STOP_TIMEOUT_SECS` tunes it
+    without a rebuild (but with --force-recreate).
+    """
+    try:
+        value = float(os.getenv("USER_TURN_STOP_TIMEOUT_SECS") or 2.0)
+    except ValueError:
+        value = 2.0
+    return min(5.0, max(1.0, value))
 
 
 def deepgram_utterance_end_ms() -> int:
@@ -1386,6 +1419,9 @@ class TurnRecorder:
         # The invocation the last spoken turn asked about, until the driver's
         # next words are sent as its answer — or a later turn moves on.
         self._awaiting_answer: str | None = None
+        # Board tools called since the last recorded turn, for `toolCalls` on
+        # the turn that reports them.
+        self._tool_calls: list[dict] = []
 
     def note_user(self, text: str) -> None:
         """What the driver just said, told to us from upstream.
@@ -1414,6 +1450,13 @@ class TurnRecorder:
 
     def cue(self) -> Cue:
         return self._cue
+
+    def note_tool_call(self, name: str, latency_ms: int, error: str | None = None) -> None:
+        """A tool the agent called; attached to the turn that speaks about it."""
+        call: dict = {"name": name, "latencyMs": max(0, latency_ms)}
+        if error:
+            call["error"] = error[:500]
+        self._tool_calls.append(call)
 
     def take_awaiting_answer(self) -> str | None:
         """The invocation an answer now would settle, handed over once."""
@@ -1491,6 +1534,8 @@ class TurnRecorder:
         for key in ("ttftMs", "promptTokens", "completionTokens", "requestedModel"):
             if metrics and metrics.get(key) is not None:
                 payload[key] = metrics[key]
+        if self._tool_calls:
+            payload["toolCalls"], self._tool_calls = self._tool_calls[:8], []
 
         # Whatever this turn was, it is now the last thing the driver heard.
         # An ask makes their next words its answer; anything else means their
@@ -1594,6 +1639,87 @@ def _partial_tail(text: str, token: str) -> str:
         if token.startswith(text[-size:]):
             return text[-size:]
     return ""
+
+
+class BoardTools:
+    """The agent's hands on the task board: tool calls, carried to the web app.
+
+    DUMB ON PURPOSE. The tools, their schemas and what each call means all live
+    in TypeScript (packages/talkback/src/board-tools.ts, and the planner the
+    board page also uses). This registers whatever `/api/realtime/session` sent
+    and posts each call back to `/api/realtime/board` verbatim, so there is one
+    definition of "move this card" and it is not in Python.
+
+    The result goes back to the model as the tool's answer, and the agent
+    speaks from it — so a failure is returned as words ("the board could not
+    be reached; nothing was changed") rather than raised, or the model would
+    have nothing to say and might claim the change anyway.
+
+    Not cancelled by an interruption: the driver asked for the edit, and
+    talking over the confirmation does not take the request back. The write is
+    idempotent on `opId` should anything retry it.
+    """
+
+    def __init__(self, ticket: str | None, recorder: "TurnRecorder | None" = None):
+        self._ticket = ticket
+        self._recorder = recorder
+
+    @staticmethod
+    def schemas(tools: list[dict]) -> ToolsSchema | None:
+        """Pipecat's form of the OpenAI function tools the session sent."""
+        functions = []
+        for tool in tools or []:
+            fn = tool.get("function") or {}
+            params = fn.get("parameters") or {}
+            if not fn.get("name"):
+                continue
+            functions.append(
+                FunctionSchema(
+                    name=fn["name"],
+                    description=fn.get("description") or "",
+                    properties=params.get("properties") or {},
+                    required=params.get("required") or [],
+                )
+            )
+        return ToolsSchema(standard_tools=functions) if functions else None
+
+    async def handle(self, params: FunctionCallParams) -> None:
+        started = time.monotonic()
+        name = params.function_name
+        payload = {
+            "ticket": self._ticket,
+            "opId": str(uuid.uuid4()),
+            "tool": name,
+            "arguments": dict(params.arguments or {}),
+        }
+        error: str | None = None
+        try:
+            result = await asyncio.to_thread(self._post, payload)
+            if not result.get("ok"):
+                error = str(result.get("error") or "refused")
+        except Exception as err:
+            error = str(err)
+            result = {"ok": False, "error": "The board could not be reached. Nothing was changed."}
+        latency_ms = int((time.monotonic() - started) * 1000)
+        logger.info(f"[board] {name} -> {'ok' if result.get('ok') else 'refused'} in {latency_ms}ms")
+        if self._recorder is not None:
+            self._recorder.note_tool_call(name, latency_ms, error)
+        await params.result_callback(result)
+
+    def _post(self, payload: dict) -> dict:
+        if not self._ticket:
+            return {"ok": False, "error": "No board is connected to this drive. Nothing was changed."}
+        req = urllib.request.Request(
+            f"{WEB_URL}/api/realtime/board",
+            method="POST",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as res:
+                return json.loads(res.read() or b"{}")
+        except urllib.error.HTTPError as err:
+            return {"ok": False, "error": f"The board refused the request ({err.code}). Nothing was changed."}
 
 
 class DraftRecorder:
@@ -1716,6 +1842,10 @@ class SilenceGate(FrameProcessor):
         # InterruptionFrame outside one is the driver starting to talk while
         # the agent had nothing in flight, which is not a decision about anything.
         self._in_response = False
+        # This completion asked for tools rather than (or before) speaking.
+        # Its silence is not a decline: the answer is the completion Pipecat
+        # runs once the tool's result is in.
+        self._calling_tools = False
         # The recorder's cue as it stood when this completion started.
         self._cue: "Cue | None" = None
         self._turn_metrics: dict = {}
@@ -1729,6 +1859,7 @@ class SilenceGate(FrameProcessor):
         self._pending = ""
         self._in_draft = False
         self._in_response = False
+        self._calling_tools = False
         self._cue = None
         self._turn_metrics = {}
 
@@ -1839,6 +1970,9 @@ class SilenceGate(FrameProcessor):
                 self._cue = self._recorder.cue()
         elif isinstance(frame, MetricsFrame):
             self._note_metrics(frame)
+        elif isinstance(frame, FunctionCallsStartedFrame):
+            self._calling_tools = True
+            logger.info(f"[turn] calling {', '.join(c.function_name for c in frame.function_calls)}")
         elif isinstance(frame, LLMTextFrame):
             self._text += frame.text
             if self._holding:
@@ -1933,14 +2067,17 @@ class SilenceGate(FrameProcessor):
                     cue=self._cue,
                     metrics=self._turn_metrics,
                 )
-            elif self._recorder is not None and self._in_response:
+            elif self._recorder is not None and self._in_response and not self._calling_tools:
                 self._recorder.decline(cue=self._cue)
             # The proactive engine needs the same fact the summary does: what
             # the turn BECAME. A spoken turn (including a declined-looking one
             # that released words) sets the awaiting-reply rule; a decline
             # re-arms with backoff. Reported from here for the same reason as
             # `note_agent` — this is the only place that knows.
-            if self._offers is not None:
+            # A completion that only called a tool has not finished its turn —
+            # the reply comes from the next one — so it neither blocks the
+            # engine as a spoken turn nor backs it off as a declined one.
+            if self._offers is not None and not (self._calling_tools and not self._spoken.strip()):
                 self._offers.note_agent_turn(bool(self._spoken.strip()))
             self._reset()
 
@@ -2059,9 +2196,13 @@ def build_pipeline(
     # sits on a live audio stream and never sends a single request.
     vad = VADProcessor(vad_analyzer=silero())
 
-    context = LLMContext(
-        [{"role": "system", "content": session.get("systemPrompt") or FALLBACK_SYSTEM_PROMPT}]
-    )
+    # The board tools, only where the session offered them — a person whose
+    # board is on, on a connection with a ticket to write with. The prompt the
+    # session composed says the same, so the model is never told it has hands
+    # it does not have.
+    tools = BoardTools.schemas(session.get("tools") or []) if ticket and not session.get("degraded") else None
+    messages = [{"role": "system", "content": session.get("systemPrompt") or FALLBACK_SYSTEM_PROMPT}]
+    context = LLMContext(messages, tools=tools) if tools else LLMContext(messages)
 
     # Seeded from the ledger on connect so a mid-drive reconnect — a tunnel, a
     # dropped socket — does not restart the conversation with no idea what the
@@ -2078,13 +2219,21 @@ def build_pipeline(
     recorder = TurnRecorder(
         ticket, session.get("startedAtEpochMs"), session.get("configVersion")
     )
+    if tools:
+        board_tools = BoardTools(ticket, recorder)
+        for schema in tools.standard_tools:
+            llm.register_function(schema.name, board_tools.handle, cancel_on_interruption=False)
+        logger.info(f"[board] tools {', '.join(s.name for s in tools.standard_tools)}")
     drafts = DraftRecorder(ticket, session.get("startedAtEpochMs"))
     # A SECOND analyzer, deliberately, not the same instance: this one drives
     # turn completion and interruption in the aggregator, and the two keep
     # independent state.
     aggregator = LLMContextAggregatorPair(
         context,
-        user_params=LLMUserAggregatorParams(vad_analyzer=silero()),
+        user_params=LLMUserAggregatorParams(
+            vad_analyzer=silero(),
+            user_turn_stop_timeout=user_turn_stop_timeout_secs(),
+        ),
     )
 
     # The proactive engine. After Recall so it can ask it to materialise the

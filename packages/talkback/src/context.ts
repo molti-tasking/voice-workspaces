@@ -80,14 +80,24 @@ export async function buildTurnContext(
   userId: string,
   captureSessionId: string,
   said: string,
+  options: {
+    /**
+     * Whether this person's board is switched on (`user.board_enabled_at`).
+     * Off, the agent is not shown the board at all: a participant in the phase
+     * before the board must not hear about a board they cannot see — and,
+     * since the agent can now edit it, must not have one edited either.
+     */
+    board?: boolean;
+  } = {},
 ): Promise<TurnContext> {
+  const showBoard = options.board ?? true;
   // Three arms in parallel. The board fold is pure CPU over ops already in
   // Postgres, so it costs one query rather than a model call, and running it
   // alongside the two searches keeps it off the turn's critical path.
   const [lexical, memory, ops] = await Promise.all([
     searchTranscripts(userId, said, { excludeSessionId: captureSessionId }),
     recallFromMemory(userId, said, { excludeSessionId: captureSessionId }),
-    loadOps(userId),
+    showBoard ? loadOps(userId) : Promise.resolve([]),
   ]);
 
   const merged = mergePassages(lexical, memory.passages);
@@ -108,7 +118,11 @@ export async function buildTurnContext(
     .filter((t) => keptThreads.has(t.text))
     .map((t) => ({ topicId: t.topicId, text: t.text }));
 
-  return { passages, threads, board: buildBoardContext(ops) };
+  return {
+    passages,
+    threads,
+    board: showBoard ? buildBoardContext(ops) : { text: null, shown: 0, total: 0 },
+  };
 }
 
 /**
