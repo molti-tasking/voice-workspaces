@@ -71,6 +71,18 @@ const Body = z.object({
   totalLatencyMs: z.number().int().optional(),
   promptTokens: z.number().int().min(0).optional(),
   completionTokens: z.number().int().min(0).optional(),
+  // The tools this turn called before it spoke — the board edits the agent
+  // made. Names and timings only; what changed is in `workspace_op`.
+  toolCalls: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(40),
+        latencyMs: z.number().int().min(0),
+        error: z.string().max(500).optional(),
+      }),
+    )
+    .max(8)
+    .optional(),
   error: z.string().optional(),
 });
 

@@ -13,6 +13,7 @@ import type {
 import {
   agentTurn,
   captureSession,
+  directive,
   extraction,
   utterance,
   workspaceCursor,
@@ -98,12 +99,14 @@ export async function loadPendingSegments(
       occurredAt,
       createdAt: utterance.createdAt,
       captureSessionId: utterance.captureSessionId,
+      resolvedCapabilityId: directive.capabilityId,
     })
     .from(utterance)
     .innerJoin(
       captureSession,
       eq(utterance.captureSessionId, captureSession.id),
     )
+    .leftJoin(directive, eq(directive.utteranceId, utterance.id))
     .where(
       and(
         eq(captureSession.userId, userId),
@@ -121,6 +124,7 @@ export async function loadPendingSegments(
     occurredAt: new Date(r.occurredAt),
     kind: r.kindOverride ?? r.kind,
     recordedAt: r.createdAt,
+    handledElsewhere: r.kindOverride === "directive" || r.resolvedCapabilityId !== null,
   }));
 }
 
@@ -365,7 +369,7 @@ export async function appendOps(input: AppendOpsInput): Promise<number> {
 }
 
 /**
- * Append one op a person posted, not the extractor.
+ * Append one op a person or the talk-back agent posted, not the extractor.
  *
  * Its own writer because `appendOps` is built around an extraction: it needs
  * an `extractionId` and refuses a second batch under the same one. A board
@@ -380,6 +384,13 @@ export async function appendUserOp(input: {
   id: string;
   op: WorkspaceOp;
   occurredAt?: Date;
+  /**
+   * The drive it happened in, when it happened in one. The agent's edits do;
+   * a drag on the board page does not. Carried because acceptance is judged in
+   * drives elapsed AFTER a transition, and the drive that made it must not
+   * count as a chance to have undone it.
+   */
+  captureSessionId?: string;
 }): Promise<"inserted" | "duplicate"> {
   const { type, ...payload } = input.op;
 
@@ -389,7 +400,7 @@ export async function appendUserOp(input: {
       id: input.id,
       userId: input.userId,
       extractionId: null,
-      captureSessionId: null,
+      captureSessionId: input.captureSessionId ?? null,
       occurredAt: input.occurredAt ?? new Date(),
       type,
       payload: payload as Record<string, unknown>,
@@ -402,11 +413,12 @@ export async function appendUserOp(input: {
 }
 
 /**
- * The ops a person posted, in `seq` order.
+ * The ops a person or the agent posted, in `seq` order.
  *
  * What `workspace:rebuild` and `workspace:reparse` must save before they clear
- * the log and restore after: a rebuild that dropped the manual gestures would
- * delete the measurement.
+ * the log and restore after: a rebuild that dropped the manual gestures — or
+ * the agent's edits, which nothing could re-derive — would delete the
+ * measurement. Their drive comes too, which acceptance is counted from.
  */
 export async function loadUserOps(userId: string): Promise<StoredOp[]> {
   const rows = await getDb()
@@ -416,13 +428,14 @@ export async function loadUserOps(userId: string): Promise<StoredOp[]> {
       occurredAt: workspaceOp.occurredAt,
       type: workspaceOp.type,
       payload: workspaceOp.payload,
+      captureSessionId: workspaceOp.captureSessionId,
     })
     .from(workspaceOp)
     .where(
       and(
         eq(workspaceOp.userId, userId),
         isNull(workspaceOp.extractionId),
-        sql`${workspaceOp.payload}->>'via' = 'user'`,
+        sql`${workspaceOp.payload}->>'via' in ('user', 'agent')`,
       ),
     )
     .orderBy(asc(workspaceOp.seq));
@@ -432,6 +445,7 @@ export async function loadUserOps(userId: string): Promise<StoredOp[]> {
     seq: Number(r.seq),
     occurredAt: r.occurredAt,
     op: { type: r.type, ...r.payload } as WorkspaceOp,
+    captureSessionId: r.captureSessionId ?? undefined,
     sourceUtteranceIds: [],
   }));
 }

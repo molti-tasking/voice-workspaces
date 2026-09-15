@@ -70,7 +70,12 @@ export function markerFor(card: BoardCard, outcome?: JudgedTransition): string |
 
   if (last.via === "speech" && last.from !== null) {
     text = outcome?.outcome === "kept" ? "moved here by speech · kept" : "moved here by speech";
-  } else if (last.via === "user" && previous?.via === "speech") {
+  } else if (last.via === "agent") {
+    // Asked aloud, so said as such: the person should be able to tell a move
+    // they requested from one the extractor read into what they said.
+    const verb = last.from === null ? "added by the agent" : "moved here by the agent";
+    text = outcome?.outcome === "kept" ? `${verb} · kept` : verb;
+  } else if (last.via === "user" && previous && previous.via !== "user") {
     text = last.to === previous.from ? "you moved it back" : "you moved it on";
   } else if (last.via === "user") {
     text = "you moved it";

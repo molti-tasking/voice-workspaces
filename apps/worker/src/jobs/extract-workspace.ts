@@ -44,11 +44,20 @@ export const BATCH_SIZE = Number(process.env.WORKSPACE_BATCH_SIZE ?? 8);
  * How long a batch waits for the classifier before an unclassified line is
  * treated as content.
  *
- * DIRECTIONS STAY OUT OF THE WORKSPACE. The classifier's own prompt tells the
- * model that a direction "drops out of the workspace" — that is the cost it
- * weighs when unsure — yet the extractor used to receive every line, so "mark
- * this" could come back as a claim or a task and the workspace stopped matching
- * the classifier's description of it. Extraction now sends only content.
+ * HANDLED DIRECTIONS STAY OUT OF THE WORKSPACE. The classifier's own prompt
+ * tells the model that a direction "drops out of the workspace", yet the
+ * extractor used to receive every line, so "mark this" — already done by the
+ * `mark` capability — could come back a second time as a claim or a task.
+ *
+ * But only a direction something ELSE handles is withheld: one the classifier
+ * matched to a capability, or one a person marked as a direction by hand. The
+ * first version withheld every direction, and that cut the board's only
+ * spoken path. "Let's remove this asymmetry already" was classified as a
+ * direction (verb `remove`), no capability matched it, the extractor never saw
+ * it, and the card it was about stayed on the board while the agent assured the
+ * driver it would go (15 Sep 2026). An unhandled direction about the person's
+ * own tasks is exactly what the extractor's prompt turns into `dropped`, so it
+ * goes through as speech.
  *
  * WHY WAIT, AND WHY NOT FOREVER. Classification runs per chunk and lands
  * ~15-25s after speech; a batch reaching the extractor sooner would send a
@@ -122,11 +131,11 @@ export async function extractWorkspace(
   // as they stand. For the same reason a rebuild can differ from the live
   // workspace where a line timed out as content and was classified afterwards
   // — that batch misses the cache and is extracted again.
-  const content = pending.filter((s) => s.kind !== "directive");
+  const content = pending.filter((s) => !(s.kind === "directive" && s.handledElsewhere));
 
   if (content.length === 0) {
-    // Nothing but directions: nothing to extract, and no reason to pay a
-    // model to say so.
+    // Nothing but handled directions: nothing to extract, and no reason to pay
+    // a model to say so.
     await advanceCursor(userId, last.id, last.occurredAt);
     log.info("workspace batch was all directions", { userId, segments: pending.length });
     return { segments: pending.length, opsAppended: 0, cacheHit: false, totalTokens: 0 };

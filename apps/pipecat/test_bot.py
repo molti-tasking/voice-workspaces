@@ -569,6 +569,14 @@ def test_a_repeat_ask_is_worded_to_be_let_go_of():
 # --- The study condition decides whether offers run -------------------------
 
 
+def test_the_turn_fallback_defaults_short_and_stays_within_bounds(monkeypatch):
+    monkeypatch.delenv("USER_TURN_STOP_TIMEOUT_SECS", raising=False)
+    assert bot.user_turn_stop_timeout_secs() == 2.0  # not Pipecat's 5.0
+    for raw, expected in (("1.5", 1.5), ("0.1", 1.0), ("30", 5.0), ("soon", 2.0), ("", 2.0)):
+        monkeypatch.setenv("USER_TURN_STOP_TIMEOUT_SECS", raw)
+        assert bot.user_turn_stop_timeout_secs() == expected
+
+
 def test_offers_follow_the_drive_s_condition_and_fall_back_to_the_env_only_when_degraded(monkeypatch):
     monkeypatch.setattr(bot, "PROACTIVE_OFFERS", True)
     assert bot.offers_enabled({"studyCondition": {"proactiveOffers": False}}) is False
@@ -797,3 +805,128 @@ def test_silence_gate_reports_what_a_turn_became():
 
     asyncio.run(run())
     assert notes == [False, True]
+
+
+# --- Board tools: the agent's hands, carried to the web app -----------------
+
+
+SESSION_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "move_task",
+            "description": "Move a task.",
+            "parameters": {
+                "type": "object",
+                "properties": {"card": {"type": "string"}, "column": {"type": "string"}},
+                "required": ["card", "column"],
+            },
+        },
+    }
+]
+
+
+def test_the_session_s_tools_become_pipecat_schemas_and_none_means_none():
+    schema = bot.BoardTools.schemas(SESSION_TOOLS)
+    assert [s.name for s in schema.standard_tools] == ["move_task"]
+    assert schema.standard_tools[0].required == ["card", "column"]
+    assert bot.BoardTools.schemas([]) is None
+    assert bot.BoardTools.schemas(None) is None
+
+
+def run_tool(tools, name, arguments):
+    """Call the handler as Pipecat would; return what the model was handed."""
+    from types import SimpleNamespace
+
+    results = []
+
+    async def result_callback(result, **_):
+        results.append(result)
+
+    params = SimpleNamespace(function_name=name, arguments=arguments, result_callback=result_callback)
+    asyncio.run(tools.handle(params))
+    return results
+
+
+def test_a_board_tool_call_is_posted_verbatim_and_its_answer_handed_to_the_model():
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+    tools = bot.BoardTools("ticket", recorder)
+    posted = []
+
+    def post(payload):
+        posted.append(payload)
+        return {"ok": True, "changed": True, "task": "Write up the asymmetry argument.", "column": "dropped"}
+
+    tools._post = post
+    results = run_tool(tools, "move_task", {"card": "1225b3", "column": "dropped"})
+
+    (payload,) = posted
+    assert payload["tool"] == "move_task"
+    assert payload["arguments"] == {"card": "1225b3", "column": "dropped"}
+    assert payload["ticket"] == "ticket"
+    assert len(payload["opId"]) == 36  # a uuid: the row id that makes a retry a no-op
+    assert results == [{"ok": True, "changed": True, "task": "Write up the asymmetry argument.", "column": "dropped"}]
+    assert recorder._tool_calls[0]["name"] == "move_task"
+    assert "error" not in recorder._tool_calls[0]
+
+
+def test_an_unreachable_board_is_told_to_the_model_in_words_not_raised():
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+    tools = bot.BoardTools("ticket", recorder)
+
+    def post(payload):
+        raise OSError("connection refused")
+
+    tools._post = post
+    (result,) = run_tool(tools, "move_task", {"card": "1225b3", "column": "dropped"})
+    assert result["ok"] is False
+    assert "Nothing was changed" in result["error"]
+    assert recorder._tool_calls[0]["error"] == "connection refused"
+
+
+def test_the_turn_after_a_tool_call_carries_the_call_and_the_next_does_not():
+    def act(recorder):
+        recorder.note_user("drop the asymmetry one")
+        recorder.note_tool_call("move_task", 180)
+        recorder.record("Dropped the asymmetry argument.", "Dropped the asymmetry argument.")
+        recorder.note_user("thanks")
+        recorder.record("Sure.", "Sure.")
+
+    turns = [p for route, p in posted_by(act) if route == "agent-turn"]
+    assert turns[0]["toolCalls"] == [{"name": "move_task", "latencyMs": 180}]
+    assert "toolCalls" not in turns[1]
+
+
+def test_a_completion_that_only_calls_a_tool_is_not_a_declined_turn():
+    """The reply comes from the completion Pipecat runs after the tool answers."""
+    recorder = FakeRecorder()
+    notes = []
+
+    class FakeOffers:
+        def note_agent_turn(self, spoke):
+            notes.append(spoke)
+
+    from pipecat.frames.frames import FunctionCallFromLLM
+
+    call = FunctionCallFromLLM(
+        function_name="move_task", tool_call_id="call-1", arguments={"card": "1225b3"}, context=None
+    )
+
+    async def run():
+        gate = bot.SilenceGate(recorder=recorder, offers=FakeOffers())
+
+        async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+            pass
+
+        gate.push_frame = capture
+        await gate.process_frame(LLMFullResponseStartFrame(), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(bot.FunctionCallsStartedFrame(function_calls=[call]), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM)
+        # …and the follow-up completion, once the tool has answered.
+        for frame in reply("Dropped the asymmetry argument."):
+            await gate.process_frame(frame, FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert recorder.declines == []
+    assert [c["spoken"] for c in recorder.calls] == ["Dropped the asymmetry argument."]
+    assert notes == [True]  # only the spoken turn reached the engine

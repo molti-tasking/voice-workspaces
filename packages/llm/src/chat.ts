@@ -48,6 +48,12 @@ export interface ChatResult {
    * does not send the header.
    */
   costUsd?: number;
+  /**
+   * Tool calls the model made instead of, or before, answering. Only present
+   * when `tools` were offered and the model used one. Arguments are parsed;
+   * a call whose arguments are not valid JSON carries `{}` and `rawArguments`.
+   */
+  toolCalls?: { name: string; arguments: Record<string, unknown>; rawArguments: string }[];
 }
 
 export interface ChatOptions {
@@ -72,11 +78,22 @@ export interface ChatOptions {
    * by a proxy without callbacks; never reaches the upstream model.
    */
   metadata?: Record<string, unknown>;
+  /**
+   * OpenAI-format function tools the model may call — the talk-back eval
+   * offers the board tools the live agent has, so a case can assert on the
+   * call rather than only on the words.
+   */
+  tools?: unknown[];
 }
 
 interface ChatCompletionResponse {
   model?: string;
-  choices?: { message?: { content?: string } }[];
+  choices?: {
+    message?: {
+      content?: string | null;
+      tool_calls?: { function?: { name?: string; arguments?: string } }[];
+    };
+  }[];
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
@@ -115,6 +132,7 @@ export async function chat(
       ...(options.seed !== undefined ? { seed: options.seed } : {}),
       ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
       ...(options.json ? { response_format: { type: "json_object" } } : {}),
+      ...(options.tools?.length ? { tools: options.tools } : {}),
     }),
     signal: options.signal,
   });
@@ -125,9 +143,24 @@ export async function chat(
   }
 
   const json = (await res.json()) as ChatCompletionResponse;
+  const message = json.choices?.[0]?.message;
+  const toolCalls = (message?.tool_calls ?? []).flatMap((call) => {
+    const name = call.function?.name;
+    if (!name) return [];
+    const rawArguments = call.function?.arguments ?? "";
+    let parsed: Record<string, unknown> = {};
+    try {
+      const value = JSON.parse(rawArguments || "{}") as unknown;
+      if (value && typeof value === "object") parsed = value as Record<string, unknown>;
+    } catch {
+      // Kept raw: a malformed call is a finding, not something to drop.
+    }
+    return [{ name, arguments: parsed, rawArguments }];
+  });
 
   return {
-    content: json.choices?.[0]?.message?.content ?? "",
+    content: message?.content ?? "",
+    ...(toolCalls.length ? { toolCalls } : {}),
     costUsd: parseCostHeader(res.headers.get("x-litellm-response-cost")),
     // Fall back to the requested name rather than empty: a backend that omits
     // `model` should still leave a usable provenance record.

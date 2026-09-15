@@ -49,6 +49,8 @@ export interface AgentTurnRecord {
   /** Text, so "unknown" stays distinguishable from "free". */
   costUsd?: string;
   configVersion?: string;
+  /** Tools the turn called before speaking, in order. */
+  toolCalls?: { name: string; latencyMs: number; error?: string }[];
   error?: string;
 }
 
@@ -81,6 +83,7 @@ export async function recordAgentTurn(record: AgentTurnRecord): Promise<string |
         completionTokens: record.completionTokens,
         costUsd: record.costUsd,
         configVersion: record.configVersion,
+        toolCalls: record.toolCalls ?? [],
         error: record.error,
       })
       // A reconnect restarts the turn counter, so a seq can repeat within a

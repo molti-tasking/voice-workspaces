@@ -43,8 +43,48 @@ export function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
 }
 
-export function checkReply(kase: EvalCase, rawReply: string, maxReplyWords: number): CheckResult {
+export interface MadeToolCall {
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export function checkReply(
+  kase: EvalCase,
+  rawReply: string,
+  maxReplyWords: number,
+  toolCalls: readonly MadeToolCall[] = [],
+): CheckResult {
   const failures: string[] = [];
+
+  // A step that called a tool is judged on the call. Its words, if any, are
+  // still held to the output contract below; its silence is not a decline.
+  const expected = kase.expect.toolCall;
+  if (expected) {
+    const call = toolCalls.find((c) => c.name === expected.name);
+    if (!call) {
+      failures.push(
+        toolCalls.length
+          ? `called ${toolCalls.map((c) => c.name).join(", ")}, expected ${expected.name}`
+          : `did not call ${expected.name}`,
+      );
+    } else {
+      for (const [key, source] of Object.entries(expected.args ?? {})) {
+        const value = call.arguments[key];
+        if (typeof value !== "string" || !new RegExp(source, "i").test(value)) {
+          failures.push(`${expected.name}.${key} = ${JSON.stringify(value)}, expected /${source}/`);
+        }
+      }
+    }
+    if (!rawReply.trim()) {
+      return { silent: false, spoken: "", drafts: [], words: 0, failures, pass: failures.length === 0 };
+    }
+  } else if (toolCalls.length) {
+    failures.push(`unexpected tool call: ${toolCalls.map((c) => `${c.name}(${JSON.stringify(c.arguments)})`).join(", ")}`);
+    if (!rawReply.trim()) {
+      return { silent: false, spoken: "", drafts: [], words: 0, failures, pass: false };
+    }
+  }
+
   const silent = isSilence(rawReply);
   // `extractDrafts` mirrors `bot.py`: the draft body never reaches TTS, so it is
   // not held to the word cap, and what remains is `cleanReply`-ed speech.
@@ -53,10 +93,10 @@ export function checkReply(kase: EvalCase, rawReply: string, maxReplyWords: numb
   const drafts = extracted?.drafts.map((d) => d.title) ?? [];
   const words = countWords(spoken);
 
-  if (kase.expect.turn === "silent" && !silent) {
+  if (kase.expect.turn === "silent" && !silent && !expected) {
     failures.push(`spoke when it should have stayed silent: ${JSON.stringify(spoken)}`);
   }
-  if (kase.expect.turn === "speak" && silent) {
+  if (kase.expect.turn === "speak" && silent && !expected) {
     failures.push("stayed silent when it should have spoken");
   }
 

@@ -203,6 +203,8 @@ services:
       - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
       - DEEPGRAM_MODEL=${DEEPGRAM_MODEL:-nova-3}
       - DEEPGRAM_UTTERANCE_END_MS=${DEEPGRAM_UTTERANCE_END_MS:-1000}
+      # Pipecat ends a turn after this much silence if its turn model has not.
+      - USER_TURN_STOP_TIMEOUT_SECS=${USER_TURN_STOP_TIMEOUT_SECS:-2.0}
       - ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY:-}
       # Fallback live-path language when a session states none (per-drive
       # choices arrive via /api/realtime/session). Unset = auto-detect.

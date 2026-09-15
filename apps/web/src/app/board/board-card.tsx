@@ -2,7 +2,6 @@
 
 import { draggable } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import { useEffect, useRef, useState } from "react";
-import { TaskState } from "@voicemural/workspace";
 import { topicIcon } from "@/app/workspace/icons";
 import type { CardView } from "./card-view";
 import type { DragData } from "./drag";
@@ -18,25 +17,22 @@ import type { DragData } from "./drag";
  * `CardView` rather than the fold's `BoardCard`, so the revision history and
  * the full block never cross into the browser.
  *
- * THE BUTTONS ARE BACK. Drag and drop (de8e643) replaced them, and with them
- * went the only way to say "not a task" — retiring a card had an API route
- * and no control — and every correction a touch or keyboard user could make.
- * The board's correction gestures are the study's measure of whether speech
- * got the board right (guideline G9), so a correction that cannot be made is
- * a reversal that cannot be counted. The buttons do nothing themselves: they
- * call the board's `send`, so a button and a drag are the same move, with the
- * same optimistic update, the same revert and the same error line.
+ * MOVING IS DRAG ONLY; "NOT A TASK" IS A BUTTON. A button per column
+ * duplicated what dragging already does, and the board is used at a desk, so
+ * the per-state buttons are gone. "Not a task" stays, because no column means
+ * "this should never have been a card" — without it a speech-made card that
+ * is wrong could only be dragged to `dropped`, and a drop and a retirement
+ * are different findings (guideline G9). It calls the board's `send`, so it
+ * shares the drag's optimistic update, revert and error line.
  */
 export function BoardCard({
   card,
-  onMove,
   onRetire,
   busy = false,
 }: {
   card: CardView;
-  onMove: (to: TaskState) => void;
   onRetire: () => void;
-  /** A move is in flight; a second one now would race it. */
+  /** A change is in flight; a second one now would race it. */
   busy?: boolean;
 }) {
   const ref = useRef<HTMLElement | null>(null);
@@ -64,9 +60,9 @@ export function BoardCard({
     <article
       ref={ref}
       /*
-       * The whole card drags, as on every board this resembles. The buttons
-       * inside still take a click — a native drag only begins once the pointer
-       * moves — so the accessible path is not shadowed by the convenient one.
+       * The whole card drags, as on every board this resembles. The button
+       * inside still takes a click — a native drag only begins once the
+       * pointer moves.
        */
       className={[
         "rounded-xl border border-line bg-ink-soft/40 p-3",
@@ -100,31 +96,13 @@ export function BoardCard({
         </p>
       )}
 
-      <div
-        className="mt-2 flex flex-wrap items-center gap-1"
-        role="group"
-        aria-label={`Correct “${card.text}”`}
-      >
-        {TaskState.options
-          .filter((s) => s !== card.state)
-          .map((s) => (
-            <button
-              key={s}
-              type="button"
-              disabled={busy}
-              onClick={() => onMove(s)}
-              aria-label={`Move to ${s}`}
-              className="rounded border border-line px-1.5 py-0.5 font-mono text-[10px] text-white/40 hover:border-white/30 hover:text-white/80 focus-visible:border-white/50 focus-visible:text-white/80 focus-visible:outline-none disabled:opacity-40"
-            >
-              {s}
-            </button>
-          ))}
+      <div className="mt-2 flex justify-end">
         <button
           type="button"
           disabled={busy}
           onClick={onRetire}
           title="Remove this card — it was not a task"
-          className="ml-auto rounded px-1.5 py-0.5 text-[10px] text-white/25 hover:text-white/60 focus-visible:text-white/80 focus-visible:outline-none disabled:opacity-40"
+          className="rounded px-1.5 py-0.5 text-[10px] text-white/25 hover:text-white/60 focus-visible:text-white/80 focus-visible:outline-none disabled:opacity-40"
         >
           not a task
         </button>

@@ -35,6 +35,7 @@ export {
 } from "./board-context";
 export { SUMMARY_PROMPT, foldSummary } from "./summary";
 export {
+  BOARD_EDITING,
   OUTPUT_CONTRACT,
   SILENCE_TOKEN,
   SYSTEM_PROMPT,
@@ -73,6 +74,13 @@ export {
   sttLanguageProfile,
   type SttLanguageProfile,
 } from "./language";
+export {
+  BOARD_TOOLS,
+  BOARD_TOOL_NAMES,
+  boardEditFromToolCall,
+  type BoardToolName,
+  type ToolDefinition,
+} from "./board-tools";
 export {
   recordAgentDecision,
   recordAgentTurn,
