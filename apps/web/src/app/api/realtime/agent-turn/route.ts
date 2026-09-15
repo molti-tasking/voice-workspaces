@@ -53,11 +53,24 @@ const Body = z.object({
   // `InterruptionFrame`. Was missing here while the column existed, so an
   // interrupted turn could never say where it was cut.
   truncatedAtMs: z.number().int().min(0).optional(),
+  // What prompted the turn. Accepted by `recordAgentTurn` from the start but
+  // never by this route, so every turn — offers included — was stored as a
+  // `reply`, and the analysis could not tell an unprompted turn from an answer.
+  kind: z.enum(["reply", "proactive_prompt", "confirmation_request", "backchannel"]).optional(),
+  // Echoed from `/api/realtime/session` by the container, rather than stamped
+  // here from this deployment's constant: a web deploy mid-drive changes the
+  // constant, not the prompt the container is already running.
+  configVersion: z.string().max(64).optional(),
+  // Pipecat's own name for the model it called — the alias, before LiteLLM
+  // resolves it. `resolvedModel` stays for a writer that can see the proxy's answer.
+  requestedModel: z.string().max(200).optional(),
   resolvedModel: z.string().optional(),
   asrMs: z.number().int().optional(),
   ttftMs: z.number().int().optional(),
   speakTtfbMs: z.number().int().optional(),
   totalLatencyMs: z.number().int().optional(),
+  promptTokens: z.number().int().min(0).optional(),
+  completionTokens: z.number().int().min(0).optional(),
   error: z.string().optional(),
 });
 
@@ -86,7 +99,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
-  await recordAgentTurn({
+  const id = await recordAgentTurn({
     ...turn,
     text: turn.text.slice(0, MAX_TURN_CHARS),
     generatedText: turn.generatedText.slice(0, MAX_TURN_CHARS),
@@ -96,5 +109,8 @@ export async function POST(req: Request) {
     userId: payload.userId,
   });
 
-  return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
+  // The id goes back so the container can post the turn's decision pointing at
+  // it — sequentially, from the same task, which is what keeps that foreign
+  // key from racing this insert. Null when nothing was written.
+  return NextResponse.json({ ok: true, id }, { headers: { "Cache-Control": "no-store" } });
 }

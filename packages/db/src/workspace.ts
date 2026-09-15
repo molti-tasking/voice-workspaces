@@ -96,6 +96,7 @@ export async function loadPendingSegments(
       kind: utterance.kind,
       kindOverride: utterance.kindOverride,
       occurredAt,
+      createdAt: utterance.createdAt,
       captureSessionId: utterance.captureSessionId,
     })
     .from(utterance)
@@ -119,6 +120,7 @@ export async function loadPendingSegments(
     text: r.text,
     occurredAt: new Date(r.occurredAt),
     kind: r.kindOverride ?? r.kind,
+    recordedAt: r.createdAt,
   }));
 }
 
@@ -746,16 +748,31 @@ export async function loadTimelineMarkers(
   return markers;
 }
 
-/** Users with transcribed speech that extraction has not yet consumed. */
+/**
+ * Users with transcribed speech that extraction has not yet consumed.
+ *
+ * With `classifyWaitMs`, only SETTLED speech counts toward the batch: an
+ * utterance already classified, or one that has waited longer than that for
+ * its verdict. Extraction will not take a batch still waiting on the
+ * classifier (see `extractWorkspace`), so counting unsettled speech would
+ * enqueue a job that can only skip — and a skipped job holds its throttle
+ * slot for the next five minutes.
+ */
 export async function usersWithPendingSpeech(
   minSegments: number,
+  options: { classifyWaitMs?: number } = {},
 ): Promise<string[]> {
   const occurredAt = sql`${captureSession.startedAt} + make_interval(secs => ${utterance.startOffsetMs} / 1000.0)`;
+  const settled =
+    options.classifyWaitMs === undefined
+      ? sql`true`
+      : sql`(coalesce(${utterance.kindOverride}, ${utterance.kind}) <> 'unclassified'
+          or ${utterance.createdAt} < now() - make_interval(secs => ${options.classifyWaitMs / 1000}))`;
 
   const rows = await getDb()
     .select({
       userId: captureSession.userId,
-      pending: sql<number>`count(*)::int`,
+      pending: sql<number>`count(*) filter (where ${settled})::int`,
       sessionEnded: sql<boolean>`bool_or(${captureSession.endedAt} is not null)`,
     })
     .from(utterance)
@@ -777,7 +794,8 @@ export async function usersWithPendingSpeech(
 
   // Extract once a batch has built up, or as soon as a drive has ended — a
   // closed session will never accumulate more, so waiting would strand it.
+  // An ended drive still needs something settled to take, or the job skips.
   return rows
-    .filter((r) => r.pending >= minSegments || r.sessionEnded)
+    .filter((r) => r.pending >= minSegments || (r.sessionEnded && r.pending > 0))
     .map((r) => r.userId);
 }

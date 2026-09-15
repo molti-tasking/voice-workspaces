@@ -19,8 +19,16 @@ import {
   type SettingProfile,
 } from "./setting";
 
-/** Bumped when the prompt changes, so a drive's turns stay interpretable later. */
-export const TALKBACK_CONFIG_VERSION = "talkback-7";
+/**
+ * Bumped when the prompt changes, so a drive's turns stay interpretable later.
+ *
+ * talkback-8 changes no text in this file. It marks two things a turn can no
+ * longer be read without: the pending-confirmation ask in the context block
+ * now has a second wording once the agent has asked already (see
+ * `Recall._compose` and eval/messages.ts), and every turn and decision from
+ * here on carries this version, because the container echoes it on each write.
+ */
+export const TALKBACK_CONFIG_VERSION = "talkback-8";
 
 /**
  * The default register: brief, and present.
@@ -294,6 +302,16 @@ export interface ComposeInputs {
   base?: string;
   /** The setting this recording was started in. Null behaves as `driving`. */
   setting?: string | null;
+  /**
+   * Composed sections: the study condition's stanzas, and later the active
+   * mode and persona. Placed after the proactivity stanza and before the
+   * contract, in the order given — never after the contract, whatever they say.
+   *
+   * Empty today. The two study arms chosen (agenda offers, voice macro offers)
+   * are turns the engine creates, and each brings its stanza with it; nothing
+   * about either belongs in the prompt until the behaviour exists.
+   */
+  sections?: readonly string[];
 }
 
 export interface ComposedPrompt {
@@ -324,10 +342,13 @@ export function composeSystemPrompt(inputs: ComposeInputs = {}): ComposedPrompt 
   // the wire format. The proactivity stanza sits after the setting so it can
   // refine the setting's "a pause is thinking" line rather than be overruled
   // by it, and before the contract so the contract still has the last word.
+  // Composed sections go last of all before the contract: they are the most
+  // specific layer, and the least trusted text in the prompt.
   const prompt = [
     inputs.base ?? SYSTEM_PROMPT,
     profile.stanza,
     PROACTIVITY_STANZAS[profile.proactivity],
+    ...(inputs.sections ?? []).filter((s) => s.trim()),
     OUTPUT_CONTRACT,
   ].join("\n\n");
 

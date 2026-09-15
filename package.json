@@ -34,6 +34,9 @@
     "memory:status": "pnpm --filter @voicemural/worker memory status",
     "memory:reindex": "pnpm --filter @voicemural/worker memory reindex",
     "memory:show": "pnpm --filter @voicemural/worker memory show",
+    "study:export": "pnpm --filter @voicemural/worker study export",
+    "study:participant": "pnpm --filter @voicemural/worker study participant",
+    "study:condition": "pnpm --filter @voicemural/worker study condition",
     "lint:fix": "turbo run lint -- --fix",
     "deadcode": "knip"
   },
