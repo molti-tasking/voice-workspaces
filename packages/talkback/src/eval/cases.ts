@@ -190,6 +190,21 @@ export const CASES: EvalCase[] = [
     expect: { turn: "speak", mustMention: ["doc|send|go ahead|diary"] },
   },
   {
+    id: "pending-asked-once",
+    about: "An ask already let pass once is not spent on a driver who is still mid-thought.",
+    setting: "walking",
+    history: [
+      { role: "user", content: "Okay. That's the plan for the intro done, I think." },
+      { role: "assistant", content: "Want me to send yesterday's diary entry to the shared doc now?" },
+    ],
+    context: {
+      pending: "send yesterday's diary entry to the shared Google Doc",
+      pendingAskedCount: 1,
+    },
+    said: "and the related work section still needs the context switching papers, the Mark one and the",
+    expect: { turn: "either", mustNotMention: ["doc|diary|go ahead|send"] },
+  },
+  {
     id: "thread-settles-open-question",
     about: "A landed decision that settles an open question in the workspace is pointed out, not re-asked.",
     setting: "desk",

@@ -118,12 +118,29 @@ describe("the turn messages, which mirror bot.py", () => {
     expect(block.endsWith("That is background. Answer only what was just said to you.")).toBe(true);
   });
 
+  it("put the board ahead of everything, as Recall._compose does", () => {
+    const block = composeContextBlock({
+      board: "Their task board right now:\n- [doing] ethics form",
+      threads: [{ text: "Topic: Field study" }],
+    })!;
+    expect(block.indexOf("Their task board right now:")).toBe(0);
+    expect(block.indexOf("[doing] ethics form")).toBeLessThan(block.indexOf("Where things stand"));
+  });
+
   it("append the pending confirmation ask after the background, or alone", () => {
     const withBlock = composeContextBlock({ summary: "- x", pending: "send the diary" })!;
     expect(withBlock).toMatch(/Answer only what was just said to you\.\n\nThey earlier asked for this/);
     const alone = composeContextBlock({ pending: "send the diary" })!;
     expect(alone.startsWith("They earlier asked for this")).toBe(true);
     expect(alone).toContain("cannot be undone: send the diary");
+  });
+
+  it("word a repeat ask so it can be let go of", () => {
+    const first = composeContextBlock({ pending: "send the diary", pendingAskedCount: 0 })!;
+    const repeat = composeContextBlock({ pending: "send the diary", pendingAskedCount: 1 })!;
+    expect(first).toContain("ask in one short sentence");
+    expect(repeat).toContain("already asked about it once");
+    expect(repeat).not.toContain("ask in one short sentence");
   });
 
   it("order the turn as system, history, context block, then what was said", () => {

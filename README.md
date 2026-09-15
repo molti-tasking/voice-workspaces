@@ -249,6 +249,20 @@ There is no admin UI for it; enable someone with `pnpm db:studio` or
 `UPDATE "user" SET board_enabled_at = now() WHERE id = '…';`. `pnpm
 workspace:show` prints tasks as `(task/<state>)`.
 
+Study participants and conditions have validating commands rather than SQL,
+because a mistyped condition does not fail — the drive silently runs the
+defaults:
+
+| Command | Does |
+|---|---|
+| `pnpm study:participant --user <id> --id P07` | the pseudonym PostHog and the export join on (`--clear` removes it) |
+| `pnpm study:condition --user <id> --set '{"agendaOffers":true}'` | the condition for that person's NEXT drives; each drive freezes its own copy (`--clear` resets to today's behaviour) |
+| `pnpm study:condition --user <id>` | print the template and the last ten drives' conditions |
+| `pnpm study:export` | one JSONL file per participant into `storage/study-export/` — counts, timings, ids and enums, no transcript, agent or workspace text |
+
+`--include-text` on the export is refused unless `--user` is listed in
+`STUDY_PILOT_USER_IDS`: it exists for the researcher's own pilot account only.
+
 ---
 
 ## Deployment (Coolify)

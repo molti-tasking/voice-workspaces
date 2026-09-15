@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { and, captureSession, desc, eq, getDb } from "@voicemural/db";
-import { CaptureSessionCreate } from "@voicemural/shared";
+import { and, captureSession, desc, eq, getDb, user } from "@voicemural/db";
+import { CaptureSessionCreate, resolveStudyCondition } from "@voicemural/shared";
 import { asSttLanguage } from "@voicemural/talkback/language";
 import { asVoiceId } from "@voicemural/talkback/voice";
 import { capture, sessionIdFrom } from "@/lib/analytics/server";
@@ -62,6 +62,28 @@ export async function POST(req: Request) {
     return NextResponse.json({ id, resumed: true });
   }
 
+  // The study condition, frozen onto the drive here and nowhere else — the
+  // resume paths above and below never touch it, exactly like `setting`. Read
+  // only on a fresh insert, so a phase change the researcher makes mid-drive
+  // applies from the participant's next drive, not halfway through this one.
+  //
+  // A template that does not parse must not cost the participant their
+  // recording: the drive is registered under the defaults and the mistake is
+  // logged, because a phase silently run as the control arm is otherwise only
+  // discovered in the analysis.
+  const [template] = await db
+    .select({ studyCondition: user.studyCondition })
+    .from(user)
+    .where(eq(user.id, userId))
+    .limit(1);
+  const resolved = resolveStudyCondition(template?.studyCondition);
+  if (!resolved.ok) {
+    console.error("user.study_condition does not parse; this drive runs under the defaults", {
+      userId,
+      captureSessionId: id,
+    });
+  }
+
   // Conflict-safe rather than check-then-insert: two concurrent creates of
   // the same id (a client retry racing its own timed-out request) would else
   // both pass the `existing` check above and the loser would surface a unique
@@ -78,6 +100,7 @@ export async function POST(req: Request) {
       setting,
       voiceId,
       sttLanguage,
+      studyCondition: resolved.condition,
     })
     .onConflictDoNothing({ target: captureSession.id })
     .returning({ id: captureSession.id });

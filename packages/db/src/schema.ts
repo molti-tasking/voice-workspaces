@@ -43,6 +43,27 @@ export const user = pgTable("user", {
    * Better Auth field; set by hand via SQL or Drizzle Studio.
    */
   boardEnabledAt: timestamp("board_enabled_at", { withTimezone: true }),
+  /**
+   * The pseudonym this person carries in the study's analysis, or null for
+   * everyone who is not a participant (the researchers, pilots, guests).
+   *
+   * The analysis joins PostHog events and `study:export` files to people by
+   * this and nothing else — never by name or email, which the analysis must
+   * not need. Unique so two rows can never claim one participant; set by hand,
+   * like `boardEnabledAt`, or with `pnpm study:participant`.
+   */
+  studyParticipantId: text("study_participant_id").unique(),
+  /**
+   * The study condition this person's NEXT drives run under, or null for
+   * today's behaviour.
+   *
+   * Only a template. Every drive copies the resolved condition onto its own
+   * `capture_session.study_condition` when it opens, so a phase change is one
+   * write here — new drives pick it up, drives already recorded keep what
+   * they ran under. Shape: `StudyCondition` in @voicemural/shared, validated on
+   * the way in by `pnpm study:condition` and on the way out at session insert.
+   */
+  studyCondition: jsonb("study_condition").$type<Record<string, unknown>>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -226,6 +247,22 @@ export const captureSession = pgTable(
      * re-index after a model change.
      */
     memoryIndexedAt: timestamp("memory_indexed_at", { withTimezone: true }),
+    /**
+     * The study condition this drive ran under, copied from
+     * `user.study_condition` when the session was inserted and never written
+     * again — the same rule as `setting` and `voiceId`, for the same reason: a
+     * drive whose second half ran under different rules cannot be analysed as
+     * either.
+     *
+     * Stored RESOLVED, defaults filled in, rather than as the sparse template
+     * the researcher wrote. A default that changes next month must not
+     * reinterpret the drives recorded under the old one.
+     *
+     * NULL only for drives recorded before conditions existed. Those ran under
+     * the container's `PROACTIVE_OFFERS` environment variable, which nothing
+     * recorded — say so in the analysis rather than guess.
+     */
+    studyCondition: jsonb("study_condition").$type<Record<string, unknown>>(),
     /** Active mode/persona at capture time, for reconstructing what was in force. */
     activeModeId: uuid("active_mode_id"),
     activePersonaId: uuid("active_persona_id"),
@@ -568,6 +605,112 @@ export const agentTurnRelations = relations(agentTurn, ({ one }) => ({
   captureSession: one(captureSession, {
     fields: [agentTurn.captureSessionId],
     references: [captureSession.id],
+  }),
+}));
+
+/**
+ * What prompted the model to consider a turn.
+ *
+ * `macro_offer` and `agenda` are written by nothing yet. They are the study's
+ * two varied behaviours (EVALUATION_PLAN.md T2.5, T2.8), declared now so the
+ * migration that brings them in does not also have to alter a type in use.
+ */
+export const agentDecisionTriggerEnum = pgEnum("agent_decision_trigger", [
+  "user_turn",
+  "opening",
+  "silence_offer",
+  "confirmation",
+  "macro_offer",
+  "agenda",
+]);
+
+/**
+ * What the turn became.
+ *
+ * No `error`. A completion that fails raises an ErrorFrame that Pipecat sends
+ * UPSTREAM, away from the gate that writes these rows, so the container cannot
+ * tell a failed turn from one still in flight. Add the value together with a
+ * writer that can observe it, not before.
+ */
+export const agentDecisionOutcomeEnum = pgEnum("agent_decision_outcome", [
+  "spoke",
+  "declined",
+  "interrupted",
+]);
+
+/**
+ * Every moment the model was given to speak, and what it did with it.
+ * Append-only.
+ *
+ * A SEPARATE TABLE FROM `agent_turn`, for the reason `agent_turn` is separate
+ * from `utterance`: `agent_turn` is the echo filter's only input, and a row in
+ * it asserts that audio reached the speaker. A declined turn produced no audio.
+ * Writing one there would teach the filter to discard the driver's speech for
+ * matching words the car never heard.
+ *
+ * Yet the declines are the data. A silence the agent chose is how guideline G3
+ * (time services to the task) shows up in a drive; an offer it made and the
+ * driver talked over is G8 (efficient dismissal); and "a declined offer is
+ * never repeated" is a rule that can only be kept against a stored record of
+ * the decline. Before this table all of it was a log line.
+ *
+ * One row per completion the gate saw end, spoken or not. A spoken or
+ * interrupted row points at its `agent_turn` when that write succeeded first.
+ */
+export const agentDecision = pgTable(
+  "agent_decision",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    captureSessionId: uuid("capture_session_id")
+      .notNull()
+      .references(() => captureSession.id, { onDelete: "cascade" }),
+    /**
+     * Monotonic per connection, not per drive: a reconnect restarts it, as it
+     * restarts `agent_turn.seq`. Order by `offsetMs` when reading a drive.
+     * Not unique for the same reason.
+     */
+    seq: integer("seq").notNull(),
+    /**
+     * When the moment arose — the driver's final words, or the offer timer
+     * firing — as ms into the drive, on the `utterance` clock.
+     */
+    offsetMs: integer("offset_ms").notNull(),
+    trigger: agentDecisionTriggerEnum("trigger").notNull(),
+    outcome: agentDecisionOutcomeEnum("outcome").notNull(),
+    /** `TALKBACK_CONFIG_VERSION` of the prompt the container was running. */
+    configVersion: text("config_version"),
+    /**
+     * From the moment to the first word released to speech; for a decline,
+     * to the end of the completion that declined. Null when unmeasured.
+     */
+    latencyMs: integer("latency_ms"),
+    /**
+     * What the moment was ABOUT, when it was about one thing: the invocation
+     * id for a confirmation, the proposal id for a macro offer, a topic key for
+     * an agenda offer. The key "never offer a declined subject again" is kept
+     * against, which is why it is indexed.
+     */
+    subjectKey: text("subject_key"),
+    agentTurnId: uuid("agent_turn_id").references(() => agentTurn.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("agent_decision_session_offset_idx").on(t.captureSessionId, t.offsetMs),
+    // The context route counts asks per pending invocation on the turn path.
+    index("agent_decision_session_subject_idx")
+      .on(t.captureSessionId, t.subjectKey)
+      .where(sql`${t.subjectKey} is not null`),
+  ],
+);
+
+export const agentDecisionRelations = relations(agentDecision, ({ one }) => ({
+  captureSession: one(captureSession, {
+    fields: [agentDecision.captureSessionId],
+    references: [captureSession.id],
+  }),
+  agentTurn: one(agentTurn, {
+    fields: [agentDecision.agentTurnId],
+    references: [agentTurn.id],
   }),
 }));
 

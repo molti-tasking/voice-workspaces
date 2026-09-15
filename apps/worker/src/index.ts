@@ -17,7 +17,7 @@ import { log } from "@voicemural/telemetry";
 import { captureException, installGenerationSink, shutdownAnalytics } from "@voicemural/telemetry";
 import { classifyChunk } from "./jobs/classify-utterance";
 import { MACRO_WINDOW_DAYS, MIN_OCCURRENCES, detectMacros } from "./jobs/detect-macros";
-import { BATCH_SIZE, extractWorkspaceFully } from "./jobs/extract-workspace";
+import { BATCH_SIZE, CLASSIFY_WAIT_MS, extractWorkspaceFully } from "./jobs/extract-workspace";
 import { indexMemory } from "./jobs/index-memory";
 import { invokePendingDirectives } from "./jobs/invoke-capability";
 import {
@@ -364,7 +364,7 @@ async function main() {
       // backlog itself, batch by batch. The window is not the pace of
       // extraction — it only suppresses a re-send while a drain is in flight
       // (see EXTRACT_SINGLETON_S for the day it was).
-      const userIds = await usersWithPendingSpeech(BATCH_SIZE);
+      const userIds = await usersWithPendingSpeech(BATCH_SIZE, { classifyWaitMs: CLASSIFY_WAIT_MS });
       for (const userId of userIds) {
         await boss.send(
           JOBS.workspaceExtract,

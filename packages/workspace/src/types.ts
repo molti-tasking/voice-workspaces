@@ -35,6 +35,12 @@ export interface TranscriptSegment {
   text: string;
   /** Optional Midas-touch classification of the raw stream (see note below). */
   kind?: "content" | "directive" | "unclassified";
+  /**
+   * When the segment entered the ledger, as opposed to when it was said.
+   * Optional, like `kind`: only a pipeline that classifies asynchronously
+   * needs to know how long a segment has been waiting for its verdict.
+   */
+  recordedAt?: Date;
 }
 
 /* ---------------------------------------------------------------------------

@@ -43,7 +43,7 @@ const {
   resetCursor,
 } = await import("@voicemural/db/workspace");
 const { foldWorkspace, transitionsOf } = await import("@voicemural/workspace");
-const { extractWorkspace } = await import("./extract-workspace");
+const { CLASSIFY_WAIT_MS, extractWorkspace } = await import("./extract-workspace");
 
 const USER_ID = "test-extract-user";
 const SESSION_ID = "00000000-0000-4000-8000-0000000000e1";
@@ -74,7 +74,9 @@ function reply(content: string) {
 const { isDatabaseReachable } = await import("@voicemural/db/testing");
 const describeIfDb = (await isDatabaseReachable()) ? describe : describe.skip;
 
-async function seedTranscript(lines: string[]) {
+type Kind = "content" | "directive" | "unclassified";
+
+async function seedTranscript(lines: (string | { text: string; kind: Kind })[]) {
   const db = getDb();
   await db.delete(user).where(eq(user.id, USER_ID));
   await db
@@ -103,16 +105,25 @@ async function seedTranscript(lines: string[]) {
     })
     .returning({ id: audioChunk.id });
 
-  await db.insert(utterance).values(
-    lines.map((text, i) => ({
-      captureSessionId: SESSION_ID,
-      chunkId: chunk!.id,
-      startOffsetMs: i * 1000,
-      endOffsetMs: i * 1000 + 900,
-      text,
-      kind: "content" as const,
-    })),
-  );
+  return db
+    .insert(utterance)
+    .values(
+      lines.map((line, i) => ({
+        captureSessionId: SESSION_ID,
+        chunkId: chunk!.id,
+        startOffsetMs: i * 1000,
+        endOffsetMs: i * 1000 + 900,
+        text: typeof line === "string" ? line : line.text,
+        kind: typeof line === "string" ? ("content" as const) : line.kind,
+      })),
+    )
+    .returning({ id: utterance.id, text: utterance.text });
+}
+
+/** Everything the model was shown on call `n`, as one string. */
+function sentOnCall(n = 0): string {
+  const messages = chatMock.mock.calls[n]?.[0] as { content: string }[] | undefined;
+  return (messages ?? []).map((m) => m.content).join("\n");
 }
 
 const LINES = [
@@ -344,5 +355,81 @@ describeIfDb("extractWorkspace", () => {
     const outcome = await extractWorkspace(USER_ID);
     expect(outcome.skipped).toBe("nothing pending");
     expect(chatMock).not.toHaveBeenCalled();
+  });
+});
+
+describeIfDb("extractWorkspace, with directions in the stream", () => {
+  const DIRECTION = "Mark this as the intro's main claim.";
+
+  beforeEach(() => {
+    chatMock.mockReset();
+    chatMock.mockResolvedValue(reply(RESPONSE));
+  });
+
+  afterAll(async () => {
+    await getDb().delete(user).where(eq(user.id, USER_ID));
+    await closeDb();
+  });
+
+  /**
+   * The classifier's prompt promises a direction "drops out of the workspace".
+   * This is that promise, kept: never shown to the model, never cited by an
+   * op, and still consumed, so it is not waited on forever.
+   */
+  it("never sends a direction to the model, and moves past it", async () => {
+    const rows = await seedTranscript([
+      ...LINES.slice(0, 3),
+      { text: DIRECTION, kind: "directive" },
+      ...LINES.slice(3, 7),
+    ]);
+    const directionId = rows.find((r) => r.text === DIRECTION)!.id;
+
+    const outcome = await extractWorkspace(USER_ID);
+
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    expect(sentOnCall()).not.toContain(DIRECTION);
+    expect(sentOnCall()).toContain(LINES[0]);
+    expect(outcome.segments).toBe(8); // the whole batch was consumed
+
+    const ops = await loadOps(USER_ID);
+    expect(ops.flatMap((o) => o.sourceUtteranceIds)).not.toContain(directionId);
+    const [stored] = await loadExtractions(USER_ID);
+    expect(stored?.inputSegmentIds).not.toContain(directionId);
+
+    expect((await extractWorkspace(USER_ID)).skipped).toBe("nothing pending");
+  });
+
+  it("calls no model for a batch that is all directions", async () => {
+    await seedTranscript(LINES.map(() => ({ text: DIRECTION, kind: "directive" as const })));
+    const outcome = await extractWorkspace(USER_ID);
+    expect(chatMock).not.toHaveBeenCalled();
+    expect(outcome.opsAppended).toBe(0);
+    expect((await extractWorkspace(USER_ID)).skipped).toBe("nothing pending");
+  });
+
+  /**
+   * The race T0.4 closes. A line the classifier has not reached yet may be a
+   * direction, so the batch waits — without moving the cursor, so the same
+   * eight lines are taken when it resumes. Past the wait, the line is content.
+   */
+  it("waits for an unclassified line, then sends it as content after the timeout", async () => {
+    await seedTranscript([...LINES.slice(0, 7), { text: DIRECTION, kind: "unclassified" }]);
+
+    const early = await extractWorkspace(USER_ID);
+    expect(early.skipped).toBe("awaiting classification");
+    expect(chatMock).not.toHaveBeenCalled();
+
+    const later = new Date(Date.now() + CLASSIFY_WAIT_MS + 1_000);
+    const outcome = await extractWorkspace(USER_ID, later);
+    expect(outcome.segments).toBe(8);
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    expect(sentOnCall()).toContain(DIRECTION);
+  });
+
+  it("does not wait on a line the classifier has already settled", async () => {
+    await seedTranscript([...LINES.slice(0, 7), { text: DIRECTION, kind: "directive" }]);
+    const outcome = await extractWorkspace(USER_ID);
+    expect(outcome.skipped).toBeUndefined();
+    expect(chatMock).toHaveBeenCalledTimes(1);
   });
 });

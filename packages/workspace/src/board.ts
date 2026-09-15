@@ -264,6 +264,16 @@ export type TransitionOutcome =
   /** Untouched, but not enough drives have passed to call it kept. */
   | "pending";
 
+/**
+ * How many later drives a speech-driven move must survive untouched to count
+ * as kept. Two: one commute is easy to miss; two is a choice.
+ *
+ * Here rather than on the board page because two readers must agree on it: the
+ * card the person sees, and `study:export`, which the analysis reads. A kept
+ * card on screen that the export calls pending would be two measurements.
+ */
+export const KEPT_AFTER_SESSIONS = 2;
+
 export interface JudgedTransition {
   transition: TaskTransition;
   outcome: TransitionOutcome;
