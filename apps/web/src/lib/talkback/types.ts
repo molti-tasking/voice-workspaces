@@ -8,40 +8,21 @@
  */
 export type TalkbackStatus = "off" | "connecting" | "listening" | "speaking" | "degraded";
 
-/**
- * One side of the live exchange, as it happens.
- *
- * Held in memory only and deliberately so: the durable record is `utterance`
- * and `agent_turn`, written by the capture pipeline and the bot. This is the
- * screen catching up with the conversation, not a second transcript — if it
- * disagreed with the ledger, the ledger is right.
- */
-export interface TalkbackTurn {
-  id: string;
-  role: "you" | "agent";
-  text: string;
-  /**
-   * Which voice in the room said it, when the live STT could tell.
-   *
-   * Only ever set once more than one speaker has been heard: `bot.py` tags a
-   * transcript `[Speaker N]` from that point on and the hook lifts the tag out
-   * of the text into this field. Null for the ordinary one-person drive.
-   */
-  speaker?: number | null;
-}
-
 export interface TalkbackState {
   status: TalkbackStatus;
-  /** What the agent last said. Kept for the single-line glance view. */
-  reply: string | null;
   /**
-   * The exchange so far, oldest first, bounded.
+   * What the conversation is about right now, in two to four words.
    *
-   * Bounded because this runs for a whole drive on a phone: an unbounded list
-   * would grow without limit in memory and re-render longer every turn, on the
-   * same device that is holding a MediaRecorder open.
+   * Held in memory only, and not produced here: the voice container names it
+   * off the live STT stream and pushes it over the data channel that is
+   * already open (see `TopicTitle` in apps/pipecat/bot.py). The browser only
+   * ever receives it, so a reload during a drive starts blank again and the
+   * next push refills it — the durable record is `utterance`, as always.
+   *
+   * Null until the container has heard enough to name anything, which is also
+   * what the board shows before the first title: empty tiles.
    */
-  turns: TalkbackTurn[];
+  title: string | null;
   /**
    * Whether the agent can reach anything the driver has said before.
    *
@@ -59,13 +40,9 @@ export interface TalkbackState {
   error: string | null;
 }
 
-/** How much of the exchange is kept on screen. A glance, not a history. */
-export const MAX_VISIBLE_TURNS = 8;
-
 export const OFF: TalkbackState = {
   status: "off",
-  reply: null,
-  turns: [],
+  title: null,
   memory: "ready",
   error: null,
 };

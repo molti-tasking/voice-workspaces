@@ -23,6 +23,7 @@ service's own variables serve. Anywhere else, the three below are enough.
 import asyncio
 import os
 import time
+import urllib.error
 
 for _name, _value in (
     ("LITELLM_BASE_URL", "http://litellm.test"),
@@ -117,6 +118,11 @@ def drive(frames, recorder=None, llm_name=None):
 
     asyncio.run(run())
     return spoken
+
+
+async def _swallow(frame, direction=FrameDirection.DOWNSTREAM):
+    """A push that goes nowhere, for tests that only look at state."""
+    return None
 
 
 def heard(text):
@@ -930,3 +936,205 @@ def test_a_completion_that_only_calls_a_tool_is_not_a_declined_turn():
     assert recorder.declines == []
     assert [c["spoken"] for c in recorder.calls] == ["Dropped the asymmetry argument."]
     assert notes == [True]  # only the spoken turn reached the engine
+
+
+# --- TopicTitle: what the board is told, and how often -----------------------
+# The recorder shows ONE short title of what is being talked about now, and
+# flips it like a departure board when it changes. Two things decide whether
+# that is bearable to sit next to for a whole drive: how often the container
+# calls the model, and whether an unchanged subject is allowed to re-push. Both
+# are tested here; the flipping itself is the browser's (split-flap.test.ts).
+
+
+def titler(monkeypatch, prompt="name it", reply=None, replies=None):
+    """A `TopicTitle` with the model faked and the task manager stood in for.
+
+    Like `offers_with`: `create_task` needs a pipeline the bare processor has
+    not got, so the coroutine is RUN here instead of scheduled — which also
+    makes the call synchronous for the test, and the cadence is what is being
+    measured, not the concurrency.
+    """
+    answers = list(replies) if replies is not None else [reply]
+    asked = []
+
+    def chat(messages, *, max_tokens, metadata):
+        asked.append(messages)
+        return answers.pop(0) if answers else None
+
+    monkeypatch.setattr(bot, "_litellm_chat", chat)
+
+    processor = bot.TopicTitle(prompt)
+    pushed = []
+
+    async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+        pushed.append(frame)
+
+    processor.push_frame = capture
+    processor.create_task = _plain_task
+    processor.asked = asked
+    processor.pushed = pushed
+    return processor
+
+
+def _plain_task(coro, name=None):
+    """Stand in for the pipeline's task manager, which a bare processor lacks."""
+    return asyncio.get_running_loop().create_task(coro)
+
+
+async def settled(processor):
+    """Let the naming task finish.
+
+    It ends in `asyncio.to_thread`, so yielding once is not enough — the thread
+    has to be joined before the push it makes can be observed.
+    """
+    if processor._task is not None:
+        await processor._task
+
+
+def messages_pushed(processor):
+    return [f for f in processor.pushed if isinstance(f, bot.RTVIServerMessageFrame)]
+
+
+def test_clean_title_strips_what_a_board_cannot_show():
+    assert bot.clean_title('"Funding round."', None) == "Funding round"
+    assert bot.clean_title("**Tuesday deadline**", None) == "Tuesday deadline"
+    assert bot.clean_title("  Split   flap  board \n", None) == "Split flap board"
+
+
+def test_clean_title_caps_at_four_words_and_thirty_two_characters():
+    assert bot.clean_title("one two three four five", None) == "one two three four"
+    long = bot.clean_title("Immunotherapy reimbursement negotiation timeline", None)
+    assert len(long) <= 32
+    assert long == "Immunotherapy reimbursement"
+
+
+def test_clean_title_reports_nothing_to_change():
+    assert bot.clean_title(None, "Funding round") is None
+    assert bot.clean_title("   ", "Funding round") is None
+    assert bot.clean_title("NONE", None) is None
+    # The common case: the model was asked to return the current title when the
+    # subject has not moved, and does. The board must not re-flip to itself.
+    assert bot.clean_title("Funding round", "Funding round") is None
+    assert bot.clean_title("FUNDING ROUND", "Funding round") is None
+
+
+def test_the_board_stays_quiet_below_the_thresholds(monkeypatch):
+    processor = titler(monkeypatch, reply="Funding round")
+
+    async def run():
+        # Well under CALL_AFTER_CHARS, and no time has passed.
+        await processor.process_frame(heard("so anyway"), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert processor.asked == []
+    assert messages_pushed(processor) == []
+    # The transcript itself went straight on regardless.
+    assert len(processor.pushed) == 1
+
+
+def test_enough_speech_after_the_gap_names_the_subject_once(monkeypatch):
+    processor = titler(monkeypatch, reply="Funding round")
+
+    async def run():
+        # The gap, as if the drive had been running.
+        processor._last_call -= bot.TopicTitle.MIN_GAP_SECONDS + 1
+        await processor.process_frame(
+            heard("x" * bot.TopicTitle.CALL_AFTER_CHARS), FrameDirection.DOWNSTREAM
+        )
+        await settled(processor)
+
+    asyncio.run(run())
+    assert len(processor.asked) == 1
+    assert processor.title == "Funding round"
+
+
+def test_any_speech_names_the_subject_once_it_is_overdue(monkeypatch):
+    processor = titler(monkeypatch, reply="Funding round")
+
+    async def run():
+        # Far too little speech for the char threshold, but long enough that a
+        # slow talker should still get a board.
+        processor._last_call -= bot.TopicTitle.CALL_AFTER_SECONDS + 1
+        await processor.process_frame(heard("mm the funding"), FrameDirection.DOWNSTREAM)
+        await settled(processor)
+
+    asyncio.run(run())
+    assert len(processor.asked) == 1
+
+
+def test_a_changed_title_is_pushed_to_the_browser_exactly_once(monkeypatch):
+    processor = titler(monkeypatch, reply="Funding round")
+
+    async def run():
+        processor._last_call -= bot.TopicTitle.CALL_AFTER_SECONDS + 1
+        await processor.process_frame(heard("about the funding"), FrameDirection.DOWNSTREAM)
+        await settled(processor)
+
+    asyncio.run(run())
+    messages = messages_pushed(processor)
+    assert len(messages) == 1
+    assert messages[0].data == {"type": "title", "title": "Funding round"}
+
+
+def test_the_same_subject_named_again_pushes_nothing(monkeypatch):
+    processor = titler(monkeypatch, replies=["Funding round", "Funding round"])
+
+    async def run():
+        for _ in range(2):
+            processor._last_call -= bot.TopicTitle.CALL_AFTER_SECONDS + 1
+            await processor.process_frame(heard("still the funding"), FrameDirection.DOWNSTREAM)
+            await settled(processor)
+
+    asyncio.run(run())
+    assert len(processor.asked) == 2  # it asked twice…
+    assert len(messages_pushed(processor)) == 1  # …and the board moved once
+
+
+def test_a_failed_call_is_logged_and_the_next_trigger_retries(monkeypatch):
+    def boom(messages, *, max_tokens, metadata):
+        raise urllib.error.URLError("proxy down")
+
+    monkeypatch.setattr(bot, "_litellm_chat", boom)
+    processor = bot.TopicTitle("name it")
+    processor.push_frame = _swallow
+    processor.create_task = _plain_task
+
+    async def run():
+        processor._last_call -= bot.TopicTitle.CALL_AFTER_SECONDS + 1
+        await processor.process_frame(heard("about the funding"), FrameDirection.DOWNSTREAM)
+        await settled(processor)
+
+    asyncio.run(run())
+    assert processor.title is None
+
+
+def test_a_container_with_no_title_prompt_never_calls(monkeypatch):
+    """An older web app sends no `titlePrompt`. Then the board simply never runs."""
+    processor = titler(monkeypatch, prompt="", reply="Funding round")
+
+    async def run():
+        processor._last_call -= bot.TopicTitle.CALL_AFTER_SECONDS + 1
+        await processor.process_frame(heard("x" * 400), FrameDirection.DOWNSTREAM)
+        await settled(processor)
+
+    asyncio.run(run())
+    assert processor.asked == []
+    assert messages_pushed(processor) == []
+
+
+def test_the_gate_tells_the_board_what_the_driver_heard():
+    """The agent's own phrase for the subject is half of what names it."""
+    noted = []
+
+    class FakeTitle:
+        def note_agent(self, text):
+            noted.append(text)
+
+    async def run():
+        gate = bot.SilenceGate(title=FakeTitle())
+        gate.push_frame = _swallow
+        for frame in reply("The Tuesday deadline is the binding one."):
+            await gate.process_frame(frame, FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert "".join(noted) == "The Tuesday deadline is the binding one."

@@ -68,9 +68,16 @@ session and should not gain one. The context ticket gets a drive-length TTL via
 
 ```
 transport.input() → vad → Trace("in") → stt → Trace("stt") → summary
-  → Recall → aggregator.user() → llm → SilenceGate → tts
+  → title → Recall → aggregator.user() → llm → SilenceGate → tts
   → transport.output() → aggregator.assistant()
 ```
+
+`title` (`TopicTitle`) names what is being talked about **right now** in two to
+four words, off its own short window of recent speech rather than the
+whole-drive summary, and pushes each change to the browser as an
+`RTVIServerMessageFrame` over the data channel the audio already needs. That is
+the recorder's split-flap board. It never blocks a turn, and it is inert unless
+`/api/realtime/session` sent a `titlePrompt`.
 
 `Trace` logs exactly three things — audio-frame counts, VAD start/stop,
 transcriptions. Those separate the three otherwise-identical silent failures:
@@ -185,9 +192,8 @@ Once the live STT hears a **second voice**, `SpeakerTagger` in `bot.py`
 prefixes every transcript from then on with `[Speaker N]`, numbered in order
 of first appearance so Speaker 1 is the driver. The tag is written into the
 text on purpose — it is the one thing that reaches the LLM, the running
-summary, `agent_turn.respondingToText` and the browser's live exchange alike
-(the recorder lifts it into a small `S2` label). `Recall` strips it before
-searching the ledger. A one-person drive is byte-for-byte what it was before:
+summary, the topic title's window and `agent_turn.respondingToText` alike.
+`Recall` strips it before searching the ledger. A one-person drive is byte-for-byte what it was before:
 nothing is tagged until there are two.
 
 The prompt has a section for it: a conversation between the people in the car
