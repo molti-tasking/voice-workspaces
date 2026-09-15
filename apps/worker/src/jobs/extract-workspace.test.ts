@@ -32,7 +32,7 @@ vi.mock("@voicemural/telemetry", async (importOriginal) => {
 });
 
 const { closeDb, eq, getDb } = await import("@voicemural/db");
-const { audioChunk, captureSession, user, utterance } = await import(
+const { audioChunk, capability, captureSession, directive, user, utterance } = await import(
   "@voicemural/db/schema"
 );
 const {
@@ -360,6 +360,7 @@ describeIfDb("extractWorkspace", () => {
 
 describeIfDb("extractWorkspace, with directions in the stream", () => {
   const DIRECTION = "Mark this as the intro's main claim.";
+  const CAPABILITY_ID = "00000000-0000-4000-8000-0000000000e9";
 
   beforeEach(() => {
     chatMock.mockReset();
@@ -371,18 +372,38 @@ describeIfDb("extractWorkspace, with directions in the stream", () => {
     await closeDb();
   });
 
+  /** The classifier's verdict on a line, as recordClassifications writes it. */
+  async function classifyAsDirection(utteranceId: string, handledBy: "capability" | null) {
+    const db = getDb();
+    if (handledBy) {
+      await db
+        .insert(capability)
+        .values({ id: CAPABILITY_ID, userId: USER_ID, type: "action", name: "mark" })
+        .onConflictDoNothing();
+    }
+    await db.insert(directive).values({
+      utteranceId,
+      captureSessionId: SESSION_ID,
+      verb: "mark",
+      restatement: "Marking that.",
+      capabilityId: handledBy ? CAPABILITY_ID : null,
+      confidence: 90,
+    });
+  }
+
   /**
    * The classifier's prompt promises a direction "drops out of the workspace".
-   * This is that promise, kept: never shown to the model, never cited by an
-   * op, and still consumed, so it is not waited on forever.
+   * Kept for a direction a capability already carried out: never shown to the
+   * model, never cited by an op, and still consumed, so it is not waited on.
    */
-  it("never sends a direction to the model, and moves past it", async () => {
+  it("never sends a handled direction to the model, and moves past it", async () => {
     const rows = await seedTranscript([
       ...LINES.slice(0, 3),
       { text: DIRECTION, kind: "directive" },
       ...LINES.slice(3, 7),
     ]);
     const directionId = rows.find((r) => r.text === DIRECTION)!.id;
+    await classifyAsDirection(directionId, "capability");
 
     const outcome = await extractWorkspace(USER_ID);
 
@@ -399,8 +420,36 @@ describeIfDb("extractWorkspace, with directions in the stream", () => {
     expect((await extractWorkspace(USER_ID)).skipped).toBe("nothing pending");
   });
 
-  it("calls no model for a batch that is all directions", async () => {
-    await seedTranscript(LINES.map(() => ({ text: DIRECTION, kind: "directive" as const })));
+  /**
+   * 15 Sep 2026: "Let's remove this asymmetry already" was a direction no
+   * capability handles. Withheld, the card it named stayed on the board. An
+   * unhandled direction about the person's own work is speech the extractor
+   * is written to act on.
+   */
+  it("sends a direction nothing handles, so speech can still drop a task", async () => {
+    const REMOVE = "Let's remove this asymmetry already.";
+    const rows = await seedTranscript([...LINES.slice(0, 7), { text: REMOVE, kind: "directive" }]);
+    await classifyAsDirection(rows.find((r) => r.text === REMOVE)!.id, null);
+
+    await extractWorkspace(USER_ID);
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    expect(sentOnCall()).toContain(REMOVE);
+  });
+
+  it("withholds a line a person marked as a direction by hand", async () => {
+    const rows = await seedTranscript([...LINES.slice(0, 7), DIRECTION]);
+    await getDb()
+      .update(utterance)
+      .set({ kindOverride: "directive" })
+      .where(eq(utterance.id, rows.find((r) => r.text === DIRECTION)!.id));
+
+    await extractWorkspace(USER_ID);
+    expect(sentOnCall()).not.toContain(DIRECTION);
+  });
+
+  it("calls no model for a batch that is all handled directions", async () => {
+    const rows = await seedTranscript(LINES.map((_, i) => ({ text: `${DIRECTION} ${i}`, kind: "directive" as const })));
+    for (const row of rows) await classifyAsDirection(row.id, "capability");
     const outcome = await extractWorkspace(USER_ID);
     expect(chatMock).not.toHaveBeenCalled();
     expect(outcome.opsAppended).toBe(0);

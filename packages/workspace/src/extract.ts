@@ -19,7 +19,8 @@ import {
  * subtly wrong. The "PROMPT_VERSION discipline" test in `extract.test.ts`
  * fails if the prompt text drifts without the version moving.
  *
- * "5" changed the INPUT, not the text: directions are no longer sent (see
+ * "5" changed the INPUT, not the text: directions already handled by a
+ * capability, or marked as directions by hand, are no longer sent (see
  * CLASSIFY_WAIT_MS in apps/worker/src/jobs/extract-workspace.ts). A batch that
  * held one hashes differently anyway, but a batch without one would otherwise
  * hit a cache entry made under a pipeline that let directions through, and a

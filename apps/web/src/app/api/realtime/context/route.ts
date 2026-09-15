@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { captureSession, eq, getDb } from "@voicemural/db";
+import { boardEnabledAt } from "@voicemural/db/board";
 import {
   pendingConfirmation,
   settleInvocation,
@@ -100,8 +101,12 @@ export async function POST(req: Request) {
    * bound that matters, and the client refreshes it — the risk of a re-read of
    * the driver's own transcript, by a holder who already proved ownership of
    * the drive, is not worth ending the conversation over. */
+  // Checked per turn rather than once per drive: a researcher switching the
+  // board on mid-drive should not have to wait for the next one, and it is a
+  // primary-key read.
+  const boardOn = (await boardEnabledAt(payload.userId).catch(() => null)) !== null;
   const [{ passages, threads, board }, { settled, pending }] = await Promise.all([
-    buildTurnContext(payload.userId, payload.captureSessionId, parsed.data.said),
+    buildTurnContext(payload.userId, payload.captureSessionId, parsed.data.said, { board: boardOn }),
     settleThenReadPending(payload.captureSessionId, parsed.data.said, parsed.data.answering),
   ]);
 

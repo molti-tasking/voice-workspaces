@@ -55,13 +55,14 @@ type Move =
  * refresh, because the ledger has no memory of it. A gesture that silently does
  * nothing is worse than one that is not offered.
  *
- * ## Drag is an addition, never the only way
+ * ## Drag moves; one button retires
  *
- * The element adapter is built on native HTML5 drag events, which do not fire
- * on touch and are not reachable from a keyboard. The buttons on every card are
- * therefore not a fallback — they are the primary path, and drag is a
- * convenience on top for whoever is at a desk with a mouse. Nothing is reachable
- * only by dragging.
+ * Moving a card is drag only. Per-column buttons on every card duplicated it
+ * and were removed at the maintainer's call — the board is a desk view. The
+ * cost is known and accepted: the element adapter is built on native HTML5
+ * drag events, which do not fire on touch and are not reachable from a
+ * keyboard, so a card cannot be moved from a phone. "Not a task" stays a
+ * button, because no column means that.
  */
 export function BoardSurface({ cards }: { cards: CardView[] }) {
   const router = useRouter();
@@ -185,7 +186,6 @@ export function BoardSurface({ cards }: { cards: CardView[] }) {
             key={state}
             state={state}
             cards={shown.filter((c) => c.state === state)}
-            onMove={moveCard}
             onRetire={retireCard}
             busy={busy}
           />
@@ -198,13 +198,11 @@ export function BoardSurface({ cards }: { cards: CardView[] }) {
 function Column({
   state,
   cards,
-  onMove,
   onRetire,
   busy,
 }: {
   state: TaskState;
   cards: CardView[];
-  onMove: (cardId: string, blockId: string, to: TaskState) => void;
   onRetire: (cardId: string, blockId: string) => void;
   busy: boolean;
 }) {
@@ -248,7 +246,6 @@ function Column({
           <BoardCard
             key={card.cardId}
             card={card}
-            onMove={(to) => onMove(card.cardId, card.blockId, to)}
             onRetire={() => onRetire(card.cardId, card.blockId)}
             busy={busy}
           />

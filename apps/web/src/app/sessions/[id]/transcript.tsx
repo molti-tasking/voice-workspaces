@@ -38,6 +38,8 @@ export interface AgentTurnRow {
   ttftMs: number | null;
   speakTtfbMs: number | null;
   totalLatencyMs: number | null;
+  /** Board tools the turn called before speaking. */
+  toolCalls: { name: string; latencyMs: number; error?: string }[];
   error: string | null;
 }
 
@@ -243,6 +245,18 @@ function AgentLine({ turn }: { turn: AgentTurnRow }) {
           in both places; only the gutter differs, because the two views run on
           different clocks. See components/agent-turn-bubble.tsx. */}
       <div className="min-w-0 flex-1 text-right">
+        {/* What the agent was actually answering, from the LIVE transcription.
+            Turns sit on the page by when they were spoken, which after a slow
+            turn is under a later line — a reply read against the line above it
+            looked like a non sequitur, and "Go ahead." to "Can you repeat the
+            question?" only made sense once this showed it had heard "Can I…".
+            The ledger lines on this page are a different transcription of the
+            same audio, so the two can disagree. */}
+        {turn.respondingToText && (
+          <p className="mb-1 truncate text-[11px] text-white/30" title={turn.respondingToText}>
+            answering “{turn.respondingToText}”
+          </p>
+        )}
         <AgentTurnBubble
           seq={turn.seq}
           text={turn.text}
@@ -273,6 +287,9 @@ function Meta({ turn, spokeMs }: { turn: AgentTurnRow; spokeMs: number }) {
     // interruption is the measured end and `heard` below carries it.
     spokeMs > 0 && !turn.bargedIn && `spoke ~${(spokeMs / 1000).toFixed(1)}s`,
     turn.truncatedAtMs !== null && `heard ${(turn.truncatedAtMs / 1000).toFixed(1)}s`,
+    // What the agent DID before it spoke. The spoken line claims a change; this
+    // is the record of whether a tool was called for it, and whether it failed.
+    ...turn.toolCalls.map((c) => `${c.name}${c.error ? " failed" : ""} ${c.latencyMs}ms`),
   ].filter(Boolean);
 
   if (parts.length === 0 && !turn.resolvedModel) return null;

@@ -93,6 +93,32 @@ describe("the deterministic checks", () => {
   });
 });
 
+describe("the tool-call checks", () => {
+  const dropCase = CASES.find((c) => c.id === "board-remove-drops")!;
+  const hands = CASES.find((c) => c.id === "board-mention-no-edit")!;
+
+  it("passes the expected call with matching arguments, and needs no words on that step", () => {
+    const result = checkReply(dropCase, "", 60, [{ name: "move_task", arguments: { card: "1225b3", column: "dropped" } }]);
+    expect(result.pass).toBe(true);
+  });
+
+  it("fails the wrong tool, a wrong argument, or no call at all", () => {
+    expect(checkReply(dropCase, "", 60, [{ name: "remove_task", arguments: { card: "1225b3" } }]).failures[0]).toMatch(
+      /called remove_task, expected move_task/,
+    );
+    expect(
+      checkReply(dropCase, "", 60, [{ name: "move_task", arguments: { card: "1225b3", column: "done" } }]).failures[0],
+    ).toMatch(/column/);
+    expect(checkReply(dropCase, "Dropped it.", 60).failures).toContain("did not call move_task");
+  });
+
+  it("fails a tool call where none was wanted", () => {
+    const result = checkReply(hands, "", 60, [{ name: "move_task", arguments: { card: "1225b3", column: "done" } }]);
+    expect(result.pass).toBe(false);
+    expect(result.failures[0]).toMatch(/unexpected tool call/);
+  });
+});
+
 describe("the turn messages, which mirror bot.py", () => {
   it("compose nothing from an empty context", () => {
     expect(composeContextBlock(undefined)).toBeNull();

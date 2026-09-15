@@ -9,11 +9,13 @@
  * Like the trajectory, nothing here is stored. A task is a block of kind
  * `task`, its column is the `state` on that block, and a transition is a
  * `revise_block` that changed the state. Speech moves cards through the
- * extractor; a person moves them through the board. Both are ops in the same
- * ledger, told apart by `via`.
+ * extractor; a person moves them through the board; the talk-back agent moves
+ * them when asked to, through a tool. All three are ops in the same ledger,
+ * told apart by `via`.
  *
- * The evaluation's primary measure falls out of that: for every speech-driven
- * transition, did the person keep it, reverse it, or never touch it. Nobody
+ * The evaluation's primary measure falls out of that: for every transition a
+ * machine made — the extractor's or the agent's — did the person keep it,
+ * reverse it, or never touch it. Nobody
  * reads the drives, so the person's own keep/reverse is the ground truth by
  * design — and it is read off the ledger, not off page views.
  *
@@ -30,7 +32,8 @@ import {
   type WorkspaceState,
 } from "./types";
 
-export type TransitionVia = "speech" | "user";
+/** Who moved the card: the extractor reading speech, the person, or the agent. */
+export type TransitionVia = "speech" | "user" | "agent";
 
 export interface TaskTransition {
   /** Root of the revision chain — stable across revisions, the card's identity. */
@@ -151,7 +154,7 @@ function transitionsFrom(
       to,
       at: stored.occurredAt,
       seq: stored.seq,
-      via: op.via === "user" ? "user" : "speech",
+      via: op.via ?? "speech",
       extractionId: stored.extractionId,
       captureSessionId: stored.captureSessionId,
       sourceUtteranceIds: stored.sourceUtteranceIds ?? [],
@@ -259,7 +262,7 @@ export type TransitionOutcome =
   | "corrected"
   /** The person said it was not a task. */
   | "retired"
-  /** Speech moved it again before the person weighed in. */
+  /** Speech or the agent moved it again before the person weighed in. */
   | "superseded"
   /** Untouched, but not enough drives have passed to call it kept. */
   | "pending";
@@ -282,7 +285,13 @@ export interface JudgedTransition {
 }
 
 /**
- * Judge every speech transition by what happened to the card next.
+ * Judge every transition a machine made by what happened to the card next.
+ *
+ * Speech (the extractor) and the agent are both judged, and separately
+ * countable by `transition.via`: one infers a change from what was said, the
+ * other makes one because it was asked to, and "do people keep what the agent
+ * did when they asked it" is not the same finding as "do they keep what the
+ * extractor read into their speech". Only the person's own moves decide.
  *
  * "Kept" is inferred from drives elapsed, not from page views: the ledger is
  * the instrument, and a card that sat in `done` through two more commutes
@@ -311,7 +320,7 @@ export function judge(
 
   for (let i = 0; i < ordered.length; i += 1) {
     const t = ordered[i]!;
-    if (t.via !== "speech") continue;
+    if (t.via === "user") continue;
 
     const next = ordered.slice(i + 1).find((n) => n.cardId === t.cardId);
 
@@ -322,7 +331,7 @@ export function judge(
     }
 
     let outcome: TransitionOutcome;
-    if (next.via === "speech") outcome = "superseded";
+    if (next.via !== "user") outcome = "superseded";
     else if (next.to === "retired") outcome = "retired";
     else if (next.to === t.from) outcome = "reversed";
     else outcome = "corrected";
@@ -333,7 +342,7 @@ export function judge(
   return judged;
 }
 
-/** The speech transitions the person did not accept. */
+/** The machine-made transitions the person did not accept. */
 export function reversals(
   transitions: readonly TaskTransition[],
   opts: { withinSessions: number; sessions?: readonly LedgerSession[] },

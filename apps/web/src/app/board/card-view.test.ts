@@ -116,6 +116,25 @@ describe("markerFor", () => {
     );
   });
 
+  it("says the agent moved it — or added it — when it was asked to", () => {
+    expect(markerFor(card({ lastTransition: transition({ via: "agent" }) }))).toBe("moved here by the agent");
+    expect(markerFor(card({ lastTransition: transition({ via: "agent", from: null, to: "open" }) }))).toBe(
+      "added by the agent",
+    );
+    const kept = { transition: transition({ via: "agent" }), outcome: "kept" } as JudgedTransition;
+    expect(markerFor(card({ lastTransition: transition({ via: "agent" }) }), kept)).toBe(
+      "moved here by the agent · kept",
+    );
+  });
+
+  it("calls it back when the person undoes what the agent did", () => {
+    const agent = transition({ from: "next", to: "dropped", via: "agent", seq: 1 });
+    const user = transition({ from: "dropped", to: "next", via: "user", seq: 2 });
+    expect(markerFor(card({ lastTransition: user, history: [agent, user], state: "next" }))).toBe(
+      "you moved it back",
+    );
+  });
+
   it("stays quiet at one stale drive — one commute is easy to miss", () => {
     expect(markerFor(card({ staleSessions: 1 }))).toBe("moved here by speech");
   });
