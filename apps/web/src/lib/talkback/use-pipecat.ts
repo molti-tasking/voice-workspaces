@@ -3,20 +3,12 @@
 import {
   PipecatClient,
   RTVIEvent,
-  type BotOutputData,
   type Participant,
-  type TranscriptData,
 } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import { useEffect, useState } from "react";
 import { subscribeStream } from "@/lib/recorder/mic-bus";
-import {
-  MAX_VISIBLE_TURNS,
-  OFF,
-  type TalkbackOptions,
-  type TalkbackState,
-  type TalkbackTurn,
-} from "./types";
+import { OFF, type TalkbackOptions, type TalkbackState } from "./types";
 
 /**
  * The live conversation, over Pipecat.
@@ -108,10 +100,6 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
       // should not be discovered afterwards from thin answers.
       if (!ticket) patch({ memory: "unavailable" });
 
-      /* One key per agent turn, so every `bot-output` for that reply lands in
-       * the same bubble. Reset when the bot starts speaking again. */
-      let agentTurnKey = `agent-${Date.now()}`;
-
       const next = new PipecatClient({
         transport: new SmallWebRTCTransport({
           /* THE BROWSER NEEDS STUN TOO, and forgetting it fails in a way that
@@ -140,10 +128,7 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
         enableMic: true,
         enableCam: false,
         callbacks: {
-          onBotStartedSpeaking: () => {
-            agentTurnKey = `agent-${Date.now()}`;
-            patch({ status: "speaking" });
-          },
+          onBotStartedSpeaking: () => patch({ status: "speaking" }),
           onBotStoppedSpeaking: () => patch({ status: "listening" }),
           onDisconnected: () => {
             if (!disposed)
@@ -153,72 +138,28 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
       });
       client = next;
 
-      /* Both halves of the exchange, on screen as it happens.
+      /* THE LIVE TOPIC TITLE, pushed by the container.
        *
-       * Appended rather than replaced: seeing only the latest line makes it
-       * impossible to tell a misheard question from a bad answer, which is the
-       * first thing anybody needs to know when a reply seems wrong. */
-      const append = (
-        role: TalkbackTurn["role"],
-        text: string,
-        key?: string,
-      ) => {
-        // `[Speaker 2] …` is how the container marks a line once it has heard
-        // more than one voice. Shown as a label rather than read as text.
-        const tagged = /^\[Speaker (\d+)\]\s*/.exec(text);
-        const speaker = tagged ? Number(tagged[1]) : null;
-        const trimmed = (tagged ? text.slice(tagged[0].length) : text).trim();
-        if (!trimmed) return;
-        setState((prev) => {
-          const turns = [...prev.turns];
-          const last = turns[turns.length - 1];
-
-          /* ACCUMULATE INTO THE CURRENT TURN, and never trust the event to be
-           * emitted once.
-           *
-           * A reply arrives as several `bot-output` events, and on the RTVI 1.x
-           * wire format — which is what Pipecat serves this client — they carry
-           * no stable `segment_id` and the same sentence is emitted more than
-           * once. Keying on the id alone produced a column of duplicate bubbles:
-           * "I'm doing well, thank you." three times for one reply.
-           *
-           * So the turn owns the bubble, not the event. Text already present is
-           * dropped, anything new is appended, and the bubble closes when the
-           * other speaker starts. That is correct for both wire formats and for
-           * whatever the next one does. */
-          if (last && last.id === key) {
-            const already = last.text.includes(trimmed);
-            if (already) return prev;
-            turns[turns.length - 1] = { ...last, text: `${last.text} ${trimmed}`.trim() };
-          } else {
-            turns.push({
-              id: key ?? `${role}-${Date.now()}-${turns.length}`,
-              role,
-              text: trimmed,
-              speaker,
-            });
-          }
-          const merged = turns[turns.length - 1]!;
-          return {
-            ...prev,
-            turns: turns.slice(-MAX_VISIBLE_TURNS),
-            reply: role === "agent" ? merged.text : prev.reply,
-          };
-        });
-      };
-
-
-      next.on(RTVIEvent.UserTranscript, (data: TranscriptData) => {
-        // Interim results rewrite themselves several times a second. Only the
-        // final text is worth putting in front of someone driving.
-        if (data?.final) append("you", data.text);
-      });
-
-      next.on(RTVIEvent.BotOutput, (data: BotOutputData) => {
-        // A turn the silence gate declined never reaches the speaker, so it
-        // must not appear here either — the screen should show what was said.
-        if (data?.will_be_spoken === false) return;
-        append("agent", data.text, agentTurnKey);
+       * The screen used to render the last eight turns of the exchange. It was
+       * the wrong thing to show somebody in a car cradle — reading is the one
+       * thing they cannot do — and it re-rendered this provider on every
+       * streamed fragment of every reply, on a phone that is also holding a
+       * MediaRecorder open. Two to four words naming the subject costs one
+       * render when the subject actually changes.
+       *
+       * Named in the voice container rather than here or in the worker: it sits
+       * next to the running summary, on the freshest copy of what was said (see
+       * `TopicTitle` in apps/pipecat/bot.py), and rides the data channel that
+       * the audio already needs — so the phone makes no extra request.
+       *
+       * `serverMessage` carries the frame's `data` payload directly and is
+       * typed `any`, so this is the boundary where it gets checked: an older
+       * container sends nothing at all, and a future one may send other kinds
+       * of server message through the same event. */
+      next.on(RTVIEvent.ServerMessage, (data) => {
+        if (data?.type !== "title") return;
+        const { title } = data as { title?: unknown };
+        if (typeof title === "string") patch({ title });
       });
 
       next.on(

@@ -20,11 +20,15 @@ WHAT IS HERE
   summary     A rolling summary of the drive, folded in the background off the
               live STT stream — see `RunningSummary` for why it lives here and
               not in the ledger.
+  title       Two to four words naming what is being talked about right now,
+              pushed to the browser as an RTVI server message for the recorder's
+              split-flap board — see `TopicTitle`.
 
 WHAT IS FETCHED, NOT DUPLICATED
-  /api/realtime/session   the system prompt, the summary instruction, the
-                          voice, a seed summary for reconnects, and the
-                          drive's start time. Once per connection.
+  /api/realtime/session   the system prompt, the summary and title
+                          instructions, the voice, a seed summary for
+                          reconnects, and the drive's start time. Once per
+                          connection.
   /api/realtime/context   passages from PAST drives matching what was just
                           said, and any parked action to ask about — settling
                           the last ask first. Once per turn.
@@ -94,6 +98,10 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+# The board's one wire to the browser. The RTVI observer that PipelineWorker
+# installs turns this frame into a `server-message` on the data channel the
+# transcripts already use, so it can be pushed from anywhere in the pipeline.
+from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.openai.llm import OpenAILLMService
@@ -628,6 +636,45 @@ class SpeakerTagger(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+def _litellm_chat(messages: list[dict], *, max_tokens: int, metadata: dict) -> str | None:
+    """One blocking chat completion against the proxy, for the background folds.
+
+    BLOCKING ON PURPOSE, and called through `asyncio.to_thread`: urllib is in the
+    standard library and this container already depends on the proxy being
+    reachable. An async HTTP client would be a second connection pool to reason
+    about for two calls a minute that nobody is waiting on.
+
+    Shared by `RunningSummary` and `TopicTitle` because they ask the same model
+    the same way and differ only in prompt and token budget — the summary's own
+    copy of this was the obvious thing for the title to drift away from.
+
+    `SUMMARISE_MODEL` for both, and temperature 0: these are folds, not
+    conversation. A title that comes back differently worded each call would
+    flip the board for no reason.
+    """
+    req = urllib.request.Request(
+        f"{LITELLM_BASE_URL}/chat/completions",
+        method="POST",
+        data=json.dumps(
+            {
+                "model": SUMMARISE_MODEL,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": 0,
+                # For Langfuse, through LiteLLM. Ignored by a proxy without it.
+                "metadata": metadata,
+            }
+        ).encode(),
+        headers={
+            "Authorization": f"Bearer {LITELLM_API_KEY}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as res:
+        body = json.loads(res.read())
+    return (body["choices"][0]["message"]["content"] or "").strip() or None
+
+
 class RunningSummary(FrameProcessor):
     """A rolling summary of the drive, kept in memory and never persisted.
 
@@ -739,30 +786,214 @@ class RunningSummary(FrameProcessor):
             if self._summary and self._summary.strip()
             else "Summary so far: (nothing yet)"
         )
-        req = urllib.request.Request(
-            f"{LITELLM_BASE_URL}/chat/completions",
-            method="POST",
-            data=json.dumps(
-                {
-                    "model": SUMMARISE_MODEL,
-                    "messages": [
-                        {"role": "system", "content": self._prompt},
-                        {"role": "user", "content": f"{prior}\n\nNewly spoken:\n{new_text}"},
-                    ],
-                    "max_tokens": 300,
-                    "temperature": 0,
-                    # For Langfuse, through LiteLLM. Ignored by a proxy without it.
-                    "metadata": self._metadata,
-                }
-            ).encode(),
-            headers={
-                "Authorization": f"Bearer {LITELLM_API_KEY}",
-                "Content-Type": "application/json",
-            },
+        return _litellm_chat(
+            [
+                {"role": "system", "content": self._prompt},
+                {"role": "user", "content": f"{prior}\n\nNewly spoken:\n{new_text}"},
+            ],
+            max_tokens=300,
+            metadata=self._metadata,
         )
-        with urllib.request.urlopen(req, timeout=30) as res:
-            body = json.loads(res.read())
-        return (body["choices"][0]["message"]["content"] or "").strip() or None
+
+
+def clean_title(raw: str | None, previous: str | None) -> str | None:
+    """Make a model's answer fit on a board, or decide it is not a change.
+
+    Pure, and separated from `TopicTitle` because this is where every shape the
+    model can return has to be survived: a quoted title, one wrapped in
+    asterisks, one with a full stop, one that is a whole sentence, the literal
+    word NONE, or the title it was already given back verbatim — which is the
+    COMMON case and the one the prompt asks for.
+
+    Returns None for "nothing to change", so the caller has exactly one test to
+    make and the board never re-flips to what it is already showing.
+
+    The caps are the board's, not the model's: four words and 32 characters is
+    what fits across a phone in a cradle at a size that can be read without
+    focusing. A longer answer is cut rather than rejected — a shortened subject
+    still names the subject, and rejecting it would leave the last title up
+    while the conversation has moved on.
+    """
+    if not raw:
+        return None
+
+    text = raw.strip()
+    # Markdown the model was not asked for, and the quotes it puts round a title
+    # because a title looks like a quotation.
+    text = re.sub(r"[*_`#]+", " ", text)
+    text = text.strip().strip("\"'“”‘’").strip()
+    # Trailing punctuation: a board has none, and "Funding round." and
+    # "Funding round" are the same title arriving twice.
+    text = re.sub(r"[\s.,;:!?\-–—]+$", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    if not text or text.upper() == "NONE":
+        return None
+
+    # Four words, then as many of them as fit — dropped whole. A board cut
+    # mid-word reads as a rendering fault rather than as a long subject, and a
+    # glance cannot tell the two apart.
+    words = text.split(" ")[:4]
+    while len(words) > 1 and len(" ".join(words)) > 32:
+        words.pop()
+    text = " ".join(words)[:32].strip()
+    # The cut can leave a trailing mark behind.
+    text = re.sub(r"[\s.,;:!?\-–—]+$", "", text)
+
+    if not text:
+        return None
+    # Case-insensitively, because a model that re-capitalises the same subject
+    # has not changed it — and the board renders uppercase anyway.
+    if previous is not None and text.casefold() == previous.casefold():
+        return None
+    return text
+
+
+class TopicTitle(FrameProcessor):
+    """The live topic title: what is being talked about RIGHT NOW, in 2-4 words.
+
+    WHY THE CONTAINER. The browser has no transcript of its own worth naming —
+    it would have to ask the ledger, which trails live speech by 15 to 25
+    seconds through the batch capture path, and then poll for it on a phone that
+    is already holding a MediaRecorder open and a WebRTC call up. This process
+    has the live STT stream, which exists nowhere else, and a data channel to
+    the browser that the audio already needs. So the freshest source pushes, and
+    the phone makes no extra request. Same three reasons as `RunningSummary`,
+    which this sits next to.
+
+    WHY A RECENT WINDOW AND NOT THE SUMMARY. The running summary is the whole
+    drive — decisions, open questions, the thread of the argument — and a title
+    taken from it would name the drive, which barely changes over forty minutes.
+    The board has to answer a different question: what is being said in the last
+    minute or two. So this keeps its own short window (`WINDOW_CHARS`) and lets
+    the summary keep its own job.
+
+    IT NEVER BLOCKS A TURN. The call runs as a background task and pushes a
+    frame when it lands. A title that is a few seconds stale costs a glance
+    nothing; a turn that waits on one costs the conversation. One call in flight
+    at a time and NO QUEUE, for the same reason `_maybe_fold` has none: queued
+    calls would arrive out of order behind a slow model and the newest answer is
+    the only one worth having.
+
+    HOW IT REACHES THE SCREEN. `RTVIServerMessageFrame`, which the RTVI observer
+    that `PipelineWorker` installs serialises onto the same data channel the
+    transcripts use — so this works from anywhere in the pipeline and needs no
+    processor of its own downstream.
+
+    INERT WITHOUT A PROMPT. An older web app does not send `titlePrompt`, and a
+    degraded connection has no session at all. Then this makes no calls and
+    pushes nothing, and the browser simply never shows a board — which is the
+    right failure for a decorative surface on a study rig.
+    """
+
+    # How much recent speech the model is shown. Enough for a subject to be
+    # recognisable, short enough that last quarter-hour cannot outvote the last
+    # minute — which is the whole difference between this and the summary.
+    WINDOW_CHARS = 900
+    # Enough new speech to be worth naming, and never more often than this.
+    CALL_AFTER_CHARS = 160
+    MIN_GAP_SECONDS = 12
+    # A slow talker still gets a title: any new speech at all, after this long.
+    CALL_AFTER_SECONDS = 30
+
+    def __init__(self, title_prompt: str | None, metadata: dict | None = None):
+        super().__init__()
+        self._prompt = (title_prompt or "").strip()
+        self._metadata = metadata or {}
+        self._title: str | None = None
+        self._window = ""
+        self._new_chars = 0
+        self._last_call = time.monotonic()
+        self._task: asyncio.Task | None = None
+
+    @property
+    def title(self) -> str | None:
+        return self._title
+
+    def note_agent(self, text: str) -> None:
+        """Record what the driver actually HEARD.
+
+        Called by `SilenceGate` rather than observed as a frame, for the same
+        reason the summary is: the gate is the only place that knows the final
+        text, after the sentinel is stripped and a declined turn is dropped.
+
+        It belongs in the window because half of what names a subject is the
+        answer — "the Tuesday deadline" is often the agent's phrase for what the
+        driver has been circling, and a board built only from the microphone
+        would keep missing it.
+        """
+        if text.strip():
+            self._append(f"(you said) {text.strip()}")
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, TranscriptionFrame) and frame.text.strip():
+            self._append(frame.text.strip())
+
+        # Pushed on IMMEDIATELY, before anything is decided about it. Nothing
+        # downstream waits on the board.
+        await self.push_frame(frame, direction)
+
+        if isinstance(frame, TranscriptionFrame) and frame.text.strip():
+            self._maybe_name()
+
+    def _append(self, text: str) -> None:
+        if not self._prompt or not text.strip():
+            return
+        self._window = f"{self._window} {text.strip()}".strip()[-self.WINDOW_CHARS :]
+        self._new_chars += len(text.strip())
+
+    def _maybe_name(self) -> None:
+        elapsed = time.monotonic() - self._last_call
+        enough = self._new_chars >= self.CALL_AFTER_CHARS and elapsed >= self.MIN_GAP_SECONDS
+        overdue = self._new_chars > 0 and elapsed >= self.CALL_AFTER_SECONDS
+        if not (enough or overdue):
+            return
+        if self._task is not None and not self._task.done():
+            return
+        # `create_task`, not `asyncio.create_task`, because this task PUSHES A
+        # FRAME — the same reason `Offers` uses it. Pipecat's task manager is
+        # what keeps that push inside the processor's own lifecycle, and what
+        # cancels it cleanly when the pipeline goes down.
+        # `_name_topic`, not `_name`: FrameProcessor already owns `_name`, and it
+        # is a string — shadowing it fails at the call, not at the definition.
+        self._task = self.create_task(self._name_topic(), name="title:call")
+
+    async def _name_topic(self) -> None:
+        window, self._new_chars = self._window, 0
+        self._last_call = time.monotonic()
+        if not window:
+            return
+
+        current = self._title or "(none yet)"
+        try:
+            raw = await asyncio.to_thread(
+                _litellm_chat,
+                [
+                    {"role": "system", "content": self._prompt},
+                    {
+                        "role": "user",
+                        "content": f"Current title: {current}\n\nRecent speech:\n{window}",
+                    },
+                ],
+                max_tokens=16,
+                metadata=self._metadata,
+            )
+        except Exception as err:
+            # Logged and dropped. The next trigger retries against a window that
+            # still holds this speech, so nothing is lost but one call — and a
+            # board is not worth failing a drive over.
+            logger.warning(f"[title] naming failed, will retry: {err}")
+            return
+
+        title = clean_title(raw, self._title)
+        if title is None:
+            return
+
+        self._title = title
+        logger.info(f"[title] {title}")
+        await self.push_frame(RTVIServerMessageFrame(data={"type": "title", "title": title}))
 
 
 class Recall(FrameProcessor):
@@ -1817,9 +2048,13 @@ class SilenceGate(FrameProcessor):
         drafts: DraftRecorder | None = None,
         offers: "Offers | None" = None,
         llm_name: str | None = None,
+        # Keyword-only in effect, and LAST, so every existing positional
+        # construction of the gate — the tests included — keeps working.
+        title: "TopicTitle | None" = None,
     ):
         super().__init__()
         self._summary = summary
+        self._title = title
         self._recorder = recorder
         self._drafts = drafts
         self._offers = offers
@@ -1936,6 +2171,8 @@ class SilenceGate(FrameProcessor):
             self._first_spoke_ms = int(time.time() * 1000)
         if self._summary is not None:
             self._summary.note_agent(text)
+        if self._title is not None:
+            self._title.note_agent(text)
         # ACCUMULATE ONLY. This runs per released fragment as the reply streams,
         # so recording here writes a row per word — "Yes", ",", " I", " can" —
         # which is worse than no rows at all: the echo filter would then be
@@ -2213,6 +2450,14 @@ def build_pipeline(
         seed=session.get("driveSummary"),
         metadata=litellm_metadata("talkback.summary", session, capture_session_id),
     )
+    # The live topic title, for the split-flap board on the recorder. Its own
+    # short window of recent speech rather than the summary above, because the
+    # board answers "what now" and the summary answers "what so far" — see the
+    # class. Inert when the web app sends no `titlePrompt`.
+    title = TopicTitle(
+        session.get("titlePrompt"),
+        metadata=litellm_metadata("talkback.title", session, capture_session_id),
+    )
     # Offsets are measured against the drive's own start, the same clock
     # `utterance` uses — which is what lets the two tables be read as one
     # dialogue, and what the echo filter compares intervals against.
@@ -2256,6 +2501,9 @@ def build_pipeline(
             # Before Recall: the summary must see this turn's speech, and Recall
             # reads the summary when it composes the block.
             summary,
+            # After the summary and before Recall: both read the same
+            # transcription frame, and neither waits on the other.
+            title,
             recall,
             offers,
             aggregator.user(),
@@ -2264,7 +2512,7 @@ def build_pipeline(
             # still records what the model generated, so a declined turn is
             # visible in the context as a turn that happened, while never
             # reaching the speaker.
-            SilenceGate(summary, recorder, drafts, offers, llm_name=llm.name),
+            SilenceGate(summary, recorder, drafts, offers, llm_name=llm.name, title=title),
             tts,
             transport.output(),
             aggregator.assistant(),

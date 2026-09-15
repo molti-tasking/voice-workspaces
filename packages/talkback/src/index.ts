@@ -34,6 +34,7 @@ export {
   type BoardContext,
 } from "./board-context";
 export { SUMMARY_PROMPT, foldSummary } from "./summary";
+export { TITLE_PROMPT } from "./title";
 export {
   BOARD_EDITING,
   OUTPUT_CONTRACT,
