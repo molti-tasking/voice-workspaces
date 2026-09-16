@@ -8,10 +8,18 @@
  * Skipped when Postgres is unreachable — so check the counts, not the colour.
  */
 import { config } from "dotenv";
-config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true });
+config({
+  path: new URL("../../../.env", import.meta.url).pathname,
+  quiet: true,
+});
 
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { boardEnabledAt, enableBoard } from "./board";
+import {
+  boardEnabledAt,
+  boardVersion,
+  boardVersionOf,
+  enableBoard,
+} from "./board";
 import { captureSession, extraction, user, workspaceOp } from "./schema";
 import { isDatabaseReachable } from "./testing";
 import { appendOps, appendUserOp, loadOps, loadUserOps } from "./workspace";
@@ -25,7 +33,9 @@ const describeIfDb = (await isDatabaseReachable()) ? describe : describe.skip;
 async function seed() {
   const db = getDb();
   await db.delete(user).where(eq(user.id, USER_ID));
-  await db.insert(user).values({ id: USER_ID, name: "B", email: `${USER_ID}@test.local` });
+  await db
+    .insert(user)
+    .values({ id: USER_ID, name: "B", email: `${USER_ID}@test.local` });
 }
 
 describeIfDb("board", () => {
@@ -37,10 +47,18 @@ describeIfDb("board", () => {
   });
 
   it("appends a user op once, however many times the same opId is posted", async () => {
-    const op = { type: "retire_block" as const, blockId: "b1", via: "user" as const };
+    const op = {
+      type: "retire_block" as const,
+      blockId: "b1",
+      via: "user" as const,
+    };
 
-    expect(await appendUserOp({ userId: USER_ID, id: OP_ID, op })).toBe("inserted");
-    expect(await appendUserOp({ userId: USER_ID, id: OP_ID, op })).toBe("duplicate");
+    expect(await appendUserOp({ userId: USER_ID, id: OP_ID, op })).toBe(
+      "inserted",
+    );
+    expect(await appendUserOp({ userId: USER_ID, id: OP_ID, op })).toBe(
+      "duplicate",
+    );
 
     const [row] = await getDb()
       .select({ count: sql<number>`count(*)::int` })
@@ -97,7 +115,9 @@ describeIfDb("board", () => {
    */
   it("saves the agent's edits for a rebuild too, with the drive they happened in", async () => {
     const session = "00000000-0000-4000-8000-00000000b0a2";
-    await getDb().insert(captureSession).values({ id: session, userId: USER_ID, startedAt: new Date() });
+    await getDb()
+      .insert(captureSession)
+      .values({ id: session, userId: USER_ID, startedAt: new Date() });
     await appendUserOp({
       userId: USER_ID,
       id: OP_ID,
@@ -107,7 +127,26 @@ describeIfDb("board", () => {
 
     const saved = await loadUserOps(USER_ID);
     expect(saved).toHaveLength(1);
-    expect(saved[0]).toMatchObject({ id: OP_ID, captureSessionId: session, op: { via: "agent" } });
+    expect(saved[0]).toMatchObject({
+      id: OP_ID,
+      captureSessionId: session,
+      op: { via: "agent" },
+    });
+  });
+
+  it("fingerprints the op log the way a page can from the ops it loaded", async () => {
+    const empty = await boardVersion(USER_ID);
+    expect(empty).toBe("0:0");
+
+    await appendUserOp({
+      userId: USER_ID,
+      id: OP_ID,
+      op: { type: "retire_block", blockId: "b1", via: "agent" },
+    });
+    const ops = await loadOps(USER_ID);
+    const after = await boardVersion(USER_ID);
+    expect(after).not.toBe(empty);
+    expect(after).toBe(boardVersionOf(ops.at(-1)!.seq, ops.length));
   });
 
   it("is hidden until enabled, and keeps the first date once it is", async () => {
