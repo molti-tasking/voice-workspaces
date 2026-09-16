@@ -3,6 +3,7 @@ import { z } from "zod";
 import { captureSession, eq, getDb } from "@voicemural/db";
 import { recordDraft } from "@voicemural/db/drafts";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
+import { MAX_DRAFT_CHARS, MAX_DRAFT_TITLE_CHARS } from "@/lib/drafts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,17 +23,6 @@ export const dynamic = "force-dynamic";
  * no Better Auth session — and ownership is re-resolved against
  * `capture_session.userId` rather than trusted from the payload.
  */
-
-/**
- * A cap, because this is model output written straight to a column.
- *
- * Generous enough for a long email or a page of notes, and far below anything
- * that would make the cue panel unrenderable on a phone. A model that runs away
- * gets truncated rather than rejected: a clipped draft is still worth having,
- * and losing it entirely to a length check is the worse failure.
- */
-const MAX_DRAFT_CHARS = 8_000;
-const MAX_TITLE_CHARS = 120;
 
 const Body = z.object({
   ticket: z.string().min(1),
@@ -72,7 +62,7 @@ export async function POST(req: Request) {
     captureSessionId: payload.captureSessionId,
     seq,
     startOffsetMs,
-    title: title.slice(0, MAX_TITLE_CHARS),
+    title: title.slice(0, MAX_DRAFT_TITLE_CHARS),
     text: text.slice(0, MAX_DRAFT_CHARS),
     respondingToText,
   });
