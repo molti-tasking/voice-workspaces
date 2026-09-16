@@ -8,3 +8,4 @@ export * from "./macros";
 export * from "./trajectory";
 export * from "./board";
 export * from "./board-edit";
+export * from "./task-brief";
