@@ -8,7 +8,7 @@
  * That is the same rule the rest of the display follows: the ledger is durable,
  * the conversation is ephemeral.
  */
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, max } from "drizzle-orm";
 import { agentDraft } from "./schema";
 import { getDb } from "./index";
 
@@ -72,4 +72,28 @@ export async function loadSessionDrafts(captureSessionId: string): Promise<Draft
     .from(agentDraft)
     .where(eq(agentDraft.captureSessionId, captureSessionId))
     .orderBy(asc(agentDraft.seq));
+}
+
+/**
+ * The seq a reconnecting container should carry on from.
+ *
+ * `DraftRecorder` counts from 0 for the life of a process, and a drive can
+ * outlive several of them — a tunnel, a container restart, the person leaving
+ * the page and coming back. The second process would then re-issue seq 0, 1, 2
+ * against a drive that already has those rows, and `recordDraft`'s
+ * `onConflictDoNothing` would swallow every draft of the rest of the drive
+ * WITHOUT an error anywhere: the POST returns 200, the container logs "stored",
+ * and the person never sees the thing they asked for. The idempotency that
+ * makes a retry safe is exactly what makes a restart silent.
+ *
+ * So the seq is seeded from the ledger at connect, which is the only place that
+ * knows. Returns 0 for a drive with no drafts yet, which is where a fresh
+ * container would have started anyway.
+ */
+export async function nextDraftSeq(captureSessionId: string): Promise<number> {
+  const [row] = await getDb()
+    .select({ seq: max(agentDraft.seq) })
+    .from(agentDraft)
+    .where(eq(agentDraft.captureSessionId, captureSessionId));
+  return row?.seq === null || row?.seq === undefined ? 0 : row.seq + 1;
 }

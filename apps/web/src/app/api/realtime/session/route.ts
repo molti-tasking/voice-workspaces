@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { captureSession, eq, getDb } from "@voicemural/db";
 import { boardEnabledAt } from "@voicemural/db/board";
+import { nextDraftSeq } from "@voicemural/db/drafts";
 import { resolveStudyCondition } from "@voicemural/shared";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import {
@@ -93,6 +94,16 @@ export async function POST(req: Request) {
   const driveSoFar = await loadDriveSoFarText(payload.captureSessionId).catch(() => "");
   const driveSummary = driveSoFar ? await foldSummary(null, driveSoFar) : null;
 
+  /* Where the container's draft counter should resume.
+   *
+   * Same reconnect story as the summary seed above, and a worse failure: the
+   * counter restarting at 0 collides with rows this drive already has, and the
+   * unique index turns every later draft into a silent no-op. Fails open to 0
+   * — which is exactly the behaviour before this existed, so a broken read
+   * costs a reconnected drive its drafts rather than costing every drive its
+   * connection. */
+  const draftSeq = await nextDraftSeq(payload.captureSessionId).catch(() => 0);
+
   // The board, and the agent's hands on it, only where the person has a board.
   // Decided once per connection, because the tools are registered once per
   // connection: a board switched on mid-drive shows up in the turn context
@@ -142,6 +153,10 @@ export async function POST(req: Request) {
       // The container computes offsets against this so `agent_turn` shares a
       // clock with `utterance`, which is ms since the drive started.
       startedAtEpochMs: new Date(row.startedAt).getTime(),
+      // The container seeds `DraftRecorder` from this rather than counting from
+      // zero, so a reconnect mid-drive cannot collide with the drafts already
+      // written. See `nextDraftSeq`.
+      nextDraftSeq: draftSeq,
       configVersion: TALKBACK_CONFIG_VERSION,
       // The study condition frozen onto THIS drive when it opened — not the
       // participant's current template, which may have moved to the next

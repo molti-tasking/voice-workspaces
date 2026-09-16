@@ -606,6 +606,38 @@ def test_an_engine_under_a_no_offers_condition_never_arms(monkeypatch):
     assert engine._log == []
 
 
+# --- DraftRecorder: what agent_draft learns ----------------------------------
+
+
+def drafts_posted_by(action, first_seq=0):
+    """Run `action(recorder)` inside a loop and return what it would have POSTed."""
+    posted = []
+    recorder = bot.DraftRecorder(
+        ticket="ticket", started_at_ms=int(time.time() * 1000), first_seq=first_seq
+    )
+    recorder._post = posted.append
+
+    async def run():
+        action(recorder)
+        # `record` is fire-and-forget through `asyncio.to_thread`.
+        await asyncio.sleep(0.2)
+
+    asyncio.run(run())
+    return posted
+
+
+def test_draft_recorder_counts_on_from_the_seeded_seq():
+    # A reconnect mid-drive. Counting from 0 again would collide with the rows
+    # this drive already has, and `recordDraft` resolves a collision by doing
+    # nothing — so every draft for the rest of the drive would vanish behind a
+    # 200.
+    def act(recorder):
+        recorder.record([{"title": "A", "text": "one"}, {"title": "B", "text": "two"}])
+
+    assert [p["seq"] for p in drafts_posted_by(act, first_seq=3)] == [3, 4]
+    assert [p["seq"] for p in drafts_posted_by(act)] == [0, 1]
+
+
 # --- Offers: the proactive engine's state machine ----------------------------
 #
 # The engine's timing is an asyncio task inside the pipeline; what is tested
