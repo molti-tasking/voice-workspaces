@@ -68,15 +68,27 @@ export function Quotes({
 /**
  * Why there is nothing to quote.
  *
- * Three cases, one sentence: the agent added the card and cited nothing, the
- * extractor cited nothing, or what it cited no longer resolves. All the page
- * can honestly say is which drive the card came from — so it says that, and
- * links there, rather than leaving a blank where speech should be.
+ * Four cases, one sentence: the person imported the card from a board they
+ * already kept, the agent added it and cited nothing, the extractor cited
+ * nothing, or what it cited no longer resolves. All the page can honestly say
+ * is where the card came from — so it says that, and links to the drive when
+ * there was one, rather than leaving a blank where speech should be.
  */
 function NoQuotes({ brief }: { brief: CardBrief }) {
   const first = brief.card.history[0];
-  const added = first?.via === "agent" ? "added by the agent" : "from speech";
   const sessionId = first?.captureSessionId;
+
+  // An import has no drive behind it and no utterance under it. Saying "from
+  // speech" here would be the one thing this page must never do.
+  if (first?.via === "import") {
+    return (
+      <p className="text-sm text-white/35">
+        Brought in from another board, so there is nothing recorded to quote.
+      </p>
+    );
+  }
+
+  const added = first?.via === "agent" ? "added by the agent" : "from speech";
 
   if (!sessionId || !first) {
     return <p className="text-sm text-white/35">No line is cited.</p>;

@@ -84,6 +84,10 @@ const BY: Record<CardStep["via"], string> = {
   speech: "by speech",
   user: "by you",
   agent: "by the agent",
+  // A card that arrived with the person, from a board they already kept. It
+  // quotes nothing and no drive produced it, so the brief says where it came
+  // from rather than naming a speaker.
+  import: "from another board",
 };
 
 /**

@@ -413,12 +413,18 @@ export async function appendUserOp(input: {
 }
 
 /**
- * The ops a person or the agent posted, in `seq` order.
+ * The ops a person, the agent or an import posted, in `seq` order.
  *
  * What `workspace:rebuild` and `workspace:reparse` must save before they clear
  * the log and restore after: a rebuild that dropped the manual gestures — or
  * the agent's edits, which nothing could re-derive — would delete the
  * measurement. Their drive comes too, which acceptance is counted from.
+ *
+ * `import` is in the filter for a blunter reason than measurement: an imported
+ * card exists in no transcript, so a rebuild that left it behind would silently
+ * empty the board of every task the person brought with them. Imported ops
+ * restore exactly, since they mint their own topic and block ids and reference
+ * nothing the extractor made.
  */
 export async function loadUserOps(userId: string): Promise<StoredOp[]> {
   const rows = await getDb()
@@ -435,7 +441,7 @@ export async function loadUserOps(userId: string): Promise<StoredOp[]> {
       and(
         eq(workspaceOp.userId, userId),
         isNull(workspaceOp.extractionId),
-        sql`${workspaceOp.payload}->>'via' in ('user', 'agent')`,
+        sql`${workspaceOp.payload}->>'via' in ('user', 'agent', 'import')`,
       ),
     )
     .orderBy(asc(workspaceOp.seq));

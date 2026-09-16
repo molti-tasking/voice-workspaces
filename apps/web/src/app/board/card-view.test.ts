@@ -135,6 +135,21 @@ describe("markerFor", () => {
     );
   });
 
+  it("says an imported card came from another board, and never claims it was kept", () => {
+    const imported = transition({ from: null, to: "next", via: "import" });
+    expect(markerFor(card({ lastTransition: imported, state: "next" }))).toBe(
+      "brought in from another board",
+    );
+
+    // `judge()` does not score an import, so no outcome should ever reach this
+    // branch — and if one did, the card must not turn it into a verdict about
+    // the machine.
+    const kept = { transition: imported, outcome: "kept" } as JudgedTransition;
+    expect(markerFor(card({ lastTransition: imported, state: "next" }), kept)).toBe(
+      "brought in from another board",
+    );
+  });
+
   it("stays quiet at one stale drive — one commute is easy to miss", () => {
     expect(markerFor(card({ staleSessions: 1 }))).toBe("moved here by speech");
   });
