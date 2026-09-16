@@ -190,7 +190,7 @@ me."* Unprompted support must **offer and never assign**. A declined offer must 
 
    | Change | Bump | Also |
    |---|---|---|
-   | Talk-back prompt | `TALKBACK_CONFIG_VERSION` (`prompt.ts`, now `"talkback-7"`) | |
+   | Talk-back prompt | `TALKBACK_CONFIG_VERSION` (`prompt.ts`, now `"talkback-12"`) | |
    | Extraction prompt or input | `PROMPT_VERSION` (`packages/workspace/src/extract.ts`, now `"4"`) | Update the fingerprint test in `extract.test.ts` |
    | Classifier or macro prompt | `CLASSIFY_PROMPT_VERSION` / `MACRO_PROMPT_VERSION` | |
 9. **Every new spoken behaviour gets eval cases** in `packages/talkback/src/eval/cases.ts`, and
