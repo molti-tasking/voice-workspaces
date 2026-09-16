@@ -49,10 +49,9 @@ if (!projectToken || !apiHost) {
     // happened during.
     tracing_headers: [window.location.hostname],
 
-    // Started per route instead, so /record is never recorded — it is a static
-    // timer on a phone in a cradle, and recording it burns a participant's
-    // mobile data for a video of a number changing. See <PostHogPageview>.
-    disable_session_recording: true,
+    // Let the server-side replay setting control recording so Replay Vision
+    // scanners can review supported browser flows.
+    disable_session_recording: false,
 
     session_recording: {
       // The app has almost no <input> elements, so `maskAllInputs` would
