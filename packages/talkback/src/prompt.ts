@@ -42,8 +42,13 @@ import {
  * session composes BOARD_EDITING into the prompt and hands the container four
  * tools (board-tools.ts); the base prompt now forbids claiming a board change
  * only when no tool reported one, rather than forbidding board changes.
+ *
+ * talkback-11 gives the agent web search. Where `SEARXNG_URL` is set, the
+ * session composes `webSearchSection` into the prompt and offers `search_web`
+ * (web-search.ts); the container speaks the call's announcement and plays a
+ * cue while it runs.
  */
-export const TALKBACK_CONFIG_VERSION = "talkback-10";
+export const TALKBACK_CONFIG_VERSION = "talkback-11";
 
 /**
  * The default register: brief, and present.

@@ -10,11 +10,13 @@ import {
   SUMMARY_PROMPT,
   TALKBACK_CONFIG_VERSION,
   TITLE_PROMPT,
+  WEB_SEARCH_TOOL,
   asSttLanguage,
   asVoiceId,
   composeSystemPrompt,
   foldSummary,
   loadDriveSoFarText,
+  webSearchSection,
 } from "@voicemural/talkback";
 
 export const runtime = "nodejs";
@@ -97,9 +99,13 @@ export async function POST(req: Request) {
   // (the context route checks every turn) but the agent can only read it
   // until the next drive, which the base prompt handles.
   const boardEditable = (await boardEnabledAt(payload.userId).catch(() => null)) !== null;
+  // Web search wherever an instance is configured. Checked here rather than
+  // only in `/search` so a deployment without one never tells the model it can
+  // look things up.
+  const webSearch = Boolean(process.env.SEARXNG_URL);
   const composed = composeSystemPrompt({
     setting: row.setting,
-    sections: boardEditable ? [BOARD_EDITING] : [],
+    sections: [...(boardEditable ? [BOARD_EDITING] : []), ...(webSearch ? [webSearchSection()] : [])],
   });
 
   return NextResponse.json(
@@ -145,9 +151,14 @@ export async function POST(req: Request) {
       // PROACTIVE_OFFERS said otherwise.
       studyCondition: resolveStudyCondition(row.studyCondition).condition,
       // OpenAI-format function tools for the container to register as they
-      // are. Empty when the board is off, and then the prompt says nothing
-      // about editing it either. Every call comes back to /api/realtime/board.
-      tools: boardEditable ? BOARD_TOOLS : [],
+      // are. Board tools only when the board is on, and then the prompt says
+      // nothing about editing it either; every call comes back to
+      // /api/realtime/board.
+      tools: [...(boardEditable ? BOARD_TOOLS : []), ...(webSearch ? [WEB_SEARCH_TOOL] : [])],
+      // Which of those is the search, so the container can route it to
+      // /api/realtime/search, speak its announcement and play the cue —
+      // without a tool name hard-coded in Python. Null when not offered.
+      webSearchTool: webSearch ? WEB_SEARCH_TOOL.function.name : null,
     },
     { headers: { "Cache-Control": "no-store" } },
   );

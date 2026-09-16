@@ -32,6 +32,9 @@ WHAT IS FETCHED, NOT DUPLICATED
   /api/realtime/context   passages from PAST drives matching what was just
                           said, and any parked action to ask about — settling
                           the last ask first. Once per turn.
+  /api/realtime/search    a web search the agent asked for, as a tool call —
+                          only where the session offered one. The driver hears
+                          the call's announcement and `SearchingSound` meanwhile.
 
 WHAT IS WRITTEN BACK
   /api/realtime/agent-turn  what reached the speaker. The echo filter's input.
@@ -60,12 +63,14 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
+import numpy as np
 from aiortc.sdp import candidate_from_sdp
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
 
+from pipecat.audio.mixers.base_audio_mixer import BaseAudioMixer
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
@@ -80,8 +85,11 @@ from pipecat.frames.frames import (
     FunctionCallsStartedFrame,
     LLMTextFrame,
     MetricsFrame,
+    MixerControlFrame,
+    MixerEnableFrame,
     StartFrame,
     TranscriptionFrame,
+    TTSSpeakFrame,
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
     VADUserStartedSpeakingFrame,
@@ -1776,6 +1784,35 @@ class TurnRecorder:
         decision = self._decision(cue, "interrupted" if barged_in else "spoke", latency)
         self._send(payload, decision)
 
+    def record_announcement(self, spoken: str) -> None:
+        """A sentence spoken for a tool while it runs — "Let me look that up."
+
+        Written to `agent_turn`, because it reached the speaker and the echo
+        filter must know that. NOT a decision, and it does not take the tool
+        calls pending for the next turn: the model's decision is the completion
+        that called the tool and the one that answers from it, and both are
+        recorded by the gate as usual. Nor does it settle an ask — it is not an
+        answer to anything.
+        """
+        if not self._ticket or not self._started_at_ms or not spoken.strip():
+            return
+        seq, self._seq = self._seq, self._seq + 1
+        offset = max(0, _now_ms() - self._started_at_ms)
+        payload = {
+            "ticket": self._ticket,
+            "seq": seq,
+            "startOffsetMs": offset,
+            "endOffsetMs": offset + int(len(spoken) / 14 * 1000),
+            "text": spoken,
+            "generatedText": spoken,
+            "kind": "reply",
+        }
+        if self._responding_to:
+            payload["respondingToText"] = self._responding_to
+        if self._config_version:
+            payload["configVersion"] = self._config_version
+        self._send(payload, None)
+
     def decline(self, *, interrupted: bool = False, cue: Cue | None = None) -> None:
         """A completion that reached nobody: the model declined, or the driver
         spoke before its first word. Writes a decision and NO turn.
@@ -1821,7 +1858,7 @@ class TurnRecorder:
             decision["subjectKey"] = cue.subject_key
         return decision
 
-    def _send(self, turn: dict | None, decision: dict) -> None:
+    def _send(self, turn: dict | None, decision: dict | None) -> None:
         """Both writes, in ONE task, turn first.
 
         Sequential on purpose: the decision points at the turn's row, and the
@@ -1837,6 +1874,8 @@ class TurnRecorder:
                     turn_id = (response or {}).get("id")
                 except Exception as err:
                     logger.warning(f"[turn] not recorded, echo filter will be blind: {err}")
+            if decision is None:
+                return
             if turn_id:
                 decision["agentTurnId"] = turn_id
             try:
@@ -1951,6 +1990,213 @@ class BoardTools:
                 return json.loads(res.read() or b"{}")
         except urllib.error.HTTPError as err:
             return {"ok": False, "error": f"The board refused the request ({err.code}). Nothing was changed."}
+
+
+class SearchingSound(BaseAudioMixer):
+    """The cue a driver hears while a web search runs: two soft rising blips,
+    every 1.2 seconds, until the result is back.
+
+    WHY A SOUND AT ALL. A search is the one moment the agent is working and
+    audibly doing nothing — the announcement ends, then several seconds of
+    silence that in a car cannot be told apart from a dropped connection. The
+    cue says "still on it" without words to listen to.
+
+    WHY A MIXER, NOT AUDIO FRAMES. Pushed as frames, the cue would queue in
+    line with the announcement's speech and interleave with it chunk by chunk.
+    A mixer is summed into whatever the transport is sending at that instant —
+    speech or silence — so it can start the moment the call arrives and play
+    under the announcement, ducked, rather than after it. And Pipecat marks the
+    bot as speaking only for TTS and speech frames, never for a mixer's plain
+    output, so the cue cannot hold off the driver's turn or trip interruption.
+
+    SYNTHESISED, NOT A FILE. No sound asset to ship or license, no `soundfile`
+    dependency in the image, and it is generated at whatever rate the transport
+    runs at, so there is no resampling to get wrong.
+
+    Idle it returns the transport's audio untouched. Only drives that were
+    offered a search get one at all (see `build_pipeline`).
+    """
+
+    PERIOD_SECS = 1.2
+    BLIPS = ((0.0, 660.0), (0.14, 880.0))  # (start, Hz): a rising pair, not an alarm
+    BLIP_SECS = 0.12
+    # Of full scale. Well under speech, which ElevenLabs delivers near peak.
+    LEVEL = 0.12
+    # Under the announcement's own words, so the cue never competes with them.
+    DUCKED = 0.3
+    # Transport audio louder than this is speech. About -36 dBFS.
+    SPEECH_PEAK = 500
+
+    def __init__(self):
+        super().__init__()
+        self._loop: np.ndarray | None = None
+        self._pos = 0
+        self._active = False
+        self._gain = 0.0
+
+    @classmethod
+    def synthesise(cls, sample_rate: int) -> np.ndarray:
+        """One period of the cue, as float samples in int16 scale."""
+        period = np.zeros(int(cls.PERIOD_SECS * sample_rate), dtype=np.float32)
+        t = np.arange(int(cls.BLIP_SECS * sample_rate), dtype=np.float32) / sample_rate
+        # An 8ms attack and a fast exponential decay: a soft tap, no click.
+        envelope = np.minimum(1.0, t / 0.008) * np.exp(-t / 0.03)
+        for start_secs, hz in cls.BLIPS:
+            start = int(start_secs * sample_rate)
+            period[start : start + len(t)] += np.sin(2 * np.pi * hz * t) * envelope
+        return period * (cls.LEVEL * 32767)
+
+    @property
+    def active(self) -> bool:
+        return self._active
+
+    def begin(self) -> None:
+        self._active = True
+
+    def end(self) -> None:
+        """Stop. The cue fades over one chunk rather than cutting mid-blip."""
+        self._active = False
+
+    async def start(self, sample_rate: int):
+        self._loop = self.synthesise(sample_rate)
+
+    async def stop(self):
+        self._active = False
+
+    async def process_frame(self, frame: MixerControlFrame):
+        if isinstance(frame, MixerEnableFrame):
+            self._active = frame.enable
+
+    async def mix(self, audio: bytes) -> bytes:
+        return self.mix_now(audio)
+
+    def mix_now(self, audio: bytes) -> bytes:
+        if self._loop is None or (not self._active and self._gain == 0.0):
+            return audio
+        out = np.frombuffer(audio, dtype=np.int16)
+        if len(out) == 0:
+            return audio
+
+        speaking = int(np.abs(out.astype(np.int32)).max()) > self.SPEECH_PEAK
+        target = (self.DUCKED if speaking else 1.0) if self._active else 0.0
+        # Ramp across the chunk from where the last one ended, so neither
+        # ducking nor stopping is a step the ear hears as a click.
+        ramp = np.linspace(self._gain, target, len(out), dtype=np.float32)
+        positions = (self._pos + np.arange(len(out))) % len(self._loop)
+        mixed = out.astype(np.float32) + self._loop[positions] * ramp
+
+        self._gain = target
+        # Faded out: the next search starts on its first blip, not mid-period.
+        self._pos = 0 if target == 0.0 else (self._pos + len(out)) % len(self._loop)
+        return np.clip(mixed, -32768, 32767).astype(np.int16).tobytes()
+
+
+class WebSearch:
+    """The agent's web search: a tool call, carried to the web app, with the
+    driver kept informed while it runs.
+
+    DUMB ON PURPOSE, like `BoardTools`: the tool, its schema, the SearXNG
+    request and what a result looks like to the model are all TypeScript
+    (packages/talkback/src/web-search.ts). This posts the call's arguments to
+    `/api/realtime/search` and hands back whatever comes.
+
+    WHAT THE DRIVER HEARS, in order: the call's `announcement` spoken at once —
+    the model wrote it, in the language of the conversation — with
+    `SearchingSound` starting under it and running until the result is back,
+    and then the answer, from the completion Pipecat runs on the result. The
+    announcement is spoken HERE rather than left to the model because a model
+    that calls a tool often says nothing first, and the driver would sit
+    through the search in silence.
+
+    CANCELLED BY AN INTERRUPTION, unlike a board edit. The model waits for this
+    result before it answers; if the driver starts talking, what they say next
+    is the thing to respond to, and a search they talked over should neither
+    keep the cue playing nor come back later as an answer to a moment that has
+    passed.
+    """
+
+    # Past the web app's own 5s budget, so the route's failure — which says
+    # why — arrives before this gives up on it.
+    TIMEOUT_SECS = 7
+    MAX_ANNOUNCEMENT_CHARS = 160
+
+    def __init__(
+        self,
+        ticket: str | None,
+        sound: SearchingSound | None = None,
+        recorder: "TurnRecorder | None" = None,
+    ):
+        self._ticket = ticket
+        self._sound = sound
+        self._recorder = recorder
+
+    @classmethod
+    def announcement(cls, arguments: dict) -> str:
+        """What to say as the search starts. The model's sentence, or a plain one."""
+        said = " ".join(str(arguments.get("announcement") or "").split())
+        if said:
+            return said[: cls.MAX_ANNOUNCEMENT_CHARS]
+        query = " ".join(str(arguments.get("query") or "").split())
+        return f"Searching the web for {query}." if query and len(query) <= 60 else "Let me look that up."
+
+    async def handle(self, params: FunctionCallParams) -> None:
+        started = time.monotonic()
+        name = params.function_name
+        arguments = dict(params.arguments or {})
+
+        announcement = self.announcement(arguments)
+        # Not appended to the context: the model did not generate it as a
+        # reply, and the call it came with is already there.
+        await params.llm.push_frame(TTSSpeakFrame(announcement, append_to_context=False))
+        if self._recorder is not None:
+            self._recorder.record_announcement(announcement)
+        if self._sound is not None:
+            self._sound.begin()
+
+        error: str | None = None
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(self._post, {"ticket": self._ticket, "arguments": arguments}),
+                timeout=self.TIMEOUT_SECS,
+            )
+            if not result.get("ok"):
+                error = str(result.get("error") or "refused")
+        except asyncio.CancelledError:
+            if self._recorder is not None:
+                self._recorder.note_tool_call(name, int((time.monotonic() - started) * 1000), "cancelled")
+            logger.info("[search] cancelled by the driver talking")
+            raise
+        except TimeoutError:
+            error = "timed out"
+            result = {"ok": False, "error": "The search took too long and was abandoned."}
+        except Exception as err:
+            error = str(err)
+            result = {"ok": False, "error": "The search could not be reached."}
+        finally:
+            if self._sound is not None:
+                self._sound.end()
+
+        latency_ms = int((time.monotonic() - started) * 1000)
+        # Never the query: it is the participant's question.
+        logger.info(f"[search] {'ok' if result.get('ok') else 'failed'} in {latency_ms}ms")
+        if self._recorder is not None:
+            self._recorder.note_tool_call(name, latency_ms, error)
+        await params.result_callback(result)
+
+    def _post(self, payload: dict) -> dict:
+        if not self._ticket:
+            return {"ok": False, "error": "Search is not available on this connection."}
+        req = urllib.request.Request(
+            f"{WEB_URL}/api/realtime/search",
+            method="POST",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.TIMEOUT_SECS) as res:
+                return json.loads(res.read() or b"{}")
+        except urllib.error.HTTPError as err:
+            return {"ok": False, "error": f"The search was refused ({err.code})."}
 
 
 class DraftRecorder:
@@ -2342,6 +2588,15 @@ def build_pipeline(
     anything else — authorisation is the ticket's job.
     """
     session = session or {"systemPrompt": FALLBACK_SYSTEM_PROMPT, "degraded": True}
+    # Tools need a ticket to act with and a real session to have been offered
+    # them; a degraded connection gets neither.
+    tools_allowed = bool(ticket) and not session.get("degraded")
+    # Which offered tool is the web search, named by the session rather than
+    # known here. Only a drive that has one gets the cue mixed into its output:
+    # a mixer changes how the transport paces audio, and a drive without search
+    # should run exactly as it did before search existed.
+    search_tool = session.get("webSearchTool") if tools_allowed else None
+    searching_sound = SearchingSound() if search_tool else None
     transport = SmallWebRTCTransport(
         webrtc_connection=connection,
         # NO `vad_analyzer` here. Pipecat 1.7 removed that field from
@@ -2351,6 +2606,7 @@ def build_pipeline(
         params=TransportParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
+            audio_out_mixer=searching_sound,
         ),
     )
 
@@ -2433,11 +2689,11 @@ def build_pipeline(
     # sits on a live audio stream and never sends a single request.
     vad = VADProcessor(vad_analyzer=silero())
 
-    # The board tools, only where the session offered them — a person whose
-    # board is on, on a connection with a ticket to write with. The prompt the
-    # session composed says the same, so the model is never told it has hands
-    # it does not have.
-    tools = BoardTools.schemas(session.get("tools") or []) if ticket and not session.get("degraded") else None
+    # The tools, only where the session offered them — board tools for a person
+    # whose board is on, the web search where an instance is configured — on a
+    # connection with a ticket to act with. The prompt the session composed
+    # says the same, so the model is never told it has hands it does not have.
+    tools = BoardTools.schemas(session.get("tools") or []) if tools_allowed else None
     messages = [{"role": "system", "content": session.get("systemPrompt") or FALLBACK_SYSTEM_PROMPT}]
     context = LLMContext(messages, tools=tools) if tools else LLMContext(messages)
 
@@ -2466,9 +2722,15 @@ def build_pipeline(
     )
     if tools:
         board_tools = BoardTools(ticket, recorder)
+        web_search = WebSearch(ticket, searching_sound, recorder)
         for schema in tools.standard_tools:
-            llm.register_function(schema.name, board_tools.handle, cancel_on_interruption=False)
-        logger.info(f"[board] tools {', '.join(s.name for s in tools.standard_tools)}")
+            if schema.name == search_tool:
+                # Cancellable, and so synchronous: the model waits for the
+                # result to answer from. See `WebSearch`.
+                llm.register_function(schema.name, web_search.handle, cancel_on_interruption=True)
+            else:
+                llm.register_function(schema.name, board_tools.handle, cancel_on_interruption=False)
+        logger.info(f"[tools] {', '.join(s.name for s in tools.standard_tools)}")
     drafts = DraftRecorder(ticket, session.get("startedAtEpochMs"))
     # A SECOND analyzer, deliberately, not the same instance: this one drives
     # turn completion and interruption in the aggregator, and the two keep
