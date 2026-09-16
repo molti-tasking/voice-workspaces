@@ -181,7 +181,11 @@ function UserLine({
   const hallucinated = isLikelyHallucination(row.text);
 
   return (
-    <li className="group flex gap-3">
+    /* The anchor a task brief links a quote to. `scroll-mt-24` keeps the line
+       clear of the header once the browser has jumped to it — without it the
+       line lands under the top of the viewport, which reads as the wrong line
+       being highlighted. */
+    <li id={`u-${row.id}`} className="group flex scroll-mt-24 gap-3">
       <span
         className="w-12 shrink-0 pt-1 text-right font-mono text-xs text-white/25 tabular-nums"
         title={`${formatOffset(row.startOffsetMs)}–${formatOffset(row.endOffsetMs)}`}

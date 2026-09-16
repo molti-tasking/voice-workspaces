@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { boardEnabledAt, boardVersionOf } from "@voicemural/db/board";
 import { loadOps } from "@voicemural/db/workspace";
-import { KEPT_AFTER_SESSIONS, foldBoard, judge } from "@voicemural/workspace";
+import { foldBoard } from "@voicemural/workspace";
 import { AppDock } from "@/components/app-dock";
 import { Link } from "@/components/nav-link";
 import { NavMenu } from "@/components/nav-menu";
@@ -11,6 +11,7 @@ import { parseInstant } from "@/lib/instant";
 import { currentUser } from "@/lib/session";
 import { BoardLive } from "./board-live";
 import { BoardSurface } from "./board-surface";
+import { outcomesByBlock, withAsOf } from "./brief-view";
 import { toCardView } from "./card-view";
 
 export const dynamic = "force-dynamic";
@@ -57,13 +58,10 @@ export default async function BoardPage({
 
   const ops = await loadOps(user.id);
   const board = foldBoard(ops, { asOf });
-  const outcomes = judge(board.transitions, {
-    withinSessions: KEPT_AFTER_SESSIONS,
-    sessions: board.sessions,
-  });
   // The verdict on each card's latest speech move, keyed by the block that
-  // carried it, so the card can say "kept" once it is.
-  const outcomeByBlock = new Map(outcomes.map((o) => [o.transition.blockId, o]));
+  // carried it, so the card can say "kept" once it is. Shared with the two
+  // brief pages, which draw the same marker line.
+  const outcomeByBlock = outcomesByBlock(board);
   const awaitingReview = board.cards.filter(
     (c) => outcomeByBlock.get(c.lastTransition.blockId)?.outcome === "pending",
   ).length;
@@ -96,7 +94,17 @@ export default async function BoardPage({
           </p>
         </div>
 
-        <NavMenu />
+        <div className="flex items-center gap-4">
+          {/* The other way to read the same fold: every active task with what
+              was said about it, rather than a column of sentences. */}
+          <Link
+            href={withAsOf("/board/brief", asOf)}
+            className="text-xs text-white/40 hover:text-white/80"
+          >
+            Brief
+          </Link>
+          <NavMenu />
+        </div>
       </header>
 
       {board.cards.length === 0 ? (
@@ -108,7 +116,7 @@ export default async function BoardPage({
            no transitions. Columns are rebuilt from `state` on the other side. */
         <BoardSurface
           cards={board.cards.map((card) =>
-            toCardView(card, outcomeByBlock.get(card.lastTransition.blockId)),
+            toCardView(card, outcomeByBlock.get(card.lastTransition.blockId), { asOf }),
           )}
         />
       )}

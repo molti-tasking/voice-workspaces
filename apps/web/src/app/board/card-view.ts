@@ -1,4 +1,5 @@
 import type { BoardCard, JudgedTransition, TaskState } from "@voicemural/workspace";
+import { cardHref } from "./brief-view";
 
 /**
  * What a card looks like once it has crossed to the browser.
@@ -31,9 +32,22 @@ export interface CardView {
   spanCount: number;
   /** How the card got to this column, in the person's terms. Null when silent. */
   marker: string | null;
+  /**
+   * Where the card's brief lives, already built.
+   *
+   * A string rather than the pieces to build one from, for the same reason
+   * `said` is pre-formatted: it keeps the payload small and the `asOf` cursor
+   * — which the browser has no other way of knowing about — is resolved once,
+   * on the server, instead of being re-derived per card.
+   */
+  href: string;
 }
 
-export function toCardView(card: BoardCard, outcome?: JudgedTransition): CardView {
+export function toCardView(
+  card: BoardCard,
+  outcome?: JudgedTransition,
+  opts: { asOf?: Date } = {},
+): CardView {
   return {
     cardId: card.cardId,
     blockId: card.block.id,
@@ -47,6 +61,7 @@ export function toCardView(card: BoardCard, outcome?: JudgedTransition): CardVie
     }),
     spanCount: card.block.spans.length,
     marker: markerFor(card, outcome),
+    href: cardHref(card.cardId, opts.asOf),
   };
 }
 

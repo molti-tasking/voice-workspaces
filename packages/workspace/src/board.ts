@@ -76,6 +76,15 @@ export interface Board {
   /** Every transition on every card, in ledger order. */
   transitions: TaskTransition[];
   sessions: LedgerSession[];
+  /**
+   * The fold this board was built from.
+   *
+   * Carried rather than re-folded by the caller, because a task brief needs
+   * the topic's other blocks and the superseded ones behind each card. Folding
+   * a second time would cost another pass and, worse, could be handed a
+   * different `asOf` — two views of one ledger that disagree.
+   */
+  workspace: WorkspaceState;
   asOf: Date | null;
 }
 
@@ -217,7 +226,7 @@ export function foldBoard(ops: readonly StoredOp[], opts: { asOf?: Date } = {}):
     );
   }
 
-  return { columns, cards, transitions, sessions, asOf: state.asOf };
+  return { columns, cards, transitions, sessions, workspace: state, asOf: state.asOf };
 }
 
 function emptyColumns(): Record<TaskState, BoardCard[]> {

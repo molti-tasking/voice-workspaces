@@ -307,6 +307,34 @@ export interface AnalyticsEventMap {
     block_id: string;
     by: "agent";
   };
+  /**
+   * One task's brief opened — the record behind a card, read at the desk.
+   *
+   * Ids and counts only: the words are content. `utterance_count` is how many
+   * cited lines actually resolved, so zero is the fallback case rather than a
+   * card with nothing said about it.
+   */
+  board_card_viewed: {
+    card_id: string;
+    state: TaskStateName;
+    utterance_count: number;
+    step_count: number;
+    stale_sessions: number;
+    /** Whether the scrubber was moved off "now" before this render. */
+    has_as_of: boolean;
+  };
+  /**
+   * Every active task read at once. Ids and counts only: the words are content.
+   *
+   * `uncited` is how many of those cards quote nothing — the yield question
+   * for spans, which is what T2.4 is measured on.
+   */
+  board_brief_viewed: {
+    card_count: number;
+    topic_count: number;
+    uncited: number;
+    has_as_of: boolean;
+  };
 
   transcription_failed: {
     chunk_id: string;

@@ -14,7 +14,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { audioChunk, captureSession, user, utterance } from "./schema";
 import { listSessionsWithStats } from "./sessions";
 import { isDatabaseReachable } from "./testing";
-import { loadTimelineSessions } from "./workspace";
+import { loadTimelineSessions, loadUtterancesByIds } from "./workspace";
 import { closeDb, getDb } from "./index";
 
 const USER_ID = "test-stats-user";
@@ -200,5 +200,68 @@ describeIfDb("loadTimelineSessions", () => {
       .values({ id: S3, userId: USER_ID, startedAt: new Date() });
 
     expect(await loadTimelineSessions(USER_ID)).toEqual([]);
+  });
+});
+
+/**
+ * The lines behind a task brief.
+ *
+ * Two of these are about not throwing. Span ids are unchecked model output and
+ * `utterance.id` is a uuid column, so a garbled id reaches Postgres as a bad
+ * literal and takes the whole page down with a 500 — which no amount of type
+ * safety catches, because the string is a perfectly good `string`.
+ */
+describeIfDb("loadUtterancesByIds", () => {
+  beforeEach(cleanup);
+
+  /** Every utterance id on a session, in the order they were spoken. */
+  async function utteranceIds(sessionId: string): Promise<string[]> {
+    const rows = await getDb()
+      .select({ id: utterance.id, at: utterance.startOffsetMs })
+      .from(utterance)
+      .where(eq(utterance.captureSessionId, sessionId));
+    return rows.sort((a, b) => a.at - b.at).map((r) => r.id);
+  }
+
+  it("returns the asked-for lines in the order they were said", async () => {
+    await makeUser(USER_ID);
+    await makeSession(S1, USER_ID, 2, 2);
+    const ids = await utteranceIds(S1);
+
+    // Asked for backwards; must come back forwards.
+    const rows = await loadUtterancesByIds(USER_ID, [...ids].reverse());
+
+    expect(rows.map((r) => r.id)).toEqual(ids);
+    expect(rows.every((r) => r.captureSessionId === S1)).toBe(true);
+  });
+
+  it("never returns another user's line", async () => {
+    await makeUser(USER_ID);
+    await makeUser(OTHER_ID);
+    await makeSession(S1, USER_ID, 1, 1);
+    await makeSession(S2, OTHER_ID, 1, 1);
+    const mine = await utteranceIds(S1);
+    const theirs = await utteranceIds(S2);
+
+    const rows = await loadUtterancesByIds(USER_ID, [...mine, ...theirs]);
+
+    expect(rows.map((r) => r.id)).toEqual(mine);
+  });
+
+  it("drops a malformed id instead of letting Postgres reject the query", async () => {
+    await makeUser(USER_ID);
+    await makeSession(S1, USER_ID, 1, 1);
+    const mine = await utteranceIds(S1);
+
+    const rows = await loadUtterancesByIds(USER_ID, ["u1", ...mine]);
+
+    expect(rows.map((r) => r.id)).toEqual(mine);
+    // All of them malformed: no query at all, and still no throw.
+    expect(await loadUtterancesByIds(USER_ID, ["u1", "u2"])).toEqual([]);
+  });
+
+  it("returns nothing for an empty list", async () => {
+    await makeUser(USER_ID);
+    expect(await loadUtterancesByIds(USER_ID, [])).toEqual([]);
   });
 });

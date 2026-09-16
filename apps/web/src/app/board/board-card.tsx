@@ -3,6 +3,7 @@
 import { draggable } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import { useEffect, useRef, useState } from "react";
 import { topicIcon } from "@/app/workspace/icons";
+import { Link } from "@/components/nav-link";
 import type { CardView } from "./card-view";
 import type { DragData } from "./drag";
 
@@ -96,7 +97,27 @@ export function BoardCard({
         </p>
       )}
 
-      <div className="mt-2 flex justify-end">
+      <div className="mt-2 flex items-center justify-between">
+        {/*
+          `draggable={false}` matters. An anchor is natively draggable, so a
+          drag that starts on this link would carry a URL rather than the
+          card's `DragData` — and the board's monitor, which reads that data,
+          would silently ignore the drop. Turning the anchor's own drag off
+          hands the gesture to the card, so grabbing the link moves the card
+          and a plain click still navigates.
+
+          The label is the generic word "brief", never the task's own words:
+          PostHog autocapture is on, and it sends the text of what was clicked.
+        */}
+        <Link
+          href={card.href}
+          draggable={false}
+          title="What was said about this task, and how it got here"
+          className="rounded px-1.5 py-0.5 text-[10px] text-white/25 hover:text-white/60 focus-visible:text-white/80 focus-visible:outline-none"
+        >
+          brief
+        </Link>
+
         <button
           type="button"
           disabled={busy}

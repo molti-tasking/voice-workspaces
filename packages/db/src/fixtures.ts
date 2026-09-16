@@ -46,6 +46,25 @@ const EARLIER_SESSION_IDS = [
 ] as const;
 
 /**
+ * The two lines the task ops cite, with fixed ids so they can be cited at all.
+ *
+ * Every other fixture utterance takes a random uuid, which is fine because
+ * nothing points at it. A `spans` entry is a pointer, so these two need ids
+ * that are known before the row is written — otherwise the ops would have to
+ * be inserted in a second pass, and the point of the fixture is that it reads
+ * as one script.
+ *
+ * Without them the whole quotes path of a task brief is invisible in the
+ * fixture: every op would carry `spans: []`, and every card would render the
+ * "no line is cited" fallback, which is the branch that is meant to be the
+ * exception.
+ */
+const SAID_IDS = {
+  askedAboutStart: "00000000-0000-4000-8000-00000000fa01",
+  reportedDone: "00000000-0000-4000-8000-00000000fa02",
+} as const;
+
+/**
  * A plausible monologue, mixing content with the occasional direction.
  *
  * A direction carries the RESTATEMENT the classifier would have written — one
@@ -103,7 +122,8 @@ const EARLIER: {
   session: (typeof EARLIER_SESSION_IDS)[number];
   daysAgo: number;
   setting: "driving" | "walking" | "hands_busy" | "desk";
-  lines: { text: string; kind: "content" | "directive" }[];
+  /** `id` only where an op's `spans` cite the line — see `SAID_IDS`. */
+  lines: { text: string; kind: "content" | "directive"; id?: string }[];
   ops: { type: "create_topic" | "add_block" | "revise_block"; payload: Record<string, unknown> }[];
 }[] = [
   {
@@ -114,12 +134,19 @@ const EARLIER: {
       { text: "The thing I want out of the research stay is not the name of the place.", kind: "content" },
       { text: "Flag the funding question, I keep forgetting it.", kind: "directive" },
       { text: "Three to six months feels right, any less and nothing lands.", kind: "content" },
+      {
+        text: "I need to email the host lab about a start date.",
+        kind: "content",
+        id: SAID_IDS.askedAboutStart,
+      },
     ],
     ops: [
       { type: "create_topic", payload: { topicId: "fx-stay", title: "Research stay", slug: "research-stay", icon: "Plane" } },
       { type: "add_block", payload: { blockId: "fx-b1", topicId: "fx-stay", kind: "claim", text: "What matters is not the name of the place.", spans: [] } },
       { type: "add_block", payload: { blockId: "fx-b2", topicId: "fx-stay", kind: "fact", label: "Duration", text: "Three to six months.", spans: [] } },
-      { type: "add_block", payload: { blockId: "fx-t1", topicId: "fx-stay", kind: "task", state: "next", text: "Email the host lab about a start date.", spans: [] } },
+      // Cites the line it came from, so `/board/cards/[cardId]` can quote the
+      // person's own words rather than falling back to "no line is cited".
+      { type: "add_block", payload: { blockId: "fx-t1", topicId: "fx-stay", kind: "task", state: "next", text: "Email the host lab about a start date.", spans: [{ utteranceId: SAID_IDS.askedAboutStart }] } },
     ],
   },
   {
@@ -130,11 +157,16 @@ const EARLIER: {
       { text: "Actually what matters is who I would be working with, day to day.", kind: "content" },
       { text: "Flag the funding thing again, it is still open.", kind: "directive" },
       { text: "The ethics form needs a data management plan before any of this.", kind: "content" },
+      {
+        text: "Emailed the host lab, that's sorted.",
+        kind: "content",
+        id: SAID_IDS.reportedDone,
+      },
     ],
     ops: [
       { type: "revise_block", payload: { blockId: "fx-b3", supersedesBlockId: "fx-b1", topicId: "fx-stay", kind: "claim", text: "What matters is who I would work with, day to day.", spans: [] } },
       // Progress reported in speech: the same text, a new state.
-      { type: "revise_block", payload: { blockId: "fx-t2", supersedesBlockId: "fx-t1", topicId: "fx-stay", kind: "task", state: "done", text: "Email the host lab about a start date.", spans: [] } },
+      { type: "revise_block", payload: { blockId: "fx-t2", supersedesBlockId: "fx-t1", topicId: "fx-stay", kind: "task", state: "done", text: "Email the host lab about a start date.", spans: [{ utteranceId: SAID_IDS.reportedDone }] } },
       { type: "create_topic", payload: { topicId: "fx-ethics", title: "Ethics form", slug: "ethics-form", icon: "Scale" } },
       { type: "add_block", payload: { blockId: "fx-b4", topicId: "fx-ethics", kind: "question", text: "Does the data management plan have to name the outlet?", spans: [] } },
     ],
@@ -175,6 +207,8 @@ const FIXTURE_OPS: {
   { type: "create_topic", payload: { topicId: "fx-midas", title: "Midas touch", slug: "midas-touch", icon: "Puzzle" } },
   { type: "add_block", payload: { blockId: "fx-m1", topicId: "fx-midas", kind: "claim", text: "Treating everything as content by default makes the failure mode additive rather than destructive.", spans: [] } },
   { type: "add_block", payload: { blockId: "fx-m2", topicId: "fx-midas", kind: "context", text: "The alternative is a classifier arms race, which does not converge.", spans: [] } },
+  // Deliberately citing nothing, so the brief's fallback path — "from speech
+  // during the drive on ..." — is visible in the fixture too.
   { type: "add_block", payload: { blockId: "fx-m3", topicId: "fx-midas", kind: "task", state: "open", text: "Write up the asymmetry argument.", spans: [] } },
   { type: "create_topic", payload: { topicId: "fx-rep", title: "Repertoire", slug: "repertoire", icon: "Wrench" } },
   { type: "add_block", payload: { blockId: "fx-r1", topicId: "fx-rep", kind: "claim", text: "The repertoire is the contribution, not the recogniser.", spans: [] } },
@@ -327,6 +361,7 @@ async function seedEarlierSessions(userId: string): Promise<void> {
       const [row] = await db
         .insert(utterance)
         .values({
+          ...(line.id ? { id: line.id } : {}),
           captureSessionId: drive.session,
           chunkId: chunk.id,
           startOffsetMs: startOffsetMs + 1000,
@@ -358,10 +393,19 @@ async function seedEarlierSessions(userId: string): Promise<void> {
         type: op.type,
         payload: op.payload,
         occurredAt: new Date(startedAt.getTime() + (index + 1) * CHUNK_MS),
-        sourceUtteranceIds: [],
+        // What `appendOps` writes when an op carries spans of its own: the
+        // lines it cites, not the whole batch.
+        sourceUtteranceIds: spansOf(op.payload),
       });
     }
   }
+}
+
+/** The utterance ids an op's `spans` name, if any. */
+function spansOf(payload: Record<string, unknown>): string[] {
+  const spans = payload.spans;
+  if (!Array.isArray(spans)) return [];
+  return spans.map((s) => (s as { utteranceId: string }).utteranceId);
 }
 
 /** The person's own board gestures, after the drives they respond to. */
