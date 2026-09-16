@@ -1138,3 +1138,187 @@ def test_the_gate_tells_the_board_what_the_driver_heard():
 
     asyncio.run(run())
     assert "".join(noted) == "The Tuesday deadline is the binding one."
+
+
+# --- Web search -------------------------------------------------------------
+
+SEARCH_RATE = 24_000
+SEARCH_CHUNK = b"\x00\x00" * (SEARCH_RATE // 25)  # 40ms of silence, the transport's chunk
+
+
+def peak(audio: bytes) -> int:
+    import numpy as np
+
+    return int(np.abs(np.frombuffer(audio, dtype=np.int16).astype(np.int32)).max())
+
+
+def started_sound():
+    sound = bot.SearchingSound()
+    asyncio.run(sound.start(SEARCH_RATE))
+    return sound
+
+
+def test_the_search_cue_leaves_the_audio_untouched_until_a_search_begins():
+    sound = started_sound()
+    assert sound.mix_now(SEARCH_CHUNK) is SEARCH_CHUNK
+
+    sound.begin()
+    first = sound.mix_now(SEARCH_CHUNK)
+    assert len(first) == len(SEARCH_CHUNK)
+    assert peak(first) > 0
+
+
+def test_the_search_cue_fades_out_over_one_chunk_and_then_costs_nothing():
+    sound = started_sound()
+    sound.begin()
+    for _ in range(3):
+        sound.mix_now(SEARCH_CHUNK)
+    sound.end()
+    sound.mix_now(SEARCH_CHUNK)  # the fade
+    assert sound.mix_now(SEARCH_CHUNK) is SEARCH_CHUNK
+
+
+def test_the_search_cue_ducks_under_speech():
+    import numpy as np
+
+    speech = (np.sin(np.arange(len(SEARCH_CHUNK) // 2) / 3) * 8_000).astype(np.int16).tobytes()
+
+    def cue_level(audio: bytes) -> int:
+        sound = started_sound()
+        sound.begin()
+        sound.mix_now(audio)  # settle the ramp
+        sound._pos = 0  # compare the same stretch of the cue
+        mixed = np.frombuffer(sound.mix_now(audio), dtype=np.int16).astype(np.int32)
+        return int(np.abs(mixed - np.frombuffer(audio, dtype=np.int16)).max())
+
+    assert cue_level(speech) < cue_level(SEARCH_CHUNK) * 0.5
+
+
+class FakeLLM:
+    def __init__(self):
+        self.pushed = []
+
+    async def push_frame(self, frame, direction=None):
+        self.pushed.append(frame)
+
+
+def run_search(search, arguments, *, cancel_after=None):
+    """Call the search handler as Pipecat would; return (spoken, results)."""
+    from types import SimpleNamespace
+
+    llm = FakeLLM()
+    results = []
+
+    async def result_callback(result, **_):
+        results.append(result)
+
+    params = SimpleNamespace(
+        function_name="search_web", arguments=arguments, llm=llm, result_callback=result_callback
+    )
+
+    async def run():
+        task = asyncio.create_task(search.handle(params))
+        if cancel_after is None:
+            await task
+            return
+        await asyncio.sleep(cancel_after)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run())
+    return [f.text for f in llm.pushed if isinstance(f, bot.TTSSpeakFrame)], results
+
+
+class RecordingSound:
+    def __init__(self):
+        self.events = []
+
+    def begin(self):
+        self.events.append("begin")
+
+    def end(self):
+        self.events.append("end")
+
+
+def test_a_search_announces_itself_plays_the_cue_and_hands_back_the_result():
+    sound = RecordingSound()
+    recorder = FakeRecorder()
+    recorder.announcements = []
+    recorder.tool_calls = []
+    recorder.record_announcement = recorder.announcements.append
+    recorder.note_tool_call = lambda name, ms, error=None: recorder.tool_calls.append((name, error))
+
+    search = bot.WebSearch("ticket", sound, recorder)
+    posted = []
+
+    def post(payload):
+        assert sound.events == ["begin"], "the cue must be playing while the request is out"
+        posted.append(payload)
+        return {"ok": True, "query": "CHI 2027 deadline", "results": []}
+
+    search._post = post
+    spoken, results = run_search(
+        search, {"query": "CHI 2027 deadline", "announcement": "Let me look up the CHI deadline."}
+    )
+
+    assert spoken == ["Let me look up the CHI deadline."]
+    assert recorder.announcements == ["Let me look up the CHI deadline."]
+    assert posted == [
+        {
+            "ticket": "ticket",
+            "arguments": {"query": "CHI 2027 deadline", "announcement": "Let me look up the CHI deadline."},
+        }
+    ]
+    assert sound.events == ["begin", "end"]
+    assert results == [{"ok": True, "query": "CHI 2027 deadline", "results": []}]
+    assert recorder.tool_calls == [("search_web", None)]
+
+
+def test_a_search_with_no_announcement_still_says_what_it_is_doing():
+    assert bot.WebSearch.announcement({"query": "CHI deadline"}) == "Searching the web for CHI deadline."
+    assert bot.WebSearch.announcement({"query": "x " * 50}) == "Let me look that up."
+    assert bot.WebSearch.announcement({}) == "Let me look that up."
+
+
+def test_a_failed_search_is_told_to_the_model_in_words_and_the_cue_stops():
+    sound = RecordingSound()
+    search = bot.WebSearch("ticket", sound)
+
+    def post(payload):
+        raise OSError("connection refused")
+
+    search._post = post
+    _, (result,) = run_search(search, {"query": "q", "announcement": "Looking."})
+    assert result == {"ok": False, "error": "The search could not be reached."}
+    assert sound.events == ["begin", "end"]
+
+
+def test_a_search_the_driver_talks_over_stops_the_cue_and_answers_nothing():
+    sound = RecordingSound()
+    search = bot.WebSearch("ticket", sound)
+    # A request still out when the driver starts talking. Short, because the
+    # loop waits for the worker thread on the way out.
+    search._post = lambda payload: time.sleep(0.3) or {"ok": True}
+
+    _, results = run_search(search, {"query": "q", "announcement": "Looking."}, cancel_after=0.05)
+    assert sound.events == ["begin", "end"]
+    assert results == []
+
+
+def test_an_announcement_is_an_agent_turn_but_not_a_decision_and_keeps_the_tool_calls():
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000, config_version="talkback-test")
+
+    def act(recorder):
+        recorder.note_user("when is the CHI deadline")
+        recorder.note_tool_call("move_task", 120)
+        recorder.record_announcement("Let me look up the CHI deadline.")
+
+    posted = posted_by(act, recorder)
+    assert [route for route, _ in posted] == ["agent-turn"]
+    (_, turn) = posted[0]
+    assert turn["text"] == "Let me look up the CHI deadline."
+    assert turn["respondingToText"] == "when is the CHI deadline"
+    assert "toolCalls" not in turn
+    # Still waiting for the turn that answers.
+    assert recorder._tool_calls == [{"name": "move_task", "latencyMs": 120}]

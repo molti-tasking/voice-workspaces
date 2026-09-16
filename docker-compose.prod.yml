@@ -84,6 +84,9 @@ services:
       # The memory index. Optional — unset keeps recall lexical. Web embeds the
       # query per turn; the worker builds the index. See TALKBACK.md, "Memory".
       - MODEL_EMBED=${MODEL_EMBED:-}
+      # Talk-back's web search. Optional — unset, the agent is not offered it.
+      # See TALKBACK.md, "Web search".
+      - SEARXNG_URL=${SEARXNG_URL:-}
       - STORAGE_DIR=/data/storage
       # Also needed at runtime, not just as a build arg: the server-side client
       # in the route handlers and Better Auth hooks reads them per process.

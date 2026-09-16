@@ -300,6 +300,56 @@ both readers come from Postgres — the live panel via `/api/record/cues`, and
 that is tappable, which the cue panel's no-tap rule explicitly is not — there is
 no voice equivalent of "put this on my clipboard".
 
+## Web search
+
+Ask something current — "when is the CHI deadline?", "look up what Pipecat's
+latest release is" — and the agent searches a SearXNG instance and answers in a
+sentence, naming the site. Off unless `SEARXNG_URL` is set (web app only); then
+`/api/realtime/session` composes `webSearchSection()` — which carries today's
+date, the only place the prompt does — into the prompt, offers
+`search_web`, and names it in `webSearchTool` so the container can route it
+without a tool name hard-coded in Python.
+
+**What the driver hears, in order.** The call's `announcement` — a sentence the
+model writes as a tool argument, in the language of the conversation — spoken
+the moment the call arrives; `SearchingSound`, two soft rising blips every 1.2s,
+starting under it and running until the result is back; then the answer, from
+the completion Pipecat runs on the result. The announcement is an argument
+rather than something the model says first because a model calling a tool
+frequently says nothing, and the search would be dead air — which in a car
+sounds like a dropped connection.
+
+**The cue is a mixer, not frames.** Queued as audio frames it would interleave
+with the announcement chunk by chunk. `SearchingSound` is summed into whatever
+the transport sends, ducked to 30% under speech, faded over one chunk when it
+stops. Pipecat marks the bot as speaking only for TTS and speech frames, so the
+cue never holds off the driver's turn. Only drives offered search get a mixer:
+it changes how the output transport paces audio.
+
+**Cancelled by an interruption**, unlike a board edit. The model waits for the
+result; if the driver starts talking, their words are what to answer, and a
+search they talked over neither keeps the cue going nor comes back later.
+
+**The announcement is an `agent_turn`**, because it reached the speaker and the
+echo filter must know. It writes no `agent_decision` and does not take the
+turn's `toolCalls` — the decisions are the completion that called the tool and
+the one that answers, as for a board edit. `search_web` appears in the answering
+turn's `toolCalls` with its latency, or `cancelled`.
+
+**What reaches the model** is `searchResultForModel`: at most two direct
+answers and five results as site, title and a 280-character snippet — no URLs,
+since it must never read one out and prompt size is the biggest lever on
+time-to-first-word. Failures come back as `ok: false` with a sentence to say.
+The route gives SearXNG 5s; the container gives the route 7s.
+
+**What leaves.** The query, which is the participant's question in the model's
+words, goes to the instance and on to its engines. It is never logged, on
+either side. A study that uses this needs it on the information sheet.
+
+Setup failures look like search failures: a 403 is an instance without `json`
+in `search.formats`, a 429 its bot limiter. The web log says which
+(`[search] SearXNG answered 403`).
+
 ## Confirmations reach the driver on the turn path
 
 An outbound or irreversible action does not fire when the worker resolves it —

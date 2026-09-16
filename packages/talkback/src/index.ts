@@ -83,6 +83,15 @@ export {
   type ToolDefinition,
 } from "./board-tools";
 export {
+  WEB_SEARCH_TOOL,
+  WEB_SEARCH_TOOL_NAME,
+  searchResultForModel,
+  searxngRequest,
+  webSearchFromToolCall,
+  webSearchSection,
+  type SearchResultForModel,
+} from "./web-search";
+export {
   recordAgentDecision,
   recordAgentTurn,
   type AgentDecisionOutcome,
