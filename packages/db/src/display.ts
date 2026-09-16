@@ -9,7 +9,14 @@
  * conversation is ephemeral") applies to the screen too.
  */
 import { and, asc, desc, eq, gte, max, sql } from "drizzle-orm";
-import { agentDraft, captureSession, directive, utterance, workspaceOp } from "./schema";
+import {
+  agentDraft,
+  agentDraftVersion,
+  captureSession,
+  directive,
+  utterance,
+  workspaceOp,
+} from "./schema";
 import { getDb } from "./index";
 
 export interface LiveSession {
@@ -108,9 +115,17 @@ export async function cueVersion(
   // Drafts are in the version because they are the one lane the user ASKED
   // for. A cue arriving late is a cue; a draft arriving late is the person
   // staring at a screen that does not have the thing they just requested.
+  //
+  // Counted over VERSIONS, not lineages. "Make it shorter" appends a version to
+  // a draft that already exists, so a lineage count never moves and the panel
+  // would sit there showing the text they just asked to have replaced — the
+  // exact failure this lane is in the version to prevent. The join is what
+  // scopes versions to this drive; `agent_draft_version` has no session of its
+  // own, by design (its lineage does).
   const [drafts] = await db
-    .select({ n: sql<number>`count(*)`, last: max(agentDraft.createdAt) })
-    .from(agentDraft)
+    .select({ n: sql<number>`count(*)`, last: max(agentDraftVersion.createdAt) })
+    .from(agentDraftVersion)
+    .innerJoin(agentDraft, eq(agentDraft.id, agentDraftVersion.draftId))
     .where(eq(agentDraft.captureSessionId, captureSessionId));
 
   return [
