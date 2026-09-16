@@ -279,7 +279,7 @@ export interface AnalyticsEventMap {
     /** Who made this move: the person on the board page, or the agent asked aloud. */
     by: "user" | "agent";
     /** Who last moved this card before now. Null when it was only ever added. */
-    previous_via: "speech" | "user" | "agent" | null;
+    previous_via: "speech" | "user" | "agent" | "import" | null;
     /** True when this move puts the card back where speech had moved it from. */
     reverses_speech: boolean;
     /** True when this move puts the card back where the agent had moved it from. */
@@ -291,7 +291,7 @@ export interface AnalyticsEventMap {
     card_id: string;
     state: TaskStateName;
     by: "user" | "agent";
-    previous_via: "speech" | "user" | "agent" | null;
+    previous_via: "speech" | "user" | "agent" | "import" | null;
   };
   /** A task the agent put on the board because it was asked to. */
   board_card_added: {
@@ -306,6 +306,55 @@ export interface AnalyticsEventMap {
     card_id: string;
     block_id: string;
     by: "agent";
+  };
+  /**
+   * One task's brief opened — the record behind a card, read at the desk.
+   *
+   * Ids and counts only: the words are content. `utterance_count` is how many
+   * cited lines actually resolved, so zero is the fallback case rather than a
+   * card with nothing said about it.
+   */
+  board_card_viewed: {
+    card_id: string;
+    state: TaskStateName;
+    utterance_count: number;
+    step_count: number;
+    stale_sessions: number;
+    /** Whether the scrubber was moved off "now" before this render. */
+    has_as_of: boolean;
+  };
+  /**
+   * Every active task read at once. Ids and counts only: the words are content.
+   *
+   * `uncited` is how many of those cards quote nothing — the yield question
+   * for spans, which is what T2.4 is measured on.
+   */
+  board_brief_viewed: {
+    card_count: number;
+    topic_count: number;
+    uncited: number;
+    has_as_of: boolean;
+  };
+  /**
+   * A board the person already kept elsewhere, brought in as cards.
+   *
+   * Counts only — the tasks are the person's own work and their words never
+   * leave the database, exactly as for every other board event. `format` says
+   * which reader understood the paste, which is the one thing worth knowing
+   * when someone reports that their import came out wrong.
+   */
+  board_imported: {
+    format: "trello-json" | "table" | "outline";
+    /** Cards actually written. */
+    card_count: number;
+    /** Topics this import had to open. */
+    topics_created: number;
+    /** Refused because the board or the paste already had them. */
+    skipped_duplicate: number;
+    /** Refused for any other reason: too long, past the cap, archived. */
+    skipped_other: number;
+    /** How many columns the import landed in — one means nothing was mapped. */
+    columns_used: number;
   };
 
   transcription_failed: {

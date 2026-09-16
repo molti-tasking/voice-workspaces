@@ -11,10 +11,13 @@ import type { AnalyticsEventName } from "./analytics";
  * to the events already stored under the old name.
  */
 const KNOWN_EVENTS = [
+  "board_brief_viewed",
   "board_card_added",
   "board_card_moved",
   "board_card_retired",
   "board_card_reworded",
+  "board_card_viewed",
+  "board_imported",
   "board_viewed",
   "capability_invoked",
   "capture_session_completed",
@@ -58,10 +61,13 @@ describe("analytics taxonomy", () => {
     // AnalyticsEventName (missing one fails to compile), and every key must be
     // an AnalyticsEventName (a stale one fails to compile).
     const coverage: Record<AnalyticsEventName, true> = {
+      board_brief_viewed: true,
       board_card_added: true,
       board_card_moved: true,
       board_card_retired: true,
       board_card_reworded: true,
+      board_card_viewed: true,
+      board_imported: true,
       board_viewed: true,
       capability_invoked: true,
       capture_session_completed: true,

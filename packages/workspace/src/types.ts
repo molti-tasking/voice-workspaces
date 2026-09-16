@@ -89,8 +89,16 @@ export type TaskState = z.infer<typeof TaskState>;
  * it is a machine acting like speech does, but on an explicit request and at
  * once, and whether people keep what it did is measured separately from
  * whether they keep what the extractor inferred.
+ *
+ * `"import"` is a board the person already kept somewhere else — Trello,
+ * Jira, Notion, a list in a notes app — brought in once so the first drive
+ * talks about work that already exists. It is the person's own claim about
+ * their own work, not a reading of their speech, so `judge()` does not score
+ * it: an imported card counted as "kept" would inflate the acceptance measure
+ * with cards no machine ever inferred. It carries no spans, because no
+ * utterance said it.
  */
-export const OpVia = z.enum(["user", "agent"]);
+export const OpVia = z.enum(["user", "agent", "import"]);
 export type OpVia = z.infer<typeof OpVia>;
 
 /** A span of derived text traced back to the utterance it came from. */

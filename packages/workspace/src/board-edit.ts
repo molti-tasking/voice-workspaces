@@ -85,7 +85,15 @@ export function cardHandle(cardId: string): string {
   return cardId.replace(/[^0-9a-f]/gi, "").slice(-6).toLowerCase();
 }
 
-function sameText(a: string, b: string): boolean {
+/**
+ * Whether two task lines say the same thing.
+ *
+ * Exported because both writers that can put a NEW card on the board have to
+ * refuse the same duplicates: the agent's `add_task` and an import of a board
+ * the person already keeps. Punctuation and case are ignored, so "Email
+ * William." and "email William" are one task.
+ */
+export function sameTaskText(a: string, b: string): boolean {
   const norm = (s: string) =>
     s
       .toLowerCase()
@@ -214,7 +222,7 @@ function planAdd(
   // on the board from the same speech; a second card for it is noise the
   // person has to clean up.
   const duplicate = board.cards.find(
-    (c) => sameText(c.block.text, text) && c.state !== "done" && c.state !== "dropped",
+    (c) => sameTaskText(c.block.text, text) && c.state !== "done" && c.state !== "dropped",
   );
   if (duplicate) return { status: "exists", card: view(duplicate) };
 

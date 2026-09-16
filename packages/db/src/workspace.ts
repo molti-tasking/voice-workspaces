@@ -413,12 +413,18 @@ export async function appendUserOp(input: {
 }
 
 /**
- * The ops a person or the agent posted, in `seq` order.
+ * The ops a person, the agent or an import posted, in `seq` order.
  *
  * What `workspace:rebuild` and `workspace:reparse` must save before they clear
  * the log and restore after: a rebuild that dropped the manual gestures — or
  * the agent's edits, which nothing could re-derive — would delete the
  * measurement. Their drive comes too, which acceptance is counted from.
+ *
+ * `import` is in the filter for a blunter reason than measurement: an imported
+ * card exists in no transcript, so a rebuild that left it behind would silently
+ * empty the board of every task the person brought with them. Imported ops
+ * restore exactly, since they mint their own topic and block ids and reference
+ * nothing the extractor made.
  */
 export async function loadUserOps(userId: string): Promise<StoredOp[]> {
   const rows = await getDb()
@@ -435,7 +441,7 @@ export async function loadUserOps(userId: string): Promise<StoredOp[]> {
       and(
         eq(workspaceOp.userId, userId),
         isNull(workspaceOp.extractionId),
-        sql`${workspaceOp.payload}->>'via' in ('user', 'agent')`,
+        sql`${workspaceOp.payload}->>'via' in ('user', 'agent', 'import')`,
       ),
     )
     .orderBy(asc(workspaceOp.seq));
@@ -599,6 +605,59 @@ export async function loadSessionUtterances(
     text: r.text,
   }));
 }
+
+/**
+ * The utterances a set of ids names — the lines behind a task brief.
+ *
+ * Scoped by user, which is the whole security story here: the ids come off
+ * block spans written by a model, so an id that belongs to someone else's
+ * drive is a normal failure mode rather than an attack, and either way the
+ * join simply does not return it. `sessionIdsForUtterances` deliberately is
+ * not reused for the same reason — it is not scoped by user.
+ *
+ * Ordered by wall-clock time, so a brief reads forwards however the caller
+ * collected the ids.
+ */
+export async function loadUtterancesByIds(
+  userId: string,
+  ids: readonly string[],
+): Promise<TimelineUtterance[]> {
+  /*
+   * `utterance.id` is a uuid column, so Postgres THROWS on a malformed
+   * literal rather than returning no rows — one garbled span id would turn the
+   * brief page into a 500. Span ids are unchecked model output (`toSpans` in
+   * @voicemural/workspace), so they are filtered to UUID shape here rather
+   * than trusted.
+   */
+  const wanted = [...new Set(ids)].filter((id) => UUID.test(id));
+  if (wanted.length === 0) return [];
+
+  const occurredAt = sql<Date>`${captureSession.startedAt} + make_interval(secs => ${utterance.startOffsetMs} / 1000.0)`;
+
+  const rows = await getDb()
+    .select({
+      id: utterance.id,
+      captureSessionId: utterance.captureSessionId,
+      occurredAt,
+      text: utterance.text,
+      kind: utterance.kind,
+      kindOverride: utterance.kindOverride,
+    })
+    .from(utterance)
+    .innerJoin(captureSession, eq(utterance.captureSessionId, captureSession.id))
+    .where(and(eq(captureSession.userId, userId), inArray(utterance.id, wanted)))
+    .orderBy(asc(occurredAt), asc(utterance.id));
+
+  return rows.map((r) => ({
+    id: r.id,
+    captureSessionId: r.captureSessionId,
+    occurredAt: new Date(r.occurredAt),
+    kind: r.kindOverride ?? r.kind,
+    text: r.text,
+  }));
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Every extraction as a marker on the timeline.

@@ -32,8 +32,11 @@ import {
   type WorkspaceState,
 } from "./types";
 
-/** Who moved the card: the extractor reading speech, the person, or the agent. */
-export type TransitionVia = "speech" | "user" | "agent";
+/**
+ * Who moved the card: the extractor reading speech, the person, the agent —
+ * or, for the add that put an already-kept task on the board, the import.
+ */
+export type TransitionVia = "speech" | "user" | "agent" | "import";
 
 export interface TaskTransition {
   /** Root of the revision chain — stable across revisions, the card's identity. */
@@ -76,6 +79,15 @@ export interface Board {
   /** Every transition on every card, in ledger order. */
   transitions: TaskTransition[];
   sessions: LedgerSession[];
+  /**
+   * The fold this board was built from.
+   *
+   * Carried rather than re-folded by the caller, because a task brief needs
+   * the topic's other blocks and the superseded ones behind each card. Folding
+   * a second time would cost another pass and, worse, could be handed a
+   * different `asOf` — two views of one ledger that disagree.
+   */
+  workspace: WorkspaceState;
   asOf: Date | null;
 }
 
@@ -217,7 +229,7 @@ export function foldBoard(ops: readonly StoredOp[], opts: { asOf?: Date } = {}):
     );
   }
 
-  return { columns, cards, transitions, sessions, asOf: state.asOf };
+  return { columns, cards, transitions, sessions, workspace: state, asOf: state.asOf };
 }
 
 function emptyColumns(): Record<TaskState, BoardCard[]> {
@@ -293,6 +305,12 @@ export interface JudgedTransition {
  * did when they asked it" is not the same finding as "do they keep what the
  * extractor read into their speech". Only the person's own moves decide.
  *
+ * Neither `user` nor `import` transitions are judged. What a person moved by
+ * hand is the verdict; what they imported is a card they brought with them.
+ * Every LATER transition on an imported card is judged as usual — an imported
+ * task that speech then moves to `done` is exactly the acceptance question,
+ * and one of the few ways to ask it on the first drive.
+ *
  * "Kept" is inferred from drives elapsed, not from page views: the ledger is
  * the instrument, and a card that sat in `done` through two more commutes
  * without being touched is one the person was content with. `sessions` should
@@ -320,7 +338,11 @@ export function judge(
 
   for (let i = 0; i < ordered.length; i += 1) {
     const t = ordered[i]!;
-    if (t.via === "user") continue;
+    // The person's own moves are the verdict, not a claim to be judged — and
+    // an imported card is the same thing at the other end: work they were
+    // already tracking, which no machine read into anything. Scoring either
+    // would count a card towards acceptance that nothing inferred.
+    if (t.via === "user" || t.via === "import") continue;
 
     const next = ordered.slice(i + 1).find((n) => n.cardId === t.cardId);
 

@@ -1,4 +1,5 @@
 import type { BoardCard, JudgedTransition, TaskState } from "@voicemural/workspace";
+import { cardHref } from "./brief-view";
 
 /**
  * What a card looks like once it has crossed to the browser.
@@ -31,9 +32,22 @@ export interface CardView {
   spanCount: number;
   /** How the card got to this column, in the person's terms. Null when silent. */
   marker: string | null;
+  /**
+   * Where the card's brief lives, already built.
+   *
+   * A string rather than the pieces to build one from, for the same reason
+   * `said` is pre-formatted: it keeps the payload small and the `asOf` cursor
+   * — which the browser has no other way of knowing about — is resolved once,
+   * on the server, instead of being re-derived per card.
+   */
+  href: string;
 }
 
-export function toCardView(card: BoardCard, outcome?: JudgedTransition): CardView {
+export function toCardView(
+  card: BoardCard,
+  outcome?: JudgedTransition,
+  opts: { asOf?: Date } = {},
+): CardView {
   return {
     cardId: card.cardId,
     blockId: card.block.id,
@@ -47,6 +61,7 @@ export function toCardView(card: BoardCard, outcome?: JudgedTransition): CardVie
     }),
     spanCount: card.block.spans.length,
     marker: markerFor(card, outcome),
+    href: cardHref(card.cardId, opts.asOf),
   };
 }
 
@@ -62,6 +77,9 @@ export function toCardView(card: BoardCard, outcome?: JudgedTransition): CardVie
  * "you moved it back" versus "you moved it on" is the distinction the study
  * turns on, and it is decided here by comparing against the transition BEFORE
  * the person's, not against the card's current state.
+ *
+ * An imported card says so until something moves it, and never says "kept":
+ * `judge()` does not score an import, so there is no verdict to report.
  */
 export function markerFor(card: BoardCard, outcome?: JudgedTransition): string | null {
   const last = card.lastTransition;
@@ -70,6 +88,11 @@ export function markerFor(card: BoardCard, outcome?: JudgedTransition): string |
 
   if (last.via === "speech" && last.from !== null) {
     text = outcome?.outcome === "kept" ? "moved here by speech · kept" : "moved here by speech";
+  } else if (last.via === "import") {
+    // An imported card has no drive behind it and no verdict to report: the
+    // person put it there themselves, from a board they already kept. Saying so
+    // is what stops "3 Sep" under the text reading as something they said.
+    text = "brought in from another board";
   } else if (last.via === "agent") {
     // Asked aloud, so said as such: the person should be able to tell a move
     // they requested from one the extractor read into what they said.
