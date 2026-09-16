@@ -12,6 +12,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 /* ---------------------------------------------------------------------------
@@ -172,6 +173,18 @@ export const chunkStatusEnum = pgEnum("chunk_status", [
   "transcribed",
   "failed",
 ]);
+
+/**
+ * Who wrote a draft version.
+ *
+ * The same two parties `workspace_op.via` already distinguishes — see `OpVia`
+ * in `packages/workspace/src/types.ts` — and for the same reason: the study
+ * compares what the model produced with what the person did to it afterwards,
+ * and that comparison is only possible if each version says which of them it
+ * came from. It is also what decides the number: the agent owns the major, the
+ * person owns the minor (see `agentDraftVersion`).
+ */
+export const agentDraftAuthorEnum = pgEnum("agent_draft_author", ["agent", "user"]);
 
 /* ---------------------------------------------------------------------------
  * Capture
@@ -1123,6 +1136,15 @@ export const workspaceOpRelations = relations(workspaceOp, ({ one }) => ({
  * Durable on purpose. The point of a draft is copying it later, which usually
  * means after the drive, from a different device — so it outlives the
  * conversation exactly the way the ledger does.
+ *
+ * LINEAGE, NOT CONTENT. This row is the draft's IDENTITY — which drive it came
+ * from, where in it, and which request produced the first version — and it is
+ * never updated. Everything that can change lives in `agent_draft_version`,
+ * one append-only row per version, exactly the split `capability` /
+ * `capability_version` already uses. Nothing reads `title`/`text` here any
+ * more: they are still written, as a frozen copy of v1.0, because the append-
+ * only rule says a column that recorded what the agent produced does not stop
+ * recording it just because a better home exists.
  */
 export const agentDraft = pgTable(
   "agent_draft",
@@ -1148,6 +1170,86 @@ export const agentDraft = pgTable(
     // retry must not leave two copies of the same draft on the screen.
     uniqueIndex("agent_draft_session_seq_idx").on(t.captureSessionId, t.seq),
     index("agent_draft_session_idx").on(t.captureSessionId),
+  ],
+);
+
+/**
+ * Every version a draft has ever had, newest LAST by number rather than by time.
+ *
+ * WHY VERSIONS AT ALL. A draft is the one thing on the screen the person asked
+ * for by name, and the first answer is rarely the one they send. Before this,
+ * a draft was insert-only: "make it shorter" produced a SECOND card, the first
+ * one stayed on the page looking equally current, and a typo in a name could
+ * only be fixed by copying the text somewhere else. Both of those lose the
+ * thing the feature is for.
+ *
+ * NUMBERING SAYS WHO. The agent owns the major and the person owns the minor:
+ * the agent's first draft is v1.0, the person editing it gives v1.1, an agent
+ * rewrite gives v2.0, a later edit of that gives v2.1. So the label is not
+ * decoration — read off a card weeks later it says, without any extra column
+ * being consulted, how many times the model rewrote this and how much hand
+ * editing each of its attempts needed. That is the measurement the study wants
+ * out of drafts, and it is free.
+ *
+ * THE NEWEST VERSION IS ALWAYS THE CURRENT ONE. A restore does not move a
+ * pointer back; it APPENDS a copy of the restored version with the next number
+ * and records what it came from, so restoring v1.1 while at v1.3 gives v1.4.
+ * The record stays append-only (EVALUATION_PLAN.md §4), and "what did they end
+ * up with" is `order by (major, minor) desc limit 1` rather than a flag that
+ * two writers can disagree about.
+ *
+ * ORDERED BY `(major, minor)`, NEVER BY `createdAt`. Clock skew between the
+ * web app and the container, or two versions inside the same millisecond, would
+ * otherwise be able to make an older version look current.
+ */
+export const agentDraftVersion = pgTable(
+  "agent_draft_version",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    draftId: uuid("draft_id")
+      .notNull()
+      .references(() => agentDraft.id, { onDelete: "cascade" }),
+    /** Bumped by an agent rewrite. See the numbering note above. */
+    major: integer("major").notNull(),
+    /** Bumped by a person's edit, and reset to 0 by each agent rewrite. */
+    minor: integer("minor").notNull(),
+    author: agentDraftAuthorEnum("author").notNull(),
+    /** The tag's `title`, or the person's. Empty when neither supplied one. */
+    title: text("title").notNull().default(""),
+    /** The body, verbatim. Markdown allowed: this is read, never spoken. */
+    text: text("text").notNull(),
+    /**
+     * The version this one was restored from, when it was a restore.
+     *
+     * Self-referencing, so the column's type is only known once the table is,
+     * which is what `AnyPgColumn` is for. `set null` rather than cascade: a
+     * version is never deleted today, and if one ever were, losing the
+     * provenance label is better than losing the restored text with it.
+     */
+    restoredFromVersionId: uuid("restored_from_version_id").references(
+      (): AnyPgColumn => agentDraftVersion.id,
+      { onDelete: "set null" },
+    ),
+    /**
+     * What was said to get THIS version, when the agent wrote it.
+     *
+     * On v1.0 it is the request that produced the draft; on an agent rewrite it
+     * is the change they asked for ("make it shorter"). Per version rather than
+     * per draft because that is the only way to read a rewrite back against the
+     * instruction it was following. Null on a person's edit — they did not ask
+     * anybody for it — and on a restore.
+     */
+    respondingToText: text("responding_to_text"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One row per (draft, major, minor). Two writers racing on the same number
+    // — the person's Save and the agent's rewrite landing together — must lose
+    // one of them at the database rather than leave two rows claiming to be
+    // v2.0. `appendDraftVersion` takes a row lock as well, so this is the
+    // backstop rather than the mechanism.
+    uniqueIndex("agent_draft_version_number_idx").on(t.draftId, t.major, t.minor),
+    index("agent_draft_version_draft_idx").on(t.draftId),
   ],
 );
 
