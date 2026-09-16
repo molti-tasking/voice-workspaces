@@ -7,6 +7,7 @@ import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import {
   BOARD_EDITING,
   BOARD_TOOLS,
+  RATING_LINES,
   SUMMARY_PROMPT,
   TALKBACK_CONFIG_VERSION,
   TITLE_PROMPT,
@@ -15,6 +16,7 @@ import {
   composeSystemPrompt,
   foldSummary,
   loadDriveSoFarText,
+  ratingVoiceIdFor,
 } from "@voicemural/talkback";
 
 export const runtime = "nodejs";
@@ -148,6 +150,19 @@ export async function POST(req: Request) {
       // are. Empty when the board is off, and then the prompt says nothing
       // about editing it either. Every call comes back to /api/realtime/board.
       tools: boardEditable ? BOARD_TOOLS : [],
+      // The rating probe: the voice it borrows and the words it says.
+      //
+      // Sent for the same reason the summary instruction is — one copy of the
+      // text, in TypeScript, changeable without rebuilding the image. The
+      // VOICE has a second reason: `packages/talkback/src/voice.ts` owns the
+      // catalogue and this container never chooses or validates a voice, so
+      // the one the probe borrows is picked here too, and picked to differ
+      // from the drive's, which is what makes the mode audible. An older
+      // container that does not read this simply has no probe.
+      ratingProbe: {
+        voiceId: ratingVoiceIdFor(row.voiceId),
+        lines: RATING_LINES,
+      },
     },
     { headers: { "Cache-Control": "no-store" } },
   );

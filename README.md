@@ -173,6 +173,16 @@ constraint, not a feature to add later.
   with the verb, the object and a restatement to read back. A `capabilityId` of
   NULL is the interesting case, not the failure case: it is an operation the
   person invented, and those are exactly what the macro detector mines.
+- `interaction_rating` is what the driver said about the system when they asked
+  to: "Hey, rate this" opens a private exchange in a second voice, takes a 1–5,
+  and hands the drive straight back (`RatingProbe` in `apps/pipecat/bot.py`; the
+  section in [TALKBACK.md](TALKBACK.md)). The row holds **no text** — a number,
+  an outcome, and the window the exchange occupied on the `utterance` clock —
+  and every probe writes one, including the ones that got no number, because a
+  feedback channel people trigger and cannot finish is the finding. The window
+  is not decoration: the capture ledger records the exchange like any other
+  sound, so extraction reads those bounds and withholds what falls inside them.
+  Without that, the workspace grows a task called "three".
 - `macro_proposal` holds crystallisation candidates, **including declined ones**.
   A declined proposal is never re-offered, and "what they tried to add and
   failed" is a stated field-study measure that only survives if refusals do.

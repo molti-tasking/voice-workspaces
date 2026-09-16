@@ -85,6 +85,13 @@
       "when": 1789426795169,
       "tag": "0011_study_measures",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789562816513,
+      "tag": "0012_interaction_rating",
+      "breakpoints": true
     }
   ]
 }

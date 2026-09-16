@@ -131,6 +131,17 @@ async function seed() {
     agentTurnId: turn!.id,
     latencyMs: 500,
   });
+  await db.insert(schema.interactionRating).values({
+    captureSessionId: SESSION,
+    seq: 0,
+    askedOffsetMs: 6_000,
+    answeredOffsetMs: 9_000,
+    endedOffsetMs: 11_000,
+    rating: 4,
+    outcome: "rated",
+    agentTurnId: turn!.id,
+    configVersion: "talkback-8",
+  });
   await db.insert(schema.macroProposal).values({
     userId: USER_ID,
     canonicalForm: `send|${SECRET}`,
@@ -200,6 +211,14 @@ describeIfDb("study export", () => {
       ttftMs: 400,
     });
     expect(byType("agent_decision")[0]).toMatchObject({ trigger: "confirmation", outcome: "spoke" });
+    // The one self-report in the export, joined to the turn it was about.
+    expect(byType("interaction_rating")[0]).toMatchObject({
+      rating: 4,
+      outcome: "rated",
+      askedOffsetMs: 6_000,
+      answeredOffsetMs: 9_000,
+      endedOffsetMs: 11_000,
+    });
     expect(byType("directive")[0]).toMatchObject({ verb: "send" });
     // Parked, asked once, and the drive ended without an answer.
     expect(byType("invocation")[0]).toMatchObject({ status: "unanswered", timesAsked: 1 });

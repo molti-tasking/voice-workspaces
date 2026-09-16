@@ -53,12 +53,13 @@ Three corollaries that are easy to violate:
 | `/api/realtime/session` | Composed prompt + drive summary + `startedAtEpochMs`, fetched once per connection |
 | `/api/realtime/context` | Per-turn recall, plus any pending confirmation. Runs the same `buildContextPassages` the TypeScript side would |
 | `/api/realtime/agent-turn` | Writes `agent_turn`. Not bookkeeping — see the landmine below |
+| `/api/realtime/rating` | Writes `interaction_rating` — what the driver said about the system when they asked to say it |
 
 The Python container holds no domain logic. Retrieval, the turn record and echo
 filtering live in TypeScript and are reached over HTTP, so there is one
 implementation of "what does it remember" rather than two that drift.
 
-All three routes are authorised by the signed ticket from
+Every one of these routes is authorised by the signed ticket from
 `packages/shared/src/realtime-ticket.ts` — the container has no Better Auth
 session and should not gain one. The context ticket gets a drive-length TTL via
 `ttlMs` because it is spent once per turn; ownership is **re-resolved** against
@@ -67,10 +68,16 @@ session and should not gain one. The context ticket gets a drive-length TTL via
 ### The pipeline
 
 ```
-transport.input() → vad → Trace("in") → stt → Trace("stt") → summary
-  → title → Recall → aggregator.user() → llm → SilenceGate → tts
+transport.input() → vad → Trace("in") → stt → Trace("stt") → RatingProbe
+  → summary → title → Recall → aggregator.user() → llm → SilenceGate → tts
   → transport.output() → aggregator.assistant()
 ```
+
+`RatingProbe` is first for a reason: while it is open it consumes the driver's
+words instead of forwarding them, so everything below it — the summary, the
+title, retrieval, the model itself — is not part of the exchange. See
+["Hey, rate this"](#hey-rate-this-a-second-voice-and-the-agent-left-out-of-it).
+It is absent entirely from a drive whose session sent no `ratingProbe`.
 
 `title` (`TopicTitle`) names what is being talked about **right now** in two to
 four words, off its own short window of recent speech rather than the
@@ -311,6 +318,87 @@ Piggybacked rather than given its own endpoint on purpose: `/context` is called
 once per turn and its entire rationale is latency, so a second round trip would
 double the pre-first-token cost to carry a row that is null on almost every
 turn.
+
+## "Hey, rate this": a second voice, and the agent left out of it
+
+Everything else this system measures is behavioural — whether a card moved,
+whether the person put it back, how long a reply took. None of it asks whether
+the thing was any good, and a participant alone in a car has no way to say so
+at the moment they think it. A debrief at the desk gets the drive as remembered
+twenty minutes later; this gets it while it is still happening.
+
+**It is not a tool the model calls.** `RatingProbe` in `bot.py` matches the
+trigger on live ASR, deterministically, before the words reach the model at
+all. Two reasons, and both are load-bearing: an instrument that fires when a
+language model judges it was addressed measures the model as much as the thing;
+and the value of the channel is that the agent is *not in the room* — a rating
+given to something that is listening is a different act from one given in
+private.
+
+**Where it sits is the design.** The probe is the first processor after
+`Trace("stt")`, above the running summary, the topic title, `Recall` and the
+user aggregator. While it is open it *consumes* transcription frames instead of
+forwarding them, and every consequence of that is intended:
+
+| Downstream | What it never sees |
+|---|---|
+| `aggregator.user()` → `llm` | no user text, so no turn runs — the agent is mute for the exchange |
+| `RunningSummary` | the summary does not fold a rating into what the drive was about |
+| `TopicTitle` | the split-flap board does not swing to "feedback" |
+| `Recall` | no drive months later quotes a rating back as something the driver said |
+
+**The voice is the mode indicator.** A driver cannot look at a screen, so the
+switch to a second voice is the only signal the channel is open — which means
+it has to go back the instant the exchange ends or the signal means nothing.
+`ratingVoiceIdFor` (`voice.ts`) picks it from the same catalogue and never
+returns the voice the drive is already using. Both switches are
+`TTSUpdateSettingsFrame`s and both are **ordered, not timed**: the TTS service
+pauses its own frame processing while it speaks, so the frame restoring the
+agent's voice is applied after the acknowledgement has played and not a moment
+before. No sleep, no guessing how long a sentence takes. Changing `voice` is a
+URL field for ElevenLabs, so each switch reconnects the websocket — which is
+why the probe speaks *after* the switch rather than during it.
+
+**The exchange.** "Hey, rate this" → the second voice asks "How was that? One
+to five." → a number → "3. Noted." → the agent's voice is back. "Never mind"
+closes it. An answer that is not a number is asked once more and then let go.
+Fifteen seconds of silence gives the drive back without the car talking to
+itself. Every path writes a row: `rated`, `cancelled`, `unclear`, `timeout` —
+a channel people trigger and cannot finish is the finding, and a table of
+successful ratings only would hide it.
+
+**What the matching refuses.** The trigger must be the whole utterance, so "I'd
+rate this paper highly" opens nothing. `four` is read from "four" and "4" but
+never from "for", and `two` never from "to" — Whisper hears both often enough
+to matter, and a wrong number recorded silently is worse than asking again.
+Two numbers in one breath ("three, no, four") is not an answer either. All of
+it is lopsided the same way: a missed trigger costs one repetition, a false one
+hijacks the drive and files a score against a moment nobody meant to rate.
+
+**Two things reach the ledger, for two different reasons.**
+
+1. The probe's own lines are written to `agent_turn` as `kind:
+   "rating_prompt"` (`TurnRecorder.record_aside`). Not bookkeeping: `agent_turn`
+   is the echo filter's only input, and the microphone hears everything the car
+   says. Without those rows, "How was that? One to five." comes back through the
+   speaker, lands in `utterance`, and is read forever after as something the
+   driver said. No `agent_decision` goes with them — a decision records a moment
+   the *model* was given to speak, and the model was not consulted.
+2. The number goes to `/api/realtime/rating` with the window the exchange
+   occupied, on the same clock as `utterance` and `agent_turn`. The capture
+   ledger records the whole exchange like any other sound — the recorder is
+   never told to look away, and that commitment comes first — so extraction
+   withholds what falls inside the window (`insideRatingWindow` in
+   `packages/db/src/workspace.ts`), padded 1.5s either side to absorb the
+   difference between the live stream's offsets and the chunk pipeline's.
+   Nothing is deleted; `/sessions/[id]` still shows the exchange where it
+   happened. Without this, a workspace grows a task called "three".
+
+**Off by default in a degraded drive.** The probe is built only when
+`/api/realtime/session` sent `ratingProbe` *and* the connection has a ticket to
+write with. A probe that opens a private-sounding channel and drops the answer
+on the floor is worse than no probe, because the person believes they were
+heard.
 
 ---
 

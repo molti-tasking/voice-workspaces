@@ -511,6 +511,17 @@ export const agentTurnKindEnum = pgEnum("agent_turn_kind", [
   "proactive_prompt",
   "confirmation_request",
   "backchannel",
+  /**
+   * A line the rating probe spoke in its own voice — the question it asks
+   * after "rate this", and the word it answers with.
+   *
+   * Not conversation: the model never generated it and never saw it. It is
+   * here because `agent_turn` is the echo filter's only input, and anything
+   * that reaches the speaker must be in it or the microphone hears the car
+   * ask "how was that, one to five" and files it as something the driver
+   * said. The kind keeps it out of any count of what the agent said back.
+   */
+  "rating_prompt",
 ]);
 
 export const agentTurn = pgTable(
@@ -710,6 +721,104 @@ export const agentDecisionRelations = relations(agentDecision, ({ one }) => ({
   }),
   agentTurn: one(agentTurn, {
     fields: [agentDecision.agentTurnId],
+    references: [agentTurn.id],
+  }),
+}));
+
+/**
+ * How a rating probe ended.
+ *
+ * `unclear` and `timeout` are kept rather than discarded because they are the
+ * finding: a feedback channel people trigger and then cannot complete is a
+ * broken feedback channel, and a table of successful ratings alone would look
+ * like it was working.
+ */
+export const ratingOutcomeEnum = pgEnum("rating_outcome", [
+  /** A number between 1 and 5 was heard and stored. */
+  "rated",
+  /** "Never mind" — the driver backed out. */
+  "cancelled",
+  /** They answered, twice, with something that was not a rating. */
+  "unclear",
+  /** They said nothing before the probe gave up. */
+  "timeout",
+]);
+
+/**
+ * What the driver said about the system, when they asked to say it.
+ *
+ * "Hey, rate this" opens a private exchange: a second voice asks how that was,
+ * the answer is a number, and the agent is not in the room for it — the words
+ * never reach the model, the running summary, or retrieval (see `RatingProbe`
+ * in apps/pipecat/bot.py). This is where the number lands.
+ *
+ * ITS OWN TABLE, not a column on `agent_turn`. A rating is about the
+ * interaction rather than a turn of it, it can arrive with no turn to point at
+ * — the first minutes of a drive — and the probe writes a row for the ones
+ * that produced no number at all. It carries NO TEXT, exactly as
+ * `agent_decision` does not: numbers, enums, offsets and ids only, so nothing
+ * here can cross the study's privacy boundary however it is exported.
+ *
+ * THE WINDOW IS LOAD-BEARING, not decoration. `askedOffsetMs` to
+ * `endedOffsetMs` is the stretch of the drive the exchange occupied, on the
+ * same clock as `utterance` and `agent_turn`. The capture ledger records that
+ * speech like any other — the recorder cannot be told to look away, and the
+ * commitment that it never is comes first — so extraction reads these bounds
+ * and withholds what falls inside them (`loadPendingSegments`). Without it the
+ * workspace grows a task called "three".
+ */
+export const interactionRating = pgTable(
+  "interaction_rating",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    captureSessionId: uuid("capture_session_id")
+      .notNull()
+      .references(() => captureSession.id, { onDelete: "cascade" }),
+    /**
+     * Monotonic per connection, not per drive — a reconnect restarts it, as it
+     * restarts `agent_turn.seq`. Order by `askedOffsetMs` when reading a drive.
+     */
+    seq: integer("seq").notNull(),
+    /** When "rate this" was heard, as ms into the drive. */
+    askedOffsetMs: integer("asked_offset_ms").notNull(),
+    /** When the number was heard. Null for a probe that got none. */
+    answeredOffsetMs: integer("answered_offset_ms"),
+    /**
+     * When the probe let go of the drive — after the last word it spoke, not
+     * after the answer. The difference is the acknowledgement, whose echo
+     * would otherwise fall outside the window and into extraction.
+     */
+    endedOffsetMs: integer("ended_offset_ms").notNull(),
+    /** 1 to 5. Null unless `outcome` is `rated`; the check is in the route. */
+    rating: integer("rating"),
+    outcome: ratingOutcomeEnum("outcome").notNull(),
+    /**
+     * The last thing the agent said before the probe opened — what "this"
+     * most likely meant.
+     *
+     * Nullable and deliberately weak: a driver may be rating the last minute,
+     * the whole drive, or the thing they were just thinking about. It is a
+     * join for the analysis to start from, never a claim about intent.
+     */
+    agentTurnId: uuid("agent_turn_id").references(() => agentTurn.id, { onDelete: "set null" }),
+    /** `TALKBACK_CONFIG_VERSION` the container was running, as everywhere else. */
+    configVersion: text("config_version"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Read a drive's ratings in order, and — the reason it is an index rather
+    // than a sort — find the windows covering an utterance during extraction.
+    index("interaction_rating_session_offset_idx").on(t.captureSessionId, t.askedOffsetMs),
+  ],
+);
+
+export const interactionRatingRelations = relations(interactionRating, ({ one }) => ({
+  captureSession: one(captureSession, {
+    fields: [interactionRating.captureSessionId],
+    references: [captureSession.id],
+  }),
+  agentTurn: one(agentTurn, {
+    fields: [interactionRating.agentTurnId],
     references: [agentTurn.id],
   }),
 }));

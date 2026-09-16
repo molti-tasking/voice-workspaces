@@ -82,6 +82,8 @@ from pipecat.frames.frames import (
     MetricsFrame,
     StartFrame,
     TranscriptionFrame,
+    TTSSpeakFrame,
+    TTSUpdateSettingsFrame,
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
     VADUserStartedSpeakingFrame,
@@ -1653,6 +1655,10 @@ class TurnRecorder:
         # Board tools called since the last recorded turn, for `toolCalls` on
         # the turn that reports them.
         self._tool_calls: list[dict] = []
+        # The last turn the AGENT spoke, for anything that needs to point at
+        # what was just said — the rating probe asks "how was that", and
+        # "that" is this row. The probe's own lines never become it.
+        self._last_turn_id: str | None = None
 
     def note_user(self, text: str) -> None:
         """What the driver just said, told to us from upstream.
@@ -1776,6 +1782,56 @@ class TurnRecorder:
         decision = self._decision(cue, "interrupted" if barged_in else "spoke", latency)
         self._send(payload, decision)
 
+    def last_turn_id(self) -> str | None:
+        """The agent's last spoken turn, once the web app has confirmed the row.
+
+        None until then, and None for a drive with no ticket — a rating that
+        cannot name what it is about is still a rating, so the caller records
+        it anyway rather than waiting.
+        """
+        return self._last_turn_id
+
+    def record_aside(self, spoken: str, *, kind: str) -> None:
+        """A line the CONTAINER spoke, not the model.
+
+        The rating probe's question and its acknowledgement. They reach the
+        speaker, so they must reach `agent_turn` — it is the echo filter's only
+        input, and without a row the microphone's copy of "How was that? One to
+        five." is read forever after as something the driver said.
+
+        No `agent_decision`, unlike every other turn: a decision records a
+        moment the MODEL was given to speak, and the model was not consulted
+        here. Filing one would put apparatus in the middle of the study's
+        turn-taking record. And no `respondingToText`: the probe answers the
+        driver's trigger, not a thought.
+        """
+        if not self._ticket or not self._started_at_ms or not spoken.strip():
+            return
+
+        seq, self._seq = self._seq, self._seq + 1
+        offset = max(0, _now_ms() - self._started_at_ms)
+        payload = {
+            "ticket": self._ticket,
+            "seq": seq,
+            "startOffsetMs": offset,
+            # Same 14-characters-a-second estimate the spoken path uses; the
+            # container never learns when playback actually ended.
+            "endOffsetMs": offset + int(len(spoken) / 14 * 1000),
+            "text": spoken,
+            "generatedText": spoken,
+            "kind": kind,
+        }
+        if self._config_version:
+            payload["configVersion"] = self._config_version
+
+        async def send() -> None:
+            try:
+                await asyncio.to_thread(self._post, "agent-turn", payload)
+            except Exception as err:
+                logger.warning(f"[turn] aside not recorded, echo filter will be blind: {err}")
+
+        asyncio.create_task(send())
+
     def decline(self, *, interrupted: bool = False, cue: Cue | None = None) -> None:
         """A completion that reached nobody: the model declined, or the driver
         spoke before its first word. Writes a decision and NO turn.
@@ -1835,6 +1891,10 @@ class TurnRecorder:
                 try:
                     response = await asyncio.to_thread(self._post, "agent-turn", turn)
                     turn_id = (response or {}).get("id")
+                    # What the rating probe means by "that". Set only here, so
+                    # the probe's own lines — written by `record_aside` — can
+                    # never become the thing being rated.
+                    self._last_turn_id = turn_id or self._last_turn_id
                 except Exception as err:
                     logger.warning(f"[turn] not recorded, echo filter will be blind: {err}")
             if turn_id:
@@ -2017,6 +2077,354 @@ class DraftRecorder:
         )
         with urllib.request.urlopen(req, timeout=5):
             pass
+
+
+# ---------------------------------------------------------------------------
+# The rating probe
+# ---------------------------------------------------------------------------
+
+# WHAT IT COSTS TO GET THIS WRONG, stated once here because three constants
+# below are all consequences of it: a false trigger hijacks the drive, mutes
+# the agent, and files a number against a moment nobody meant to rate. A missed
+# trigger costs the driver one repetition. Every threshold in this section is
+# lopsided that way on purpose.
+
+# Openers a person drops in front of the phrase without meaning them.
+RATING_FILLERS = re.compile(r"^(?:um|uh|er|so|ok|okay|hey|hi|right|and|well)\b[\s,]*")
+
+# The trigger, matched against the WHOLE utterance rather than searched for
+# inside one: "I'd rate this paper highly" is a sentence about a paper, and a
+# probe that opened on it would take the next thing said as a score.
+RATING_TRIGGER = re.compile(r"^rate (?:this|that|it)(?: one| drive| bit)?$")
+
+# Digits and the five words, and NOTHING that merely sounds like them. Whisper
+# hears "for" for four and "to" for two often enough to matter, and a rating is
+# a measurement: a wrong number recorded silently is worse than a re-ask, so
+# the homophones are refused rather than guessed.
+RATING_WORDS = {
+    "1": 1, "one": 1,
+    "2": 2, "two": 2,
+    "3": 3, "three": 3,
+    "4": 4, "four": 4,
+    "5": 5, "five": 5,
+}
+
+# "Three out of five", "3/5" — the scale said back. Removed before the number
+# is read, or the answer would contain two candidates and be refused.
+RATING_SCALE_SUFFIX = re.compile(r"\b(?:out of|of|over|slash|/)\s*(?:5|five)\b")
+
+RATING_CANCEL = re.compile(
+    r"\b(?:never ?mind|nevermind|forget it|forget that|cancel|skip it|skip|leave it|stop)\b"
+)
+
+# How long the probe holds the drive open waiting for a number.
+#
+# Long enough to survive a roundabout — the whole point is that this happens
+# while someone is driving — and short enough that a driver who thought better
+# of it, or was never answered, gets the agent back without wondering what
+# broke. A fixed constant rather than an env var: it is study apparatus, and
+# two deployments answering on different timers would be two instruments.
+RATING_TIMEOUT_SECS = 15.0
+
+# Answers that are not a rating, before the probe stops asking. One re-ask, not
+# two: a car that keeps asking the same question is worse than a lost rating.
+RATING_MAX_ATTEMPTS = 2
+
+# The words the container falls back on when the web app sent none — a degraded
+# connection has no probe at all, so these are only reached if `/session`
+# answered without them.
+FALLBACK_RATING_LINES = {
+    "question": "How was that? One to five.",
+    "reask": "One to five, or say never mind.",
+    "ack": "{rating}. Noted.",
+    "cancelled": "Never mind, then.",
+    "gaveUp": "Let's leave it.",
+}
+
+
+def normalise_spoken(text: str) -> str:
+    """Live ASR reduced to words, for matching: lowercase, no punctuation."""
+    cleaned = re.sub(r"[^\w\s/]+", " ", text.lower())
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def is_rating_trigger(text: str) -> bool:
+    """Whether this utterance is the driver asking to rate, and nothing else."""
+    spoken = normalise_spoken(strip_speaker_tag(text))
+    # Fillers come off one at a time: "um, ok, rate this" is still the trigger.
+    previous = None
+    while previous != spoken:
+        previous = spoken
+        spoken = RATING_FILLERS.sub("", spoken).strip()
+    return bool(RATING_TRIGGER.match(spoken))
+
+
+def parse_rating(text: str) -> int | None:
+    """The number in an answer, or None when there is not exactly one.
+
+    None is a real answer and the caller must handle it: it is what the re-ask
+    exists for. Two different numbers in one breath ("three, no, four") is also
+    None — the probe asks again rather than picking one.
+    """
+    spoken = RATING_SCALE_SUFFIX.sub(" ", normalise_spoken(strip_speaker_tag(text)))
+    found = {RATING_WORDS[word] for word in spoken.split() if word in RATING_WORDS}
+    return found.pop() if len(found) == 1 else None
+
+
+def is_rating_cancel(text: str) -> bool:
+    return bool(RATING_CANCEL.search(normalise_spoken(strip_speaker_tag(text))))
+
+
+class RatingProbe(FrameProcessor):
+    """"Hey, rate this" — a second voice, a number, and the agent left out of it.
+
+    WHY IT IS A PROCESSOR AND NOT A TOOL. Every other thing the agent can do
+    on request is a function call the model decides to make. This one cannot
+    be, for two reasons that both matter. It is an instrument, and an
+    instrument that fires when a language model judges it was addressed
+    measures the model as much as the thing; and the whole value of the
+    channel is that the agent is NOT in the room for it — a rating given to
+    something that is listening is a different act from one given in private.
+
+    SO IT SITS ABOVE EVERYTHING THAT REMEMBERS. Placed straight after the STT
+    trace and before the running summary, the topic title, retrieval and the
+    user aggregator, it consumes the driver's words instead of forwarding
+    them. Consequences, all of them the point: the model is never run (the
+    aggregator gets no user text, so there is no turn), the summary does not
+    fold the exchange in, the topic title does not swing to "feedback", and
+    retrieval never quotes a rating back in a later drive.
+
+    THE VOICE IS THE MODE INDICATOR. A driver cannot look at a screen, so the
+    switch to a different voice is the only way they can tell the channel is
+    open — and it has to go back the moment the exchange ends or the signal
+    means nothing. Both switches are `TTSUpdateSettingsFrame`s, and both are
+    ORDERED against the speech around them rather than timed: the TTS service
+    pauses its own frame processing while it speaks, so the frame that restores
+    the agent's voice is applied after the acknowledgement has played and not
+    a moment before. No sleep, no guessing how long a sentence takes.
+
+    WHAT REACHES THE LEDGER. The two lines the probe speaks are recorded as
+    `agent_turn` rows of kind `rating_prompt`, for one reason: `agent_turn` is
+    the echo filter's only input, and the microphone hears everything the car
+    says. Without the rows, "How was that? One to five." comes back through
+    the speaker, is transcribed into `utterance`, and is read forever after as
+    something the driver said. The number itself goes to
+    `/api/realtime/rating`, and the window the exchange occupied goes with it
+    so extraction can leave the driver's "three" out of their workspace.
+
+    EVERY PROBE WRITES A ROW, including the ones that got no number. A channel
+    people trigger and cannot finish is the finding.
+
+    WHY NO OFFER INTERRUPTS IT, since nothing here tells `Offers` to stand
+    down: its timer is cancelled by the VAD frames any speech produces, and is
+    re-armed only by a final `TranscriptionFrame` — which is exactly what this
+    consumes. So the trigger cancels whatever was armed and nothing re-arms
+    until the driver speaks again with the probe closed. If `Offers` ever arms
+    on something else, it will need telling.
+    """
+
+    def __init__(
+        self,
+        config: dict,
+        drive_voice: str,
+        recorder: "TurnRecorder | None" = None,
+        ticket: str | None = None,
+        started_at_ms: int | None = None,
+        config_version: str | None = None,
+    ):
+        super().__init__()
+        self._rating_voice = config.get("voiceId") or ""
+        lines = config.get("lines") or {}
+        self._lines = {**FALLBACK_RATING_LINES, **{k: v for k, v in lines.items() if v}}
+        self._drive_voice = drive_voice
+        self._recorder = recorder
+        self._ticket = ticket
+        self._started_at_ms = started_at_ms
+        self._config_version = config_version
+
+        self._active = False
+        self._seq = 0
+        self._attempts = 0
+        self._asked_ms: int | None = None
+        self._answered_ms: int | None = None
+        self._agent_turn_id: str | None = None
+        self._deadline: asyncio.Task | None = None
+
+    @property
+    def active(self) -> bool:
+        return self._active
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, TranscriptionFrame) and frame.text.strip():
+            if not self._active and is_rating_trigger(frame.text):
+                # Dropped, not forwarded: the trigger is addressed to the
+                # apparatus, and the agent answering "sure, go ahead" would be
+                # two voices talking at once.
+                await self._open()
+                return
+            if self._active:
+                await self._answer(frame.text)
+                return
+
+        # A drive that ends mid-probe still gets its row: the window was real
+        # and extraction reads it, whatever the exchange came to.
+        if isinstance(frame, (EndFrame, CancelFrame)) and self._active:
+            await self._close("timeout", say=None)
+
+        await self.push_frame(frame, direction)
+
+    async def _open(self) -> None:
+        self._active = True
+        self._attempts = 0
+        self._answered_ms = None
+        self._asked_ms = self._offset()
+        # What "this" most likely meant: the last thing the agent said. Taken
+        # now rather than at the end, because the probe's own lines become
+        # turns in between.
+        self._agent_turn_id = self._recorder.last_turn_id() if self._recorder else None
+        logger.info("[rating] probe open, agent muted")
+        await self._speak(self._lines["question"], voice=self._rating_voice)
+        self._arm_deadline()
+
+    async def _answer(self, text: str) -> None:
+        self._cancel_deadline()
+
+        if is_rating_cancel(text):
+            await self._close("cancelled", say=self._lines["cancelled"])
+            return
+
+        rating = parse_rating(text)
+        if rating is not None:
+            self._answered_ms = self._offset()
+            await self._close("rated", say=self._lines["ack"].replace("{rating}", str(rating)), rating=rating)
+            return
+
+        self._attempts += 1
+        if self._attempts >= RATING_MAX_ATTEMPTS:
+            await self._close("unclear", say=self._lines["gaveUp"])
+            return
+
+        logger.info("[rating] not a number, asking once more")
+        await self._speak(self._lines["reask"])
+        self._arm_deadline()
+
+    async def _close(self, outcome: str, *, say: str | None, rating: int | None = None) -> None:
+        """Say the last word, hand the voice back, write the row.
+
+        In that order, and the order is the requirement: the final line belongs
+        to the private channel, and the voice returns as soon as it has been
+        spoken — which is what the frame after it does, without a timer.
+        """
+        self._cancel_deadline()
+        self._active = False
+
+        if say:
+            await self._speak(say)
+        # Back to the agent's voice. Queued behind the line above, so it lands
+        # the instant that line finishes and never cuts it off.
+        await self.push_frame(
+            TTSUpdateSettingsFrame(delta=ElevenLabsTTSService.Settings(voice=self._drive_voice))
+        )
+
+        ended = self._offset()
+        seq, self._seq = self._seq, self._seq + 1
+        logger.info(f"[rating] {outcome}{f' {rating}/5' if rating else ''}, voice restored")
+
+        payload = {
+            "ticket": self._ticket,
+            "seq": seq,
+            "askedOffsetMs": self._asked_ms or 0,
+            "endedOffsetMs": ended,
+            "outcome": outcome,
+        }
+        if self._answered_ms is not None:
+            payload["answeredOffsetMs"] = self._answered_ms
+        if rating is not None:
+            payload["rating"] = rating
+        if self._agent_turn_id:
+            payload["agentTurnId"] = self._agent_turn_id
+        if self._config_version:
+            payload["configVersion"] = self._config_version
+
+        self._post(payload)
+        self._asked_ms = None
+        self._agent_turn_id = None
+
+    async def _speak(self, line: str, *, voice: str | None = None) -> None:
+        """One line in the probe's voice, kept out of the conversation.
+
+        `append_to_context=False` is not a detail: without it the aggregator
+        downstream files these words as something the assistant said, and the
+        model's next reply answers a question it never asked.
+        """
+        if voice:
+            await self.push_frame(
+                TTSUpdateSettingsFrame(delta=ElevenLabsTTSService.Settings(voice=voice))
+            )
+        await self.push_frame(TTSSpeakFrame(text=line, append_to_context=False))
+        # Into `agent_turn` as `rating_prompt`, so the echo filter knows the car
+        # said it. See the class docstring.
+        if self._recorder is not None:
+            self._recorder.record_aside(line, kind="rating_prompt")
+
+    def _arm_deadline(self) -> None:
+        """The same shape as `Offers`: one task, cancelled by hand."""
+        self._cancel_deadline()
+        self._deadline = self.create_task(self._expire(), name="rating:timeout")
+
+    def _cancel_deadline(self) -> None:
+        if self._deadline is not None:
+            self._deadline.cancel()
+            self._deadline = None
+
+    async def _expire(self) -> None:
+        """Nobody answered. Give the drive back, silently.
+
+        Silently because the alternative is a car saying "let's leave it" into
+        an empty cabin fifteen seconds after the driver moved on. The voice
+        still goes back, which is the part that matters — the agent is mute
+        until it does.
+        """
+        try:
+            await asyncio.sleep(RATING_TIMEOUT_SECS)
+        except asyncio.CancelledError:
+            return
+        self._deadline = None
+        if self._active:
+            logger.info("[rating] no answer, letting go")
+            await self._close("timeout", say=None)
+
+    def _offset(self) -> int:
+        """Ms into the drive, on `utterance`'s clock — the join for the analysis."""
+        if not self._started_at_ms:
+            return 0
+        return max(0, _now_ms() - self._started_at_ms)
+
+    def _post(self, payload: dict) -> None:
+        """Fire and forget, like every other write from this container."""
+        if not self._ticket or not self._started_at_ms:
+            return
+
+        def send() -> None:
+            req = urllib.request.Request(
+                f"{WEB_URL}/api/realtime/rating",
+                method="POST",
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=5):
+                pass
+
+        async def run() -> None:
+            try:
+                await asyncio.to_thread(send)
+            except Exception as err:
+                # Loud: the driver was asked for this and answered it.
+                logger.warning(f"[rating] NOT recorded, the answer is lost: {err}")
+
+        asyncio.create_task(run())
 
 
 class SilenceGate(FrameProcessor):
@@ -2470,6 +2878,30 @@ def build_pipeline(
             llm.register_function(schema.name, board_tools.handle, cancel_on_interruption=False)
         logger.info(f"[board] tools {', '.join(s.name for s in tools.standard_tools)}")
     drafts = DraftRecorder(ticket, session.get("startedAtEpochMs"))
+
+    # The rating probe, only where a rating could actually be stored.
+    #
+    # Needs the web app's config — the voice it borrows and the words it says,
+    # both chosen in TypeScript — and a ticket to write with. Without either it
+    # is not built at all, and "rate this" is simply something the driver said
+    # to the agent. That is the right degraded behaviour: a probe that opens a
+    # private-sounding channel and drops the answer on the floor is worse than
+    # no probe, because the person believes they were heard.
+    rating_config = session.get("ratingProbe") or {}
+    rating = (
+        RatingProbe(
+            rating_config,
+            drive_voice=voice,
+            recorder=recorder,
+            ticket=ticket,
+            started_at_ms=session.get("startedAtEpochMs"),
+            config_version=session.get("configVersion"),
+        )
+        if ticket and rating_config.get("voiceId")
+        else None
+    )
+    if rating is not None:
+        logger.info(f"[rating] probe armed, feedback voice {rating_config['voiceId']}")
     # A SECOND analyzer, deliberately, not the same instance: this one drives
     # turn completion and interruption in the aggregator, and the two keep
     # independent state.
@@ -2498,6 +2930,14 @@ def build_pipeline(
             # Before the trace, so the log shows the tag the model will see.
             SpeakerTagger(),
             Trace("stt"),
+            # ABOVE EVERYTHING THAT REMEMBERS, and that is the whole design of
+            # it: while the probe is open it consumes the driver's words rather
+            # than forwarding them, so the summary never folds a rating in, the
+            # topic title never swings to "feedback", retrieval never quotes one
+            # back in a later drive, and the aggregator gets no user text — so
+            # the model is not run at all. Everything below this line is the
+            # agent; the rating is not for the agent.
+            *([rating] if rating is not None else []),
             # Before Recall: the summary must see this turn's speech, and Recall
             # reads the summary when it composes the block.
             summary,

@@ -15,6 +15,7 @@ import {
   captureSession,
   directive,
   extraction,
+  interactionRating,
   utterance,
   workspaceCursor,
   workspaceOp,
@@ -69,6 +70,38 @@ export async function loadOps(userId: string): Promise<StoredOp[]> {
  * ------------------------------------------------------------------------- */
 
 /**
+ * How far either side of a rating probe an utterance still belongs to it.
+ *
+ * The probe's own bounds come from the container's clock at the moment it
+ * heard the trigger and the moment it let go; the ledger's copy of the same
+ * speech is a separate transcription of separate chunks, and its offsets are
+ * the chunk's, not the live stream's. A second and a half absorbs that
+ * difference in both directions.
+ *
+ * Lopsided on purpose: withholding a second of ordinary speech either side of
+ * a rating costs the workspace almost nothing, and failing to withhold the
+ * rating itself puts a task called "three" on somebody's board.
+ */
+const RATING_WINDOW_PAD_MS = 1_500;
+
+/**
+ * Whether an utterance falls inside a rating exchange on the same drive.
+ *
+ * The one place the private channel touches extraction. "Hey, rate this", the
+ * number, and the probe's two spoken lines coming back through the microphone
+ * are all captured like any other sound — the recorder is never told to look
+ * away, and that commitment comes before this one — so they are excluded on
+ * READ, exactly as an echoed reply and a handled direction are. Nothing is
+ * deleted, and `/sessions/[id]` still shows the exchange where it happened.
+ */
+const insideRatingWindow = sql<boolean>`exists (
+  select 1 from ${interactionRating} r
+  where r.capture_session_id = ${utterance.captureSessionId}
+    and ${utterance.startOffsetMs} between r.asked_offset_ms - ${RATING_WINDOW_PAD_MS}
+                                       and r.ended_offset_ms + ${RATING_WINDOW_PAD_MS}
+)`;
+
+/**
  * Transcribed utterances not yet consumed by extraction.
  *
  * `occurredAt` is computed as session start + offset, which is what puts every
@@ -100,6 +133,7 @@ export async function loadPendingSegments(
       createdAt: utterance.createdAt,
       captureSessionId: utterance.captureSessionId,
       resolvedCapabilityId: directive.capabilityId,
+      rated: insideRatingWindow,
     })
     .from(utterance)
     .innerJoin(
@@ -122,9 +156,16 @@ export async function loadPendingSegments(
     id: r.id,
     text: r.text,
     occurredAt: new Date(r.occurredAt),
-    kind: r.kindOverride ?? r.kind,
+    // Speech inside a rating exchange IS a direction, whatever the classifier
+    // made of it in isolation: "rate this" and the number that answers it are
+    // addressed to the system, not to the record. Both halves are needed —
+    // extraction withholds a segment only when it is a direction AND something
+    // else dealt with it (`extractWorkspaceFully`), and the probe is the
+    // something else.
+    kind: r.rated === true ? ("directive" as const) : (r.kindOverride ?? r.kind),
     recordedAt: r.createdAt,
-    handledElsewhere: r.kindOverride === "directive" || r.resolvedCapabilityId !== null,
+    handledElsewhere:
+      r.kindOverride === "directive" || r.resolvedCapabilityId !== null || r.rated === true,
   }));
 }
 
@@ -141,6 +182,7 @@ export async function loadAllSegments(
       kind: utterance.kind,
       kindOverride: utterance.kindOverride,
       occurredAt,
+      rated: insideRatingWindow,
     })
     .from(utterance)
     .innerJoin(
@@ -154,7 +196,11 @@ export async function loadAllSegments(
     id: r.id,
     text: r.text,
     occurredAt: new Date(r.occurredAt),
-    kind: r.kindOverride ?? r.kind,
+    // Both fields, for the reason given in `loadPendingSegments`: a rebuild
+    // that withheld less than the live path would put every rating back into
+    // the workspace.
+    kind: r.rated === true ? ("directive" as const) : (r.kindOverride ?? r.kind),
+    handledElsewhere: r.rated === true,
   }));
 }
 

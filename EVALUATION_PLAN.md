@@ -421,6 +421,7 @@ Each task lists **Why**, **Now** (verified current state), **Change**, and **Don
      - `capability_version` counts
      - `workspace_op` (type, `via`, counts; no text)
      - board `judge()` outcomes
+     - `interaction_rating` (the number, the outcome, offsets and ids; the table holds no text)
      - debrief responses (T3.1, which are content by design)
   3. A `--include-text` flag exists **only** for the researcher's own pilot account, and prints a
      warning.
@@ -523,6 +524,25 @@ they are correctness fixes.
     while the drive itself stays private.
   - The idle sweep's automatic close must still work.
   - Any on-screen ratings wait for decision §5.3.
+- **T3.1b In-drive rating, built.** "Hey, rate this" opens a private exchange in a second
+  voice, takes a 1–5, and hands the drive back — `RatingProbe` in `apps/pipecat/bot.py`, the
+  table `interaction_rating`, the section in TALKBACK.md.
+  - **What it is for:** the only self-report taken *during* a drive rather than remembered after
+    one, and the only measure in the study that is not behavioural. It complements T3.1 rather
+    than replacing it: a debrief asks about the drive, this asks about a moment.
+  - **What the analysis gets:** one row per probe, exported as `interaction_rating`, carrying the
+    number, the outcome (`rated` / `cancelled` / `unclear` / `timeout`), the window on the
+    `utterance` clock, and `agentTurnId` — the last thing the agent said before the trigger, so a
+    rating joins directly to what was being rated. Ratings can therefore be read against turn
+    latency, setting, proactivity, condition, or anything else keyed by drive and offset.
+  - **The three non-`rated` outcomes are data, not noise.** A channel participants trigger and
+    cannot complete is a finding about the channel; count them before reading the numbers.
+  - **Bias to declare in the limitations:** the probe is opt-in and self-triggered, so ratings
+    cluster where somebody had something to say. It measures moments people chose to rate, and
+    the count of drives with no probe at all belongs in the same table.
+  - **Not in the workspace, by construction:** the exchange is withheld from extraction by its
+    window (`insideRatingWindow`), so "three" never becomes a task. It stays in the transcript,
+    where it happened.
 - **T3.2 Calibration probe (only if approved, §5.3).**
   - At the desk, show k extracted blocks from the last drive. The participant answers "I
     said/meant this: yes/no" plus a 1–5 confidence rating.

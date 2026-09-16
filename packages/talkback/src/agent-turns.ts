@@ -30,7 +30,13 @@ export interface AgentTurnRecord {
   seq: number;
   startOffsetMs: number;
   endOffsetMs: number;
-  kind?: "reply" | "proactive_prompt" | "confirmation_request" | "backchannel";
+  kind?:
+    | "reply"
+    | "proactive_prompt"
+    | "confirmation_request"
+    | "backchannel"
+    /** A line the rating probe spoke. Not the model's words; see the schema. */
+    | "rating_prompt";
   /** What the user actually heard. Empty when a turn was cut off before playback. */
   text: string;
   /** What the model produced, spoken or not. */

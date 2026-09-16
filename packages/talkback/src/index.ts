@@ -64,6 +64,7 @@ export {
   VOICE_IDS,
   asVoiceId,
   isKnownVoice,
+  ratingVoiceIdFor,
   voiceProfile,
   type VoiceProfile,
 } from "./voice";
@@ -82,6 +83,15 @@ export {
   type BoardToolName,
   type ToolDefinition,
 } from "./board-tools";
+export {
+  MAX_RATING,
+  MIN_RATING,
+  RATING_LINES,
+  recordInteractionRating,
+  type InteractionRatingRecord,
+  type RatingLines,
+  type RatingOutcome,
+} from "./rating";
 export {
   recordAgentDecision,
   recordAgentTurn,

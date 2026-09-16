@@ -56,7 +56,13 @@ const Body = z.object({
   // What prompted the turn. Accepted by `recordAgentTurn` from the start but
   // never by this route, so every turn — offers included — was stored as a
   // `reply`, and the analysis could not tell an unprompted turn from an answer.
-  kind: z.enum(["reply", "proactive_prompt", "confirmation_request", "backchannel"]).optional(),
+  // `rating_prompt` is the container's own voice, not the model's — see
+  // `record_aside` in bot.py. It is here because anything that reached the
+  // speaker must reach this table, or the echo filter cannot tell the car's
+  // words from the driver's.
+  kind: z
+    .enum(["reply", "proactive_prompt", "confirmation_request", "backchannel", "rating_prompt"])
+    .optional(),
   // Echoed from `/api/realtime/session` by the container, rather than stamped
   // here from this deployment's constant: a web deploy mid-drive changes the
   // constant, not the prompt the container is already running.

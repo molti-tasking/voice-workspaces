@@ -64,3 +64,30 @@ export function asVoiceId(value: string | null | undefined): string | null {
 export function voiceProfile(id: string | null | undefined): VoiceProfile | null {
   return VOICES.find((v) => v.id === id) ?? null;
 }
+
+/**
+ * The voice the rating probe speaks in — never the one the agent is using.
+ *
+ * WHY A DIFFERENT VOICE AT ALL. "Rate this" opens a channel that is about the
+ * system rather than with it, and a driver cannot see a mode indicator. The
+ * voice IS the indicator: while a second voice is asking, nothing being said
+ * reaches the agent, the summary or the transcript's derived work. Saying that
+ * in words, once, would be forgotten by the third drive; saying it in a voice
+ * is heard every time and needs no attention to notice.
+ *
+ * Deterministic, so a participant hears ONE feedback voice for the whole study
+ * — a channel that sounds different each time is a different channel. Taken
+ * from the same catalogue rather than a fourth voice in an env var, for the
+ * reason the catalogue exists: a voice that lives only in a deployment's
+ * `.env` cannot be recovered from the data months later.
+ *
+ * The last entry is the designated one, and the first that differs is used
+ * when the drive is already speaking in it — a rating voice equal to the
+ * agent's would silently remove the signal.
+ */
+export function ratingVoiceIdFor(driveVoiceId: string | null | undefined): string {
+  const drive = asVoiceId(driveVoiceId);
+  const designated = VOICES[VOICES.length - 1]!.id;
+  if (designated !== drive) return designated;
+  return VOICES.find((v) => v.id !== drive)!.id;
+}

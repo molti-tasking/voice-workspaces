@@ -32,6 +32,7 @@ import {
   capabilityVersion,
   captureSession,
   directive,
+  interactionRating,
   invocation,
   macroProposal,
   user,
@@ -234,6 +235,41 @@ export async function exportParticipant(
     for (const d of decisions) {
       const { id, ...rest } = d;
       out.push({ type: "agent_decision", decisionId: id, ...rest });
+    }
+
+    /* What they said about it, when they asked to ---------------------------- */
+    //
+    // The only self-report in the export, and the only measure here that is not
+    // behavioural: everything else says what somebody did, this says what they
+    // thought of it, at the moment they thought it rather than at a debrief
+    // twenty minutes later. Whole rows, including the probes that produced no
+    // number — a channel people trigger and cannot finish is the finding, and
+    // an export of successful ratings only would hide it.
+    //
+    // Nothing to redact: the table has never held text (see `interaction_rating`
+    // in the schema), so this is the same shape with or without `--include-text`.
+    const ratings = await db
+      .select({
+        id: interactionRating.id,
+        sessionId: interactionRating.captureSessionId,
+        seq: interactionRating.seq,
+        askedOffsetMs: interactionRating.askedOffsetMs,
+        answeredOffsetMs: interactionRating.answeredOffsetMs,
+        endedOffsetMs: interactionRating.endedOffsetMs,
+        rating: interactionRating.rating,
+        outcome: interactionRating.outcome,
+        // The turn it was about, so a rating joins to what was just said.
+        agentTurnId: interactionRating.agentTurnId,
+        configVersion: interactionRating.configVersion,
+        createdAt: interactionRating.createdAt,
+      })
+      .from(interactionRating)
+      .where(inArray(interactionRating.captureSessionId, sessionIds))
+      .orderBy(asc(interactionRating.captureSessionId), asc(interactionRating.askedOffsetMs));
+
+    for (const r of ratings) {
+      const { id, createdAt, ...rest } = r;
+      out.push({ type: "interaction_rating", ratingId: id, ...rest, createdAt: iso(createdAt) });
     }
 
     /* Directions and what they fired ----------------------------------------- */

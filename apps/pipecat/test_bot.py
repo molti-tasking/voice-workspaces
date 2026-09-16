@@ -36,6 +36,7 @@ import pytest  # noqa: E402
 
 import bot  # noqa: E402  — needs the environment above
 from pipecat.frames.frames import (  # noqa: E402
+    EndFrame,
     InterruptionFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
@@ -1138,3 +1139,281 @@ def test_the_gate_tells_the_board_what_the_driver_heard():
 
     asyncio.run(run())
     assert "".join(noted) == "The Tuesday deadline is the binding one."
+
+
+# --- RatingProbe: the private channel ----------------------------------------
+#
+# The probe is apparatus, not conversation, and every one of these tests is
+# about a way that distinction could be lost: the trigger opening on a sentence
+# that merely mentions rating, a number guessed from a homophone, the driver's
+# answer reaching the model, the probe's own voice never going back, or a
+# window recorded so loosely that extraction cannot tell what to leave out.
+
+
+class FakeRatingRecorder:
+    """A `TurnRecorder` that remembers asides instead of POSTing them."""
+
+    def __init__(self, last_turn="turn-abc"):
+        self.asides = []
+        self._last_turn = last_turn
+
+    def last_turn_id(self):
+        return self._last_turn
+
+    def record_aside(self, spoken, *, kind):
+        self.asides.append({"spoken": spoken, "kind": kind})
+
+
+def probe_with(monkeypatch, recorder=None):
+    """A probe whose frames, writes and timer are captured rather than real.
+
+    `create_task` needs the pipeline's task manager, which a bare processor has
+    not got — the same reason `offers_with` records arming instead of
+    scheduling it.
+    """
+    probe = bot.RatingProbe(
+        {"voiceId": "feedback-voice", "lines": dict(bot.FALLBACK_RATING_LINES)},
+        drive_voice="agent-voice",
+        recorder=recorder if recorder is not None else FakeRatingRecorder(),
+        ticket="ticket",
+        started_at_ms=1_000,
+        config_version="talkback-test",
+    )
+
+    probe.pushed = []
+    probe.posted = []
+    probe.forwarded = []
+
+    async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+        probe.pushed.append(frame)
+        probe.forwarded.append(frame)
+
+    probe.push_frame = capture
+    monkeypatch.setattr(probe, "_post", lambda payload: probe.posted.append(payload))
+
+    log = []
+
+    def create_task(coro, name=None):
+        coro.close()
+        log.append("arm")
+        return FakeTask(log)
+
+    monkeypatch.setattr(probe, "create_task", create_task)
+    probe._log = log
+    return probe
+
+
+def spoken_lines(probe):
+    return [f.text for f in probe.pushed if isinstance(f, bot.TTSSpeakFrame)]
+
+
+def voice_switches(probe):
+    return [
+        f.delta.voice for f in probe.pushed if isinstance(f, bot.TTSUpdateSettingsFrame)
+    ]
+
+
+def frame_order(probe):
+    """What reached TTS, in order, as ('say', text) and ('voice', id) pairs."""
+    order = []
+    for frame in probe.pushed:
+        if isinstance(frame, bot.TTSSpeakFrame):
+            order.append(("say", frame.text))
+        elif isinstance(frame, bot.TTSUpdateSettingsFrame):
+            order.append(("voice", frame.delta.voice))
+    return order
+
+
+def test_the_trigger_is_the_whole_utterance_and_not_a_mention_of_rating():
+    for said in ("rate this", "Hey, rate this.", "um, ok, rate that", "Rate it!", "rate this drive"):
+        assert bot.is_rating_trigger(said), said
+    for said in (
+        "I would rate this paper highly",
+        "we should rate this later",
+        "rate this against the other one",
+        "what rate is it",
+        "great",
+    ):
+        assert not bot.is_rating_trigger(said), said
+
+
+def test_a_number_is_read_only_when_there_is_exactly_one_and_never_from_a_homophone():
+    assert bot.parse_rating("three") == 3
+    assert bot.parse_rating("uh, 4") == 4
+    assert bot.parse_rating("three out of five") == 3
+    assert bot.parse_rating("2/5") == 2
+    # Whisper hears "for" for four and "to" for two. A wrong number recorded
+    # silently is worse than asking again, so neither is guessed.
+    assert bot.parse_rating("for") is None
+    assert bot.parse_rating("to") is None
+    # Two candidates is not an answer.
+    assert bot.parse_rating("three, no, four") is None
+    assert bot.parse_rating("it was fine") is None
+
+
+def test_opening_switches_the_voice_asks_and_keeps_the_trigger_from_the_agent(monkeypatch):
+    probe = probe_with(monkeypatch)
+
+    async def run():
+        await probe.process_frame(heard("hey, rate this"), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+
+    assert probe.active
+    assert frame_order(probe) == [
+        ("voice", "feedback-voice"),
+        ("say", "How was that? One to five."),
+    ]
+    # The trigger itself never went downstream: the agent is not part of this.
+    assert not any(isinstance(f, TranscriptionFrame) for f in probe.forwarded)
+    assert probe._log == ["arm"]
+
+
+def test_a_rating_is_acknowledged_then_the_agent_s_voice_comes_straight_back(monkeypatch):
+    probe = probe_with(monkeypatch)
+
+    async def run():
+        await probe.process_frame(heard("rate this"), FrameDirection.DOWNSTREAM)
+        await probe.process_frame(heard("three out of five"), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+
+    # The order IS the requirement: the last word belongs to the private
+    # channel, and the voice returns immediately after it — the frame is queued
+    # behind the speech, so the TTS applies it once the line has played.
+    assert frame_order(probe) == [
+        ("voice", "feedback-voice"),
+        ("say", "How was that? One to five."),
+        ("say", "3. Noted."),
+        ("voice", "agent-voice"),
+    ]
+    assert not probe.active
+
+    row = probe.posted[-1]
+    assert row["outcome"] == "rated"
+    assert row["rating"] == 3
+    # What "this" meant: the last thing the agent said, taken when the probe
+    # opened rather than after its own lines became turns.
+    assert row["agentTurnId"] == "turn-abc"
+    assert row["configVersion"] == "talkback-test"
+
+
+def test_the_window_covers_the_whole_exchange_so_extraction_can_leave_it_out(monkeypatch):
+    probe = probe_with(monkeypatch)
+
+    async def run():
+        await probe.process_frame(heard("rate this"), FrameDirection.DOWNSTREAM)
+        await probe.process_frame(heard("four"), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+
+    row = probe.posted[-1]
+    # Offsets are ms into the drive, on `utterance`'s clock — the join.
+    assert row["askedOffsetMs"] <= row["answeredOffsetMs"] <= row["endedOffsetMs"]
+    # The window ends when the probe let go, not when the number arrived: the
+    # acknowledgement is spoken in between, and its echo lands in the ledger.
+    assert row["endedOffsetMs"] >= row["answeredOffsetMs"]
+
+
+def test_everything_the_probe_says_is_filed_as_a_turn_so_the_echo_filter_knows(monkeypatch):
+    recorder = FakeRatingRecorder()
+    probe = probe_with(monkeypatch, recorder=recorder)
+
+    async def run():
+        await probe.process_frame(heard("rate this"), FrameDirection.DOWNSTREAM)
+        await probe.process_frame(heard("five"), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+
+    # Both lines reached the speaker, so both must reach `agent_turn` — or the
+    # microphone's copy of them is read later as the driver's own words.
+    assert [a["spoken"] for a in recorder.asides] == ["How was that? One to five.", "5. Noted."]
+    assert {a["kind"] for a in recorder.asides} == {"rating_prompt"}
+
+
+def test_an_unusable_answer_is_asked_once_more_and_then_let_go(monkeypatch):
+    probe = probe_with(monkeypatch)
+
+    async def run():
+        await probe.process_frame(heard("rate this"), FrameDirection.DOWNSTREAM)
+        await probe.process_frame(heard("it was alright I suppose"), FrameDirection.DOWNSTREAM)
+        assert probe.active  # one more chance
+        await probe.process_frame(heard("hard to say"), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+
+    assert not probe.active
+    assert spoken_lines(probe) == [
+        "How was that? One to five.",
+        "One to five, or say never mind.",
+        "Let's leave it.",
+    ]
+    assert voice_switches(probe)[-1] == "agent-voice"
+    assert probe.posted[-1]["outcome"] == "unclear"
+    assert "rating" not in probe.posted[-1]
+    assert "answeredOffsetMs" not in probe.posted[-1]
+
+
+def test_never_mind_closes_it_without_a_rating(monkeypatch):
+    probe = probe_with(monkeypatch)
+
+    async def run():
+        await probe.process_frame(heard("rate this"), FrameDirection.DOWNSTREAM)
+        await probe.process_frame(heard("actually, never mind"), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+
+    assert probe.posted[-1]["outcome"] == "cancelled"
+    assert voice_switches(probe)[-1] == "agent-voice"
+
+
+def test_silence_gives_the_drive_back_without_the_car_talking_to_itself(monkeypatch):
+    probe = probe_with(monkeypatch)
+
+    async def now(_secs):
+        return None
+
+    # The wait itself is not what is under test; what happens after it is.
+    monkeypatch.setattr(bot.asyncio, "sleep", now)
+
+    async def run():
+        await probe.process_frame(heard("rate this"), FrameDirection.DOWNSTREAM)
+        await probe._expire()
+
+    asyncio.run(run())
+
+    assert not probe.active
+    # Nothing said on the way out, but the voice is the agent's again — it is
+    # what the driver is listening to.
+    assert spoken_lines(probe) == ["How was that? One to five."]
+    assert voice_switches(probe)[-1] == "agent-voice"
+    assert probe.posted[-1]["outcome"] == "timeout"
+
+
+def test_speech_reaches_the_agent_again_as_soon_as_the_probe_closes(monkeypatch):
+    probe = probe_with(monkeypatch)
+
+    async def run():
+        await probe.process_frame(heard("rate this"), FrameDirection.DOWNSTREAM)
+        await probe.process_frame(heard("two"), FrameDirection.DOWNSTREAM)
+        probe.forwarded.clear()
+        await probe.process_frame(heard("anyway, about the ethics form"), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+
+    assert [f.text for f in probe.forwarded if isinstance(f, TranscriptionFrame)] == [
+        "anyway, about the ethics form"
+    ]
+
+
+def test_a_drive_that_ends_mid_probe_still_writes_its_window(monkeypatch):
+    probe = probe_with(monkeypatch)
+
+    async def run():
+        await probe.process_frame(heard("rate this"), FrameDirection.DOWNSTREAM)
+        await probe.process_frame(EndFrame(), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+
+    assert not probe.active
+    assert probe.posted[-1]["outcome"] == "timeout"
