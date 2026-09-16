@@ -103,6 +103,11 @@ export default async function BoardPage({
           >
             Brief
           </Link>
+          {/* Offered on every visit, not only on an empty board: people import
+              one list, then remember the other one. */}
+          <Link href="/board/import" className="text-xs text-white/40 hover:text-white/80">
+            Import
+          </Link>
           <NavMenu />
         </div>
       </header>
@@ -139,6 +144,15 @@ function EmptyState({ hasOps }: { hasOps: boolean }) {
         {hasOps
           ? "Tasks appear here when you say you will do something — \"I need to email William tomorrow\" — and move when you say how it went."
           : "The board is derived from what you say. Record something first."}
+      </p>
+      {/* The empty board is exactly where someone realises their work is
+          somewhere else. Say so here rather than making them find the link. */}
+      <p className="mt-3 text-sm text-white/40">
+        Already keep a board somewhere?{" "}
+        <Link href="/board/import" className="underline underline-offset-4">
+          Bring it in
+        </Link>
+        .
       </p>
     </div>
   );
