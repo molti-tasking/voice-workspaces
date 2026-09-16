@@ -315,6 +315,80 @@ def test_strip_speaker_tags():
     assert bot.strip_speaker_tags("No tag here.") == "No tag here."
 
 
+# --- Drafts: what is kept rather than heard -----------------------------------
+#
+# `extract_drafts` is the Python half of `extractDrafts`
+# (packages/talkback/src/prompt.ts); these are the cases from `prompt.test.ts`,
+# ported, so the two cannot drift silently. The draft body is the one thing the
+# person explicitly asked to take away, so both sides are tolerant on purpose:
+# a missing closing tag loses seven characters, not the draft.
+
+
+def test_extract_draft_keeps_the_body_out_of_the_speech():
+    speech, drafts = bot.extract_drafts('Written it down.<draft title="Email">Dear W.</draft>')
+    assert speech == "Written it down."
+    assert drafts == [{"title": "Email", "text": "Dear W."}]
+
+
+def test_extract_draft_runs_an_unterminated_block_to_the_end():
+    _, drafts = bot.extract_drafts('<draft title="Email">Dear W. and then some')
+    assert drafts == [{"title": "Email", "text": "Dear W. and then some"}]
+
+
+def test_extract_takes_several_drafts_from_one_completion():
+    _, drafts = bot.extract_drafts('<draft title="A">one</draft>and<draft title="B">two</draft>')
+    assert [d["title"] for d in drafts] == ["A", "B"]
+
+
+def test_extract_does_not_eat_a_reply_that_merely_contains_the_characters():
+    # No `>` closing the tag, so nothing opened.
+    speech, drafts = bot.extract_drafts("I would not write <draft without a plan")
+    assert drafts == []
+    assert speech == "I would not write <draft without a plan"
+
+
+def test_extract_drops_an_empty_draft():
+    _, drafts = bot.extract_drafts('ok<draft title="X">   </draft>')
+    assert drafts == []
+
+
+def test_extract_carries_the_handle_of_a_revised_draft():
+    speech, drafts = bot.extract_drafts(
+        'Shortened it.<draft revises="3f9a2c" title="Email">Pilot Monday.</draft>'
+    )
+    assert speech == "Shortened it."
+    assert drafts == [{"title": "Email", "text": "Pilot Monday.", "revises": "3f9a2c"}]
+
+
+def test_extract_reads_the_handle_whichever_order_the_attributes_come_in():
+    _, drafts = bot.extract_drafts('<draft title="X" revises="b7e40d" >body</draft>')
+    assert drafts[0]["revises"] == "b7e40d"
+
+
+def test_extract_leaves_revises_off_a_new_draft():
+    # ABSENT, not "". The write path tells "this is new" from "this replaces
+    # something" by the key being missing.
+    for reply in (
+        '<draft title="X">body</draft>',
+        '<draft revises="" title="X">body</draft>',
+        '<draft revises="   " title="X">body</draft>',
+    ):
+        _, drafts = bot.extract_drafts(reply)
+        assert "revises" not in drafts[0], reply
+
+
+def test_silence_gate_keeps_a_revises_tag_out_of_tts_across_frames():
+    # `revises="…"` makes the opening tag long enough to be split several ways
+    # by a token stream. `_for_speech` holds from `<draft` until it sees `>`,
+    # so none of it — and none of the body — can reach the speaker.
+    heard = "".join(
+        drive(reply("Shortened it.", "<draft rev", 'ises="3f9a', '2c" title="E', 'mail">Pilot', " Monday.</dr", "aft>"))
+    )
+    assert heard.strip() == "Shortened it."
+    assert "3f9a2c" not in heard
+    assert "Pilot" not in heard
+
+
 # --- TurnRecorder: what agent_turn learns -----------------------------------
 
 
@@ -545,7 +619,14 @@ def test_recall_sends_the_driver_s_words_as_the_answer_and_notes_what_is_pending
 
     def fetch(said, answering=None):
         fetched.append((said, answering))
-        return [], [], {"invocationId": "inv-2", "restatement": "send it", "askedCount": 0}, None, "yes"
+        return (
+            [],
+            [],
+            {"invocationId": "inv-2", "restatement": "send it", "askedCount": 0},
+            None,
+            "yes",
+            None,
+        )
 
     recall._fetch = fetch
 
@@ -624,6 +705,24 @@ def drafts_posted_by(action, first_seq=0):
 
     asyncio.run(run())
     return posted
+
+
+def test_draft_recorder_passes_the_revised_handle_through():
+    def act(recorder):
+        recorder.note_user("Make it shorter.")
+        recorder.record(
+            [
+                {"title": "Email", "text": "Pilot Monday.", "revises": "3f9a2c"},
+                {"title": "Notes", "text": "Something new."},
+            ]
+        )
+
+    revision, fresh = drafts_posted_by(act)
+    assert revision["revises"] == "3f9a2c"
+    assert revision["respondingToText"] == "Make it shorter."
+    # A new draft carries no handle at all, so the web app has nothing to
+    # resolve and writes a new row.
+    assert "revises" not in fresh
 
 
 def test_draft_recorder_counts_on_from_the_seeded_seq():
@@ -1354,3 +1453,103 @@ def test_an_announcement_is_an_agent_turn_but_not_a_decision_and_keeps_the_tool_
     assert "toolCalls" not in turn
     # Still waiting for the turn that answers.
     assert recorder._tool_calls == [{"name": "move_task", "latencyMs": 120}]
+# --- Recall: what the model is shown, and in what order ------------------------
+#
+# `_compose` is mirrored in packages/talkback/src/eval/messages.ts, so an
+# evaluation and a real drive see the same block. The ORDER is the load-bearing
+# part: the running summary has to be last, because "that" and "the second one"
+# resolve against it, and everything else is background above it.
+
+
+class FakeSummary:
+    def __init__(self, summary=None):
+        self.summary = summary
+
+
+class FakeLLMContext:
+    def __init__(self):
+        self._messages = []
+
+    def add_message(self, message):
+        self._messages.append(message)
+
+    def get_messages(self):
+        return self._messages
+
+    def set_messages(self, messages):
+        self._messages[:] = messages
+
+
+def a_recall(summary=None, ticket="ticket"):
+    return bot.Recall(FakeLLMContext(), FakeSummary(summary), ticket)
+
+
+def test_compose_puts_drafts_after_the_quotes_and_before_the_drive():
+    block = a_recall(summary="- Decision: go voice-first")._compose(
+        [{"when": "yesterday", "text": "call Niklas"}],
+        None,
+        [{"text": "Topic: Field study"}],
+        "Their task board right now:\n- [doing] Write the method section",
+        'Drafts you have written on this drive, and which you can still see:\ndraft 3f9a2c "Email" (v1.0, written by you)',
+    )
+
+    order = [
+        block.index("Their task board right now:"),
+        block.index("Where things stand"),
+        block.index("From their past recordings:"),
+        block.index("Drafts you have written"),
+        block.index("So far in this drive:"),
+    ]
+    assert order == sorted(order)
+
+
+def test_compose_says_nothing_when_there_is_nothing_to_say():
+    assert a_recall()._compose([], None, [], None, None) is None
+    # …but one draft alone is worth a block: it is the difference between
+    # revising the email and writing a second one.
+    assert "draft 3f9a2c" in a_recall()._compose([], None, [], None, "draft 3f9a2c")
+
+
+def test_recall_composes_the_block_from_what_the_route_returned(monkeypatch):
+    recall = a_recall()
+    recall._fetch = lambda said, answering=None: (
+        [{"when": "yesterday", "text": "call Niklas"}],
+        [{"text": "Topic: Field study"}],
+        None,
+        "Their task board right now:\n- [doing] Write the method section",
+        None,
+        'Drafts you have written on this drive, and which you can still see:\ndraft 3f9a2c "Email" (v1.0, written by you)',
+    )
+
+    async def run():
+        recall.push_frame = _swallow
+        await recall.process_frame(
+            heard("Make that shorter."), FrameDirection.DOWNSTREAM
+        )
+
+    asyncio.run(run())
+
+    (message,) = recall._context.get_messages()
+    assert message["role"] == "system"
+    assert "draft 3f9a2c" in message["content"]
+
+
+def test_recall_keeps_talking_when_the_route_is_down():
+    recall = a_recall(summary="- Decision: go voice-first")
+
+    def boom(said, answering=None):
+        raise RuntimeError("context route is down")
+
+    recall._fetch = boom
+
+    async def run():
+        recall.push_frame = _swallow
+        await recall.process_frame(heard("anything"), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+
+    # The running summary is local and still worth putting in front of the
+    # model. An agent that has forgotten the past beats one that stops talking.
+    (message,) = recall._context.get_messages()
+    assert "So far in this drive:" in message["content"]
+

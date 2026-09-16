@@ -64,8 +64,38 @@ export interface EvalCase {
      * cannot quietly start editing boards.
      */
     toolCall?: { name: string; args?: Record<string, string> } | null;
+    /**
+     * What the reply must do with the `<draft>` tag, when that is the point.
+     *
+     * `{ revises: /3f9a2c/ }` — exactly one draft, revising a handle that
+     * matches. `{ revises: null }` — exactly one draft, and it is NEW. `null`
+     * — no draft at all, which is the case for "you already have one, do not
+     * rewrite it". Omitted where the draft tag is not what is being tested;
+     * `checkReply` then ignores drafts entirely, as it did before.
+     */
+    draft?: { revises: RegExp | null } | null;
   };
 }
+
+/**
+ * The drafts block, as `/api/realtime/context` pre-renders it.
+ *
+ * Taken verbatim from `buildDraftContext`'s output shape rather than built by
+ * calling it, so a case pins the WORDING the model actually sees: a change to
+ * the renderer that breaks the contract should fail here rather than quietly
+ * evaluate a prompt nothing produces. Bodies are short on purpose — the runner
+ * sets `maxTokens: 200`, and a case whose expected reply cannot fit is a
+ * broken case, not a failing prompt.
+ */
+const DRAFTS = [
+  "Drafts you have written on this drive, and which you can still see:",
+  'draft 3f9a2c "Email to William" (v1.0, written by you)',
+  'draft b7e40d "Reading list" (v1.1, last edited by them)',
+  "",
+  "draft 3f9a2c:\nWilliam — the pilot starts on Monday. I will send the consent form on Friday. Best, Anna",
+  "",
+  "draft b7e40d:\n- Suchman, Plans and Situated Actions\n- Schön, The Reflective Practitioner",
+].join("\n");
 
 export const CASES: EvalCase[] = [
   {
@@ -480,6 +510,55 @@ export const CASES: EvalCase[] = [
       turn: "speak",
       mustMention: ["course|deadline"],
       mustNotMention: ["^go ahead"],
+    },
+  },
+
+  /* Drafts the agent can see, and what it does with them (talkback-12). The
+   * failure these close: the agent wrote a draft, forgot it existed, and
+   * answered "make it shorter" with a SECOND card. */
+  {
+    id: "draft-revise-when-asked",
+    about: "Asked to change a draft it can see, it rewrites THAT draft rather than writing a second one.",
+    setting: "desk",
+    context: { drafts: DRAFTS },
+    history: [
+      { role: "user", content: "Draft me an email to William about the pilot." },
+      { role: "assistant", content: "Written — it's on your screen." },
+    ],
+    said: "That's too formal. Make it shorter and warmer.",
+    expect: {
+      turn: "speak",
+      draft: { revises: /3f9a2c/ },
+      // The handle is wire format. Spoken to somebody at a desk it is
+      // nonsense; spoken to somebody driving it is the `<silence>` failure
+      // again.
+      mustNotMention: ["3f9a2c", "b7e40d", "handle"],
+    },
+  },
+  {
+    id: "draft-new-when-different",
+    about: "Asked for something else entirely, it writes a NEW draft rather than overwriting one it can see.",
+    setting: "desk",
+    context: { drafts: DRAFTS },
+    said: "Different thing — write me a short message to Niklas asking if Thursday still works.",
+    expect: {
+      turn: "speak",
+      draft: { revises: null },
+      mustNotMention: ["3f9a2c", "b7e40d"],
+    },
+  },
+  {
+    id: "draft-seen-not-rewritten",
+    about:
+      "Asked what it has already written, it says so from the listing — no draft tag, and never the handle aloud.",
+    setting: "driving",
+    context: { drafts: DRAFTS },
+    said: "What have you written down for me so far?",
+    expect: {
+      turn: "speak",
+      draft: null,
+      mustMention: ["william|reading list|email"],
+      mustNotMention: ["3f9a2c", "b7e40d"],
     },
   },
 ];

@@ -25,6 +25,14 @@ export interface EvalContext {
   threads?: { text: string }[];
   /** From past drives, as `/api/realtime/context` returns them. */
   passages?: { when: string; text: string }[];
+  /**
+   * The drafts written on this drive, PRE-RENDERED by `buildDraftContext`.
+   *
+   * A string rather than rows, because that is what the route sends: the
+   * listing, the handles and the budget are decided in TypeScript so the
+   * container and the eval cannot render them differently.
+   */
+  drafts?: string;
   /** The container's running summary of the current drive. */
   summary?: string;
   /** A parked irreversible action, restated for the person. */
@@ -49,6 +57,14 @@ export function composeContextBlock(context: EvalContext | undefined): string | 
       "From their past recordings:\n" +
         context.passages.map((p) => `[${p.when}] ${p.text}`).join("\n\n"),
     );
+  }
+  // After the quotes and before the drive summary, mirroring `_compose`: the
+  // drafts are this drive's own output, so they belong next to the drive rather
+  // than among the dated material from past ones — and the summary stays LAST,
+  // closest to the user's message, because that is what anaphora resolves
+  // against.
+  if (context.drafts?.trim()) {
+    sections.push(context.drafts.trim());
   }
   if (context.summary?.trim()) {
     sections.push(`So far in this drive:\n${context.summary.trim()}`);
