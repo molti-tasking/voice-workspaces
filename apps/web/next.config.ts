@@ -69,12 +69,24 @@ const config: NextConfig = {
   },
 };
 
-export default withPostHogConfig(config, {
-  personalApiKey: process.env.POSTHOG_API_KEY!,
-  projectId: process.env.POSTHOG_PROJECT_ID,
-  host: process.env.POSTHOG_HOST,
-  sourcemaps: {
-    enabled: true,
-    deleteAfterUpload: true,
-  },
-});
+// Uploading source maps needs a personal API key and a project id, and
+// `withPostHogConfig` throws at config-load time when either is missing — which
+// fails the build itself, not just the upload. PostHog is optional here (see
+// .env.example), and a plain `docker build`, a contributor's checkout and a
+// deploy that has not been given the keys all arrive without them, so the
+// wrapper is applied only once both are present. Stack traces from such a build
+// stay unminified in PostHog; the build succeeds.
+const posthogPersonalApiKey = process.env.POSTHOG_API_KEY?.trim();
+const posthogProjectId = process.env.POSTHOG_PROJECT_ID?.trim();
+
+export default posthogPersonalApiKey && posthogProjectId
+  ? withPostHogConfig(config, {
+      personalApiKey: posthogPersonalApiKey,
+      projectId: posthogProjectId,
+      host: process.env.POSTHOG_HOST,
+      sourcemaps: {
+        enabled: true,
+        deleteAfterUpload: true,
+      },
+    })
+  : config;
