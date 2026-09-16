@@ -314,6 +314,25 @@ export interface AnalyticsEventMap {
     retryable: boolean;
     reason: string;
   };
+
+  // --- app shell, client-side (best-effort) --------------------------------
+  /**
+   * The global error boundary caught a failed chunk load and handled it.
+   *
+   * A deploy renames every fingerprinted chunk, so a tab left open on the old
+   * build asks for a file the server no longer has. The boundary reloads the
+   * page once to pick up the current build.
+   *
+   * Best-effort, and sent from the boundary the instant before the reload
+   * cancels in-flight requests, so expect roughly — not exactly — one per chunk
+   * error. `reloaded` is false when the reload guard suppressed a second reload,
+   * which is the boundary giving up rather than looping.
+   */
+  chunk_load_recovered: {
+    /** The route the dead page was on, so `/record` failures stay separable. */
+    pathname: string;
+    reloaded: boolean;
+  };
 }
 
 export type AnalyticsEventName = keyof AnalyticsEventMap;

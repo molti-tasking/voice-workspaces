@@ -34,7 +34,20 @@
  * below then purges.
  */
 const VERSION = new URL(self.location.href).searchParams.get("v") || "dev";
-const CACHE = `voicemural-static-${VERSION}`;
+const CACHE_PREFIX = "voicemural-static-";
+const CACHE = `${CACHE_PREFIX}${VERSION}`;
+
+/**
+ * How many builds' caches to keep: this one and the one before it.
+ *
+ * A deploy renames every fingerprinted chunk, so a tab still running the
+ * previous build asks for chunks only that build's cache holds. Keeping that
+ * cache lets those requests resolve instead of hitting the deleted files on the
+ * server, which is a guaranteed `ChunkLoadError`. Two is enough — one deploy of
+ * overlap — and the caches only hold what clients actually fetched, so the
+ * extra copy is small.
+ */
+const CACHES_TO_KEEP = 2;
 
 /** The offline fallback and the assets it needs to render without a network. */
 const PRECACHE = ["/offline", "/icons/icon-192.png"];
@@ -69,9 +82,16 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) =>
-        Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))),
-      )
+      .then((keys) => {
+        // `caches.keys()` returns names in creation order, so the newest —
+        // including this build's, just opened on install — are last. Keep the
+        // final `CACHES_TO_KEEP` and delete the rest. The previous purge
+        // deleted every cache but the current one, which wiped the previous
+        // build's chunks out from under tabs still running it.
+        const ours = keys.filter((k) => k.startsWith(CACHE_PREFIX));
+        const stale = ours.slice(0, Math.max(0, ours.length - CACHES_TO_KEEP));
+        return Promise.all(stale.map((k) => caches.delete(k)));
+      })
       .then(() => self.clients.claim()),
   );
 });
