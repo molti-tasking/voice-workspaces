@@ -2210,10 +2210,18 @@ class DraftRecorder:
     words whenever they resembled a draft they had asked for.
     """
 
-    def __init__(self, ticket: str | None, started_at_ms: int | None):
+    def __init__(
+        self, ticket: str | None, started_at_ms: int | None, first_seq: int = 0
+    ):
         self._ticket = ticket
         self._started_at_ms = started_at_ms
-        self._seq = 0
+        # SEEDED, not zero. `seq` is unique per drive and `recordDraft` resolves
+        # a collision by doing nothing, which is right for a retried POST and
+        # catastrophic for a reconnect: a second container counting from 0 again
+        # would have every draft for the rest of the drive accepted with a 200
+        # and silently dropped. `/api/realtime/session` returns `nextDraftSeq`
+        # from the ledger so this process carries on where the last one stopped.
+        self._seq = first_seq
         self._responding_to: str | None = None
 
     def note_user(self, text: str) -> None:
@@ -2731,7 +2739,13 @@ def build_pipeline(
             else:
                 llm.register_function(schema.name, board_tools.handle, cancel_on_interruption=False)
         logger.info(f"[tools] {', '.join(s.name for s in tools.standard_tools)}")
-    drafts = DraftRecorder(ticket, session.get("startedAtEpochMs"))
+    drafts = DraftRecorder(
+        ticket,
+        session.get("startedAtEpochMs"),
+        # Absent from an older web deploy, and from a degraded session call —
+        # both mean "no drafts known", which is what 0 says.
+        first_seq=int(session.get("nextDraftSeq") or 0),
+    )
     # A SECOND analyzer, deliberately, not the same instance: this one drives
     # turn completion and interruption in the aggregator, and the two keep
     # independent state.
