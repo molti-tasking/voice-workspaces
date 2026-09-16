@@ -11,7 +11,7 @@ import { config } from "dotenv";
 config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true });
 
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { boardEnabledAt, enableBoard } from "./board";
+import { boardEnabledAt, boardVersion, boardVersionOf, enableBoard } from "./board";
 import { captureSession, extraction, user, workspaceOp } from "./schema";
 import { isDatabaseReachable } from "./testing";
 import { appendOps, appendUserOp, loadOps, loadUserOps } from "./workspace";
@@ -108,6 +108,17 @@ describeIfDb("board", () => {
     const saved = await loadUserOps(USER_ID);
     expect(saved).toHaveLength(1);
     expect(saved[0]).toMatchObject({ id: OP_ID, captureSessionId: session, op: { via: "agent" } });
+  });
+
+  it("fingerprints the op log the way a page can from the ops it loaded", async () => {
+    const empty = await boardVersion(USER_ID);
+    expect(empty).toBe("0:0");
+
+    await appendUserOp({ userId: USER_ID, id: OP_ID, op: { type: "retire_block", blockId: "b1", via: "agent" } });
+    const ops = await loadOps(USER_ID);
+    const after = await boardVersion(USER_ID);
+    expect(after).not.toBe(empty);
+    expect(after).toBe(boardVersionOf(ops.at(-1)!.seq, ops.length));
   });
 
   it("is hidden until enabled, and keeps the first date once it is", async () => {

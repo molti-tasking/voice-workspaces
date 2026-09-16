@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { boardEnabledAt } from "@voicemural/db/board";
+import { boardEnabledAt, boardVersionOf } from "@voicemural/db/board";
 import { loadOps } from "@voicemural/db/workspace";
 import { KEPT_AFTER_SESSIONS, foldBoard, judge } from "@voicemural/workspace";
 import { AppDock } from "@/components/app-dock";
@@ -9,6 +9,7 @@ import { NavMenu } from "@/components/nav-menu";
 import { ViewEvent } from "@/lib/analytics/view-event";
 import { parseInstant } from "@/lib/instant";
 import { currentUser } from "@/lib/session";
+import { BoardLive } from "./board-live";
 import { BoardSurface } from "./board-surface";
 import { toCardView } from "./card-view";
 
@@ -111,6 +112,11 @@ export default async function BoardPage({
           )}
         />
       )}
+
+      {/* Live only when showing now. A board as of a past moment is a record,
+          and redrawing it because something happened since would change what
+          it shows. */}
+      {!asOf && <BoardLive version={boardVersionOf(ops.at(-1)?.seq ?? 0, ops.length)} />}
 
       <AppDock />
     </div>
