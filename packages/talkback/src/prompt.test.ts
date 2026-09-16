@@ -238,4 +238,41 @@ describe("extractDrafts, which bot.py mirrors", () => {
     const { drafts } = extractDrafts('ok<draft title="X">   </draft>');
     expect(drafts).toEqual([]);
   });
+
+  it("carries the handle of the draft a revision replaces", () => {
+    const { speech, drafts } = extractDrafts(
+      'Shortened it.<draft revises="3f9a2c" title="Email to William">Pilot Monday.</draft>',
+    );
+    expect(speech).toBe("Shortened it.");
+    expect(drafts).toEqual([
+      { title: "Email to William", text: "Pilot Monday.", revises: "3f9a2c" },
+    ]);
+  });
+
+  it("reads the handle whichever order the attributes come in", () => {
+    const { drafts } = extractDrafts('<draft title="X" revises="b7e40d" >body</draft>');
+    expect(drafts[0]?.revises).toBe("b7e40d");
+  });
+
+  it("leaves revises off a new draft, rather than sending an empty one", () => {
+    // ABSENT, not "". The write path tells "this is new" from "this replaces
+    // something" by the field being missing, so a model that fills in the
+    // attribute it was shown must not look like a revision of nothing.
+    expect(extractDrafts('<draft title="X">body</draft>').drafts[0]).not.toHaveProperty(
+      "revises",
+    );
+    expect(
+      extractDrafts('<draft revises="" title="X">body</draft>').drafts[0],
+    ).not.toHaveProperty("revises");
+    expect(
+      extractDrafts('<draft revises="   " title="X">body</draft>').drafts[0],
+    ).not.toHaveProperty("revises");
+  });
+
+  it("tells two drafts in one completion apart, revision and new", () => {
+    const { drafts } = extractDrafts(
+      '<draft revises="3f9a2c" title="A">one</draft>and<draft title="B">two</draft>',
+    );
+    expect(drafts.map((d) => d.revises)).toEqual(["3f9a2c", undefined]);
+  });
 });

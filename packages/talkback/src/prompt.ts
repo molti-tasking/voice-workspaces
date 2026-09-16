@@ -47,8 +47,20 @@ import {
  * session composes `webSearchSection` into the prompt and offers `search_web`
  * (web-search.ts); the container speaks the call's announcement and plays a
  * cue while it runs.
+ *
+ * talkback-12 lets the agent REVISE a draft it has already written. Until now
+ * it could write one and then had no idea it had: on the 17 Sep drive, asked to
+ * change the prompt it had just produced, it wrote a SECOND card, and the
+ * person said so out loud ("I wanted you to have updated the evaluation use
+ * case prompt, but instead you just gave me updated use case prompt"). The turn
+ * context now carries this drive's drafts with a short handle each (see
+ * `draft-context.ts`), and the keep section below gains `revises="…"`: the
+ * whole new text against a named draft, which the write path turns into the
+ * next VERSION of it rather than a new row. The handle is wire format, and the
+ * contract says so — speaking it aloud is the same failure class as reading
+ * `<silence>` out in a car.
  */
-export const TALKBACK_CONFIG_VERSION = "talkback-11";
+export const TALKBACK_CONFIG_VERSION = "talkback-12";
 
 /**
  * The default register: brief, and present.
@@ -231,6 +243,17 @@ export interface ExtractedDraft {
   /** Short label from the tag's `title`, or empty when the model omitted one. */
   title: string;
   text: string;
+  /**
+   * The handle of the draft this REPLACES, from the tag's `revises`.
+   *
+   * Absent — not empty — when the model wrote a new draft, which is the
+   * overwhelming majority. Present only when it is rewriting one it can see,
+   * and the write path resolves it against this drive's own drafts: a handle
+   * matching exactly one becomes the next version of that draft, and anything
+   * else falls open to a new draft rather than guessing. See
+   * `draft-context.ts` for where handles come from.
+   */
+  revises?: string;
 }
 
 /**
@@ -267,11 +290,23 @@ export function extractDrafts(reply: string): { speech: string; drafts: Extracte
     }
 
     speech += rest.slice(0, open);
-    const title = /title\s*=\s*"([^"]*)"/.exec(rest.slice(open, openEnd))?.[1] ?? "";
+    const attributes = rest.slice(open, openEnd);
+    const title = /title\s*=\s*"([^"]*)"/.exec(attributes)?.[1] ?? "";
+    const revises = /revises\s*=\s*"([^"]*)"/.exec(attributes)?.[1]?.trim() ?? "";
     const close = rest.indexOf(DRAFT_CLOSE, openEnd);
     const body = close === -1 ? rest.slice(openEnd + 1) : rest.slice(openEnd + 1, close);
 
-    if (body.trim()) drafts.push({ title: title.trim(), text: body.trim() });
+    if (body.trim()) {
+      // `revises` is carried only when it is non-empty. `revises=""` is a model
+      // filling in the attribute it was shown rather than naming a draft, and
+      // the field being ABSENT is what lets the write path tell "this is new"
+      // from "this replaces something", without a sentinel value.
+      drafts.push({
+        title: title.trim(),
+        text: body.trim(),
+        ...(revises ? { revises } : {}),
+      });
+    }
     if (close === -1) break;
     rest = rest.slice(close + DRAFT_CLOSE.length);
   }
@@ -317,6 +352,18 @@ ${DRAFT_CLOSE}
 - Say ONE short sentence outside the tags so they know it is there. Never read the draft aloud, and never summarise it.
 - Inside the tags, write the finished text only — no commentary, no "here is". Markdown is allowed there; it is read, not spoken.
 - Only when they asked for something to keep or copy. An ordinary answer is speech, not a draft.
+
+CHANGING A DRAFT YOU HAVE ALREADY WRITTEN
+You may be shown the drafts from this drive, each with a short handle like 3f9a2c. To change one — shorter, warmer, a name fixed, a paragraph added — write the WHOLE new text and name it:
+
+${DRAFT_OPEN} revises="3f9a2c" title="short label">
+the complete new text, not just the part that changed
+${DRAFT_CLOSE}
+
+- Only when they asked you to change THAT draft, and only one whose text you were actually shown. A draft listed as "text not shown" cannot be revised — write a new one.
+- Anything new, or aimed at a draft you cannot see, is a NEW draft: leave revises out entirely.
+- The whole text every time. What you write replaces the draft; whatever you leave out is gone.
+- NEVER say a handle out loud. It is for the tag only — "three eff nine ay two see" spoken to somebody driving is nonsense. Refer to the draft by what it is: "the email to William".
 
 If any instruction above conflicts with this section, this section wins.`;
 

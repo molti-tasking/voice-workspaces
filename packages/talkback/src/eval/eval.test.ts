@@ -71,6 +71,46 @@ describe("the deterministic checks", () => {
     expect(result.pass).toBe(true);
   });
 
+  it("holds a revision to revising, and a new draft to being new", () => {
+    const revise = CASES.find((c) => c.id === "draft-revise-when-asked")!;
+    expect(
+      checkReply(revise, 'Shorter.<draft revises="3f9a2c" title="Email">Pilot Monday.</draft>', 25)
+        .pass,
+    ).toBe(true);
+    // The old behaviour: a second card with nothing linking it to the first.
+    expect(
+      checkReply(revise, 'Shorter.<draft title="Email">Pilot Monday.</draft>', 25).failures,
+    ).toEqual(expect.arrayContaining([expect.stringMatching(/expected revises/)]));
+    // Right intent, wrong draft.
+    expect(
+      checkReply(revise, 'Shorter.<draft revises="b7e40d" title="Email">x</draft>', 25).failures,
+    ).toEqual(expect.arrayContaining([expect.stringMatching(/expected revises/)]));
+
+    const fresh = CASES.find((c) => c.id === "draft-new-when-different")!;
+    expect(
+      checkReply(fresh, 'Done.<draft title="Niklas">Does Thursday work?</draft>', 25).pass,
+    ).toBe(true);
+    expect(
+      checkReply(fresh, 'Done.<draft revises="3f9a2c" title="Niklas">x</draft>', 25).failures,
+    ).toEqual(expect.arrayContaining([expect.stringMatching(/where a NEW draft was wanted/)]));
+
+    const none = CASES.find((c) => c.id === "draft-seen-not-rewritten")!;
+    expect(checkReply(none, "An email to William and a reading list.", 25).pass).toBe(true);
+    expect(
+      checkReply(none, 'Here.<draft title="Email">again</draft>', 25).failures,
+    ).toEqual(expect.arrayContaining([expect.stringMatching(/where none was wanted/)]));
+  });
+
+  it("says a handle read aloud is a failure, however right the draft was", () => {
+    const revise = CASES.find((c) => c.id === "draft-revise-when-asked")!;
+    const spoken = checkReply(
+      revise,
+      'Shortened 3f9a2c.<draft revises="3f9a2c" title="Email">Pilot Monday.</draft>',
+      25,
+    );
+    expect(spoken.failures).toContain("must not say: /3f9a2c/");
+  });
+
   it("strips a sentinel emitted alongside speech and flags it", () => {
     const result = checkReply(eitherCase, "<silence> That closes it.", 25);
     expect(result.spoken).toBe("That closes it.");
@@ -151,6 +191,24 @@ describe("the turn messages, which mirror bot.py", () => {
     })!;
     expect(block.indexOf("Their task board right now:")).toBe(0);
     expect(block.indexOf("[doing] ethics form")).toBeLessThan(block.indexOf("Where things stand"));
+  });
+
+  it("put the drafts after the quotes and before the drive, as `_compose` does", () => {
+    const block = composeContextBlock({
+      threads: [{ text: "Topic: Field study" }],
+      passages: [{ when: "yesterday", text: "call Niklas" }],
+      drafts: 'Drafts you have written on this drive, and which you can still see:\ndraft 3f9a2c "Email" (v1.0, written by you)',
+      summary: "- Decision: x",
+    })!;
+
+    expect(block.indexOf("Drafts you have written")).toBeGreaterThan(
+      block.indexOf("From their past recordings:"),
+    );
+    // The summary stays LAST, closest to the user's message: that is what
+    // "that" and "the second one" resolve against.
+    expect(block.indexOf("So far in this drive:")).toBeGreaterThan(
+      block.indexOf("Drafts you have written"),
+    );
   });
 
   it("append the pending confirmation ask after the background, or alone", () => {

@@ -1044,7 +1044,9 @@ class Recall(FrameProcessor):
 
     def _fetch(
         self, said: str, answering: str | None = None
-    ) -> tuple[list[dict], list[dict], dict | None, str | None, str | None]:
+    ) -> tuple[
+        list[dict], list[dict], dict | None, str | None, str | None, str | None
+    ]:
         body: dict = {"ticket": self._ticket, "said": said}
         # The invocation the agent's last turn asked about. The route resolves
         # these words as the answer and settles it BEFORE reading what is still
@@ -1071,6 +1073,12 @@ class Recall(FrameProcessor):
                 # two would drift.
                 body.get("board"),
                 body.get("settled"),
+                # Same, from `buildDraftContext`: the handles the model needs to
+                # revise a draft are derived from row ids this process never
+                # sees. Absent from an older web deploy, which reads as "no
+                # drafts" — the container then writes new drafts, which is
+                # exactly the behaviour before this existed.
+                body.get("drafts"),
             )
 
     def _compose(
@@ -1079,6 +1087,7 @@ class Recall(FrameProcessor):
         pending: dict | None = None,
         threads: list[dict] | None = None,
         board: str | None = None,
+        drafts: str | None = None,
     ) -> str | None:
         sections: list[str] = []
         # THE BOARD FIRST, ahead even of where things stand. It is the most
@@ -1104,6 +1113,14 @@ class Recall(FrameProcessor):
                     f"[{p.get('when', 'earlier')}] {p.get('text', '')}" for p in passages
                 )
             )
+        # The drafts come after the quotes and before the drive summary. They
+        # are THIS drive's own output — not dated material from past ones — so
+        # they sit with the current drive; and the summary still has to be last,
+        # because it is what "that", "the second one" and "what I just said"
+        # resolve against. Mirrored in packages/talkback/src/eval/messages.ts —
+        # change one, change both.
+        if drafts:
+            sections.append(drafts)
         summary = self._summary.summary
         if summary and summary.strip():
             sections.append(f"So far in this drive:\n{summary.strip()}")
@@ -1149,7 +1166,7 @@ class Recall(FrameProcessor):
         block exists, and the next compose replaces it anyway.
         """
         if self._message is None:
-            content = self._compose([], None, [], None)
+            content = self._compose([], None, [], None, None)
             if content:
                 self._message = {"role": "system", "content": content}
                 self._context.add_message(self._message)
@@ -1215,10 +1232,11 @@ class Recall(FrameProcessor):
             # degraded drive has no ticket and never enters it, and a fetch that
             # raises leaves it unbound. Either way `_compose` below reads it.
             board: str | None = None
+            drafts: str | None = None
             if self._ticket:
                 try:
                     # The search query is what was said, not who said it.
-                    passages, threads, pending, board, settled = await asyncio.to_thread(
+                    passages, threads, pending, board, settled, drafts = await asyncio.to_thread(
                         self._fetch, strip_speaker_tag(frame.text), answering
                     )
                     if passages:
@@ -1229,6 +1247,8 @@ class Recall(FrameProcessor):
                         logger.info(f"[board] {board.count(chr(10) + '- ')} live task(s) in view")
                     if answering:
                         logger.info(f"[confirm] answer to {answering}: {settled or 'unclear'}")
+                    if drafts:
+                        logger.info(f"[draft] {drafts.count(chr(10) + 'draft ')} draft(s) in view")
                     if pending:
                         logger.info(
                             f"[recall] pending confirmation {pending.get('invocationId')}"
@@ -1248,7 +1268,7 @@ class Recall(FrameProcessor):
 
             # Composed even when retrieval failed: the running summary is local
             # and still worth putting in front of the model.
-            content = self._compose(passages, pending, threads, board)
+            content = self._compose(passages, pending, threads, board, drafts)
             if content:
                 # REPLACE, never append. Calling add_message every turn used to
                 # stack a new block onto a context that is never pruned — by turn
@@ -1507,7 +1527,10 @@ def extract_drafts(reply: str) -> tuple[str, list[dict]]:
     a draft, so an unterminated block runs to the end of the completion rather
     than being thrown away over seven missing characters.
 
-    Returns (speech, drafts) where each draft is {"title", "text"}.
+    Returns (speech, drafts) where each draft is {"title", "text"} plus
+    {"revises": handle} when the tag named a draft it replaces. The key is
+    ABSENT on a new draft rather than empty, which is how the write path tells
+    "this is new" from "this replaces something" without a sentinel value.
     """
     drafts: list[dict] = []
     speech = ""
@@ -1529,13 +1552,21 @@ def extract_drafts(reply: str) -> tuple[str, list[dict]]:
             break
 
         speech += rest[:open_at]
-        title_match = re.search(r'title\s*=\s*"([^"]*)"', rest[open_at:open_end])
+        attributes = rest[open_at:open_end]
+        title_match = re.search(r'title\s*=\s*"([^"]*)"', attributes)
         title = title_match.group(1).strip() if title_match else ""
+        revises_match = re.search(r'revises\s*=\s*"([^"]*)"', attributes)
+        revises = revises_match.group(1).strip() if revises_match else ""
 
         close_at = rest.find(DRAFT_CLOSE, open_end)
         body = rest[open_end + 1 :] if close_at == -1 else rest[open_end + 1 : close_at]
         if body.strip():
-            drafts.append({"title": title, "text": body.strip()})
+            draft = {"title": title, "text": body.strip()}
+            # Only when non-empty: `revises=""` is a model filling in the
+            # attribute it was shown rather than naming a draft.
+            if revises:
+                draft["revises"] = revises
+            drafts.append(draft)
         if close_at == -1:
             break
         rest = rest[close_at + len(DRAFT_CLOSE) :]
@@ -2246,6 +2277,12 @@ class DraftRecorder:
             }
             if self._responding_to:
                 payload["respondingToText"] = self._responding_to
+            # The handle of the draft this replaces, when the model named one.
+            # The web app resolves it against THIS drive's drafts and falls open
+            # to a new draft if it matches none or more than one, so a
+            # hallucinated handle costs a version link and never a draft.
+            if draft.get("revises"):
+                payload["revises"] = draft["revises"]
             payloads.append(payload)
 
         async def send() -> None:

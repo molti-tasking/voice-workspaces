@@ -33,6 +33,13 @@ export {
   buildBoardContext,
   type BoardContext,
 } from "./board-context";
+export {
+  MAX_DRAFT_CONTEXT_CHARS,
+  buildDraftContext,
+  draftHandle,
+  type DraftContext,
+  type DraftForContext,
+} from "./draft-context";
 export { SUMMARY_PROMPT, foldSummary } from "./summary";
 export { TITLE_PROMPT } from "./title";
 export {

@@ -37,6 +37,13 @@ export const dynamic = "force-dynamic";
  * account was upgraded mid-drive holds a ticket naming a user row that no
  * longer exists.
  *
+ * It also carries the DRAFTS this drive has produced, with a short handle for
+ * each, because the agent had no way of knowing it had written one: asked to
+ * make a draft shorter it wrote a second one from memory, and the person got
+ * two cards with nothing saying which was current. Scoped to the current drive
+ * — a draft from last Tuesday is not what "that" means, and its handle would be
+ * prompt noise.
+ *
  * It also carries any PENDING CONFIRMATION, piggybacked rather than given its
  * own endpoint. An outbound or irreversible action does not fire until the
  * person agrees, and the only channel to ask them is the conversation — so the
@@ -105,7 +112,7 @@ export async function POST(req: Request) {
   // board on mid-drive should not have to wait for the next one, and it is a
   // primary-key read.
   const boardOn = (await boardEnabledAt(payload.userId).catch(() => null)) !== null;
-  const [{ passages, threads, board }, { settled, pending }] = await Promise.all([
+  const [{ passages, threads, board, drafts }, { settled, pending }] = await Promise.all([
     buildTurnContext(payload.userId, payload.captureSessionId, parsed.data.said, { board: boardOn }),
     settleThenReadPending(payload.captureSessionId, parsed.data.said, parsed.data.answering),
   ]);
@@ -114,9 +121,15 @@ export async function POST(req: Request) {
     // `threads` is where things stand on the topics this turn touches, from
     // the memory index; empty without MODEL_EMBED. `board` is the live fold of
     // the task board — the only part of the turn that answers "what should I do
-    // next" with something actionable. The container orders them: board first,
-    // then threads, then dated quotes.
-    { passages, threads, board: board.text, pending, settled },
+    // next" with something actionable. `drafts` is what the agent has already
+    // written down on THIS drive, with the handles that let it revise one
+    // instead of writing a second. The container orders them: board first, then
+    // threads, then quotes, then drafts, then the running summary.
+    //
+    // Both `board` and `drafts` are PRE-RENDERED here rather than assembled in
+    // Python: the ordering, the budget and the wording are one decision, and
+    // splitting it across two languages is how the two would drift.
+    { passages, threads, board: board.text, drafts: drafts.text, pending, settled },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
