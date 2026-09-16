@@ -172,6 +172,25 @@ the sentinel available, so every unprompted turn is optional all the way down.
 The eval suite covers the engine's turns (`offer-*` cases in `cases.ts`), with
 the nudge standing in the driver's slot exactly as the container places it.
 
+### talkback-12: the agent can see, and change, what it wrote down
+
+Up to `talkback-11` the agent could write a draft and then had no idea it had.
+Asked to change one it wrote a SECOND card from whatever it remembered of the
+conversation, and the person was left with two, neither marked as superseding
+the other — on the one lane of the screen they had asked for by name. On the
+17 Sep 2026 drive the participant said so out loud: *"I wanted you to have
+updated the evaluation use case prompt, but instead you just gave me updated
+use case prompt."*
+
+`talkback-12` puts this drive's drafts in the turn, each with a short handle, and
+adds `revises="…"` to the keep section of `OUTPUT_CONTRACT`: the whole new text,
+against a named draft, which the write path turns into the next VERSION of it.
+The rules are narrow on purpose — only a draft they asked to change, only one
+whose text is actually visible, anything else is a new draft, and never a handle
+spoken aloud. See "Drafts" below for the mechanism, and
+`draft-revise-when-asked` / `draft-new-when-different` /
+`draft-seen-not-rewritten` in `cases.ts` for what it is held to.
+
 ### Which voice
 
 Three ElevenLabs voices are offered on the recorder, from the catalogue in
@@ -271,12 +290,16 @@ a self-hosted one keeps them at AU. Same line as `STT_PROVIDER`.
 Ask for something to take away — "draft me an email to William", "write me a
 prompt for that", "note that down" — and the model wraps it in `<draft
 title="...">...</draft>`. The body is never spoken. It is stored and shown with
-a Copy button.
+a Copy button. Ask to change it — "make it shorter", "warmer", "fix the name" —
+and it comes back as `<draft revises="3f9a2c" …>`, a new VERSION of the same
+draft rather than a second card.
 
 The tags are declared in `OUTPUT_CONTRACT`, so they sit in the same
 last-and-wins section as the `<silence>` sentinel and a composed stanza cannot
-countermand them. `extractDrafts` (TypeScript) and `extract_drafts` (bot.py) are
-mirrors of each other and both tested; change one and change the other.
+countermand them. `extractDrafts` (`prompt.ts`) and `extract_drafts` (`bot.py`)
+are mirrors of each other; change one and change the other. Both sides have
+their own copies of the same cases — `prompt.test.ts` and the Drafts section of
+`test_bot.py` — so a change to one that is not ported fails on the other.
 
 **Two paths, for two different failures.** `SilenceGate._for_speech` strips the
 block from the *stream*, tag-safe across frame boundaries, so a body split as
@@ -292,13 +315,81 @@ the agent said aloud; filing a draft as a turn would teach it to delete the
 participant's own words whenever they resembled something they had asked for.
 
 **Durable on purpose.** The container POSTs to `/api/realtime/draft`
-(ticket-authorised, ownership re-resolved, idempotent on `(session, seq)`), and
-both readers come from Postgres — the live panel via `/api/record/cues`, and
-`/sessions/[id]` afterwards. That matters most for `driving`, where
-`displayAllowed` is false and the cue stream never opens: a draft asked for at
-110 km/h is written, stored, and waiting at the desk. It is also the one panel
-that is tappable, which the cue panel's no-tap rule explicitly is not — there is
-no voice equivalent of "put this on my clipboard".
+(ticket-authorised, ownership re-resolved), and both readers come from
+Postgres — the live panel via `/api/record/cues`, and `/sessions/[id]`
+afterwards. That matters most for `driving`, where `displayAllowed` is false and
+the cue stream never opens: a draft asked for at 110 km/h is written, stored,
+and waiting at the desk. It is also the one panel that is tappable, which the
+cue panel's no-tap rule explicitly is not — there is no voice equivalent of
+"put this on my clipboard".
+
+### Versions
+
+A draft is not one row. `agent_draft` is its IDENTITY — the drive, the offset,
+the container's `seq` — and is never updated; `agent_draft_version` holds every
+version, append-only, one row each. The same split as `capability` /
+`capability_version`, and it is what makes a rewrite the SAME draft rather than
+a second card claiming to be just as current.
+
+**The agent owns the major, the person owns the minor.** v1.0 is what the agent
+first wrote, the person editing it gives v1.1, an agent rewrite gives v2.0,
+editing that gives v2.1. So the label on a card says, with nothing else
+consulted, how many times the model tried and how much hand editing each attempt
+needed.
+
+**The newest version is always the current one.** A restore does not rewind: it
+appends a copy of the chosen version with the next number and a note of where it
+came from, so restoring v1.1 while at v1.3 gives v1.4 "restored from v1.1". The
+record stays append-only and "what did they end up with" is
+`order by (major, minor) desc limit 1` — never by `createdAt`, because the web
+app and the container keep different clocks.
+
+Both writers go through `appendDraftVersion`, which takes a row lock on the
+lineage joined to `capture_session` (ownership and the read-then-append in one
+transaction). It answers `unchanged` before `conflict`, so a double-submit costs
+nothing rather than raising a conflict over a difference that does not exist. A
+person's edit sends the version it was aimed at; a 409 hands back the head and
+the editor keeps what was typed.
+
+Editing, history and Restore live on `/sessions/[id]`. `/record` shows only
+`v2.1 · 14:32` — enough that a rewrite landing in the same card is visible, and
+nothing more, because that panel only exists where the hands are elsewhere.
+
+### Handles, and `revises`
+
+`/api/realtime/context` shows the agent the drafts from THIS drive
+(`draft-context.ts`): a one-line listing of up to six, then as many bodies as fit
+in 2000 characters, newest first. A body that does not fit is skipped whole and
+marked "text not shown" — a truncated body is worse than none, because the model
+cannot tell it is truncated and would rewrite the draft deleting the half it
+never saw.
+
+Each draft carries a six-hex-character handle derived from its LINEAGE id, so it
+survives every rewrite and nothing is stored for it. To change a draft the model
+writes the whole new text as `<draft revises="3f9a2c" title="…">`, and the route
+resolves the handle against that drive's own drafts. Exactly one match becomes
+the next version; none or several writes a NEW draft instead — the stance
+`fold.ts` takes for a `revise_block` naming a block it cannot find. Losing the
+link costs a version number; guessing wrong overwrites text somebody spent a
+drive on.
+
+The prompt says twice that a handle is never spoken: "three eff nine ay two see"
+read to a driver is the `<silence>` failure again. `draft-seen-not-rewritten`
+in the eval checks it.
+
+`revises` is ABSENT on a new draft rather than empty, which is what lets an
+older container and a newer web app — or the reverse — run together in either
+deploy order.
+
+### `seq` is seeded, not counted from zero
+
+`DraftRecorder` numbers drafts with its own counter, and `agent_draft` is unique
+on `(session, seq)` so a retried POST cannot leave two copies on the screen.
+That idempotency is exactly what made a RECONNECT silent: a second container
+counting from 0 again collided with rows the drive already had, and every draft
+for the rest of the drive was accepted with a 200, logged as "stored", and
+dropped. `/api/realtime/session` now returns `nextDraftSeq` from the ledger and
+the container starts there.
 
 ## Web search
 
