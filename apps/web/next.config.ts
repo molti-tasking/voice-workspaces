@@ -1,3 +1,4 @@
+import { withPostHogConfig } from "@posthog/nextjs-config";
 import { config as loadEnv } from "dotenv";
 import type { NextConfig } from "next";
 
@@ -68,4 +69,12 @@ const config: NextConfig = {
   },
 };
 
-export default config;
+export default withPostHogConfig(config, {
+  personalApiKey: process.env.POSTHOG_API_KEY!,
+  projectId: process.env.POSTHOG_PROJECT_ID,
+  host: process.env.POSTHOG_HOST,
+  sourcemaps: {
+    enabled: true,
+    deleteAfterUpload: true,
+  },
+});
