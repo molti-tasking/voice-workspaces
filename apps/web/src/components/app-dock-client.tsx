@@ -20,6 +20,7 @@ import {
   SettingPicker,
   VoicePicker,
 } from "./capture-settings";
+import { MicLevel } from "./mic-level";
 import { Link } from "./nav-link";
 
 /**
@@ -236,15 +237,16 @@ function RecordControl({
         }
         aria-pressed={isRecording}
         className={[
-          "flex size-[4.5rem] cursor-pointer items-start justify-center rounded-full pt-[0.875rem] text-white",
+          "relative flex size-[4.5rem] cursor-pointer items-start justify-center rounded-full pt-[0.875rem] text-white",
           "transition-transform active:scale-95 disabled:cursor-default disabled:opacity-50",
           "bg-[var(--color-accent)]",
           isRecording && !armed ? "vm-recording" : "",
           armed ? "ring-2 ring-white ring-offset-2 ring-offset-transparent" : "",
         ].join(" ")}
       >
+        {isRecording && <MicLevel />}
         {isRecording ? (
-          <Square size={22} fill="currentColor" aria-hidden />
+          <Square size={22} fill="currentColor" aria-hidden className="relative" />
         ) : (
           <Mic size={24} aria-hidden />
         )}

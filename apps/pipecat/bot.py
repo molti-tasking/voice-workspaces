@@ -21,8 +21,8 @@ WHAT IS HERE
               live STT stream — see `RunningSummary` for why it lives here and
               not in the ledger.
   title       Two to four words naming what is being talked about right now,
-              pushed to the browser as an RTVI server message for the recorder's
-              split-flap board — see `TopicTitle`.
+              pushed to the browser as an RTVI server message for the title on
+              the recorder — see `TopicTitle`.
 
 WHAT IS FETCHED, NOT DUPLICATED
   /api/realtime/session   the system prompt, the summary and title
@@ -650,7 +650,7 @@ def _litellm_chat(messages: list[dict], *, max_tokens: int, metadata: dict) -> s
 
     `SUMMARISE_MODEL` for both, and temperature 0: these are folds, not
     conversation. A title that comes back differently worded each call would
-    flip the board for no reason.
+    blur the recorder's title for no reason.
     """
     req = urllib.request.Request(
         f"{LITELLM_BASE_URL}/chat/completions",
@@ -806,7 +806,7 @@ def clean_title(raw: str | None, previous: str | None) -> str | None:
     COMMON case and the one the prompt asks for.
 
     Returns None for "nothing to change", so the caller has exactly one test to
-    make and the board never re-flips to what it is already showing.
+    make and the title never re-animates to what it is already showing.
 
     The caps are the board's, not the model's: four words and 32 characters is
     what fits across a phone in a cradle at a size that can be read without
@@ -843,7 +843,7 @@ def clean_title(raw: str | None, previous: str | None) -> str | None:
     if not text:
         return None
     # Case-insensitively, because a model that re-capitalises the same subject
-    # has not changed it — and the board renders uppercase anyway.
+    # has not changed it.
     if previous is not None and text.casefold() == previous.casefold():
         return None
     return text
@@ -2450,10 +2450,10 @@ def build_pipeline(
         seed=session.get("driveSummary"),
         metadata=litellm_metadata("talkback.summary", session, capture_session_id),
     )
-    # The live topic title, for the split-flap board on the recorder. Its own
-    # short window of recent speech rather than the summary above, because the
-    # board answers "what now" and the summary answers "what so far" — see the
-    # class. Inert when the web app sends no `titlePrompt`.
+    # The live topic title on the recorder. Its own short window of recent
+    # speech rather than the summary above, because the title answers "what
+    # now" and the summary answers "what so far" — see the class. Inert when the
+    # web app sends no `titlePrompt`.
     title = TopicTitle(
         session.get("titlePrompt"),
         metadata=litellm_metadata("talkback.title", session, capture_session_id),

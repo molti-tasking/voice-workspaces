@@ -13,10 +13,11 @@ import {
   SettingPicker,
   VoicePicker,
 } from "@/components/capture-settings";
+import { MicLevel } from "@/components/mic-level";
 import { useCues } from "@/lib/display/use-cues";
 import { CuePanel } from "./cue-panel";
 import { DraftPanel } from "./draft-panel";
-import { TopicBoard } from "./topic-board";
+import { TopicTitle } from "./topic-title";
 
 /**
  * The recorder screen.
@@ -93,7 +94,7 @@ export function RecorderClient() {
           }}
           disabled={isBusy}
           className={[
-            "cursor-pointer flex size-56 items-center justify-center rounded-full text-2xl font-medium",
+            "relative cursor-pointer flex size-56 items-center justify-center rounded-full text-2xl font-medium",
             "transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
             isRecording
               ? hearing
@@ -102,7 +103,10 @@ export function RecorderClient() {
               : "bg-ink-soft text-white ring-1 ring-line",
           ].join(" ")}
         >
-          {isBusy ? "…" : isRecording ? "Stop" : "Record"}
+          {isRecording && <MicLevel />}
+          <span className="relative">
+            {isBusy ? "…" : isRecording ? "Stop" : "Record"}
+          </span>
         </button>
 
         <p className="h-5 text-center text-sm text-white/40">
@@ -130,7 +134,7 @@ export function RecorderClient() {
 
         {!isRecording && <LanguagePicker />}
 
-        {TALKBACK_ENABLED && isRecording && <TopicBoard title={talk.title} />}
+        {TALKBACK_ENABLED && isRecording && <TopicTitle title={talk.title} />}
 
         {isRecording && <CuePanel cues={cues} />}
 
@@ -224,7 +228,7 @@ function StatusPills({
     <div className="flex items-center gap-2 text-xs">
       {recording && wakeLock && <Pill label="awake" tone="ok" />}
       {/* Only worth showing when it is NOT working. A healthy socket needs no
-          pill: the topic board naming what is being talked about is the
+          pill: the topic title naming what is being talked about is the
           evidence, and a car dashboard should not carry an indicator for every
           subsystem that is fine. */}
       {talkback === "degraded" && <Pill label="talk offline" tone="warn" />}
