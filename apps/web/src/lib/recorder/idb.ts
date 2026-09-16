@@ -12,6 +12,8 @@
  * signal returns — see the REGISTRATION_STORE below.
  */
 
+import { capture } from "@/lib/analytics/client";
+
 const DB_NAME = "voicemural";
 const DB_VERSION = 2;
 const CHUNK_STORE = "pendingChunks";
@@ -46,7 +48,7 @@ let dbPromise: Promise<IDBDatabase> | undefined;
 function openDb(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
 
-  dbPromise = new Promise((resolve, reject) => {
+  const opening = new Promise<IDBDatabase>((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
 
     req.onupgradeneeded = () => {
@@ -68,11 +70,59 @@ function openDb(): Promise<IDBDatabase> {
       }
     };
 
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error ?? new Error("Failed to open IndexedDB"));
+    req.onsuccess = () => {
+      const db = req.result;
+      // Mobile Safari force-closes IndexedDB connections when it freezes or
+      // backgrounds a tab — routine on a phone in a car. The cached handle then
+      // throws InvalidStateError from every later transaction, killing the whole
+      // durable queue until a reload. Drop the cache on close so the next call
+      // re-opens instead of reusing a dead connection. The guard leaves a
+      // fresher connection in place if one has already replaced this one.
+      const forget = () => {
+        if (dbPromise === opening) dbPromise = undefined;
+      };
+      db.onclose = forget;
+      db.onabort = forget;
+      db.onversionchange = () => {
+        db.close();
+        forget();
+      };
+      resolve(db);
+    };
+    req.onerror = () => {
+      // A failed open must not linger as a permanently rejected cached promise.
+      if (dbPromise === opening) dbPromise = undefined;
+      reject(req.error ?? new Error("Failed to open IndexedDB"));
+    };
   });
 
+  dbPromise = opening;
   return dbPromise;
+}
+
+/** The error mobile Safari throws from `db.transaction()` on a force-closed connection. */
+function isConnectionClosing(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "InvalidStateError";
+}
+
+/**
+ * Run a transaction, re-opening once if the connection was force-closed.
+ *
+ * `db.transaction()` throws InvalidStateError synchronously on a dying
+ * connection, and nothing else re-opens it, so without this retry one freeze
+ * strands the queue for the rest of the page. The re-open is the recovery this
+ * file exists to make possible, so it is reported as its own signal.
+ */
+async function runOnDb<T>(op: (db: IDBDatabase) => Promise<T>): Promise<T> {
+  try {
+    return await op(await openDb());
+  } catch (err) {
+    if (!isConnectionClosing(err)) throw err;
+    dbPromise = undefined;
+    const db = await openDb();
+    capture("upload_queue_reopened", {});
+    return op(db);
+  }
 }
 
 function tx<T>(
@@ -80,7 +130,7 @@ function tx<T>(
   mode: IDBTransactionMode,
   run: (store: IDBObjectStore) => IDBRequest<T>,
 ): Promise<T> {
-  return openDb().then(
+  return runOnDb(
     (db) =>
       new Promise<T>((resolve, reject) => {
         const transaction = db.transaction(storeName, mode);
@@ -99,24 +149,26 @@ export async function enqueueChunk(chunk: Omit<PendingChunk, "localId">): Promis
 
 /** Oldest-first pending chunks, so uploads follow capture order. */
 export async function pendingChunks(limit = 20): Promise<PendingChunk[]> {
-  const db = await openDb();
-  return new Promise((resolve, reject) => {
-    const out: PendingChunk[] = [];
-    const transaction = db.transaction(CHUNK_STORE, "readonly");
-    const cursorReq = transaction
-      .objectStore(CHUNK_STORE)
-      .index("byCreatedAt")
-      .openCursor();
+  return runOnDb(
+    (db) =>
+      new Promise<PendingChunk[]>((resolve, reject) => {
+        const out: PendingChunk[] = [];
+        const transaction = db.transaction(CHUNK_STORE, "readonly");
+        const cursorReq = transaction
+          .objectStore(CHUNK_STORE)
+          .index("byCreatedAt")
+          .openCursor();
 
-    cursorReq.onsuccess = () => {
-      const cursor = cursorReq.result;
-      if (!cursor || out.length >= limit) return resolve(out);
-      out.push(cursor.value as PendingChunk);
-      cursor.continue();
-    };
-    cursorReq.onerror = () =>
-      reject(cursorReq.error ?? new Error("Failed to read pending chunks"));
-  });
+        cursorReq.onsuccess = () => {
+          const cursor = cursorReq.result;
+          if (!cursor || out.length >= limit) return resolve(out);
+          out.push(cursor.value as PendingChunk);
+          cursor.continue();
+        };
+        cursorReq.onerror = () =>
+          reject(cursorReq.error ?? new Error("Failed to read pending chunks"));
+      }),
+  );
 }
 
 export async function deleteChunk(localId: number): Promise<void> {
