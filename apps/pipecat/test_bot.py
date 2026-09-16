@@ -938,12 +938,12 @@ def test_a_completion_that_only_calls_a_tool_is_not_a_declined_turn():
     assert notes == [True]  # only the spoken turn reached the engine
 
 
-# --- TopicTitle: what the board is told, and how often -----------------------
+# --- TopicTitle: what the title is told, and how often -----------------------
 # The recorder shows ONE short title of what is being talked about now, and
-# flips it like a departure board when it changes. Two things decide whether
+# blurs it across to the new one when it changes. Two things decide whether
 # that is bearable to sit next to for a whole drive: how often the container
 # calls the model, and whether an unchanged subject is allowed to re-push. Both
-# are tested here; the flipping itself is the browser's (split-flap.test.ts).
+# are tested here; the blur itself is the browser's (topic-title.tsx).
 
 
 def titler(monkeypatch, prompt="name it", reply=None, replies=None):

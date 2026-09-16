@@ -12,7 +12,7 @@
  *   — the board is only worth having if it is STILL most of the time. A model
  *   that rephrases the same subject every call turns the screen into a flicker,
  *   which is precisely the motion the recorder is designed to avoid. Returning
- *   the current title unchanged is how the split-flap stays quiet, and it is
+ *   the current title unchanged is how the title stays still, and it is
  *   also what makes the animation affordable: it fires when the subject
  *   genuinely changes, which is rare.
  *

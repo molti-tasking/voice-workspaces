@@ -129,22 +129,35 @@ body {
   }
 }
 
-/* --- The topic board flipping ---------------------------------------------
+/* --- The topic title changing ---------------------------------------------
    THIS DELIBERATELY BREAKS THE "OPACITY ONLY" RULE the cue panel above sets,
    and the reason it is allowed to is upstream of the CSS: the container's title
    prompt returns the CURRENT title unchanged while the subject holds, so this
    fires only when the conversation genuinely turns — a handful of times an hour
-   rather than continuously — and each fold lasts 70ms. A subject changing is
-   the one event on this screen that is worth a look, and a cross-fade cannot
-   say "this changed" to someone glancing sideways at it. A cut can be mistaken
-   for a title that was always there; a flap cannot.
+   rather than continuously. A subject changing is the one event on this screen
+   that is worth a look, and a plain fade is too quiet to say "this changed" to
+   someone glancing sideways at it.
 
-   The fold is from the TOP edge, because that is where a real flap is hinged:
-   the leaf drops into place rather than spinning in the middle. */
-@keyframes vm-flap {
+   A HEAVY blur, not a soft one: the old words should stop being words before
+   the new ones arrive, so nobody half-reads a title that is on its way out.
+   The two keyframes meet at the same blur, so the swap between them does not
+   show. `BLUR_MS` in topic-title.tsx waits out `vm-title-blur`. */
+.vm-title {
+  animation: vm-title-resolve 480ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.vm-title[data-blurred] {
+  animation: vm-title-blur 320ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+@keyframes vm-title-blur {
+  to {
+    filter: blur(20px);
+    opacity: 0.3;
+  }
+}
+@keyframes vm-title-resolve {
   from {
-    transform: rotateX(-80deg);
-    transform-origin: top center;
+    filter: blur(20px);
+    opacity: 0.3;
   }
 }
 
@@ -160,11 +173,10 @@ body {
   [style*="vm-cue-in"] {
     animation: none !important;
   }
-  /* And the board's fold, for the same reason — the inline `animation` is what
-     replays it, so only this can cancel it. The ticking through the alphabet is
-     stopped in topic-board.tsx, which checks the same query: between them the
-     title changes as a plain cut. */
-  [style*="vm-flap"] {
+  /* And the topic title's blur. topic-title.tsx checks the same query and skips
+     its wait, so between them the title changes as a plain cut. */
+  .vm-title,
+  .vm-title[data-blurred] {
     animation: none !important;
   }
 }
@@ -239,6 +251,16 @@ body {
   animation: vm-record-breathe 2.4s ease-in-out infinite;
 }
 
+/* The microphone's level inside a recording button (components/mic-level.tsx).
+   `--vm-mic-level` is written every frame from the live stream, 0..1, so there
+   is no transition here: the ballistics are already in `nextLevel`. At zero it
+   is invisible, which is the point — a button that stays flat while you talk
+   is a microphone that is not hearing you. */
+.vm-mic-level {
+  background: rgb(255 255 255 / 0.24);
+  scale: var(--vm-mic-level, 0);
+}
+
 /* The settings sheet, rising out of the dock it belongs to. */
 @keyframes vm-sheet-up {
   from {
@@ -260,5 +282,11 @@ body {
      glance, so it keeps the static ring the animation was pulsing. */
   .vm-recording {
     box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-accent) 35%, transparent);
+  }
+  /* The level is information, not decoration, so it stays — as brightness
+     rather than as a disc growing and shrinking all drive. */
+  .vm-mic-level {
+    scale: 1;
+    opacity: var(--vm-mic-level, 0);
   }
 }

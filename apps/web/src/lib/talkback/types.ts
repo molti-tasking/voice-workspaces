@@ -19,8 +19,8 @@ export interface TalkbackState {
    * ever receives it, so a reload during a drive starts blank again and the
    * next push refills it — the durable record is `utterance`, as always.
    *
-   * Null until the container has heard enough to name anything, which is also
-   * what the board shows before the first title: empty tiles.
+   * Null until the container has heard enough to name anything. The recorder
+   * keeps the title's space empty until then.
    */
   title: string | null;
   /**

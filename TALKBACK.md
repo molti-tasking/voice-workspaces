@@ -75,8 +75,9 @@ transport.input() → vad → Trace("in") → stt → Trace("stt") → summary
 `title` (`TopicTitle`) names what is being talked about **right now** in two to
 four words, off its own short window of recent speech rather than the
 whole-drive summary, and pushes each change to the browser as an
-`RTVIServerMessageFrame` over the data channel the audio already needs. That is
-the recorder's split-flap board. It never blocks a turn, and it is inert unless
+`RTVIServerMessageFrame` over the data channel the audio already needs. The
+recorder shows it as a plain title that blurs across when the subject changes.
+It never blocks a turn, and it is inert unless
 `/api/realtime/session` sent a `titlePrompt`.
 
 `Trace` logs exactly three things — audio-frame counts, VAD start/stop,
