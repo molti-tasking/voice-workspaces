@@ -1,3 +1,5 @@
+import { readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { withPostHogConfig } from "@posthog/nextjs-config";
 import { config as loadEnv } from "dotenv";
 import type { NextConfig } from "next";
@@ -79,14 +81,100 @@ const config: NextConfig = {
 const posthogPersonalApiKey = process.env.POSTHOG_API_KEY?.trim();
 const posthogProjectId = process.env.POSTHOG_PROJECT_ID?.trim();
 
+/** The trailer a bundler appends to a chunk to point at its source map. */
+const SOURCE_MAPPING_URL = /^[ \t]*\/\/# sourceMappingURL=[^\r\n]*[ \t]*$/gm;
+
+/**
+ * Leaves the build output as a successful upload would have left it: no maps.
+ *
+ * Enabling the upload also turns on `productionBrowserSourceMaps`, and the
+ * success path has posthog-cli delete the `.map` files (`--delete-after`)
+ * before stripping the comments that point at them. Nothing does that when the
+ * upload fails, so skipping this would ship ~300 maps that hand the whole
+ * client source to anyone who opens devtools — a failed telemetry upload must
+ * not publish the app's source. Deliberately allowed to throw: failing the
+ * build is the right outcome if the maps cannot be removed.
+ */
+async function discardSourceMaps(distDir: string) {
+  const entries = await readdir(distDir, {
+    recursive: true,
+    withFileTypes: true,
+  });
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (!entry.isFile()) return;
+      const file = join(entry.parentPath, entry.name);
+      if (file.endsWith(".map")) return rm(file, { force: true });
+      if (!file.endsWith(".js") && !file.endsWith(".css")) return;
+      const source = await readFile(file, "utf8");
+      const stripped = source.replace(SOURCE_MAPPING_URL, "");
+      if (stripped !== source) await writeFile(file, stripped);
+    }),
+  );
+}
+
+/**
+ * The upload runs as a `compiler.runAfterProductionCompile` hook that has no
+ * error handling of its own, so anything it throws — a rejected key, a project
+ * id that does not match it, a build container with no route to PostHog —
+ * comes out of `next build` and fails the whole deploy, minutes in, after a
+ * compile that succeeded. Error tracking is not worth a failed deploy, so the
+ * hook is wrapped to warn and carry on.
+ *
+ * `withPostHogConfig` declares that it returns a `NextConfig`, but it actually
+ * returns the function form that Next calls with the build phase — the hooks
+ * only exist on what that call returns, hence the casts and the await. Calling
+ * it rather than rebuilding its result is also what keeps the plugin's own
+ * wiring intact; it warns if it is handed to a wrapper that drops it.
+ */
+type NextConfigFn = (
+  phase: string,
+  context: { defaultConfig: NextConfig },
+) => Promise<NextConfig>;
+
+function withSourcemapUpload(
+  base: NextConfig,
+  credentials: { personalApiKey: string; projectId: string },
+): NextConfig {
+  const withUpload = withPostHogConfig(base, {
+    ...credentials,
+    host: process.env.POSTHOG_HOST,
+    sourcemaps: {
+      enabled: true,
+      deleteAfterUpload: true,
+    },
+  }) as unknown as NextConfigFn;
+
+  const resilient: NextConfigFn = async (phase, context) => {
+    const resolved = await withUpload(phase, context);
+    const upload = resolved.compiler?.runAfterProductionCompile;
+    if (!upload) return resolved;
+
+    return {
+      ...resolved,
+      compiler: {
+        ...resolved.compiler,
+        runAfterProductionCompile: async (metadata) => {
+          try {
+            await upload(metadata);
+          } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            console.warn(
+              `[posthog] source-map upload failed, continuing without it: ${reason}`,
+            );
+            await discardSourceMaps(metadata.distDir);
+          }
+        },
+      },
+    };
+  };
+
+  return resilient as unknown as NextConfig;
+}
+
 export default posthogPersonalApiKey && posthogProjectId
-  ? withPostHogConfig(config, {
+  ? withSourcemapUpload(config, {
       personalApiKey: posthogPersonalApiKey,
       projectId: posthogProjectId,
-      host: process.env.POSTHOG_HOST,
-      sourcemaps: {
-        enabled: true,
-        deleteAfterUpload: true,
-      },
     })
   : config;
