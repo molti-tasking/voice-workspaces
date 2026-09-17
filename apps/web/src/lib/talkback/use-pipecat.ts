@@ -118,6 +118,30 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
            *
            * Build-time, like the URL above: it is baked into the bundle. */
           iceServers: ICE_SERVERS,
+          /* GATHER FIRST, THEN OFFER — do not trickle.
+           *
+           * Left at its default of false, the transport POSTs the offer
+           * immediately and trickles candidates afterwards by PATCHing
+           * /offer with the `pc_id` the answer carried. But `onicecandidate`
+           * starts firing the moment the local description is set, which is
+           * while that POST is still in flight, and the flush is gated only on
+           * a `_canSendIceCandidates` flag that survives from the previous
+           * connection. On any second attempt — a reconnect, a renegotiation —
+           * the flag is already true while `pc_id` is still the old closed
+           * one, so the candidates PATCH against an id the container has
+           * already popped and get a 404 `unknown pc_id`. They are then gone:
+           * there is no retry, and the browser's candidates never arrive.
+           * The container is left with only its own, so ICE reaches `checking`
+           * and stays there until it times out — which looks like a NAT
+           * problem and reads, on the screen, as a `talk…` pill that never
+           * resolves.
+           *
+           * Waiting instead puts every candidate in the SDP offer itself,
+           * where the pc_id race cannot exist because there is no second
+           * request. Bounded at 2s by the transport, which resolves rather
+           * than rejects on timeout, so a blocked STUN server costs a short
+           * delay instead of the connection. */
+          waitForICEGathering: true,
           webrtcRequestParams: {
             endpoint: `${url}/offer`,
             // Rides along with the SDP offer, so the bot has it before the
