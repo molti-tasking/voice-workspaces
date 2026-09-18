@@ -49,9 +49,13 @@ correct, and only one of them would get fixed.
 """
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import time
 import urllib.error
 import urllib.request
@@ -115,7 +119,7 @@ from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.openai.stt import OpenAISTTService
 from pipecat.transports.base_transport import TransportParams
-from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
+from pipecat.transports.smallwebrtc.connection import IceServer, SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.workers.runner import WorkerRunner
 
@@ -145,20 +149,104 @@ WEB_URL = os.getenv("WEB_URL", "http://host.docker.internal:3000").rstrip("/")
 # with a message that reads like a network blip. STUN is what lets it discover
 # its public mapping and hole-punch.
 #
-# STUN alone is usually enough from a datacenter host. If ICE still fails —
-# symmetric NAT, or UDP blocked — a TURN server is required, and this is the
-# variable that points at it:
-#
-#   ICE_SERVERS=stun:stun.example.org:3478,turn:user:pass@turn.example.org:3478
-#
 # Comma-separated. Empty disables ICE servers entirely, which is the right
 # setting for a purely local run and wrong for anything else. The default is a
 # public STUN server: it learns this container's IP and nothing about the
 # participant — no audio and no transcript passes through it — but point it at
 # AU infrastructure if even that is worth avoiding.
-ICE_SERVERS = [
+#
+# STUN IS NOT ENOUGH FROM A PHONE, which is what TURN_URLS below is for. This
+# variable is STUN only now; a `turn:` URL here carries no credential and coturn
+# answers 401 to the allocation, so it would gather no relay candidate while
+# looking configured.
+STUN_SERVERS = [
     s.strip() for s in os.getenv("ICE_SERVERS", "stun:stun.l.google.com:19302").split(",") if s.strip()
 ]
+
+# THE RELAY. Read the note above first; this is the half that makes talk-back
+# work from a car rather than from a desk.
+#
+# STUN gets a path whenever one side can be hole-punched. A mobile carrier is
+# the case where neither can: carrier-grade NAT is typically symmetric, so the
+# mapping the phone learns from STUN is not the mapping this container sends to.
+# No candidate pair forms, ICE sits in `checking`, and 60 seconds later the log
+# says "Timeout establishing the connection to the remote peer" — which reads
+# like a network blip and is not one. Meanwhile the pipeline runs perfectly:
+# the model composes an opening line, ElevenLabs synthesises it, and it is
+# spoken into a transport with nowhere to send it. The only symptom is silence.
+# A drive on 18 Sep 2026 from a Telekom mobile connection is what this is.
+#
+# A relay is the only fix. There is no STUN configuration that reaches a
+# symmetric NAT, because the problem is not discovery.
+#
+# The URLs are credentialed at USE time, not here:
+#
+#   TURN_URLS=turn:voice.example.com:3478,turn:voice.example.com:3478?transport=tcp
+#   TURN_SECRET=<the same static-auth-secret coturn holds>
+#
+# NOTE the credential does NOT go in the URL. aiortc reads the username and
+# password off the RTCIceServer object and its URI parser rejects a host
+# containing `:` outright, so the `turn:user:pass@host:port` form that this
+# comment used to recommend raises ValueError inside /offer and 500s the
+# handshake. It was never exercised because TURN was never deployed.
+TURN_URLS = [s.strip() for s in os.getenv("TURN_URLS", "").split(",") if s.strip()]
+TURN_SECRET = os.getenv("TURN_SECRET", "")
+# coturn checks expiry when an allocation is made AND when it is refreshed, so a
+# credential that dies mid-drive drops the audio rather than merely refusing a
+# new call. Twelve hours outlives any drive.
+TURN_TTL_SECONDS = int(os.getenv("TURN_TTL_SECONDS") or 12 * 60 * 60)
+
+
+def turn_credentials(now: float | None = None) -> tuple[str, str]:
+    """coturn's REST-API credential: an expiry-stamped name, HMAC'd.
+
+    Must stay byte-identical to `mintTurnCredentials` in
+    packages/shared/src/turn-credentials.ts — the browser and this container
+    authenticate to the same coturn with the same secret, and a mismatch fails
+    silently on whichever side got it wrong: coturn answers 401, that peer
+    gathers no relay candidate, and the call degrades back to the exact silent
+    timeout the relay was added to fix.
+
+    The label is random rather than anything about the participant: it is
+    written to coturn's log for every allocation and travels in the SDP, and
+    coturn itself only ever reads the expiry back out.
+    """
+    expiry = int((now if now is not None else time.time())) + TURN_TTL_SECONDS
+    username = f"{expiry}:{secrets.token_hex(6)}"
+    digest = hmac.new(TURN_SECRET.encode(), username.encode(), hashlib.sha1).digest()
+    return username, base64.b64encode(digest).decode()
+
+
+def ice_servers() -> list[IceServer]:
+    """STUN as configured, plus a freshly credentialed relay when there is one.
+
+    Both, not either. A direct path costs no relay bandwidth and is lower
+    latency, so TURN is the fallback ICE falls back TO rather than a
+    replacement — offering only the relay would push every drive through it,
+    including the ones on a LAN that never needed it.
+
+    Built per connection because the credential expires. aiortc uses at most one
+    STUN and one TURN server whatever it is given, so order matters: the first
+    of each wins.
+    """
+    servers = [IceServer(urls=url) for url in STUN_SERVERS]
+
+    if TURN_URLS and TURN_SECRET:
+        username, credential = turn_credentials()
+        servers.extend(
+            IceServer(urls=url, username=username, credential=credential)
+            for url in TURN_URLS
+        )
+    elif TURN_URLS or TURN_SECRET:
+        # Half-configured is the likelier of the two deployment mistakes, and it
+        # is invisible from the outside: the call still connects from a desk.
+        logger.warning(
+            "TURN is half-configured — %s is set and the other is not. "
+            "No relay will be offered, and talk-back will fail from a mobile network.",
+            "TURN_URLS" if TURN_URLS else "TURN_SECRET",
+        )
+
+    return servers
 
 # Folds the drive into a rolling summary. Falls back to MODEL_CONVERSE and
 # deliberately NOT to MODEL_FAST: each fold builds on the last, so a model that
@@ -2909,6 +2997,48 @@ async def healthz():
     return {"ok": True, "backend": "pipecat", "connections": len(connections)}
 
 
+def log_candidates(label: str, answer: dict) -> None:
+    """Say what path this container is actually offering the browser.
+
+    The single most useful line in the log when a call goes silent, and it was
+    missing for the whole of the drive that motivated it. Without it a failed
+    call leaves only "Timeout establishing the connection to the remote peer",
+    which is a symptom shared by every possible cause, and the remote
+    candidates — which say what the PHONE could offer and nothing about this
+    side.
+
+    Read it as: `host` only means no STUN answered and nothing outside this
+    host's network can reach it; `srflx` means STUN worked and a direct path is
+    possible where NAT allows one; `relay` means coturn issued an allocation and
+    the call will work even from a mobile carrier. No `relay` line when TURN_URLS
+    is set means the credential was rejected or UDP to coturn is blocked, and
+    the next mobile drive will be silent.
+    """
+    kinds: dict[str, int] = {}
+    for line in (answer.get("sdp") or "").splitlines():
+        if not line.startswith("a=candidate:"):
+            continue
+        # "a=candidate:<foundation> <component> <proto> <priority> <ip> <port> typ <type> ..."
+        fields = line.split()
+        if "typ" not in fields:
+            continue
+        kind = fields[fields.index("typ") + 1]
+        kinds[kind] = kinds.get(kind, 0) + 1
+
+    logger.info(
+        "[ice] %s candidates: %s",
+        label,
+        ", ".join(f"{k}={n}" for k, n in sorted(kinds.items())) or "NONE",
+    )
+    if "relay" not in kinds and TURN_URLS:
+        logger.warning(
+            "[ice] TURN is configured but no relay candidate was gathered — "
+            "check the coturn credential and that UDP to %s is open. "
+            "Calls from a mobile network will time out.",
+            ", ".join(TURN_URLS),
+        )
+
+
 @app.post("/offer")
 async def offer(request: dict, background_tasks: BackgroundTasks):
     """WebRTC signalling: the browser offers, this answers.
@@ -2930,13 +3060,15 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
     if pc_id and pc_id in connections:
         connection = connections[pc_id]
         await connection.renegotiate(sdp=sdp, type=kind, restart_pc=request.get("restart_pc", False))
-        return connection.get_answer()
+        answer = connection.get_answer()
+        log_candidates("answer (renegotiated)", answer)
+        return answer
 
     if len(connections) >= MAX_CONNECTIONS:
         logger.warning("refusing offer: %d connections already open", len(connections))
         return JSONResponse({"error": "server busy"}, status_code=503)
 
-    connection = SmallWebRTCConnection(ice_servers=ICE_SERVERS)
+    connection = SmallWebRTCConnection(ice_servers=ice_servers())
     await connection.initialize(sdp=sdp, type=kind)
 
     @connection.event_handler("closed")
@@ -2965,6 +3097,7 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
     background_tasks.add_task(run)
 
     answer = connection.get_answer()
+    log_candidates("answer", answer)
     connections[answer["pc_id"]] = connection
     return JSONResponse(answer)
 

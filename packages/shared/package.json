@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./storage": "./src/storage.ts",
-    "./realtime-ticket": "./src/realtime-ticket.ts"
+    "./realtime-ticket": "./src/realtime-ticket.ts",
+    "./turn-credentials": "./src/turn-credentials.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
