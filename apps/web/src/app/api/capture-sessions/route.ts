@@ -29,7 +29,7 @@ export async function POST(req: Request) {
   }
 
   const db = getDb();
-  const { id, startedAt, deviceInfo, setting } = parsed.data;
+  const { id, startedAt, deviceInfo, setting, useCase } = parsed.data;
   // Narrowed to the catalogue, never rejected: a stale browser offering a voice
   // that has since been retired must still be able to register its recording.
   // Unknown becomes null, which the container reads as "use the fallback".
@@ -100,6 +100,10 @@ export async function POST(req: Request) {
       setting,
       voiceId,
       sttLanguage,
+      // Which worked example on `/welcome` sent them here, or null for a drive
+      // begun any other way. Set on the fresh insert only, like `setting` and
+      // the condition above: a resumed drive keeps the intent it started with.
+      useCase,
       studyCondition: resolved.condition,
     })
     .onConflictDoNothing({ target: captureSession.id })
@@ -136,7 +140,16 @@ export async function POST(req: Request) {
   capture(
     userId,
     "capture_session_opened",
-    { capture_session_id: id, resumed: false, setting: setting ?? null, voice_id: voiceId, stt_language: sttLanguage },
+    {
+      capture_session_id: id,
+      resumed: false,
+      setting: setting ?? null,
+      voice_id: voiceId,
+      stt_language: sttLanguage,
+      // Which example was picked — and, by its absence, how many drives people
+      // start without one once they know what the system is for.
+      use_case: useCase ?? null,
+    },
     { sessionId: sessionIdFrom(req) },
   );
 

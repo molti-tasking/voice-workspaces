@@ -59,6 +59,9 @@ describeIfDb("GET /api/board/stream", () => {
   });
 
   it("is not found while the board is switched off", async () => {
+    // The column defaults to `now()` since the peer week, so this has to be
+    // said deliberately rather than assumed of a fresh account.
+    await getDb().update(user).set({ boardEnabledAt: null }).where(eq(user.id, USER_ID));
     expect((await version()).status).toBe(404);
   });
 });

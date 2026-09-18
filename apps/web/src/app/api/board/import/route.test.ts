@@ -37,11 +37,23 @@ const BATCH_A = "00000000-0000-4000-8000-0000000000a1";
 const BATCH_B = "00000000-0000-4000-8000-0000000000a2";
 
 /** One task speech already put on the board, so duplicates have something to hit. */
+/**
+ * Switch the board off for a test of the gate.
+ *
+ * The column defaults to `now()` since the peer week, so a freshly inserted
+ * user HAS a board — which is the point. A test of what happens without one has
+ * to say so deliberately.
+ */
+async function disableBoard(): Promise<void> {
+  await getDb().update(user).set({ boardEnabledAt: null }).where(eq(user.id, USER_ID));
+}
+
 async function seed(opts: { enabled?: boolean } = {}) {
   const db = getDb();
   await db.delete(user).where(eq(user.id, USER_ID));
   await db.insert(user).values({ id: USER_ID, name: "R", email: `${USER_ID}@test.local` });
-  if (opts.enabled !== false) await enableBoard(USER_ID);
+  if (opts.enabled === false) await disableBoard();
+  else await enableBoard(USER_ID);
 
   const rows = [
     { type: "create_topic" as const, payload: { topicId: "t", title: "Research stay" } },

@@ -149,7 +149,19 @@ describeIfDb("board", () => {
     expect(after).toBe(boardVersionOf(ops.at(-1)!.seq, ops.length));
   });
 
-  it("is hidden until enabled, and keeps the first date once it is", async () => {
+  it("is on from the moment an account exists", async () => {
+    // It used to be null until a researcher ran an UPDATE, which made the board
+    // the study's before/after gate AND meant every new sign-up met an agent
+    // with no board to act on — which is what the first peers reported as "an
+    // organizer for voice memos". The column still records WHEN, so an analysis
+    // can still join on it; it is simply no longer the phase gate.
+    expect(await boardEnabledAt(USER_ID)).toBeInstanceOf(Date);
+  });
+
+  it("keeps the first date once it is set, however often it is enabled", async () => {
+    const db = getDb();
+    // A row a researcher deliberately nulled, for a phase design of their own.
+    await db.update(user).set({ boardEnabledAt: null }).where(eq(user.id, USER_ID));
     expect(await boardEnabledAt(USER_ID)).toBeNull();
 
     const first = new Date("2026-09-20T09:00:00Z");

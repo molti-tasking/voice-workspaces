@@ -37,13 +37,23 @@ export const user = pgTable("user", {
    */
   isAnonymous: boolean("is_anonymous").notNull().default(false),
   /**
-   * When the task board was switched on for this participant, or null.
+   * When the task board was switched on for this person.
    *
-   * Nullable rather than a flag so the before/after phase of the study is a
-   * timestamp on the row, not a deploy date someone has to remember. Not a
-   * Better Auth field; set by hand via SQL or Drizzle Studio.
+   * ON BY DEFAULT since the peer week. It used to be null until a researcher
+   * ran an UPDATE, which made the board the study's before/after phase gate —
+   * and made every new account experience the system with its most visible
+   * capability dark. That is exactly what the first peers reported: "it seemed
+   * like an organizer for voice memos". Nothing was wrong; the agent simply
+   * had no board to act on, so `BOARD_EDITING` was never composed into the
+   * prompt and its four tools were never registered.
+   *
+   * STILL A TIMESTAMP, not a flag, and still nullable. It keeps recording WHEN
+   * somebody got the board, which is what an analysis needs, and a researcher
+   * can still null it deliberately. But it is no longer the phase gate: a
+   * before/after design needs a mechanism that does not also decide whether a
+   * new sign-up sees a working product. Not a Better Auth field.
    */
-  boardEnabledAt: timestamp("board_enabled_at", { withTimezone: true }),
+  boardEnabledAt: timestamp("board_enabled_at", { withTimezone: true }).defaultNow(),
   /**
    * The pseudonym this person carries in the study's analysis, or null for
    * everyone who is not a participant (the researchers, pilots, guests).
@@ -161,6 +171,19 @@ export const captureSettingEnum = pgEnum("capture_setting", [
   "desk",
 ]);
 
+/**
+ * Which of the three worked examples on `/welcome` a drive was started from.
+ *
+ * Mirrors `CaptureUseCase` in `@voicemural/shared` — that package owns the wire
+ * format, this one the column. See the contract for why a seeded example has to
+ * be visible in the data rather than remembered afterwards.
+ */
+export const captureUseCaseEnum = pgEnum("capture_use_case", [
+  "think_aloud",
+  "draft",
+  "recall",
+]);
+
 export const macroProposalStatusEnum = pgEnum("macro_proposal_status", [
   "proposed",
   "accepted",
@@ -225,6 +248,15 @@ export const captureSession = pgTable(
      * unchanged rather than retroactively reinterpreted.
      */
     setting: captureSettingEnum("setting"),
+    /**
+     * The worked example this drive was started from, or NULL for a drive
+     * begun any other way — which is every drive before `/welcome` existed,
+     * and every drive of the longitudinal deployment.
+     *
+     * Fixed at insert and never updated, exactly like `setting` above: it
+     * records the intent the recording began under.
+     */
+    useCase: captureUseCaseEnum("use_case"),
     /**
      * The ElevenLabs voice the system spoke with, chosen before starting.
      *
