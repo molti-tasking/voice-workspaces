@@ -31,12 +31,24 @@ const CARD = "00000000-0000-4000-8000-00000000d0b2";
 const OP_A = "00000000-0000-4000-8000-00000000d0c1";
 const OP_B = "00000000-0000-4000-8000-00000000d0c2";
 
+/**
+ * Switch the board off for a test of the gate.
+ *
+ * The column defaults to `now()` since the peer week, so a freshly inserted
+ * user HAS a board — which is the point. A test of what happens without one has
+ * to say so deliberately.
+ */
+async function disableBoard(): Promise<void> {
+  await getDb().update(user).set({ boardEnabledAt: null }).where(eq(user.id, USER_ID));
+}
+
 async function seed(opts: { enabled?: boolean } = {}) {
   const db = getDb();
   await db.delete(user).where(eq(user.id, USER_ID));
   await db.insert(user).values({ id: USER_ID, name: "R", email: `${USER_ID}@test.local` });
   await db.insert(captureSession).values({ id: SESSION, userId: USER_ID, startedAt: new Date() });
-  if (opts.enabled !== false) await enableBoard(USER_ID);
+  if (opts.enabled === false) await disableBoard();
+  else await enableBoard(USER_ID);
   await db.insert(workspaceOp).values([
     {
       userId: USER_ID,

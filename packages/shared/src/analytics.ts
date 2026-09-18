@@ -100,6 +100,15 @@ export interface AnalyticsEventMap {
     voice_id?: string | null;
     /** The transcription language stored on the session; null = auto-detect. */
     stt_language?: string | null;
+    /**
+     * Which worked example on `/welcome` started this drive; null for one begun
+     * any other way.
+     *
+     * The seeding is deliberate and so is measuring it: a capability somebody
+     * was shown is not one they grew, so the probe has to be able to say which
+     * drives were prompted and which were not.
+     */
+    use_case?: string | null;
   };
   /**
    * Emitted once per session by the worker, after late chunks have settled.
@@ -133,13 +142,15 @@ export interface AnalyticsEventMap {
    * matching `user_signed_in` may never arrive, and the gap between the two is
    * the OAuth drop-off worth seeing.
    *
-   * `location` separates the two gestures that look identical in aggregate —
-   * signing in cold from the landing page, versus a guest upgrading an account
-   * that already holds recordings.
+   * `location` separates the gestures that look identical in aggregate —
+   * signing in cold from the landing page, a guest upgrading an account that
+   * already holds recordings, and an invited peer arriving on `/welcome`, where
+   * the drop-off between reading the page and recording anything is the number
+   * the probe cares about.
    */
   sign_in_started: {
     provider: "github" | "google";
-    location: "landing" | "account_menu" | "guest_banner";
+    location: "landing" | "account_menu" | "guest_banner" | "welcome";
   };
   user_signed_out: { is_guest: boolean };
   guest_account_upgraded: {
