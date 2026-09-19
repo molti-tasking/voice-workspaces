@@ -6,6 +6,7 @@ import {
   and,
   eq,
   getDb,
+  sql,
 } from "@voicemural/db";
 import { log } from "@voicemural/telemetry";
 
@@ -205,32 +206,6 @@ export interface AgentDecisionRecord {
 export async function recordAgentDecision(record: AgentDecisionRecord): Promise<void> {
   try {
     const db = getDb();
-    let authoritative = true;
-    if (record.cueId) {
-      const prior = await db
-        .select({ outcome: agentDecision.outcome })
-        .from(agentDecision)
-        .where(
-          and(
-            eq(agentDecision.captureSessionId, record.captureSessionId),
-            eq(agentDecision.cueId, record.cueId),
-          ),
-        );
-      const spoke = record.outcome !== "declined";
-      const priorSpoke = prior.some((p) => p.outcome !== "declined");
-      authoritative = prior.length === 0 || (spoke && !priorSpoke);
-      if (authoritative && prior.length > 0) {
-        await db
-          .update(agentDecision)
-          .set({ authoritative: false })
-          .where(
-            and(
-              eq(agentDecision.captureSessionId, record.captureSessionId),
-              eq(agentDecision.cueId, record.cueId),
-            ),
-          );
-      }
-    }
     await db.insert(agentDecision).values({
       captureSessionId: record.captureSessionId,
       seq: record.seq,
@@ -241,9 +216,36 @@ export async function recordAgentDecision(record: AgentDecisionRecord): Promise<
       latencyMs: record.latencyMs,
       subjectKey: record.subjectKey,
       cueId: record.cueId,
-      authoritative,
       agentTurnId: record.agentTurnId,
     });
+
+    /* INSERT FIRST, THEN ELECT, in one statement over the whole group.
+     *
+     * The obvious shape — read the moment's other rows, decide, then insert —
+     * is a read-modify-write, and the case it exists for is two completions
+     * for one moment landing at once. Two of those would each see no prior row
+     * and each insert `authoritative: true`, restoring the doubled
+     * denominators this column was added to remove.
+     *
+     * So the election is a single UPDATE over the group, run after every
+     * insert and idempotent: prefer a row that SPOKE — what the person heard
+     * is what the moment became — and otherwise the earliest. Whichever writer
+     * commits last sees the full group and sets exactly one winner, and
+     * re-running it changes nothing.
+     */
+    if (record.cueId) {
+      await db.execute(sql`
+        update ${agentDecision} set authoritative = (${agentDecision.id} = (
+          select d.id from ${agentDecision} d
+          where d.capture_session_id = ${record.captureSessionId}
+            and d.cue_id = ${record.cueId}
+          order by (d.outcome <> 'declined') desc, d.created_at asc, d.seq asc
+          limit 1
+        ))
+        where ${agentDecision.captureSessionId} = ${record.captureSessionId}
+          and ${agentDecision.cueId} = ${record.cueId}
+      `);
+    }
   } catch (err) {
     log.error("could not record agent decision", {
       captureSessionId: record.captureSessionId,

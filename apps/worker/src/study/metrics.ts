@@ -83,11 +83,23 @@ export interface MetricsOptions {
    * rather than as the person contradicting themselves.
    */
   correctionWindowMs?: number;
+  /**
+   * The IANA zone whose calendar days the revisit measure counts in.
+   *
+   * "Reopens or edits it on a LATER DAY" needs a day, and a day is local. A
+   * study run in Germany on UTC boundaries misclassifies in both directions:
+   * an edit at 00:30 local on Tuesday is Monday in UTC, so a genuine revisit
+   * reads as same-day, and one at 23:30 Monday reads as a revisit of itself.
+   * Defaults to `STUDY_TIME_ZONE`, then UTC — a deployment in one place should
+   * set it once rather than have the analysis correct for it afterwards.
+   */
+  timeZone?: string;
   now?: Date;
 }
 
 const DEFAULT_RE_PROMPT_MS = 5_000;
 const DEFAULT_CORRECTION_WINDOW_MS = 15_000;
+const DEFAULT_TIME_ZONE = process.env.STUDY_TIME_ZONE || "UTC";
 
 /* --- small helpers ---------------------------------------------------------- */
 
@@ -200,11 +212,14 @@ export interface SessionMetrics {
 }
 
 export interface Tier3Participant {
-  /** Cards touched or opened on a day later than the day they were created. */
+  /**
+   * Cards touched or opened on a LATER CALENDAR DAY than the one they were
+   * created on, in the study's own time zone. See `MetricsOptions.timeZone`.
+   */
   revisitRate: number | null;
   revisited: number;
   cards: number;
-  /** Days 2–6, as counts: what they opened and what they changed. */
+  /** What they opened and what they changed, across the whole deployment. */
   boardOpens: number;
   cardOpens: number;
   dictations: number;
@@ -224,7 +239,7 @@ export interface ParticipantMetrics {
   computedAt: string;
   userId: string;
   participantId: string | null;
-  options: { rePromptAfterMs: number; correctionWindowMs: number };
+  options: { rePromptAfterMs: number; correctionWindowMs: number; timeZone: string };
   sessions: SessionMetrics[];
   /** Tier 1 and 2 pooled across the participant's drives. */
   tier1: Tier1;
@@ -534,11 +549,15 @@ export async function participantMetrics(
     computedAt: now.toISOString(),
     userId: person.id,
     participantId: person.participantId,
-    options: { rePromptAfterMs, correctionWindowMs },
+    options: {
+      rePromptAfterMs,
+      correctionWindowMs,
+      timeZone: options.timeZone ?? DEFAULT_TIME_ZONE,
+    },
     sessions: perSession,
     tier1: poolTier1(perSession.map((s) => s.tier1)),
     tier2: poolTier2(perSession.map((s) => s.tier2)),
-    tier3: await participantTier3(userId, now),
+    tier3: await participantTier3(userId, now, options.timeZone ?? DEFAULT_TIME_ZONE),
   };
 }
 
@@ -623,11 +642,24 @@ function poolTier2(rows: readonly Tier2[]): Tier2 {
  * Opening counts as much as editing, which is why `study_event` exists — an
  * item somebody re-read every morning and never changed leaves no other trace.
  */
-async function participantTier3(userId: string, now: Date): Promise<Tier3Participant> {
+async function participantTier3(
+  userId: string,
+  now: Date,
+  timeZone: string,
+): Promise<Tier3Participant> {
   const db = getDb();
   const board = foldBoard(await loadOps(userId), { asOf: now });
 
-  const day = (date: Date) => date.toISOString().slice(0, 10);
+  // Calendar days where the participant is, not where the server is. See
+  // `MetricsOptions.timeZone`. `en-CA` because it formats as YYYY-MM-DD, which
+  // sorts and compares as a date should.
+  const format = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const day = (date: Date) => format.format(date);
 
   // When each card first appeared, and every later day it was touched.
   const createdOn = new Map<string, string>();
@@ -666,7 +698,14 @@ async function participantTier3(userId: string, now: Date): Promise<Tier3Partici
   const count = (outcome: string) => reviews.filter((r) => r.outcome === outcome).length;
   const lost = count("lost");
 
-  /* Days 2–6, as the protocol words them: opens, new dictations, edits.
+  /* Opens, new dictations and edits — the three things days 2–6 are allowed
+   * to record.
+   *
+   * TOTALS ACROSS THE DEPLOYMENT, not a days 2–6 slice. Bounding them here
+   * would mean this module deciding when a participant's week started, which
+   * is a protocol fact it does not have; the export carries `occurredAt` on
+   * every `study_event` and `workspace_op` row, so the analysis can cut any
+   * window it likes from the same data. What this reports is the whole of it.
    *
    * A dictation is the op that first put a card on the board; an edit is
    * anything done to one afterwards. Both come from the ledger rather than

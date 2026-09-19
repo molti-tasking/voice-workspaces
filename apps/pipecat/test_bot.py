@@ -1938,6 +1938,7 @@ def test_a_board_call_says_something_before_it_waits():
     """8.4 seconds of silence is indistinguishable from a dropped connection."""
     from pipecat.frames.frames import TTSSpeakFrame
 
+    bot.Liveness._last_spoke_ms = 0.0
     recorder = FakeRecorder()
     tools = bot.BoardTools("ticket", recorder, bot.FALLBACK_FILLERS)
     tools._post = lambda payload: {"ok": True, "changed": True}
@@ -1946,9 +1947,44 @@ def test_a_board_call_says_something_before_it_waits():
     run_tool(tools, "move_task", {"card": "1225b3", "column": "dropped"}, llm)
 
     spoken = [f.text for f in llm.pushed if isinstance(f, TTSSpeakFrame)]
-    assert spoken == [bot.FALLBACK_FILLERS["lookup"]]
+    # "One moment", not "I'm looking that up": moving a card is a WRITE, and
+    # narrating it as a lookup is a false statement about what is happening.
+    assert spoken == [bot.FALLBACK_FILLERS["working"]]
     # Written to agent_turn, or the echo filter hands it back as their speech.
     assert recorder.announcements == spoken
+
+
+def test_a_second_tool_call_in_one_completion_does_not_say_it_again():
+    """Two board edits are one moment to the person, not two."""
+    from pipecat.frames.frames import TTSSpeakFrame
+
+    bot.Liveness._last_spoke_ms = 0.0
+    recorder = FakeRecorder()
+    tools = bot.BoardTools("ticket", recorder, bot.FALLBACK_FILLERS)
+    tools._post = lambda payload: {"ok": True, "changed": True}
+    llm = FakeLLM()
+
+    run_tool(tools, "move_task", {"card": "1225b3", "column": "dropped"}, llm)
+    run_tool(tools, "move_task", {"card": "4471aa", "column": "next"}, llm)
+
+    spoken = [f.text for f in llm.pushed if isinstance(f, TTSSpeakFrame)]
+    assert spoken == [bot.FALLBACK_FILLERS["working"]]
+
+
+def test_a_search_always_speaks_its_own_announcement():
+    """Two searches are two different sentences, and both are worth hearing."""
+    from pipecat.frames.frames import TTSSpeakFrame
+
+    bot.Liveness._last_spoke_ms = 0.0
+    search = bot.WebSearch("ticket", None, FakeRecorder(), bot.FALLBACK_FILLERS)
+    search._post = lambda payload: {"ok": True, "results": []}
+    llm = FakeLLM()
+
+    run_tool(search, "search_web", {"announcement": "Ich schaue die Zeiten nach."}, llm)
+    run_tool(search, "search_web", {"announcement": "Und jetzt die Adresse."}, llm)
+
+    spoken = [f.text for f in llm.pushed if isinstance(f, TTSSpeakFrame)]
+    assert spoken == ["Ich schaue die Zeiten nach.", "Und jetzt die Adresse."]
 
 
 def test_a_slow_call_is_reassured_and_a_fast_one_is_not(monkeypatch):
@@ -1959,6 +1995,9 @@ def test_a_slow_call_is_reassured_and_a_fast_one_is_not(monkeypatch):
     llm = FakeLLM()
 
     async def run(delay):
+        # The repeat guard is about two calls in one completion; each of these
+        # runs is a separate moment.
+        bot.Liveness._last_spoke_ms = 0.0
         live = bot.Liveness(llm, recorder, bot.FALLBACK_FILLERS)
         await live.begin(None)
         await asyncio.sleep(delay)
@@ -1966,7 +2005,7 @@ def test_a_slow_call_is_reassured_and_a_fast_one_is_not(monkeypatch):
 
     asyncio.run(run(0.18))
     spoken = [f.text for f in llm.pushed if isinstance(f, TTSSpeakFrame)]
-    assert spoken[0] == bot.FALLBACK_FILLERS["lookup"]
+    assert spoken[0] == bot.FALLBACK_FILLERS["working"]
     assert spoken[1:] == [bot.FALLBACK_FILLERS["stillWorking"]] * 2
     assert recorder.announcements == spoken
 
@@ -1979,7 +2018,7 @@ def test_a_slow_call_is_reassured_and_a_fast_one_is_not(monkeypatch):
     llm.pushed.clear()
     asyncio.run(run(0.01))
     assert [f.text for f in llm.pushed if isinstance(f, TTSSpeakFrame)] == [
-        bot.FALLBACK_FILLERS["lookup"]
+        bot.FALLBACK_FILLERS["working"]
     ]
 
 
@@ -2201,3 +2240,80 @@ def test_an_interruption_empties_the_queue_waiting_for_an_end():
 
     asyncio.run(run())
     assert patched == []
+
+
+def test_one_stop_closes_the_whole_speech_span():
+    """A filler and the reply it covered are ONE span, so ONE stop.
+
+    The transport raises `BotStoppedSpeakingFrame` after a third of a second
+    of no audio, not once per turn. Treating the queue as FIFO patched the
+    filler with the reply's end — marked as measured, and wrong — and left
+    every later turn one behind.
+    """
+    patched = []
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+    recorder._post = lambda route, payload: {"ok": True, "id": payload["seq"]}
+    recorder._patch = lambda payload: patched.append(payload)
+
+    async def run():
+        recorder.record_announcement("Moment, ich schaue nach.")
+        recorder.record("They open at nine.", "They open at nine.")
+        await asyncio.sleep(0.2)
+        recorder.note_playback_end(ttfb_ms=180)
+        await asyncio.sleep(0.2)
+
+    asyncio.run(run())
+
+    # Only the LAST thing in the span gets the measured end; the filler keeps
+    # its estimate, and keeps saying that is what it is.
+    assert [p["id"] for p in patched] == [1]
+
+
+def test_a_span_that_is_one_turn_still_measures_that_turn():
+    patched = []
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+    recorder._post = lambda route, payload: {"ok": True, "id": payload["seq"]}
+    recorder._patch = lambda payload: patched.append(payload)
+
+    async def run():
+        recorder.record("The EICS one.", "The EICS one.")
+        await asyncio.sleep(0.2)
+        recorder.note_playback_end()
+        recorder.record("And the other one.", "And the other one.")
+        await asyncio.sleep(0.2)
+        recorder.note_playback_end()
+        await asyncio.sleep(0.2)
+
+    asyncio.run(run())
+    assert [p["id"] for p in patched] == [0, 1]
+
+
+def test_the_context_block_stops_demanding_an_answer_once_one_was_given():
+    """A block is REPLACED every turn, even by nothing.
+
+    ANSWER_PENDING living on in a reused block would tell the model that
+    <silence> is unavailable for the rest of a thin drive.
+    """
+    context = FakeLLMContext()
+    recorder = quiet_recorder()
+    recall = bot.Recall(context, FakeSummary(), None, recorder)
+
+    async def run():
+        async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+            pass
+
+        recall.push_frame = capture
+        recorder.record("Shall I drop it?", "Shall I drop it?")
+        await recall.process_frame(
+            TranscriptionFrame(text="Ja.", user_id="u", timestamp="t"),
+            FrameDirection.DOWNSTREAM,
+        )
+        assert bot.ANSWER_PENDING in recall._message["content"]
+        # The next turn has nothing to say and must say nothing.
+        await recall.process_frame(
+            TranscriptionFrame(text="Anyway.", user_id="u", timestamp="t"),
+            FrameDirection.DOWNSTREAM,
+        )
+        assert recall._message["content"] == ""
+
+    asyncio.run(run())

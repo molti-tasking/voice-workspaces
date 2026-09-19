@@ -360,6 +360,32 @@ describeIfDb("participantMetrics", () => {
     expect(session?.tier3.canCorrect).toBe(3);
   });
 
+  it("counts days where the participant is, not where the server is", async () => {
+    // The card's ops land at 09:00 UTC on 19 Sep; the open is at 23:30 UTC
+    // the same evening, which in Berlin is already the 20th. On UTC days that
+    // is not a revisit; on the study's own days it is, and it is the study's
+    // days the protocol means.
+    await getDb()
+      .update(schema.studyEvent)
+      .set({ occurredAt: new Date("2026-09-19T23:30:00Z") })
+      .where(eq(schema.studyEvent.userId, USER_ID));
+
+    const utc = await participantMetrics(USER_ID, { now: new Date("2026-09-26T09:00:00Z") });
+    expect(utc.tier3.revisited).toBe(0);
+
+    const berlin = await participantMetrics(USER_ID, {
+      now: new Date("2026-09-26T09:00:00Z"),
+      timeZone: "Europe/Berlin",
+    });
+    expect(berlin.tier3.revisited).toBe(1);
+
+    // Put the fixture back for whatever runs next.
+    await getDb()
+      .update(schema.studyEvent)
+      .set({ occurredAt: new Date("2026-09-22T08:00:00Z") })
+      .where(eq(schema.studyEvent.userId, USER_ID));
+  });
+
   it("counts an item opened on a later day as revisited", () => {
     expect(metrics.tier3.cards).toBe(1);
     expect(metrics.tier3.revisited).toBe(1);

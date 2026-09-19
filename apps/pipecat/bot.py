@@ -1393,22 +1393,30 @@ class Recall(FrameProcessor):
             # Composed even when retrieval failed: the running summary is local
             # and still worth putting in front of the model.
             content = self._compose(passages, pending, threads, board, drafts, answering)
-            if content:
-                # REPLACE, never append. Calling add_message every turn used to
-                # stack a new block onto a context that is never pruned — by turn
-                # 20 the model read twenty of them, every one but the last
-                # already stale. That is a monotonically growing prompt, and it
-                # is why a long drive got slower the longer it ran.
-                #
-                # LLMContext.add_message does `self._messages.append(message)`,
-                # storing the dict BY REFERENCE, so mutating it here updates the
-                # context in place without touching list membership — which
-                # matters because LLMContextAggregatorPair holds that same list.
-                if self._message is None:
-                    self._message = {"role": "system", "content": content}
-                    self._context.add_message(self._message)
-                else:
-                    self._message["content"] = content
+            # REPLACE, never append. Calling add_message every turn used to
+            # stack a new block onto a context that is never pruned — by turn
+            # 20 the model read twenty of them, every one but the last
+            # already stale. That is a monotonically growing prompt, and it
+            # is why a long drive got slower the longer it ran.
+            #
+            # LLMContext.add_message does `self._messages.append(message)`,
+            # storing the dict BY REFERENCE, so mutating it here updates the
+            # context in place without touching list membership — which
+            # matters because LLMContextAggregatorPair holds that same list.
+            #
+            # AN EXISTING BLOCK IS ALWAYS REPLACED, even by nothing. Leaving
+            # the last one in place when this turn composed none used to be a
+            # harmless saving — the block is rebuilt from live state every
+            # turn, so "nothing to compose" means there is no background. It
+            # stopped being harmless with ANSWER_PENDING in it: on a thin
+            # drive that line would survive into every later turn, telling the
+            # model that `<silence>` is unavailable long after the question it
+            # belonged to was answered.
+            if self._message is not None:
+                self._message["content"] = content or ""
+            elif content:
+                self._message = {"role": "system", "content": content}
+                self._context.add_message(self._message)
 
             self._reflow()
 
@@ -1538,6 +1546,7 @@ def ends_in_question(spoken: str) -> bool:
 # and therefore no language either.
 FALLBACK_FILLERS = {
     "lookup": "One moment, I'm looking that up.",
+    "working": "One moment.",
     "stillWorking": "Still looking.",
     "answerFallback": "Sorry — say that again?",
 }
@@ -1560,6 +1569,8 @@ def fillers_for(session: dict) -> dict:
     sent = session.get("spokenFillers")
     if not isinstance(sent, dict):
         return dict(FALLBACK_FILLERS)
+    # Every key present, whatever the web app sent: a partial object from an
+    # older deploy must not raise a KeyError in the middle of a lookup.
     return {
         key: str(sent.get(key) or FALLBACK_FILLERS[key]).strip() or FALLBACK_FILLERS[key]
         for key in FALLBACK_FILLERS
@@ -1852,6 +1863,14 @@ class Liveness:
     recall as the driver's own words.
     """
 
+    # When the last filler reached the speaker, across every Liveness in this
+    # process. A completion that calls two board tools runs two of these back
+    # to back, and hearing "One moment." twice in a second is worse than
+    # hearing it once: the placeholder is there to say the system is alive,
+    # and saying it again immediately says nothing new.
+    _last_spoke_ms: float = 0.0
+    REPEAT_GUARD_SECS = 4.0
+
     def __init__(self, llm, recorder: "TurnRecorder | None", fillers: dict):
         self._llm = llm
         self._recorder = recorder
@@ -1859,7 +1878,14 @@ class Liveness:
         self._task: asyncio.Task | None = None
 
     async def begin(self, opening: str | None) -> None:
-        await self._speak(opening or self._fillers["lookup"])
+        # A phrase the model wrote for THIS call always goes out — it says
+        # what is being looked up, and two of those are two different
+        # sentences. A generic placeholder is suppressed if one was just
+        # spoken.
+        if opening is not None:
+            await self._speak(opening)
+        elif time.monotonic() - Liveness._last_spoke_ms > self.REPEAT_GUARD_SECS:
+            await self._speak(self._fillers["working"])
         self._task = asyncio.create_task(self._reassure())
 
     async def end(self) -> None:
@@ -1878,6 +1904,7 @@ class Liveness:
             raise
 
     async def _speak(self, text: str) -> None:
+        Liveness._last_spoke_ms = time.monotonic()
         await self._llm.push_frame(TTSSpeakFrame(text, append_to_context=False))
         if self._recorder is not None:
             self._recorder.record_announcement(text)
@@ -2348,19 +2375,26 @@ class TurnRecorder:
 
         THE ONLY MEASURED END this container can get for an uninterrupted
         turn. `BotStoppedSpeakingFrame` is pushed upstream as well as down, so
-        the gate sees it and calls this; the row written a second earlier with
-        the character-count estimate is then patched with what actually
-        happened, and `endMeasured` says so.
+        `PlaybackClock` sees it and calls this; the row written a second
+        earlier with the character-count estimate is then patched with what
+        actually happened, and `endMeasured` says so.
 
-        FIFO, because speech is serial: what stops playing is the oldest thing
-        still playing. A turn cancelled before its audio finished never gets
-        its own stop, which is why `drop_unended` empties the queue on an
-        interruption rather than letting every later turn take the wrong row's
-        end.
+        ONE STOP IS ONE SPEECH SPAN, NOT ONE TURN. The transport raises it
+        after a third of a second with no audio, so a liveness filler followed
+        straight away by the reply it was covering is ONE span and produces
+        ONE stop. Treating the queue as FIFO would then patch the filler with
+        the reply's end — marked `endMeasured`, and confidently wrong — and
+        leave the queue one behind for the rest of the drive.
+
+        So a stop closes the whole span: every turn still waiting is taken off
+        the queue, and only the LAST of them is patched, because that is the
+        one whose end this actually is. The others keep their estimate and
+        keep `endMeasured` false, which is exactly what they are.
         """
         if self._closed or not self._unended:
             return
-        pending = self._unended.pop(0)
+        span, self._unended = self._unended, []
+        pending = span[-1]
         pending["end"] = max(0, _now_ms() - (self._started_at_ms or 0))
         pending["ttfb"] = ttfb_ms
         self._finish(pending)
@@ -3730,9 +3764,17 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
     connection = SmallWebRTCConnection(ice_servers=ice_servers())
     await connection.initialize(sdp=sdp, type=kind)
 
+    # Whether the peer went away before the pipeline was even registered. The
+    # session call below waits on a model for the seed summary, which is
+    # comfortably long enough for somebody to tap Stop in it — and a drive
+    # registered for an already-closed connection is the exact failure this
+    # handler exists to prevent, with its offer timer armed and nobody there.
+    closed_early = {"yes": False}
+
     @connection.event_handler("closed")
     async def on_closed(conn: SmallWebRTCConnection):
         connections.pop(conn.pc_id, None)
+        closed_early["yes"] = True
         drive = drives.pop(conn.pc_id, None)
         if drive is not None:
             # NO TURN INTO A CLOSED SESSION. The browser disconnects talk-back
@@ -3766,6 +3808,13 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
     log_candidates("answer", answer)
     connections[answer["pc_id"]] = connection
     drives[answer["pc_id"]] = drive
+    if closed_early["yes"]:
+        # The peer left while the session call was in flight, so `on_closed`
+        # ran with nothing to close. Close it here instead, rather than leave
+        # a drive nobody is on the other end of.
+        drives.pop(answer["pc_id"], None)
+        connections.pop(answer["pc_id"], None)
+        await drive.close("connection closed before the pipeline started")
     return JSONResponse(answer)
 
 

@@ -48,6 +48,7 @@
     // has to invalidate the build cache when it changes — a pilot bundle and
     // a participant bundle are different artefacts.
     "STUDY_PILOT_USER_IDS",
+    "STUDY_TIME_ZONE",
     "NEXT_PUBLIC_STUDY_TOGGLES",
     "STORAGE_DIR",
     // Runtime knobs read by the worker and web. Listed with the rest so the

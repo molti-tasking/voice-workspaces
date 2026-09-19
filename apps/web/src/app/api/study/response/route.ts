@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, captureSession, eq, getDb, studyResponse } from "@voicemural/db";
+import { and, captureSession, eq, getDb, isNull, studyResponse } from "@voicemural/db";
 import { StudyResponseCreate } from "@voicemural/shared";
 import { currentUserId } from "@/lib/session";
 
@@ -60,9 +60,11 @@ export async function POST(req: Request) {
     scaleMax,
   };
 
-  // `onConflictDoUpdate` covers the session-scoped case; the partial index
-  // cannot see two nulls as equal, so a day-7 answer (no session) is corrected
-  // by hand rather than by the index.
+  // `onConflictDoUpdate` covers the session-scoped case. A day-7 answer has no
+  // session, and Postgres treats two nulls in a unique index as distinct, so
+  // that one is corrected by hand — with `isNull` in the predicate, because
+  // without it the update would match every drive-scoped row for the same item
+  // and rewrite a whole week of pre/post answers with one day-7 rating.
   if (captureSessionId) {
     await db
       .insert(studyResponse)
@@ -83,6 +85,7 @@ export async function POST(req: Request) {
       .where(
         and(
           eq(studyResponse.userId, userId),
+          isNull(studyResponse.captureSessionId),
           eq(studyResponse.phase, phase),
           eq(studyResponse.item, item),
         ),

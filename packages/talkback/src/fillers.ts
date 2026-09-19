@@ -10,9 +10,12 @@
  * same, and a lookup is the one moment the system is audibly doing nothing
  * while being very much alive.
  *
- * Three phrases, and nothing more:
+ * Four phrases, and nothing more:
  *
- * - `lookup` goes out BEFORE the tool call, the moment the model asks for one.
+ * - `lookup` goes out BEFORE a search, the moment the model asks for one, and
+ *   `working` before any other tool call — a board edit is a write, not a
+ *   lookup, and saying "I'm looking that up" about moving a card is a false
+ *   statement about what the system is doing.
  * - `stillWorking` repeats once the call passes ~5s, and again every ~5s up to
  *   a cap. A second reassurance is the difference between "slow" and "gone";
  *   a fourth is nagging.
@@ -44,6 +47,14 @@
 export interface SpokenFillers {
   /** Said as a lookup starts. */
   lookup: string;
+  /**
+   * Said as any other tool call starts — a board edit, which is a WRITE.
+   *
+   * Separate from `lookup` because "I'm looking that up" is a false statement
+   * about moving a card, and a system that narrates itself wrongly is worse
+   * than one that says four words.
+   */
+  working: string;
   /** Said again while it is still running. */
   stillWorking: string;
   /** Said when the model will not answer an answer. See the guard in bot.py. */
@@ -60,11 +71,13 @@ export interface SpokenFillers {
 export const FILLERS: Record<string, SpokenFillers> = {
   en: {
     lookup: "One moment, I'm looking that up.",
+    working: "One moment.",
     stillWorking: "Still looking.",
     answerFallback: "Sorry — say that again?",
   },
   de: {
     lookup: "Moment, ich schaue nach.",
+    working: "Einen Moment.",
     stillWorking: "Ich schaue noch.",
     answerFallback: "Entschuldigung — sagen Sie das noch einmal?",
   },

@@ -3,7 +3,7 @@
  *
  *   pnpm study:export [--user <id>] [--out <dir>]        one JSONL file per participant
  *   pnpm study:export --user <id> --include-text          pilot accounts only; see below
- *   pnpm study:metrics [--user <id>] [--out <dir>]        Tier 1-3, per session and per participant
+ *   pnpm study:metrics [--user <id>] [--out <dir>] [--tz Europe/Berlin]  Tier 1-3, per session and participant
  *   pnpm study:metrics --print                            the same, to stdout
  *   pnpm study:review --user <id> [--card <id> --outcome done|open|lost]   the day-7 review
  *   pnpm study:participant --user <id> --id <P07>         assign a pseudonym (or --clear)
@@ -184,7 +184,10 @@ async function runMetrics(): Promise<void> {
   if (!print) await mkdir(outDir, { recursive: true });
 
   for (const target of targets) {
-    const metrics = await participantMetrics(target.userId, { rePromptAfterMs });
+    const metrics = await participantMetrics(target.userId, {
+      rePromptAfterMs,
+      timeZone: flag("tz"),
+    });
     if (print) {
       console.log(JSON.stringify(metrics, null, 2));
       continue;
