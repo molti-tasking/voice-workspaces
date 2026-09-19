@@ -103,6 +103,12 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
     let disposed = false;
     let client: PipecatClient | null = null;
     let audioEl: HTMLAudioElement | null = null;
+    /* Whether a connection has been STARTED, set before the first await in
+     * `connect` rather than when the client lands. It is what tells a stop
+     * from a stream that has simply not been published yet, and it has to be
+     * true for the whole of `connect` — a Stop during its round trips must
+     * still close what that call is about to open. */
+    let opened = false;
 
     const patch = (next: Partial<TalkbackState>) =>
       setState((prev) => ({ ...prev, ...next }));
@@ -110,6 +116,7 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
     async function connect(stream: MediaStream): Promise<void> {
       const [micTrack] = stream.getAudioTracks();
       if (!micTrack || disposed) return;
+      opened = true;
 
       /* `||`, NOT `??`.
        *
@@ -294,21 +301,62 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
       }
     }
 
-    const unsubscribe = subscribeStream((stream) => {
-      if (disposed) return;
-      if (stream) void connect(stream);
-      else void client?.disconnect();
-    });
-
-    return () => {
-      disposed = true;
-      unsubscribe();
-      void client?.disconnect();
+    /* STOP CLOSES THE PEER CONNECTION, not just the microphone tap.
+     *
+     * The recorder publishes `null` when a drive ends, and this used to answer
+     * it with a bare `client?.disconnect()` on the way past. That is the same
+     * call, but nothing owned the outcome: the client reference stayed, the
+     * audio element stayed, and a failed disconnect was invisible. Meanwhile
+     * Stop ends the capture session over HTTPS immediately, so from that
+     * moment the container is talking into a drive the database says is over —
+     * and it only finds out when ICE gives up, which on the first formative
+     * pilot took 52 seconds. Long enough for a silence timer to fire: an
+     * `agent_turn` at offset 396984ms against an `ended_at` 52s earlier,
+     * offering to look up something she had already said yes to.
+     *
+     * The container and the web app now refuse that write on their own (see
+     * `resolveLiveSession` and `Offers._fire`). This is the first of the three
+     * guards and the only one that stops it happening at all: end the call
+     * where the drive ends. */
+    async function teardown(): Promise<void> {
+      const closing = client;
       client = null;
       if (audioEl) {
         audioEl.srcObject = null;
         audioEl = null;
       }
+      if (!closing) return;
+      try {
+        await closing.disconnect();
+      } catch (err) {
+        // Nothing to retry with — the effect is going away either way — but it
+        // must not be silent: an un-closed peer connection is exactly the state
+        // the pilot's stray turn was spoken from.
+        console.warn(`[talkback:pipecat] could not close the connection — ${String(err)}`);
+      }
+    }
+
+    const unsubscribe = subscribeStream((stream) => {
+      if (disposed) return;
+      if (stream) {
+        void connect(stream);
+        return;
+      }
+      // `subscribeStream` fires immediately with whatever it is holding, which
+      // on a mount that beats the recorder's own publish is null. That is "not
+      // up yet", not "stopped", and treating it as a stop would leave the
+      // effect disposed and the drive permanently mute.
+      if (!opened) return;
+      // A real stop. Nothing may reconnect behind it, including a `connect`
+      // still working through its round trips.
+      disposed = true;
+      void teardown();
+    });
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+      void teardown();
     };
   }, [enabled, captureSessionId]);
 

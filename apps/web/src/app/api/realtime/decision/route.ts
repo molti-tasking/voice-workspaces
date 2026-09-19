@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { agentDecisionOutcomeEnum, agentDecisionTriggerEnum, captureSession, eq, getDb } from "@voicemural/db";
+import { agentDecisionOutcomeEnum, agentDecisionTriggerEnum } from "@voicemural/db";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import { recordAgentDecision } from "@voicemural/talkback";
+import { resolveLiveSession } from "@/lib/talkback/live-session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,7 +22,8 @@ export const dynamic = "force-dynamic";
  * posted here can cross the study's privacy boundary however it is exported.
  * `subjectKey` is an id (an invocation, a proposal, a topic), never a phrase.
  *
- * Ticket-authorised, ownership re-resolved, exactly as `/agent-turn` is.
+ * Ticket-authorised, ownership re-resolved and refused once the drive has
+ * ended, exactly as `/agent-turn` is.
  */
 
 const Body = z.object({
@@ -52,14 +54,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "bad_ticket" }, { status: 401 });
   }
 
-  const rows = await getDb()
-    .select({ userId: captureSession.userId })
-    .from(captureSession)
-    .where(eq(captureSession.id, payload.captureSessionId))
-    .limit(1);
-
-  if (rows[0]?.userId !== payload.userId) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  // Ownership AND still-running, together: a row for a session that has ended
+  // corrupts every count and duration taken from it. See `resolveLiveSession`.
+  const session = await resolveLiveSession("decision", payload.captureSessionId, payload.userId);
+  if (!session.live) {
+    return NextResponse.json({ error: session.error }, { status: session.status });
   }
 
   await recordAgentDecision({

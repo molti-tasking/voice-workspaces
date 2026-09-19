@@ -851,6 +851,56 @@ def test_a_declined_turn_leaves_the_question_standing():
     assert recorder.awaiting_question_answer
 
 
+def test_a_refused_write_teaches_the_container_the_drive_is_over(monkeypatch):
+    """One 409, and nothing is attempted again.
+
+    The container has no other way to learn it. Stop on /record ends the
+    capture session over HTTPS while the peer connection is still up, so
+    everything below is the container talking into a drive the database
+    already calls finished.
+    """
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+    attempts = []
+
+    def urlopen(req, timeout=None):
+        attempts.append(req.full_url)
+        raise urllib.error.HTTPError(req.full_url, 409, "Conflict", {}, None)
+
+    monkeypatch.setattr(bot.urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(urllib.error.HTTPError):
+        recorder._post("agent-turn", {"ticket": "ticket"})
+
+    assert recorder.session_ended is True
+    assert len(attempts) == 1
+
+    # And from here nothing is even attempted: no turn, no announcement, no
+    # decision. A row for an ended session skews every count taken from it.
+    posted = posted_by(
+        lambda r: (
+            r.record("Anything at all.", "Anything at all."),
+            r.record_announcement("Let me look that up."),
+            r.decline(),
+        ),
+        recorder,
+    )
+    assert posted == []
+
+
+def test_a_403_is_not_taken_as_the_drive_having_ended(monkeypatch):
+    # Different fact, different response: a forbidden write is this request
+    # being wrong, and the next turn may be perfectly fine.
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+
+    def urlopen(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", {}, None)
+
+    monkeypatch.setattr(bot.urllib.request, "urlopen", urlopen)
+    with pytest.raises(urllib.error.HTTPError):
+        recorder._post("agent-turn", {"ticket": "ticket"})
+    assert recorder.session_ended is False
+
+
 def test_a_pending_ask_does_not_relabel_an_offer():
     recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
     recorder.note_offer("silence_offer")
@@ -1038,7 +1088,7 @@ class FakeContext:
         self.messages.append(message)
 
 
-def offers_with(monkeypatch, session=None, recall=None):
+def offers_with(monkeypatch, session=None, recall=None, recorder=None):
     """A fresh engine with the timer disarmed into a log of arm/cancel calls.
 
     `asyncio.sleep` is a no-op for the engine's lifetime so `_fire` can be
@@ -1053,7 +1103,7 @@ def offers_with(monkeypatch, session=None, recall=None):
     monkeypatch.setattr(bot.asyncio, "sleep", now)
 
     log = []
-    engine = bot.Offers(FakeContext(), recall or FakeRecall(), session or {})
+    engine = bot.Offers(FakeContext(), recall or FakeRecall(), session or {}, recorder)
 
     def create_task(coro, name=None):
         coro.close()
@@ -1114,6 +1164,32 @@ def test_a_spoken_agent_turn_blocks_until_the_driver_replies(monkeypatch):
     asyncio.run(run2())
     assert engine._awaiting_user is False
     assert engine._log[-1] == "arm"
+
+
+def test_the_engine_refuses_a_moment_once_the_drive_has_ended(monkeypatch):
+    """The pilot's stray turn (19 Sep 2026).
+
+    `agent_turn` seq 14 starts at offset 396984ms — 52 seconds after this
+    session's `ended_at`. Stop on /record ends the capture session over HTTPS;
+    the peer connection follows only when ICE gives up, and in that gap the
+    silence timer fired and offered to look up the opening hours she had
+    already agreed to 99 seconds earlier. Checked where the turn is TAKEN, not
+    only where it is written: the turn was spoken aloud.
+    """
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+    engine = offers_with(monkeypatch, recorder=recorder)
+
+    async def run():
+        await engine._fire(engine._delay, opening=False)
+        assert engine._context.messages != []  # a live drive still offers
+
+        recorder._session_ended = True
+        engine._context.messages.clear()
+        engine._awaiting_user = False
+        await engine._fire(engine._delay, opening=False)
+        assert engine._context.messages == []  # …and a stopped one does not
+
+    asyncio.run(run())
 
 
 def test_a_declined_offer_backs_off_and_speech_resets_the_backoff(monkeypatch):

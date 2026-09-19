@@ -1687,6 +1687,18 @@ class Offers(FrameProcessor):
         if self._awaiting_user:
             return
 
+        # The drive is over. The timer is armed from the driver's last words
+        # and cancelled by an EndFrame, and on the first formative pilot
+        # neither happened in time: Stop ends the capture session over HTTPS,
+        # the peer connection follows only when ICE gives up, and 52 seconds
+        # after `ended_at` this fired and offered to look something up in a
+        # room where the recording had stopped. Checked HERE rather than only
+        # at the write, because the failure is the turn being TAKEN — spoken
+        # aloud, and offering something she had already agreed to.
+        if self._recorder is not None and self._recorder.session_ended:
+            logger.info("[offers] the drive has ended — no unprompted turn")
+            return
+
         if opening:
             self._opened = True
             instruction = OPENING_NUDGE
@@ -2003,6 +2015,13 @@ class TurnRecorder:
         self._decision_seq = 0
         self._responding_to: str | None = None
         self._cue = Cue("user_turn")
+        # Set the first time the web app refuses a write because the drive is
+        # over. The container has no other way to learn it: Stop on `/record`
+        # ends the session over HTTPS, and the WebRTC peer connection closing
+        # behind it is an ICE timeout away — tens of seconds, on the pilot 52
+        # of them, which is long enough for a silence timer to fire and speak
+        # into a room where the recording has stopped.
+        self._session_ended = False
         # The invocation the last spoken turn asked about, until the driver's
         # next words are sent as its answer — or a later turn moves on.
         self._awaiting_answer: str | None = None
@@ -2042,6 +2061,16 @@ class TurnRecorder:
 
     def cue(self) -> Cue:
         return self._cue
+
+    @property
+    def session_ended(self) -> bool:
+        """Whether the drive this container is talking into has been stopped.
+
+        Learned from the web app refusing a write, and read by everything that
+        would otherwise start a turn. One refusal is enough: `ended_at` is
+        never unset, so nothing can put the drive back.
+        """
+        return self._session_ended
 
     def note_tool_call(self, name: str, latency_ms: int, error: str | None = None) -> None:
         """A tool the agent called; attached to the turn that speaks about it."""
@@ -2093,6 +2122,12 @@ class TurnRecorder:
         `requestedModel`, each only when measured.
         """
         if not self._ticket or not self._started_at_ms or not spoken.strip():
+            return
+        # Nothing is written into a drive that has been stopped — not a turn,
+        # not a decision. The row would corrupt every count and duration taken
+        # from that session, and the web app refuses it anyway; this keeps the
+        # container from spending a request per turn finding that out.
+        if self._session_ended:
             return
 
         cue = cue or self._cue
@@ -2168,6 +2203,8 @@ class TurnRecorder:
         """
         if not self._ticket or not self._started_at_ms or not spoken.strip():
             return
+        if self._session_ended:
+            return
         seq, self._seq = self._seq, self._seq + 1
         offset = max(0, _now_ms() - self._started_at_ms)
         payload = {
@@ -2189,7 +2226,7 @@ class TurnRecorder:
         """A completion that reached nobody: the model declined, or the driver
         spoke before its first word. Writes a decision and NO turn.
         """
-        if not self._ticket or not self._started_at_ms:
+        if not self._ticket or not self._started_at_ms or self._session_ended:
             return
         cue = cue or self._cue
         latency = self._latency(cue, _now_ms()) if not interrupted else None
@@ -2264,9 +2301,23 @@ class TurnRecorder:
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=5) as res:
-            raw = res.read()
-            return json.loads(raw) if raw else None
+        try:
+            with urllib.request.urlopen(req, timeout=5) as res:
+                raw = res.read()
+                return json.loads(raw) if raw else None
+        except urllib.error.HTTPError as err:
+            # 409 is the web app saying this drive has ended. It is the only
+            # signal the container gets: Stop closes the session over HTTPS and
+            # the peer connection follows whenever ICE notices, which on the
+            # pilot was 52 seconds later. Remembered rather than merely
+            # reported, so the NEXT turn is not attempted at all.
+            if err.code == 409:
+                if not self._session_ended:
+                    logger.warning(
+                        "[turn] the drive has ended; nothing further will be spoken or recorded"
+                    )
+                self._session_ended = True
+            raise
 
 
 def _partial_tail(text: str, token: str) -> str:

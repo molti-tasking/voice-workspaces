@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { captureSession, eq, getDb } from "@voicemural/db";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import { recordAgentTurn } from "@voicemural/talkback";
+import { resolveLiveSession } from "@/lib/talkback/live-session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,6 +26,9 @@ export const dynamic = "force-dynamic";
  *
  * Ticket-authorised for the same reason as the context route — the Python
  * container has no session — and ownership is re-resolved rather than trusted.
+ * So is whether the drive is still running: a turn written after Stop belongs
+ * to no conversation and skews every count taken from the session. See
+ * `resolveLiveSession`.
  */
 
 /**
@@ -101,14 +104,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "bad_ticket" }, { status: 401 });
   }
 
-  const rows = await getDb()
-    .select({ userId: captureSession.userId })
-    .from(captureSession)
-    .where(eq(captureSession.id, payload.captureSessionId))
-    .limit(1);
-
-  if (rows[0]?.userId !== payload.userId) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  // Ownership AND still-running, together: a row for a session that has ended
+  // corrupts every count and duration taken from it. See `resolveLiveSession`.
+  const session = await resolveLiveSession("agent-turn", payload.captureSessionId, payload.userId);
+  if (!session.live) {
+    return NextResponse.json({ error: session.error }, { status: session.status });
   }
 
   const id = await recordAgentTurn({
