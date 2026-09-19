@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { and, captureSession, eq, getDb, isNull } from "@voicemural/db";
 import { currentUserId } from "@/lib/session";
 
@@ -11,7 +12,19 @@ export const runtime = "nodejs";
  * stop, so this call is often never made. The worker's sweep closes sessions
  * that have gone quiet, and `on-session-end-summarise` fires from there. Never
  * make correctness depend on this endpoint being reached.
+ *
+ * `debriefEndedOffsetMs` closes the readable window when the participant taps
+ * Done on the three questions (see `/debrief`). Optional, because every other
+ * way a session ends — the idle sweep, a dead zone, a phone put down — leaves
+ * it null, and a debrief with no end is read as running to the end of the
+ * recording. That is the reading that keeps the promise: it can only make the
+ * readable window smaller than the truth, never larger.
  */
+
+const Body = z.object({
+  debriefEndedOffsetMs: z.number().int().min(0).optional(),
+});
+
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -19,11 +32,20 @@ export async function POST(
   const userId = await currentUserId(req);
   if (!userId) return NextResponse.json({ error: "unauthorised" }, { status: 401 });
 
+  // A body is optional here and always has been: the recorder's own teardown
+  // paths post nothing at all, and so does `dismissResumable`.
+  const body = Body.safeParse(await req.json().catch(() => null));
   const { id } = await params;
 
   const updated = await getDb()
     .update(captureSession)
-    .set({ endedAt: new Date(), endedBy: "client" })
+    .set({
+      endedAt: new Date(),
+      endedBy: "client",
+      ...(body.success && body.data.debriefEndedOffsetMs !== undefined
+        ? { debriefEndedOffsetMs: body.data.debriefEndedOffsetMs }
+        : {}),
+    })
     .where(
       and(
         eq(captureSession.id, id),

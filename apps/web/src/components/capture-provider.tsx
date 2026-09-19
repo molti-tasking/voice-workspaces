@@ -23,6 +23,17 @@ export interface CaptureContextValue {
   recorder: ReturnType<typeof useRecorder>;
   talkback: TalkbackState;
   isRecording: boolean;
+  /**
+   * The post-drive debrief: Stop has been tapped, the three questions are on
+   * screen, and the microphone is STILL OPEN for the answers.
+   *
+   * Separate from `isRecording` on purpose. Capture carries on — the chunk
+   * loop, the wake lock and the uploader do not know the difference — but
+   * talk-back does not, because these answers are the study's channel and an
+   * agent replying to them would be talking over the one part of a drive it
+   * is not in.
+   */
+  isDebriefing: boolean;
   /** True while the microphone is being opened or the last chunk closed out. */
   isBusy: boolean;
 
@@ -42,6 +53,8 @@ export interface CaptureContextValue {
   /** Start a drive with whatever is currently selected. Safe to call twice. */
   startRecording: () => void;
   stopRecording: () => void;
+  /** Done with the three questions: close the window and end the recording. */
+  finishDebrief: () => void;
 }
 
 const CaptureContext = createContext<CaptureContextValue | null>(null);
@@ -71,6 +84,7 @@ const CaptureContext = createContext<CaptureContextValue | null>(null);
 export function CaptureProvider({ children }: { children: React.ReactNode }) {
   const recorder = useRecorder();
   const isRecording = recorder.status === "recording";
+  const isDebriefing = recorder.status === "debriefing";
   const isBusy = recorder.status === "requesting" || recorder.status === "stopping";
 
   // Inferred from the device and its motion, not asked. See detect-setting.ts.
@@ -80,7 +94,7 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
   // has to be inferable from anywhere — a participant who taps record while
   // reading the board still needs the right profile. It stops for the duration
   // of the recording, which is when the phone is actually in a cradle.
-  const detected = useDetectedSetting({ enabled: !isRecording });
+  const detected = useDetectedSetting({ enabled: !isRecording && !isDebriefing });
   const [chosenSetting, chooseSetting] = useState<CaptureSetting | null>(null);
 
   // Per-browser preferences, remembered across visits. See their stores.
@@ -99,7 +113,7 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
   const source: SettingSource = chosenSetting ? "chosen" : detected.source;
 
   const { requestMotion } = detected;
-  const { start, stop } = recorder;
+  const { start, stop, finishDebrief: endDebrief } = recorder;
 
   const startRecording = useCallback(() => {
     // iOS gates the accelerometer behind a tap; this is the tap. The answer
@@ -116,11 +130,16 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     void stop();
   }, [stop]);
 
+  const finishDebrief = useCallback(() => {
+    void endDebrief();
+  }, [endDebrief]);
+
   const value = useMemo<CaptureContextValue>(
     () => ({
       recorder,
       talkback,
       isRecording,
+      isDebriefing,
       isBusy,
       setting,
       source,
@@ -132,11 +151,13 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       chooseSttLanguage,
       startRecording,
       stopRecording,
+      finishDebrief,
     }),
     [
       recorder,
       talkback,
       isRecording,
+      isDebriefing,
       isBusy,
       setting,
       source,
@@ -147,6 +168,7 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       chooseSttLanguage,
       startRecording,
       stopRecording,
+      finishDebrief,
     ],
   );
 

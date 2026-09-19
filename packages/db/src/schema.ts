@@ -234,6 +234,31 @@ export const captureSession = pgTable(
      */
     endedBy: text("ended_by").$type<"client" | "idle_sweep">(),
     /**
+     * The post-drive debrief window, in ms into the recording.
+     *
+     * THE PRIVACY BOUNDARY RUNS THROUGH THESE TWO COLUMNS. `/study` promises
+     * that nobody on the research team listens to a drive or reads its
+     * transcript; what researchers see is counts and timings. The debrief is
+     * the exception the participant is told about — three questions they answer
+     * aloud, knowing the answers are read. So the content channel is not a
+     * property of a session, it is a property of an INTERVAL inside one, and
+     * an export that cannot name the interval cannot honour the promise.
+     *
+     * Recorded rather than inferred from the clock, because "after Stop" is not
+     * a time anyone can reconstruct: the recording continues across it, and the
+     * ledger has no seam.
+     *
+     * `debriefStartedOffsetMs` set with `debriefEndedOffsetMs` still null means
+     * a debrief that was never closed — the participant walked away and the
+     * idle sweep ended the session. Everything after the start is then the
+     * debrief, which is the reading that keeps the promise: it can only ever
+     * make the readable window smaller than the truth, never larger.
+     *
+     * Null on every recording made before the debrief existed, which had none.
+     */
+    debriefStartedOffsetMs: integer("debrief_started_offset_ms"),
+    debriefEndedOffsetMs: integer("debrief_ended_offset_ms"),
+    /**
      * When `capture_session_completed` was sent to PostHog.
      *
      * Exactly-once is enforced here rather than relying on PostHog's event

@@ -63,6 +63,18 @@ export interface AnalyticsEventMap {
     chunks_recorded: number;
     chunks_pending: number;
   };
+  /**
+   * The post-drive debrief opened: Stop was tapped and the recording carried on.
+   *
+   * Counts and timings only, like everything here — the answers themselves are
+   * transcript, and transcript never reaches an analytics event. What this
+   * measures is whether the window is reached at all, and how long a drive was
+   * before it.
+   */
+  debrief_started: {
+    capture_session_id: string;
+    recording_duration_ms: number;
+  };
   mic_permission_denied: { error_name: string };
   wake_lock_denied: Record<string, never>;
   unfinished_session_detected: { capture_session_id: string };

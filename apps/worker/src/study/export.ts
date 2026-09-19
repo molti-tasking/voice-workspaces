@@ -111,6 +111,8 @@ export async function exportParticipant(
       voiceId: captureSession.voiceId,
       sttLanguage: captureSession.sttLanguage,
       studyCondition: captureSession.studyCondition,
+      debriefStartedOffsetMs: captureSession.debriefStartedOffsetMs,
+      debriefEndedOffsetMs: captureSession.debriefEndedOffsetMs,
     })
     .from(captureSession)
     .where(eq(captureSession.userId, userId))
@@ -131,6 +133,23 @@ export async function exportParticipant(
       sttLanguage: s.sttLanguage,
       // Null for drives recorded before conditions existed — not "defaults".
       studyCondition: s.studyCondition,
+      /* WHERE THE READABLE CHANNEL IS, and the only place there is one.
+       *
+       * `/study` promises that nobody on the research team listens to a drive
+       * or reads its transcript; the debrief is the stated exception, spoken
+       * knowingly after Stop. That makes the boundary an INTERVAL rather than a
+       * property of a session, and these are its edges, in ms into the
+       * recording — the same clock `utterance.startOffsetMs` is on.
+       *
+       * Both null is a drive with no debrief, which is every drive recorded
+       * before it existed: nothing in it is readable. A start with no end is a
+       * debrief that was never closed — the phone was put down and the idle
+       * sweep ended the session — and reads as running to the end of the
+       * recording. The export carries the edges and never the words: this file
+       * still exports counts and timings, and T1.3 decides what a debrief
+       * export looks like. */
+      debriefStartedOffsetMs: s.debriefStartedOffsetMs,
+      debriefEndedOffsetMs: s.debriefEndedOffsetMs,
     });
   }
 

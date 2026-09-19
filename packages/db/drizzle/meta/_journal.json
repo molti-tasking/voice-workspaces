@@ -113,6 +113,13 @@
       "when": 1789823262140,
       "tag": "0015_decision_opportunities",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1789823498960,
+      "tag": "0016_debrief_window",
+      "breakpoints": true
     }
   ]
 }

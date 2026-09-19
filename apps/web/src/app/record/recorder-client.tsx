@@ -15,6 +15,7 @@ import {
 } from "@/components/capture-settings";
 import { MicLevel } from "@/components/mic-level";
 import { useCues } from "@/lib/display/use-cues";
+import { DEBRIEF_MAX_MS, DEBRIEF_QUESTIONS } from "@/lib/study/debrief";
 import { CuePanel } from "./cue-panel";
 import { DraftPanel } from "./draft-panel";
 import { TopicTitle } from "./topic-title";
@@ -33,11 +34,13 @@ export function RecorderClient() {
     recorder: rec,
     talkback: talk,
     isRecording,
+    isDebriefing,
     isBusy,
     setting,
     source,
     startRecording,
     stopRecording,
+    finishDebrief,
   } = useCapture();
 
   const [showPicker, setShowPicker] = useState(false);
@@ -83,6 +86,13 @@ export function RecorderClient() {
         <button
           type="button"
           onClick={() => {
+            if (isDebriefing) {
+              // Done with the three questions. The same enormous target, so a
+              // participant who has already put the phone in a pocket has one
+              // gesture to learn rather than two.
+              finishDebrief();
+              return;
+            }
             if (isRecording) {
               // One tap, no confirmation: this target is 224px and is meant to
               // be hit without looking. The dock's 64px button arms first —
@@ -96,21 +106,28 @@ export function RecorderClient() {
           className={[
             "relative cursor-pointer flex size-56 items-center justify-center rounded-full text-2xl font-medium",
             "transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
-            isRecording
-              ? hearing
-                ? "bg-accent text-white shadow-[0_0_0_18px_var(--color-accent-soft)]"
-                : "bg-accent text-white shadow-[0_0_0_12px_var(--color-accent-soft)]"
-              : "bg-ink-soft text-white ring-1 ring-line",
+            isDebriefing
+              ? // Still recording, and it must not look like it is not — but not
+                // the drive's own colour either, because the channel has
+                // changed and the participant was told it would.
+                "bg-amber-500/90 text-white shadow-[0_0_0_12px_rgba(245,158,11,0.18)]"
+              : isRecording
+                ? hearing
+                  ? "bg-accent text-white shadow-[0_0_0_18px_var(--color-accent-soft)]"
+                  : "bg-accent text-white shadow-[0_0_0_12px_var(--color-accent-soft)]"
+                : "bg-ink-soft text-white ring-1 ring-line",
           ].join(" ")}
         >
-          {isRecording && <MicLevel />}
+          {(isRecording || isDebriefing) && <MicLevel />}
           <span className="relative">
-            {isBusy ? "…" : isRecording ? "Stop" : "Record"}
+            {isBusy ? "…" : isDebriefing ? "Done" : isRecording ? "Stop" : "Record"}
           </span>
         </button>
 
         <p className="h-5 text-center text-sm text-white/40">
-          {isRecording ? (
+          {isDebriefing ? (
+            "Still recording. Answer out loud, then tap Done."
+          ) : isRecording ? (
             profile.hint
           ) : (
             <>
@@ -128,11 +145,13 @@ export function RecorderClient() {
           )}
         </p>
 
-        {!isRecording && showPicker && <SettingPicker />}
+        {isDebriefing && <DebriefPanel startedMs={rec.debriefStartedMs} elapsedMs={rec.elapsedMs} />}
 
-        {!isRecording && <VoicePicker />}
+        {!isRecording && !isDebriefing && showPicker && <SettingPicker />}
 
-        {!isRecording && <LanguagePicker />}
+        {!isRecording && !isDebriefing && <VoicePicker />}
+
+        {!isRecording && !isDebriefing && <LanguagePicker />}
 
         {TALKBACK_ENABLED && isRecording && <TopicTitle title={talk.title} />}
 
@@ -144,7 +163,7 @@ export function RecorderClient() {
       </div>
 
       <footer className="w-full max-w-md space-y-3 text-sm">
-        {rec.lastSessionId && !isRecording && (
+        {rec.lastSessionId && !isRecording && !isDebriefing && (
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
             <p className="mb-1 font-medium text-emerald-100">
               Saved {formatOffset(rec.lastSessionMs)}
@@ -183,7 +202,7 @@ export function RecorderClient() {
           </Notice>
         )}
 
-        {rec.resumable && !isRecording && (
+        {rec.resumable && !isRecording && !isDebriefing && (
           <Notice tone="warn" title="Unfinished session found">
             <div className="space-y-2">
               <p>
@@ -206,6 +225,59 @@ export function RecorderClient() {
         )}
       </footer>
     </main>
+  );
+}
+
+/**
+ * The three questions, asked while the microphone is still open.
+ *
+ * WHY THIS EXISTS AT ALL. The first formative pilot (19 Sep 2026) recorded
+ * 5m44s and then stopped, and the most useful thing the participant said came
+ * afterwards: that the agent mangled a place name, that she wanted it to say
+ * "warte kurz, ich suche" before a lookup, and — watching it sit silent — "ist
+ * jetzt die App ausgegangen?". None of it is in the ledger. It exists because
+ * somebody happened to be filming.
+ *
+ * READ DELIBERATELY, unlike everything else on this screen. The cue panel is
+ * glanceable because a driver cannot read; this appears only once the drive is
+ * over and the phone is in a hand. The questions are still spoken aloud rather
+ * than typed, and "nothing today" is a complete answer to all three.
+ */
+function DebriefPanel({
+  startedMs,
+  elapsedMs,
+}: {
+  startedMs: number | null;
+  elapsedMs: number;
+}) {
+  // From the chunk clock, not a wall clock: it is the same clock the stored
+  // offsets are on, and it advances a chunk at a time, which is exactly the
+  // granularity worth showing.
+  const usedMs = startedMs === null ? 0 : Math.max(0, elapsedMs - startedMs);
+  const leftSecs = Math.max(0, Math.ceil((DEBRIEF_MAX_MS - usedMs) / 1000));
+
+  return (
+    <section className="w-full max-w-md rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+      <header className="mb-3 flex items-baseline justify-between gap-3">
+        <h2 className="text-sm font-medium text-amber-100">Before you go</h2>
+        <span className="font-mono text-xs tabular-nums text-amber-200/60">
+          {leftSecs}s
+        </span>
+      </header>
+      <ol className="space-y-2.5 text-sm leading-relaxed text-white/80">
+        {DEBRIEF_QUESTIONS.map((question, i) => (
+          <li key={question} className="flex gap-3">
+            <span className="shrink-0 font-mono text-xs text-white/30">{i + 1}</span>
+            {question}
+          </li>
+        ))}
+      </ol>
+      <p className="mt-3 text-xs text-white/40">
+        Say them out loud. These answers are the part of a drive the research
+        team reads — nothing else is. &ldquo;Nothing today&rdquo; is a fine
+        answer.
+      </p>
+    </section>
   );
 }
 
