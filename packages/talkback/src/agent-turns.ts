@@ -115,6 +115,15 @@ export interface AgentDecisionRecord {
   userId: string;
   seq: number;
   offsetMs: number;
+  /**
+   * The moment this decision belongs to. Several completions can share one —
+   * Pipecat runs inference more than once inside a user turn — and this is what
+   * makes the log countable by moment rather than by row. See the counting rule
+   * on `agentDecision` in the schema.
+   */
+  opportunitySeq?: number;
+  /** Which completion this was within that moment, from 0. The last one wins. */
+  attempt?: number;
   trigger: AgentDecisionTrigger;
   outcome: AgentDecisionOutcome;
   configVersion?: string;
@@ -137,6 +146,8 @@ export async function recordAgentDecision(record: AgentDecisionRecord): Promise<
       captureSessionId: record.captureSessionId,
       seq: record.seq,
       offsetMs: record.offsetMs,
+      opportunitySeq: record.opportunitySeq,
+      attempt: record.attempt ?? 0,
       trigger: record.trigger,
       outcome: record.outcome,
       configVersion: record.configVersion,

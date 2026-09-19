@@ -30,6 +30,11 @@ const Body = z.object({
   ticket: z.string().min(1),
   seq: z.number().int().min(0),
   offsetMs: z.number().int().min(0),
+  // The moment this completion belongs to, and which completion it was within
+  // it. Absent from an older container, whose rows have to be deduplicated on
+  // `offsetMs` the way the pilot's did.
+  opportunitySeq: z.number().int().min(0).optional(),
+  attempt: z.number().int().min(0).max(64).optional(),
   trigger: z.enum(agentDecisionTriggerEnum.enumValues),
   outcome: z.enum(agentDecisionOutcomeEnum.enumValues),
   configVersion: z.string().max(64).optional(),

@@ -121,16 +121,35 @@ async function seed() {
       confirmed: null,
     })
     .returning({ id: schema.invocation.id });
-  await db.insert(schema.agentDecision).values({
-    captureSessionId: SESSION,
-    seq: 0,
-    offsetMs: 3_500,
-    trigger: "confirmation",
-    outcome: "spoke",
-    subjectKey: inv!.id,
-    agentTurnId: turn!.id,
-    latencyMs: 500,
-  });
+  // TWO completions over ONE moment, which is what Pipecat's aggregator
+  // actually produces: a half-finished sentence declined fast, then the whole
+  // thing answered. The export has to carry enough for an analysis to count
+  // the moment once.
+  await db.insert(schema.agentDecision).values([
+    {
+      captureSessionId: SESSION,
+      seq: 0,
+      offsetMs: 3_500,
+      opportunitySeq: 1,
+      attempt: 0,
+      trigger: "confirmation",
+      outcome: "declined",
+      subjectKey: inv!.id,
+      latencyMs: 400,
+    },
+    {
+      captureSessionId: SESSION,
+      seq: 1,
+      offsetMs: 3_500,
+      opportunitySeq: 1,
+      attempt: 1,
+      trigger: "confirmation",
+      outcome: "spoke",
+      subjectKey: inv!.id,
+      agentTurnId: turn!.id,
+      latencyMs: 500,
+    },
+  ]);
   await db.insert(schema.macroProposal).values({
     userId: USER_ID,
     canonicalForm: `send|${SECRET}`,
@@ -199,7 +218,15 @@ describeIfDb("study export", () => {
       hasError: true,
       ttftMs: 400,
     });
-    expect(byType("agent_decision")[0]).toMatchObject({ trigger: "confirmation", outcome: "spoke" });
+    const decisions = byType("agent_decision");
+    // Both rows are exported — they are both real completions — and they carry
+    // the moment they belong to, so 2 rows is 1 opportunity. Counted by row the
+    // pilot's decline rate was 69%; counted by moment, 53%.
+    expect(decisions).toHaveLength(2);
+    expect(new Set(decisions.map((d) => d.opportunitySeq)).size).toBe(1);
+    expect(decisions.map((d) => d.attempt)).toEqual([0, 1]);
+    // The authoritative outcome of a moment is its LAST attempt.
+    expect(decisions.at(-1)).toMatchObject({ trigger: "confirmation", outcome: "spoke" });
     expect(byType("directive")[0]).toMatchObject({ verb: "send" });
     // Parked, asked once, and the drive ended without an answer.
     expect(byType("invocation")[0]).toMatchObject({ status: "unanswered", timesAsked: 1 });

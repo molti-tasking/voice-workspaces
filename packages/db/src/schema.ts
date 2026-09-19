@@ -719,8 +719,45 @@ export const agentDecisionOutcomeEnum = pgEnum("agent_decision_outcome", [
  * never repeated" is a rule that can only be kept against a stored record of
  * the decline. Before this table all of it was a log line.
  *
- * One row per completion the gate saw end, spoken or not. A spoken or
- * interrupted row points at its `agent_turn` when that write succeeded first.
+ * ONE ROW PER COMPLETION, NOT PER MOMENT — and the difference is the counting
+ * rule this table has to state, because it is a measurement instrument.
+ *
+ * Pipecat's user aggregator may run inference MORE THAN ONCE inside one user
+ * turn: `_on_user_turn_inference_triggered` pushes the aggregation it has so
+ * far and starts a completion, and `_maybe_emit_user_turn_stopped` pushes
+ * again at the end of the turn ("so multiple inferences in the same turn don't
+ * lose earlier segments"). The first sees a half-finished sentence, which the
+ * prompt correctly tells the model to answer with `<silence>`; the second sees
+ * the whole thing and speaks. Both are real completions, both are decisions,
+ * and both belong here — but they are ONE moment the agent was given.
+ *
+ * On the first formative pilot (19 Sep 2026) that made sixteen of forty-eight
+ * rows share an `offset_ms` with another, and in five of those pairs the first
+ * declined in about 400ms and the second spoke. Counted by row the decline rate
+ * was 69%; counted by moment it was 53%, and nothing in the table said which
+ * number the log supported.
+ *
+ * SO COUNT MOMENTS WITH `opportunity_seq`, NOT ROWS. Every row carries the
+ * moment it belongs to and its `attempt` within it:
+ *
+ *   -- how often the agent was given a moment
+ *   select count(distinct opportunity_seq) ...
+ *   -- what it did with each, one row per moment
+ *   select distinct on (opportunity_seq) * ... order by opportunity_seq, attempt desc
+ *
+ * The AUTHORITATIVE outcome of a moment is its LAST attempt: the completion
+ * that spoke is what the driver experienced, and an earlier decline on a
+ * sentence that was not finished yet is a step on the way to it, not a separate
+ * silence they sat through.
+ *
+ * Deliberately not fixed by suppressing the second dispatch. How a turn ends is
+ * the paper's independent variable, and `user_turn_stop_timeout` is one of the
+ * dials on it (TALKBACK.md → Latency); a container that quietly ran one
+ * inference where Pipecat runs two would be a different system from the one
+ * being measured.
+ *
+ * A spoken or interrupted row points at its `agent_turn` when that write
+ * succeeded first.
  */
 export const agentDecision = pgTable(
   "agent_decision",
@@ -740,6 +777,25 @@ export const agentDecision = pgTable(
      * firing — as ms into the drive, on the `utterance` clock.
      */
     offsetMs: integer("offset_ms").notNull(),
+    /**
+     * The MOMENT this decision belongs to, monotonic per connection.
+     *
+     * Rows sharing it came from one cue — the same words, or the same firing of
+     * the offer timer — and are the several completions Pipecat ran over it.
+     * This is what makes the log countable without collapsing duplicates by
+     * hand; see the counting rule above. Null on rows written before it
+     * existed, which have to be deduplicated on `offset_ms` as before.
+     */
+    opportunitySeq: integer("opportunity_seq"),
+    /**
+     * Which completion this was within that moment, from 0.
+     *
+     * The last one is the authoritative outcome. Kept rather than derived from
+     * `seq` because a decision is not always written for every completion — a
+     * decline the container refuses and re-runs (see `AnswerGuard` in bot.py)
+     * writes none at all, so gaps in `seq` are not gaps in attempts.
+     */
+    attempt: integer("attempt").notNull().default(0),
     trigger: agentDecisionTriggerEnum("trigger").notNull(),
     outcome: agentDecisionOutcomeEnum("outcome").notNull(),
     /** `TALKBACK_CONFIG_VERSION` of the prompt the container was running. */
@@ -761,6 +817,12 @@ export const agentDecision = pgTable(
   },
   (t) => [
     index("agent_decision_session_offset_idx").on(t.captureSessionId, t.offsetMs),
+    // How the export reads a drive: one moment at a time, attempts in order.
+    index("agent_decision_session_opportunity_idx").on(
+      t.captureSessionId,
+      t.opportunitySeq,
+      t.attempt,
+    ),
     // The context route counts asks per pending invocation on the turn path.
     index("agent_decision_session_subject_idx")
       .on(t.captureSessionId, t.subjectKey)

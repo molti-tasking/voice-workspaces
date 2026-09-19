@@ -220,6 +220,15 @@ export async function exportParticipant(
         sessionId: agentDecision.captureSessionId,
         seq: agentDecision.seq,
         offsetMs: agentDecision.offsetMs,
+        // COUNT MOMENTS WITH THESE, NOT ROWS. Pipecat runs inference more than
+        // once inside a user turn, so several decisions can share one moment —
+        // count distinct `opportunitySeq`, and take the highest `attempt` as
+        // what the moment became. Null `opportunitySeq` is a drive recorded
+        // before the container numbered them, and has to be deduplicated on
+        // `offsetMs` instead. The rule is spelled out on `agentDecision` in the
+        // schema; this is the export that carries it.
+        opportunitySeq: agentDecision.opportunitySeq,
+        attempt: agentDecision.attempt,
         trigger: agentDecision.trigger,
         outcome: agentDecision.outcome,
         configVersion: agentDecision.configVersion,
@@ -229,7 +238,13 @@ export async function exportParticipant(
       })
       .from(agentDecision)
       .where(inArray(agentDecision.captureSessionId, sessionIds))
-      .orderBy(asc(agentDecision.captureSessionId), asc(agentDecision.offsetMs));
+      // Attempts in order within a moment, so the last row for an
+      // `opportunitySeq` is the authoritative one without a sort on the way out.
+      .orderBy(
+        asc(agentDecision.captureSessionId),
+        asc(agentDecision.offsetMs),
+        asc(agentDecision.attempt),
+      );
 
     for (const d of decisions) {
       const { id, ...rest } = d;

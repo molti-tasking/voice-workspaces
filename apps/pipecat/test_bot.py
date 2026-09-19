@@ -716,12 +716,77 @@ def test_a_spoken_reply_writes_the_turn_first_then_a_decision_pointing_at_it():
         "ticket": "ticket",
         "seq": 0,
         "offsetMs": decision["offsetMs"],
+        # The moment their words made, and the first completion run over it.
+        "opportunitySeq": 1,
+        "attempt": 0,
         "trigger": "user_turn",
         "outcome": "spoke",
         "configVersion": "talkback-test",
         "latencyMs": decision["latencyMs"],
         "agentTurnId": TURN_ID,
     }
+
+
+def test_several_completions_over_one_moment_share_its_number():
+    """The pilot's duplicate rows, made countable.
+
+    Pipecat runs inference more than once inside a user turn: the first sees a
+    half-finished sentence and declines in ~400ms, the second sees the whole
+    thing and speaks. Sixteen of forty-eight rows shared an `offset_ms` with
+    another, and counted by row the decline rate was 69% where counted by
+    moment it was 53% — with nothing in the table saying which the log
+    supported.
+    """
+
+    def act(recorder):
+        recorder.note_user("so the thing about the intro is")
+        recorder.decline()  # the half-finished sentence
+        recorder.record("Start with the asymmetry.", "…")  # the same words, finished
+
+    decisions = [payload for route, payload in posted_by(act) if route == "decision"]
+    assert [d["opportunitySeq"] for d in decisions] == [1, 1]
+    assert [d["attempt"] for d in decisions] == [0, 1]
+    # The authoritative outcome of a moment is its LAST attempt.
+    assert [d["outcome"] for d in decisions] == ["declined", "spoke"]
+
+
+def test_a_new_moment_gets_a_new_number():
+    def act(recorder):
+        recorder.note_user("first thing")
+        recorder.decline()
+        recorder.note_user("second thing")
+        recorder.decline()
+        recorder.note_offer("silence_offer")
+        recorder.decline()
+
+    decisions = [payload for route, payload in posted_by(act) if route == "decision"]
+    assert [d["opportunitySeq"] for d in decisions] == [1, 2, 3]
+    assert [d["attempt"] for d in decisions] == [0, 0, 0]
+
+
+def test_a_pending_ask_relabels_a_moment_without_starting_a_new_one():
+    # The ask did not make the moment, their words did — which is why the clock
+    # and the number both carry over.
+    def act(recorder):
+        recorder.note_user("yes go ahead")
+        recorder.note_pending("inv-1")
+        recorder.record("Sending it now.", "…")
+
+    (decision,) = [payload for route, payload in posted_by(act) if route == "decision"]
+    assert decision["trigger"] == "confirmation"
+    assert decision["opportunitySeq"] == 1
+
+
+def test_a_refused_decline_does_not_spend_an_attempt():
+    # `AnswerGuard` writes no decision for the completion it refuses, so the
+    # re-run is still attempt 0 of that moment — which is why `attempt` is
+    # counted here rather than derived from `seq`.
+    def act(recorder):
+        recorder.note_user("Ja.")
+        recorder.record("Der in Altenholz hat bis achtzehn Uhr offen.", "…")
+
+    (decision,) = [payload for route, payload in posted_by(act) if route == "decision"]
+    assert decision["attempt"] == 0
 
 
 def test_a_declined_user_turn_writes_a_decision_and_no_turn():

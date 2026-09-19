@@ -1944,11 +1944,19 @@ class Cue:
     what the moment is about when it is about one thing — the parked
     invocation for a confirmation. `at_ms` is wall clock, the moment the cue
     arose: the driver's final words, or the offer timer firing.
+
+    `opportunity` numbers the MOMENT, and it is here rather than on the
+    recorder because a completion is labelled with the cue as it stood when the
+    completion started — so a cue that has since moved on must still be able to
+    say which moment it was. Pipecat runs inference more than once inside a
+    user turn (see the counting rule on `agent_decision` in the schema), and
+    without this the log cannot be counted without collapsing rows by hand.
     """
 
     trigger: str
     subject_key: str | None = None
     at_ms: int | None = None
+    opportunity: int = 0
 
 
 # Unprompted moments: the engine made them, nobody spoke. A turn taken in one
@@ -2071,6 +2079,13 @@ class TurnRecorder:
         self._seq = 0
         self._decision_seq = 0
         self._responding_to: str | None = None
+        # Moments, and where the decisions for the current one have got to.
+        # `_attempt` counts completions within a moment rather than being
+        # derived from `_decision_seq`, because not every completion writes a
+        # decision — a refused decline writes none at all.
+        self._opportunity = 0
+        self._decided_opportunity: int | None = None
+        self._attempt = 0
         self._cue = Cue("user_turn")
         # Set the first time the web app refuses a write because the drive is
         # over. The container has no other way to learn it: Stop on `/record`
@@ -2100,7 +2115,7 @@ class TurnRecorder:
         """
         if text.strip():
             self._responding_to = text
-            self._cue = Cue("user_turn", None, _now_ms())
+            self._cue = Cue("user_turn", None, _now_ms(), self._new_opportunity())
 
     def note_pending(self, invocation_id: str | None) -> None:
         """The driver's turn carries a parked action to ask about.
@@ -2110,11 +2125,20 @@ class TurnRecorder:
         not make the moment, their words did.
         """
         if invocation_id and self._cue.trigger == "user_turn":
-            self._cue = Cue("confirmation", invocation_id, self._cue.at_ms)
+            # The SAME moment, relabelled: the ask did not make it, their words
+            # did — which is why the clock and the opportunity both carry over.
+            self._cue = Cue(
+                "confirmation", invocation_id, self._cue.at_ms, self._cue.opportunity
+            )
 
     def note_offer(self, trigger: str) -> None:
         """The proactive engine is about to run a turn nobody asked for."""
-        self._cue = Cue(trigger, None, _now_ms())
+        self._cue = Cue(trigger, None, _now_ms(), self._new_opportunity())
+
+    def _new_opportunity(self) -> int:
+        """The next moment the agent is given. See `Cue.opportunity`."""
+        self._opportunity += 1
+        return self._opportunity
 
     def cue(self) -> Cue:
         return self._cue
@@ -2362,10 +2386,19 @@ class TurnRecorder:
     def _decision(self, cue: Cue, outcome: str, latency: int | None) -> dict:
         seq, self._decision_seq = self._decision_seq, self._decision_seq + 1
         started_at_ms = self._started_at_ms or 0
+        # Attempts within a moment are contiguous in time, so one counter is
+        # enough — no bookkeeping that grows with the drive.
+        if cue.opportunity == self._decided_opportunity:
+            self._attempt += 1
+        else:
+            self._decided_opportunity = cue.opportunity
+            self._attempt = 0
         decision = {
             "ticket": self._ticket,
             "seq": seq,
             "offsetMs": max(0, (cue.at_ms or _now_ms()) - started_at_ms),
+            "opportunitySeq": cue.opportunity,
+            "attempt": self._attempt,
             "trigger": cue.trigger,
             "outcome": outcome,
         }
