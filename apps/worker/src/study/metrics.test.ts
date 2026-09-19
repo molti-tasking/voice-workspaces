@@ -184,9 +184,13 @@ async function seed() {
     { captureSessionId: SESSION, seq: 2, offsetMs: 13_000, trigger: "user_turn", outcome: "declined", cueId: "cue-b", authoritative: false },
     { captureSessionId: SESSION, seq: 3, offsetMs: 43_000, trigger: "user_turn", outcome: "declined", cueId: "cue-c" },
     { captureSessionId: SESSION, seq: 4, offsetMs: 62_000, trigger: "user_turn", outcome: "spoke", cueId: "cue-d" },
-    // THE PILOT 01 FAILURE: their answer, declined.
-    { captureSessionId: SESSION, seq: 5, offsetMs: 76_000, trigger: "answer", outcome: "declined", cueId: "cue-e" },
-    { captureSessionId: SESSION, seq: 6, offsetMs: 93_000, trigger: "user_turn", outcome: "spoke", cueId: "cue-f" },
+    // THE PILOT 01 FAILURE: their answer, declined — and then the guard
+    // overruling it, so the moment became speech. The rescue is what makes
+    // this measure refuse to deduplicate: counting the authoritative row only
+    // would report zero for a drive where every answer had to be forced.
+    { captureSessionId: SESSION, seq: 5, offsetMs: 76_000, trigger: "answer", outcome: "declined", cueId: "cue-e", authoritative: false },
+    { captureSessionId: SESSION, seq: 6, offsetMs: 76_000, trigger: "answer", outcome: "spoke", cueId: "cue-e" },
+    { captureSessionId: SESSION, seq: 7, offsetMs: 93_000, trigger: "user_turn", outcome: "spoke", cueId: "cue-f" },
   ]);
 
   // A stated intent that reached the board, and one that did not.
@@ -298,11 +302,11 @@ describeIfDb("participantMetrics", () => {
 
   it("counts one moment once, however many completions it ran", () => {
     const [session] = metrics.sessions;
-    // Seven rows, six moments: `cue-b` ran twice.
+    // Eight rows, six moments: `cue-b` and `cue-e` each ran twice.
     expect(session?.tier1.opportunities).toBe(6);
-    expect(session?.tier1.doubleDispatched).toBe(1);
-    expect(session?.tier1.silent).toBe(2);
-    expect(session?.tier1.silentShare).toBeCloseTo(2 / 6);
+    expect(session?.tier1.doubleDispatched).toBe(2);
+    expect(session?.tier1.silent).toBe(1);
+    expect(session?.tier1.silentShare).toBeCloseTo(1 / 6);
   });
 
   it("reports the error rate over every turn that reached the speaker", () => {
@@ -330,7 +334,10 @@ describeIfDb("participantMetrics", () => {
     expect(session?.tier2.correctionRate).not.toBeNull();
   });
 
-  it("counts the answers the agent declined — the number that must be zero", () => {
+  it("counts the answers the agent declined even when the guard rescued them", () => {
+    // The moment became speech — its authoritative row says so — and the
+    // person still waited an extra completion for an answer they had already
+    // given. This is the one measure that counts declines rather than moments.
     const [session] = metrics.sessions;
     expect(session?.tier2.unansweredAnswers).toBe(1);
     expect(metrics.tier2.unansweredAnswers).toBe(1);

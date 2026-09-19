@@ -614,6 +614,12 @@ configurable); repeat-request rate; correction rate (spoken rejections, declined
 `judge()`'s reversed/corrected transitions, reported apart and pooled); intent throughput
 (directions that reached the board); and **unanswered answers, whose target is 0**.
 
+Every rate over decisions counts `authoritative` rows only — Pilot 01 wrote two per offset, which
+doubles the denominator of the silence rate — with one deliberate exception. Unanswered answers
+count the *declines themselves*, because when `AnswerGuard` rescues one the completion that
+finally speaks becomes the moment's authoritative decision, and deduplicating would report zero
+for a drive where the model declined every answer and was overruled every time.
+
 **Tier 3 — relief.** Mental load before and after the same drive (negative delta is the good
 direction); whether they could tell it was working; whether they could correct it; revisit rate
 by *day*; and the day-7 verdict per item — done / still open / **lost**. `lostRate` is the

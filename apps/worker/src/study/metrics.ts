@@ -159,8 +159,17 @@ export interface Tier2 {
    * Answers to the agent's own questions that it then declined. TARGET: 0.
    *
    * The single number Pilot 01 would have failed on, and the reason the
-   * `answer` trigger exists. Non-zero means the guard in bot.py fired, which
-   * means somebody was left waiting even if the guard then covered it.
+   * `answer` trigger exists.
+   *
+   * THE ONE MEASURE THAT DOES NOT DEDUPLICATE, deliberately. When `AnswerGuard`
+   * rescues a declined answer, the completion that finally speaks becomes the
+   * moment's authoritative decision — correctly, because it is what the person
+   * heard. Counting only authoritative rows would then report zero for a drive
+   * where the model declined every answer it was given and was overruled every
+   * time, which is precisely the behaviour this number exists to see. So it
+   * counts the declines themselves. A non-zero value means the guard fired,
+   * and somebody waited an extra completion for an answer they had already
+   * earned.
    */
   unansweredAnswers: number;
 }
@@ -474,7 +483,8 @@ export async function participantMetrics(
         intents: sessionDirectives.length,
         intentsRealised,
         intentThroughput: share(intentsRealised, sessionDirectives.length),
-        unansweredAnswers: counted.filter(
+        // Over `sessionDecisions`, not `counted`. See the field's note.
+        unansweredAnswers: sessionDecisions.filter(
           (d) => d.trigger === "answer" && d.outcome === "declined",
         ).length,
       };
