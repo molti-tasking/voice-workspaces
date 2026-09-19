@@ -4,7 +4,9 @@ import { AppDock } from "@/components/app-dock";
 import { configuredProviders } from "@/lib/auth";
 import { providerName } from "@/lib/providers";
 import { currentUser } from "@/lib/session";
+import { siteUrl } from "@/lib/site";
 import { GuestButton, SignInButton } from "../sign-in-button";
+import { AddToHomeScreen } from "./add-to-home-screen";
 import { UseCaseCards } from "./use-case-cards";
 
 export const dynamic = "force-dynamic";
@@ -139,6 +141,14 @@ export default async function WelcomePage() {
           third-party tool.
         </p>
       </section>
+
+      {/*
+        Last of the practicalities, and deliberately after the honest list
+        rather than before it: this asks them to put an icon on their phone,
+        which is a bigger commitment than reading a page, and nobody should be
+        asked for it until they know what they are installing.
+      */}
+      <AddToHomeScreen host={siteUrl().host} />
 
       {user ? (
         <AppDock />
