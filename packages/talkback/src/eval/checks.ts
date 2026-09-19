@@ -45,6 +45,23 @@ export function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
 }
 
+/**
+ * Whether this case's history really does end with the agent asking something.
+ *
+ * Used to validate `expect.answering` rather than to infer it. The two facts
+ * are not the same: `pending-asked-once` also ends on an agent question, and
+ * the right reply there is silence, because what the driver said next was the
+ * middle of a different sentence and not an answer at all. So the case says
+ * whether it is an answer, and this checks the case is not lying about the
+ * setup — a case claiming `answering` with no question behind it would pass
+ * vacuously and pin nothing.
+ */
+export function endsOnAnAgentQuestion(kase: EvalCase): boolean {
+  const last = kase.history?.at(-1);
+  if (!kase.said?.trim() || last?.role !== "assistant") return false;
+  return /\?["'`*)\]\s]*$/.test(last.content.trim());
+}
+
 export interface MadeToolCall {
   name: string;
   arguments: Record<string, unknown>;
@@ -129,6 +146,15 @@ export function checkReply(
   }
   if (kase.expect.turn === "speak" && silent && !expected) {
     failures.push("stayed silent when it should have spoken");
+  }
+  // Separate from the line above and not folded into it, because it is a
+  // different claim. `turn` is what this case expects; `answering` is a rule
+  // that holds whatever it expects, and it is the one talkback-13 exists for:
+  // the pilot's agent asked a question, was told "Ja.", and said nothing. A
+  // tool call counts as acting on the answer, which is why `expected` excuses
+  // it here as it does above.
+  if (kase.expect.answering && silent && !expected) {
+    failures.push("declined an answer to its own question");
   }
 
   if (!silent) {

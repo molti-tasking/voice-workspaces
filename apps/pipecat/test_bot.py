@@ -37,6 +37,7 @@ import pytest  # noqa: E402
 
 import bot  # noqa: E402  — needs the environment above
 from pipecat.frames.frames import (  # noqa: E402
+    FunctionCallsStartedFrame,
     InterruptionFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
@@ -82,6 +83,9 @@ class FakeRecorder:
         self.calls = []
         self.declines = []
         self.current = cue or bot.Cue("user_turn", None, 1_000)
+        # Whether the driver's next words answer a question the agent asked.
+        # False here, as it is on a fresh recorder; the answer-guard tests set it.
+        self.awaiting_question_answer = False
 
     def cue(self):
         return self.current
@@ -314,6 +318,223 @@ def test_strip_speaker_tags():
     assert bot.strip_speaker_tags("[Speaker 2]'s question is for them.") == "question is for them."
     assert bot.strip_speaker_tags("Yes, [Speaker 1] said so.") == "Yes, said so."
     assert bot.strip_speaker_tags("No tag here.") == "No tag here."
+
+
+# --- AnswerGuard: a question the agent asked is never answered with silence ---
+#
+# The most expensive failure the first formative pilot found (19 Sep 2026). The
+# agent asked whether it should look up the opening times, the participant said
+# "Ja.", and the model answered `<silence>` — faithfully recorded as
+# `user_turn -> declined`. She waited forty seconds, asked "Und dann?", got
+# nothing again, and stopped the recording. Nothing failed; the default simply
+# won over an obligation nothing had stated.
+
+
+class FakeAnswers:
+    """Stands in for `AnswerGuard`, whose re-run needs a live pipeline."""
+
+    def __init__(self, retrying=False, acknowledgement="Sorry, I lost that. Say it again."):
+        self.retrying = retrying
+        self.acknowledgement = acknowledgement
+        self.retries = 0
+        self.settlements = 0
+
+    def request_retry(self):
+        self.retries += 1
+        self.retrying = True
+
+    def settled(self):
+        self.settlements += 1
+        self.retrying = False
+
+
+class FakeOffers:
+    """Records what `SilenceGate` tells the proactive engine each turn became."""
+
+    def __init__(self):
+        self.told = []
+
+    def note_agent_turn(self, spoke):
+        self.told.append(spoke)
+
+
+def drive_answers(frames, recorder, answers, offers=None):
+    """Push frames through a gate that has an answer guard; return what was said.
+
+    Collects `TTSSpeakFrame` as well as `LLMTextFrame`, because the fixed
+    acknowledgement is spoken directly rather than generated.
+    """
+    spoken = []
+
+    async def run():
+        gate = bot.SilenceGate(recorder=recorder, offers=offers, answers=answers)
+
+        async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+            if isinstance(frame, (LLMTextFrame, bot.TTSSpeakFrame)):
+                spoken.append(frame.text)
+
+        gate.push_frame = capture
+        for frame in frames:
+            await gate.process_frame(frame, FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    return spoken
+
+
+def asking_recorder():
+    recorder = FakeRecorder()
+    recorder.awaiting_question_answer = True
+    return recorder
+
+
+def test_the_phrases_match_the_typescript_they_mirror():
+    """Pinned on BOTH sides, because neither can import the other.
+
+    The text below is what `packages/talkback/src/prompt.ts` exports as
+    ANSWER_RETRY_NUDGE, ANSWER_ACKNOWLEDGEMENTS and SEARCH_WAIT_PHRASES, and
+    `prompt.test.ts` pins the same strings there. A change to one side without
+    the other fails here with the other side's text in the diff.
+    """
+    assert bot.ANSWER_RETRY_NUDGE == (
+        "(They have just answered the question YOU asked them. <silence> is not "
+        "available on this turn: act on their answer and say in one short sentence "
+        "what you are doing. If you cannot tell what they meant, ask one short "
+        "question instead — but say something.)"
+    )
+    assert bot.ANSWER_ACKNOWLEDGEMENTS == {
+        "en": "Sorry, I lost that. Say it again.",
+        "de": "Entschuldige, das ist mir entgangen. Sag es noch mal.",
+    }
+    assert bot.SEARCH_WAIT_PHRASES == {
+        "en": ("Still looking.", "Bear with me, I am still searching."),
+        "de": ("Ich suche noch.", "Hab ein bisschen Geduld, ich suche noch."),
+    }
+
+
+def test_the_fixed_phrases_follow_the_drive_s_language():
+    assert bot.phrase_language({"sttLanguage": "de"}) == "de"
+    # Auto-detect, an older web app, and a language with no phrases all fall
+    # back to English — which is what the participant would have heard anyway.
+    assert bot.phrase_language({"sttLanguage": None}) == "en"
+    assert bot.phrase_language({}) == "en"
+    assert bot.phrase_language({"sttLanguage": "fr"}) == "en"
+
+
+def test_the_keep_alive_runs_out_rather_than_nagging():
+    assert bot.search_wait_phrase("de", 0) == bot.SEARCH_WAIT_PHRASES["de"][0]
+    assert bot.search_wait_phrase("de", 1) == bot.SEARCH_WAIT_PHRASES["de"][1]
+    assert bot.search_wait_phrase("de", 2) is None
+    assert bot.search_wait_phrase(None, 0) == bot.SEARCH_WAIT_PHRASES["en"][0]
+
+
+def test_ends_in_question():
+    assert bot._ends_in_question("Soll ich die genauen Zeiten suchen?")
+    assert bot._ends_in_question('  "Shall I look that up?"  ')
+    assert bot._ends_in_question("Which one — the first or the second?*")
+    assert not bot._ends_in_question("I'll look that up.")
+    assert not bot._ends_in_question("Is that right? Probably not.")
+    assert not bot._ends_in_question("")
+
+
+def test_a_declined_answer_to_our_own_question_is_refused_rather_than_recorded():
+    recorder, answers, offers = asking_recorder(), FakeAnswers(), FakeOffers()
+
+    assert drive_answers(reply("<silence>"), recorder, answers, offers) == []
+
+    # No turn, because nothing was spoken — and no decision either: the driver's
+    # words were ONE moment to speak, and the re-run decides what it became.
+    assert recorder.calls == []
+    assert recorder.declines == []
+    assert answers.retries == 1
+    # The engine is not told the turn declined, or it would back off and arm an
+    # offer over the top of the re-run that is still to come.
+    assert offers.told == []
+
+
+def test_the_re_run_speaking_settles_the_moment_and_writes_one_turn():
+    recorder, answers, offers = asking_recorder(), FakeAnswers(), FakeOffers()
+
+    frames = [*reply("<silence>"), *reply("Looking up the hours for the Kiel one now.")]
+    assert drive_answers(frames, recorder, answers, offers) == [
+        "Looking up the hours for the Kiel one now."
+    ]
+
+    assert len(recorder.calls) == 1
+    assert recorder.declines == []
+    assert answers.retries == 1
+    assert answers.settlements == 1
+    assert offers.told == [True]
+
+
+def test_a_second_decline_speaks_the_fixed_acknowledgement_and_records_it():
+    recorder, answers, offers = asking_recorder(), FakeAnswers(), FakeOffers()
+
+    frames = [*reply("<silence>"), *reply("<silence>")]
+    assert drive_answers(frames, recorder, answers, offers) == [answers.acknowledgement]
+
+    # Spoken, therefore recorded: the echo filter reads `agent_turn` and nothing
+    # else, so a sentence that reaches the speaker and not the table comes back
+    # as the participant's own words.
+    assert [call["spoken"] for call in recorder.calls] == [answers.acknowledgement]
+    assert recorder.declines == []
+    # One re-run, never two: the guard answers a second decline with words.
+    assert answers.retries == 1
+    assert offers.told == [True]
+
+
+def test_the_acknowledgement_does_not_itself_ask_a_question():
+    # A question here would re-arm the guard on their reply and could ping-pong.
+    for language in ("en", "de"):
+        assert not bot._ends_in_question(bot.answer_acknowledgement(language))
+
+
+def test_a_decline_with_no_question_outstanding_is_still_a_decline():
+    recorder, answers, offers = FakeRecorder(), FakeAnswers(), FakeOffers()
+    recorder.awaiting_question_answer = False
+
+    assert drive_answers(reply("<silence>"), recorder, answers, offers) == []
+
+    assert len(recorder.declines) == 1
+    assert answers.retries == 0
+    assert offers.told == [False]
+
+
+def test_an_offer_declined_while_a_question_stands_is_still_a_decline():
+    # The guard is about the driver ANSWERING. A moment the engine made is not
+    # an answer to anything, so declining it is the design working.
+    recorder, answers = asking_recorder(), FakeAnswers()
+    recorder.current = bot.Cue("silence_offer", None, 2_000)
+
+    assert drive_answers(reply("<silence>"), recorder, answers) == []
+
+    assert len(recorder.declines) == 1
+    assert answers.retries == 0
+
+
+def test_a_tool_calling_completion_is_not_refused_either():
+    # Its silence is not a decline: the answer is the completion Pipecat runs
+    # once the tool's result is in.
+    recorder, answers = asking_recorder(), FakeAnswers()
+    frames = [
+        LLMFullResponseStartFrame(),
+        FunctionCallsStartedFrame(function_calls=[]),
+        LLMFullResponseEndFrame(),
+    ]
+
+    assert drive_answers(frames, recorder, answers) == []
+
+    assert recorder.declines == []
+    assert answers.retries == 0
+
+
+def test_a_gate_with_no_answer_guard_behaves_exactly_as_before():
+    # Every existing construction of the gate passes no guard, the tests
+    # included, and must keep declining as it always did.
+    recorder = asking_recorder()
+
+    assert drive(reply("<silence>"), recorder=recorder) == []
+
+    assert len(recorder.declines) == 1
 
 
 # --- Drafts: what is kept rather than heard -----------------------------------
@@ -582,6 +803,52 @@ def test_a_later_turn_moves_on_from_an_unanswered_ask():
 
     posted_by(act, recorder)
     assert recorder.take_awaiting_answer() is None
+
+
+def test_a_spoken_question_arms_the_answer_guard_and_the_next_turn_clears_it():
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+    assert not recorder.awaiting_question_answer
+
+    def ask(r):
+        r.note_user("Wo ist der nächste Baumarkt?")
+        r.record("Soll ich die genauen Zeiten für einen davon suchen?", "…")
+
+    posted_by(ask, recorder)
+    assert recorder.awaiting_question_answer
+
+    def answer(r):
+        r.note_user("Ja.")
+        r.record("Der in Altenholz hat bis achtzehn Uhr offen.", "…")
+
+    posted_by(answer, recorder)
+    assert not recorder.awaiting_question_answer
+
+
+def test_only_what_was_spoken_counts_as_the_question():
+    # A question the driver never heard is not one they can be answering. On an
+    # interrupted turn `spoken` is what had been released; `generatedText` may
+    # carry a question that was cut off before its first word.
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+
+    def act(r):
+        r.record("I'll", "I'll check. Shall I book it?", barged_in=True)
+
+    posted_by(act, recorder)
+    assert not recorder.awaiting_question_answer
+
+
+def test_a_declined_turn_leaves_the_question_standing():
+    # The obligation is cleared by the next turn that REACHES THE SPEAKER, so a
+    # silence in between cannot quietly discharge it.
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+
+    def act(r):
+        r.record("Which of the two?", "Which of the two?")
+        r.note_user("Ja.")
+        r.decline()
+
+    posted_by(act, recorder)
+    assert recorder.awaiting_question_answer
 
 
 def test_a_pending_ask_does_not_relabel_an_offer():

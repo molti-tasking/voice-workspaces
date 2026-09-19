@@ -1,15 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  ANSWER_ACKNOWLEDGEMENTS,
+  ANSWER_RETRY_NUDGE,
   OPENING_NUDGE,
   OUTPUT_CONTRACT,
+  SEARCH_WAIT_PHRASES,
   SILENCE_NUDGE,
   SILENCE_TOKEN,
   SYSTEM_PROMPT,
+  answerAcknowledgement,
   cleanReply,
   composeSystemPrompt,
   extractDrafts,
   isSilence,
   renderSilenceNudge,
+  searchWaitPhrase,
 } from "./prompt";
 import { PROACTIVITY_STANZAS, SETTING_PROFILES } from "./setting";
 
@@ -175,6 +180,60 @@ describe("the proactive engine's instructions, which bot.py mirrors", () => {
     expect(rendered).not.toContain("{silence}");
     // The nudge never asserts the driver said anything — it reports quiet.
     expect(rendered).toMatch(/quiet for 12 seconds/);
+  });
+});
+
+describe("an answer the agent asked for, which bot.py mirrors", () => {
+  it("states the converse of the always-answer rule in WHEN TO SPEAK", () => {
+    // The pilot's failure was not the model being unhelpful. WHEN TO SPEAK
+    // said a question put to the agent is always answered, and said nothing
+    // about a question the agent put to THEM.
+    expect(SYSTEM_PROMPT).toMatch(/if YOUR last turn asked them something/i);
+    expect(SYSTEM_PROMPT).toMatch(/never reply <silence> to an answer you asked for/i);
+    // In WHEN TO SPEAK, not bolted on after the setting: it is a rule about
+    // earning a turn, and it belongs with the others.
+    const rules = SYSTEM_PROMPT.indexOf("WHEN TO SPEAK");
+    expect(rules).toBeGreaterThan(-1);
+    expect(SYSTEM_PROMPT.indexOf("their next words are its answer")).toBeGreaterThan(rules);
+  });
+
+  it("takes the sentinel off the table for the re-run, and only for it", () => {
+    expect(ANSWER_RETRY_NUDGE).toContain(SILENCE_TOKEN);
+    expect(ANSWER_RETRY_NUDGE).toMatch(/not available on this turn/i);
+    // The contract still offers it everywhere else — the nudge is one message
+    // on one completion, not a change to the wire format.
+    expect(OUTPUT_CONTRACT).toContain(`reply with exactly: ${SILENCE_TOKEN}`);
+  });
+
+  it("keeps the last-resort acknowledgement out of question form", () => {
+    // A question here would put the guard back on their reply and could
+    // ping-pong. See `_ends_in_question` in bot.py.
+    for (const phrase of Object.values(ANSWER_ACKNOWLEDGEMENTS)) {
+      expect(phrase.trim()).not.toMatch(/\?["'`*)\]]*$/);
+      expect(phrase.split(/\s+/).length).toBeLessThanOrEqual(12);
+    }
+  });
+
+  it("speaks the drive's own language, and falls back to English on auto-detect", () => {
+    expect(answerAcknowledgement("de")).toBe(ANSWER_ACKNOWLEDGEMENTS.de);
+    expect(answerAcknowledgement(null)).toBe(ANSWER_ACKNOWLEDGEMENTS.en);
+    expect(answerAcknowledgement("fr")).toBe(ANSWER_ACKNOWLEDGEMENTS.en);
+  });
+});
+
+describe("the keep-alive said while a tool runs, which bot.py mirrors", () => {
+  it("runs out rather than nagging", () => {
+    const de = SEARCH_WAIT_PHRASES.de!;
+    expect(searchWaitPhrase("de", 0)).toBe(de[0]);
+    expect(searchWaitPhrase("de", de.length)).toBeNull();
+    expect(searchWaitPhrase(null, 0)).toBe(SEARCH_WAIT_PHRASES.en![0]);
+  });
+
+  it("says only that it is still going, so it is never mistaken for the answer", () => {
+    for (const phrases of Object.values(SEARCH_WAIT_PHRASES)) {
+      expect(phrases.length).toBeGreaterThan(0);
+      for (const phrase of phrases) expect(phrase.split(/\s+/).length).toBeLessThanOrEqual(10);
+    }
   });
 });
 

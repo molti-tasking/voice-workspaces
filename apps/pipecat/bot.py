@@ -1527,6 +1527,53 @@ SILENCE_NUDGE = (
     "nothing is genuinely useful, reply <silence>.)"
 )
 
+# --- Words the container puts in the model's mouth ---------------------------
+#
+# Everything below is spoken with no completion behind it, so every one of them
+# is written to `agent_turn` when it is said: the agent's voice reaches the
+# microphone and is transcribed like any other sound, and `withoutEcho` tells
+# those lines from the driver's by comparing against that table. A phrase that
+# is spoken and not recorded comes back as the participant's own words.
+#
+# Mirrors ANSWER_RETRY_NUDGE / ANSWER_ACKNOWLEDGEMENTS / SEARCH_WAIT_PHRASES in
+# packages/talkback/src/prompt.ts — change one, change both.
+ANSWER_RETRY_NUDGE = (
+    "(They have just answered the question YOU asked them. <silence> is not "
+    "available on this turn: act on their answer and say in one short sentence "
+    "what you are doing. If you cannot tell what they meant, ask one short "
+    "question instead — but say something.)"
+)
+ANSWER_ACKNOWLEDGEMENTS = {
+    "en": "Sorry, I lost that. Say it again.",
+    "de": "Entschuldige, das ist mir entgangen. Sag es noch mal.",
+}
+SEARCH_WAIT_PHRASES = {
+    "en": ("Still looking.", "Bear with me, I am still searching."),
+    "de": ("Ich suche noch.", "Hab ein bisschen Geduld, ich suche noch."),
+}
+FALLBACK_PHRASE_LANGUAGE = "en"
+
+
+def phrase_language(session: dict) -> str:
+    """Which language the fixed phrases above are said in.
+
+    The drive's own `sttLanguage`, which is a property of the recording rather
+    than of this container. Null — auto-detect — falls back to English, which
+    is what the participant would have heard anyway.
+    """
+    language = (session or {}).get("sttLanguage")
+    return language if language in ANSWER_ACKNOWLEDGEMENTS else FALLBACK_PHRASE_LANGUAGE
+
+
+def answer_acknowledgement(language: str | None) -> str:
+    return ANSWER_ACKNOWLEDGEMENTS.get(language or "", ANSWER_ACKNOWLEDGEMENTS[FALLBACK_PHRASE_LANGUAGE])
+
+
+def search_wait_phrase(language: str | None, index: int) -> str | None:
+    """The nth keep-alive, or None once the list is spent and we fall silent."""
+    phrases = SEARCH_WAIT_PHRASES.get(language or "", SEARCH_WAIT_PHRASES[FALLBACK_PHRASE_LANGUAGE])
+    return phrases[index] if 0 <= index < len(phrases) else None
+
 
 class Offers(FrameProcessor):
     """The proactive engine: unprompted turns, offered out of silence.
@@ -1688,6 +1735,94 @@ class Offers(FrameProcessor):
         await super().cleanup()
 
 
+class AnswerGuard(FrameProcessor):
+    """Refuses to let an answer the agent ASKED FOR go unanswered.
+
+    THE FAILURE IT CLOSES, observed on the first formative pilot (19 Sep 2026).
+    The agent asked "Soll ich die genauen Zeiten für einen davon suchen?", the
+    participant said "Ja.", and the model returned `<silence>` — recorded,
+    faithfully, as `user_turn -> declined`. Forty seconds of nothing followed,
+    she asked "Und dann?", that was declined too, and she stopped the
+    recording. Her own words afterwards: "ist jetzt die App ausgegangen?"
+
+    This is the most expensive failure the system has, because the person is
+    waiting on a commitment they have already made and a screenless interface
+    gives them no way to tell waiting from broken. The defect is upstream of
+    `SilenceGate`: the model genuinely answered `<silence>`, and nothing in the
+    prompt or the container said it could not.
+
+    WHAT THIS DOES. `TurnRecorder` remembers that the last SPOKEN turn ended in
+    a question. When the gate then sees a completion decline a `user_turn` in
+    that state, it does not write the decline: it asks here for one re-run with
+    `ANSWER_RETRY_NUDGE`, which takes the sentinel off the table for that
+    completion. If the re-run declines as well, the gate speaks
+    `ANSWER_ACKNOWLEDGEMENTS` — a fixed sentence, in the drive's language —
+    rather than nothing.
+
+    ONE DECISION PER MOMENT. The refused completion writes no `agent_turn`
+    (nothing was spoken) and no `agent_decision` either: the driver's words were
+    one opportunity to speak, and the turn that finally speaks — or the
+    acknowledgement — is what that opportunity became. Writing the refusal
+    too would make the log say the agent was given two moments where it had one.
+
+    WHY A PROCESSOR. The re-run is the same mechanism `Offers` uses for an
+    unprompted turn: a user-role message added to the context, then an
+    `LLMRunFrame` pushed from a point upstream of the user aggregator, so the
+    completion, the gate, the recorder and the barge-in plumbing are all the
+    normal ones. Nothing about it is conditional on the study arm — unlike
+    `Offers`, this is a correctness guard and runs on every drive.
+    """
+
+    # A beat before the re-run, so the declined completion has finished
+    # travelling the pipeline — the assistant aggregator sits at the very end —
+    # before a second one starts behind it.
+    SETTLE_SECS = 0.1
+
+    def __init__(self, context: LLMContext, session: dict | None = None):
+        super().__init__()
+        self._context = context
+        self._language = phrase_language(session or {})
+        # True between asking for the re-run and the turn it produces. One per
+        # moment: a second decline is answered with words, not a third try.
+        self._retrying = False
+
+    @property
+    def retrying(self) -> bool:
+        return self._retrying
+
+    @property
+    def acknowledgement(self) -> str:
+        return answer_acknowledgement(self._language)
+
+    def request_retry(self) -> None:
+        """Run this turn again, from the gate's frame handler.
+
+        Synchronous on purpose: the gate calls it while handling the declined
+        completion's end frame, and the work happens on a task afterwards.
+        """
+        self._retrying = True
+        self.create_task(self._retry(), name="answers:retry")
+
+    def settled(self) -> None:
+        """The moment is over — something was spoken, or the driver moved on."""
+        self._retrying = False
+
+    async def _retry(self) -> None:
+        self._context.add_message({"role": "user", "content": ANSWER_RETRY_NUDGE})
+        logger.info("[answer] a declined answer to our own question — re-running the turn")
+        await asyncio.sleep(self.SETTLE_SECS)
+        await self.push_frame(LLMRunFrame())
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        # New words are a new moment, whatever became of the last one. Without
+        # this a retry abandoned by a barge-in would leave the flag set and the
+        # NEXT decline would be answered with the acknowledgement.
+        if isinstance(frame, TranscriptionFrame) and frame.text.strip() and self._retrying:
+            self._retrying = False
+        await self.push_frame(frame, direction)
+
+
 def extract_drafts(reply: str) -> tuple[str, list[dict]]:
     """Split a completion into what is spoken and what is kept.
 
@@ -1810,6 +1945,19 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _ends_in_question(said: str) -> bool:
+    """Whether a spoken turn ended by asking something.
+
+    Lexical and coarse, like `TurnRecorder._kind`'s test for a confirmation
+    ask, and lopsided the same safe way: a missed question costs nothing beyond
+    the behaviour that already existed, while a false positive only makes the
+    agent try harder to answer the driver's next words. The trailing characters
+    stripped are what a model puts after the mark — a closing quote from a
+    reply it wrapped, an asterisk — never punctuation of its own.
+    """
+    return said.strip().rstrip("\"'`*)] ").endswith("?")
+
+
 class TurnRecorder:
     """Writes down what the agent said, for the filter that reads it back —
     and what it chose not to say, for the study.
@@ -1858,6 +2006,11 @@ class TurnRecorder:
         # The invocation the last spoken turn asked about, until the driver's
         # next words are sent as its answer — or a later turn moves on.
         self._awaiting_answer: str | None = None
+        # Whether the last turn that actually REACHED THE SPEAKER ended by
+        # asking something. Broader than `_awaiting_answer`, which only knows
+        # about a parked invocation: this covers a question the model asked in
+        # free text, which is most of them, and is what `AnswerGuard` keys on.
+        self._asked_question = False
         # Board tools called since the last recorded turn, for `toolCalls` on
         # the turn that reports them.
         self._tool_calls: list[dict] = []
@@ -1901,6 +2054,17 @@ class TurnRecorder:
         """The invocation an answer now would settle, handed over once."""
         invocation_id, self._awaiting_answer = self._awaiting_answer, None
         return invocation_id
+
+    @property
+    def awaiting_question_answer(self) -> bool:
+        """Whether the driver's next words answer a question the agent asked.
+
+        Read by `SilenceGate`, which refuses to record a decline in this state.
+        Not consumed here: the gate may look at it more than once within a
+        moment, and it is cleared by the next turn that reaches the speaker
+        rather than by being read.
+        """
+        return self._asked_question
 
     def record(
         self,
@@ -1980,6 +2144,14 @@ class TurnRecorder:
         # An ask makes their next words its answer; anything else means their
         # next words answer that instead.
         self._awaiting_answer = cue.subject_key if kind == "confirmation_request" else None
+        # The same fact, without a parked invocation behind it. Measured on
+        # what was SPOKEN rather than on `generatedText`: a question the driver
+        # never heard — cut off before its first word, or inside a draft block
+        # — is not one they can be answering. This is also how the flag CLEARS:
+        # the next turn that reaches the speaker overwrites it, so a turn that
+        # answers plainly ends the obligation without anything having to
+        # remember to.
+        self._asked_question = _ends_in_question(spoken)
 
         decision = self._decision(cue, "interrupted" if barged_in else "spoke", latency)
         self._send(payload, decision)
@@ -2511,10 +2683,12 @@ class SilenceGate(FrameProcessor):
         # Keyword-only in effect, and LAST, so every existing positional
         # construction of the gate — the tests included — keeps working.
         title: "TopicTitle | None" = None,
+        answers: "AnswerGuard | None" = None,
     ):
         super().__init__()
         self._summary = summary
         self._title = title
+        self._answers = answers
         self._recorder = recorder
         self._drafts = drafts
         self._offers = offers
@@ -2660,6 +2834,11 @@ class SilenceGate(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
+        # Whether this frame ends in a re-run rather than a decline. A local,
+        # not state: it is decided and acted on within one frame, and `_reset`
+        # runs in between.
+        retry = False
+
         if isinstance(frame, LLMFullResponseStartFrame):
             self._reset()
             self._in_response = True
@@ -2756,7 +2935,10 @@ class SilenceGate(FrameProcessor):
             #
             # A decline writes its DECISION instead — the silence the agent
             # chose, which used to exist only as the log line above.
-            if self._recorder is not None and self._spoken.strip():
+            spoke = bool(self._spoken.strip())
+            if self._recorder is not None and spoke:
+                if self._answers is not None:
+                    self._answers.settled()
                 self._recorder.record(
                     self._spoken,
                     self._text,
@@ -2765,7 +2947,35 @@ class SilenceGate(FrameProcessor):
                     metrics=self._turn_metrics,
                 )
             elif self._recorder is not None and self._in_response and not self._calling_tools:
-                self._recorder.decline(cue=self._cue)
+                if self._answers is not None and self._answers.retrying:
+                    # The re-run declined as well. Say the fixed sentence rather
+                    # than nothing: they answered a question the agent asked, and
+                    # a second silence is the failure this guard exists for. It
+                    # reaches the speaker, so it is a turn like any other — and
+                    # it is the decision this moment produced.
+                    self._answers.settled()
+                    spoken = self._answers.acknowledgement
+                    logger.info(f"[answer] re-run declined too, acknowledging: {spoken!r}")
+                    # `append_to_context` left at its default, unlike the search
+                    # announcement: the model did not write this one, but it
+                    # DID say it, and a next turn that cannot see it would
+                    # answer as if the driver had been met with silence again.
+                    await self.push_frame(TTSSpeakFrame(spoken), direction)
+                    self._recorder.record(spoken, spoken, started_ms=_now_ms(), cue=self._cue)
+                    spoke = True
+                elif (
+                    self._answers is not None
+                    and self._cue is not None
+                    and self._cue.trigger == "user_turn"
+                    and self._recorder.awaiting_question_answer
+                ):
+                    # An answer to the agent's own question, declined. Refuse
+                    # it: no turn (nothing was spoken) and NO decision either —
+                    # their words were one moment to speak, and what that moment
+                    # became is decided by the re-run, not by this completion.
+                    retry = True
+                else:
+                    self._recorder.decline(cue=self._cue)
             # The proactive engine needs the same fact the summary does: what
             # the turn BECAME. A spoken turn (including a declined-looking one
             # that released words) sets the awaiting-reply rule; a decline
@@ -2773,12 +2983,24 @@ class SilenceGate(FrameProcessor):
             # `note_agent` — this is the only place that knows.
             # A completion that only called a tool has not finished its turn —
             # the reply comes from the next one — so it neither blocks the
-            # engine as a spoken turn nor backs it off as a declined one.
-            if self._offers is not None and not (self._calling_tools and not self._spoken.strip()):
-                self._offers.note_agent_turn(bool(self._spoken.strip()))
+            # engine as a spoken turn nor backs it off as a declined one. Nor
+            # has a refused decline: the re-run is still to come, and backing
+            # the engine off now would arm an offer over the top of it.
+            if (
+                self._offers is not None
+                and not retry
+                and not (self._calling_tools and not spoke)
+            ):
+                self._offers.note_agent_turn(spoke)
             self._reset()
 
         await self.push_frame(frame, direction)
+
+        # AFTER the declined completion has gone downstream, so the assistant
+        # aggregator at the end of the pipeline has closed this turn before the
+        # next one starts behind it. `AnswerGuard` adds its own beat on top.
+        if retry and self._answers is not None:
+            self._answers.request_retry()
 
 
 def build_pipeline(
@@ -2969,6 +3191,11 @@ def build_pipeline(
     # path — the same one a normal turn takes.
     recall = Recall(context, summary, ticket, recorder, drafts)
     offers = Offers(context, recall, session, recorder)
+    # Not conditional on anything: a declined answer to the agent's own
+    # question is a defect in every study arm. Sits next to `Offers` because it
+    # re-runs a turn by the same route — a message on the context and an
+    # LLMRunFrame from upstream of the user aggregator.
+    answers = AnswerGuard(context, session)
     logger.info(f"[study] condition {session.get('studyCondition') or 'none (degraded)'}")
 
     pipeline = Pipeline(
@@ -2988,13 +3215,16 @@ def build_pipeline(
             title,
             recall,
             offers,
+            answers,
             aggregator.user(),
             llm,
             # Between the LLM and TTS deliberately: the aggregator downstream
             # still records what the model generated, so a declined turn is
             # visible in the context as a turn that happened, while never
             # reaching the speaker.
-            SilenceGate(summary, recorder, drafts, offers, llm_name=llm.name, title=title),
+            SilenceGate(
+                summary, recorder, drafts, offers, llm_name=llm.name, title=title, answers=answers
+            ),
             tts,
             transport.output(),
             aggregator.assistant(),

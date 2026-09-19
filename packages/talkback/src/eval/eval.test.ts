@@ -2,7 +2,7 @@ import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { describe, expect, it } from "vitest";
 import { OUTPUT_CONTRACT, SYSTEM_PROMPT } from "../prompt";
 import { CASES, findCases } from "./cases";
-import { checkReply } from "./checks";
+import { checkReply, endsOnAnAgentQuestion } from "./checks";
 import { parseJudgement, renderTurnForJudge } from "./judge";
 import { langfuseConfig, startLangfuse, traceTurn } from "./langfuse";
 import { buildTurnMessages, composeContextBlock } from "./messages";
@@ -15,6 +15,16 @@ describe("the cases", () => {
   it("have unique ids and a stated purpose", () => {
     expect(new Set(CASES.map((c) => c.id)).size).toBe(CASES.length);
     for (const c of CASES) expect(c.about.length).toBeGreaterThan(10);
+  });
+
+  it("only claim to be answering the agent's own question where one was asked", () => {
+    // `expect.answering` turns a silence into a failure, so a case that sets it
+    // without an agent question behind it would pin nothing and look as if it
+    // did. The reverse is deliberately NOT asserted: `pending-asked-once` also
+    // ends on an agent question, and there the right reply is silence.
+    const answering = CASES.filter((c) => c.expect.answering);
+    expect(answering.length).toBeGreaterThan(0);
+    for (const c of answering) expect(endsOnAnAgentQuestion(c), c.id).toBe(true);
   });
 
   it("can be selected by id and refuse an unknown one", () => {
@@ -51,6 +61,32 @@ describe("the deterministic checks", () => {
     expect(checkReply(eitherCase, "- first\n- second", 25).failures).toContain("markdown in speech");
     expect(checkReply(eitherCase, "Nice one 🎉", 25).failures).toContain("emoji in speech");
     expect(checkReply(eitherCase, "Done. Let me know if you need more.", 25).failures).toContain("sign-off");
+  });
+
+  it("fails any silence on a turn that answers the agent's own question", () => {
+    // The pilot's turn, as a check: the agent had just asked whether to look
+    // the times up, and the reply to "Ja." was `<silence>`.
+    const answering = CASES.find((c) => c.id === "answer-bare-yes")!;
+    expect(checkReply(answering, "<silence>", 25).failures).toContain(
+      "declined an answer to its own question",
+    );
+    expect(checkReply(answering, "Der in Altenholz hat bis achtzehn Uhr offen.", 25).pass).toBe(true);
+  });
+
+  it("lets a tool call stand in for speech on an answering turn", () => {
+    // Acting on the answer IS the answer; the words come from the completion
+    // that reads the tool's result.
+    const answering = CASES.find((c) => c.id === "answer-bare-yes")!;
+    const withTool = { ...answering, expect: { ...answering.expect, toolCall: { name: "search_web" } } };
+    expect(checkReply(withTool, "", 25, [{ name: "search_web", arguments: {} }]).pass).toBe(true);
+  });
+
+  it("still allows silence after an agent question the driver did not answer", () => {
+    // `pending-asked-once`: the ask was let pass, and what came next was the
+    // middle of a different sentence. Silence there is the design working.
+    const notAnswering = CASES.find((c) => c.id === "pending-asked-once")!;
+    expect(notAnswering.expect.answering).toBeUndefined();
+    expect(checkReply(notAnswering, "<silence>", 25).pass).toBe(true);
   });
 
   it("checks mustMention and mustNotMention against the spoken text", () => {
