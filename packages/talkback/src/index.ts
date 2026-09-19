@@ -110,6 +110,7 @@ export {
   type SearchResultForModel,
 } from "./web-search";
 export {
+  finishAgentTurn,
   recordAgentDecision,
   recordAgentTurn,
   type AgentDecisionOutcome,

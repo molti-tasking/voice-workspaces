@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { and, captureSession, eq, getDb, isNull } from "@voicemural/db";
 import { currentUserId } from "@/lib/session";
 
@@ -11,7 +12,19 @@ export const runtime = "nodejs";
  * stop, so this call is often never made. The worker's sweep closes sessions
  * that have gone quiet, and `on-session-end-summarise` fires from there. Never
  * make correctness depend on this endpoint being reached.
+ *
+ * SINCE THE DEBRIEF, this is the second half of Stop rather than the whole of
+ * it: Stop opens the debrief window (`../debrief`) and keeps recording, and
+ * this closes both the window and the drive when the person taps done. A drive
+ * that never gets here is closed by the sweep with no debrief offsets, which
+ * is the honest record of a debrief that did not happen.
  */
+
+const Body = z.object({
+  /** Ms into the drive when the debrief ended. Absent when there was none. */
+  debriefEndedOffsetMs: z.number().int().min(0).optional(),
+});
+
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -21,9 +34,23 @@ export async function POST(
 
   const { id } = await params;
 
+  /* Where the debrief window closes, when there was one.
+   *
+   * Optional, and absent from every caller that is not the recorder's done
+   * button: `dismissResumable` closes out a drive nobody debriefed, and the
+   * sweep never calls this route at all. A body that is not JSON — which is
+   * what a bare `fetch(url, {method:"POST"})` sends — reads as "no debrief",
+   * which is exactly what it means. */
+  const body = Body.safeParse(await req.json().catch(() => null));
+  const debriefEndedOffsetMs = body.success ? body.data.debriefEndedOffsetMs : undefined;
+
   const updated = await getDb()
     .update(captureSession)
-    .set({ endedAt: new Date(), endedBy: "client" })
+    .set({
+      endedAt: new Date(),
+      endedBy: "client",
+      ...(debriefEndedOffsetMs === undefined ? {} : { debriefEndedOffsetMs }),
+    })
     .where(
       and(
         eq(captureSession.id, id),

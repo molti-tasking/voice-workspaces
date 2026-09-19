@@ -9,7 +9,7 @@ import {
   SquareKanban,
   type LucideIcon,
 } from "lucide-react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { formatOffset } from "@voicemural/shared";
 import { SETTING_PROFILES } from "@voicemural/talkback/setting";
@@ -69,7 +69,9 @@ const TIMELINE: Tab = { href: "/timeline", label: "Timeline", Icon: ListTree };
  */
 export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
   const pathname = usePathname();
-  const { isRecording, isBusy, recorder, startRecording, stopRecording } = useCapture();
+  const router = useRouter();
+  const { isRecording, isBusy, recorder, settingUnknown, startRecording, stopRecording } =
+    useCapture();
 
   const [sheetOpen, setSheetOpen] = useState(false);
   const [armedAt, setArmedAt] = useState<number | null>(null);
@@ -140,6 +142,13 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
               onToggleSheet={() => setSheetOpen((v) => !v)}
               onPress={() => {
                 if (!isRecording) {
+                  // Nothing has said where they are, and a drive must not
+                  // start under a guess: send them to the recorder, where the
+                  // picker is. See `settingUnknown`.
+                  if (settingUnknown) {
+                    router.push("/record");
+                    return;
+                  }
                   startRecording();
                   return;
                 }
@@ -148,7 +157,12 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
                   return;
                 }
                 setArmedAt(null);
+                // Stop opens the DEBRIEF now, and the debrief lives on the
+                // recorder screen — three questions with the microphone still
+                // open. Stopping from the board and being left on the board
+                // would be stopping into nothing.
                 stopRecording();
+                router.push("/record");
               }}
             />
           )}

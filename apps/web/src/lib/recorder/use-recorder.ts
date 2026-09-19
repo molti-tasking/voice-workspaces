@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CaptureSetting } from "@voicemural/shared";
+import type { CaptureSetting, SettingSource } from "@voicemural/shared";
 import { capture } from "@/lib/analytics/client";
 import type { UseCaseId } from "@/lib/use-cases";
 import {
@@ -66,6 +66,22 @@ export interface RecorderState {
   lastSessionId: string | null;
   /** Recorded length of that session, for the confirmation line. */
   lastSessionMs: number;
+  /**
+   * Whether the drive is in its DEBRIEF: Stop has been tapped, the three
+   * questions are on screen, and the microphone is still open.
+   *
+   * `/study` promises participants that three questions follow every drive and
+   * that researchers read those answers — they are the one part of the corpus
+   * that is content by design. Stop used to end the recording, so the
+   * questions were asked with the microphone already closed and the answers
+   * went nowhere. The window between `beginDebrief` and `stop` is marked on
+   * the session (`debrief_started_offset_ms`), so the utterances inside it are
+   * exactly the debrief and everything outside stays private.
+   *
+   * Talk-back is disconnected for the duration: the agent must not join a
+   * debrief, and a turn it tries to post during one is refused.
+   */
+  debriefing: boolean;
 }
 
 /**
@@ -149,6 +165,7 @@ export function useRecorder() {
     currentSessionId: null,
     lastSessionId: null,
     lastSessionMs: 0,
+    debriefing: false,
   });
 
   const runningRef = useRef(false);
@@ -164,8 +181,11 @@ export function useRecorder() {
    * always zero. Refs are the live view those events actually mean. */
   const resumableRef = useRef<OpenSessionMeta | null>(null);
   const pendingUploadsRef = useRef(0);
+  /** Same reason as the two above: `stop` must see the live value. */
+  const debriefingRef = useRef(false);
 
   const patch = useCallback((next: Partial<RecorderState>) => {
+    if (next.debriefing !== undefined) debriefingRef.current = next.debriefing;
     setState((prev) => ({ ...prev, ...next }));
   }, []);
 
@@ -328,7 +348,7 @@ export function useRecorder() {
    */
   const start = useCallback(async (
     setting?: CaptureSetting,
-    source?: "device" | "motion" | "default" | "chosen",
+    source?: SettingSource,
     voiceId?: string,
     sttLanguage?: string | null,
     useCase?: UseCaseId,
@@ -408,6 +428,11 @@ export function useRecorder() {
       startedAt: new Date(meta.startedAt).toISOString(),
       deviceInfo: { userAgent: navigator.userAgent, mimeType },
       setting,
+      // How that setting was arrived at: observed, remembered, or corrected.
+      // Stored on the drive, not only reported to analytics — a profile that
+      // was guessed and one that was observed are different facts, and Pilot
+      // 01's `driving` was a guess nobody could see in the data.
+      settingSource: source,
       voiceId,
       // Null is normal (auto-detect); undefined on the wire keeps zod happy.
       sttLanguage: sttLanguage ?? undefined,
@@ -440,10 +465,43 @@ export function useRecorder() {
       resumable: null,
       currentSessionId: meta.captureSessionId,
       lastSessionId: null,
+      debriefing: false,
     });
     await acquireWakeLock();
     void runLoop(stream, meta);
   }, [acquireWakeLock, patch, runLoop]);
+
+  /**
+   * Stop talking to the agent, keep recording, and ask the three questions.
+   *
+   * This is what Stop does now. The chunk loop is untouched — the microphone
+   * stays open and the audio keeps uploading — and the only things that change
+   * are that talk-back disconnects and the session gets a debrief-start
+   * offset. `stop()` below closes both.
+   *
+   * Best-effort on the network, like every other call from a phone at the end
+   * of a drive: a failed POST costs the analysis the exact boundary of the
+   * window, and the recording itself carries on regardless.
+   */
+  const beginDebrief = useCallback(async () => {
+    if (!runningRef.current) return;
+    const meta = metaRef.current;
+    if (!meta) return;
+    patch({ debriefing: true });
+    try {
+      await fetch(`/api/capture-sessions/${meta.captureSessionId}/debrief`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // The client's own elapsed time, not the server's clock: a drive that
+        // started in a dead zone registers late, and `now - startedAt` would
+        // count the wait as recorded speech.
+        body: JSON.stringify({ offsetMs: meta.elapsedMs }),
+      });
+    } catch {
+      // The window's start is lost; the debrief is still recorded, and the
+      // sweep still closes the session.
+    }
+  }, [patch]);
 
   const stop = useCallback(async () => {
     if (!runningRef.current) return;
@@ -476,6 +534,13 @@ export function useRecorder() {
       try {
         await fetch(`/api/capture-sessions/${meta.captureSessionId}/end`, {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // Where the debrief window closes, when there was one. The route
+          // reads a body that is not JSON as "no debrief", which is what a
+          // drive closed from anywhere else means.
+          body: JSON.stringify(
+            debriefingRef.current ? { debriefEndedOffsetMs: meta.elapsedMs } : {},
+          ),
         });
       } catch {
         // Best-effort. The worker's sweep closes sessions that go quiet, so a
@@ -493,6 +558,7 @@ export function useRecorder() {
       currentSessionId: null,
       lastSessionId: meta?.captureSessionId ?? null,
       lastSessionMs: meta?.elapsedMs ?? 0,
+      debriefing: false,
     });
     kickUploader();
 
@@ -518,5 +584,5 @@ export function useRecorder() {
     kickUploader();
   }, [patch, state.resumable]);
 
-  return { ...state, start, stop, dismissResumable, chunkMs: CHUNK_MS };
+  return { ...state, start, beginDebrief, stop, dismissResumable, chunkMs: CHUNK_MS };
 }

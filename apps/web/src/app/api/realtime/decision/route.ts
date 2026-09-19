@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { agentDecisionOutcomeEnum, agentDecisionTriggerEnum, captureSession, eq, getDb } from "@voicemural/db";
-import { verifyTicket } from "@voicemural/shared/realtime-ticket";
+import { agentDecisionOutcomeEnum, agentDecisionTriggerEnum } from "@voicemural/db";
 import { recordAgentDecision } from "@voicemural/talkback";
+import { authoriseOpenDrive } from "@/lib/realtime/drive";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +34,11 @@ const Body = z.object({
   latencyMs: z.number().int().min(0).optional(),
   // An id, so bounded like one. Anything longer is not a key.
   subjectKey: z.string().min(1).max(128).optional(),
+  // Which MOMENT this decides. Two completions run for one moment arrive with
+  // the same `offsetMs` and the same value here, which is what lets the writer
+  // keep exactly one of them authoritative instead of double-counting the
+  // moment. An opaque id from the container, never a phrase.
+  cueId: z.string().min(1).max(64).optional(),
   agentTurnId: z.uuid().optional(),
 });
 
@@ -45,27 +50,19 @@ export async function POST(req: Request) {
 
   const { ticket, ...decision } = parsed.data;
 
-  let payload;
-  try {
-    payload = verifyTicket(ticket);
-  } catch {
-    return NextResponse.json({ error: "bad_ticket" }, { status: 401 });
-  }
-
-  const rows = await getDb()
-    .select({ userId: captureSession.userId })
-    .from(captureSession)
-    .where(eq(captureSession.id, payload.captureSessionId))
-    .limit(1);
-
-  if (rows[0]?.userId !== payload.userId) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  // Refused once the drive is over, exactly as a turn is. A decision recorded
+  // after Stop is a moment nobody was there for, and it would land in every
+  // rate the analysis computes over decisions — silent opportunities most of
+  // all, which is the measure this table exists for.
+  const auth = await authoriseOpenDrive(ticket);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
 
   await recordAgentDecision({
     ...decision,
-    captureSessionId: payload.captureSessionId,
-    userId: payload.userId,
+    captureSessionId: auth.captureSessionId,
+    userId: auth.userId,
   });
 
   return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });

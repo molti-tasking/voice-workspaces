@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { CaptureSetting } from "@voicemural/shared";
-import { DEFAULT_SETTING } from "@voicemural/talkback/setting";
+import type { CaptureSetting, SettingSource } from "@voicemural/shared";
+import { DEFAULT_SETTING, SETTINGS } from "@voicemural/talkback/setting";
 
 /**
  * Where the person is, inferred rather than asked.
@@ -24,8 +24,19 @@ import { DEFAULT_SETTING } from "@voicemural/talkback/setting";
  *
  * Android exposes `devicemotion` without asking; iOS needs a one-off
  * permission that can only be requested from a tap, so it is requested on
- * the Record button and benefits the next recording. Without any motion data
- * the default is the base prompt's stance, `driving`, which is the safe one.
+ * the Record button and benefits the next recording.
+ *
+ * WHEN NOTHING SAYS ANYTHING, IT ASKS. The fallback used to be `driving`,
+ * because `driving` is the safe stance for a phone that might be in a cradle
+ * — 25-word replies, nothing on screen. It is a terrible stance for somebody
+ * sitting still at a table, and that is exactly what Pilot 01 was: a
+ * stationary first-time user, no accelerometer permission, run under the
+ * driving profile with the cue panel suppressed, and nothing in the data
+ * saying the profile had been guessed. So `source` is now `"default"` only
+ * while nothing has told us anything, the recorder REFUSES TO START a drive
+ * in that state (it shows the picker instead), and the answer is remembered
+ * for next time. `driving` remains the value behind an unanswered question,
+ * because whatever is shown while waiting must be the safe one.
  *
  * Pure classifier, testable; the hook only feeds it samples.
  */
@@ -43,7 +54,35 @@ export interface MotionWindow {
   gravity: { x: number; y: number; z: number } | null;
 }
 
-export type SettingSource = "device" | "motion" | "default" | "chosen";
+/**
+ * Re-exported from the wire contract so the recorder has one name for it. The
+ * values are stored on `capture_session.setting_source`.
+ */
+export type { SettingSource };
+
+/** The key the last correction is remembered under, per browser. */
+const REMEMBERED_KEY = "voicemural.setting";
+
+/** The remembered correction, or null. Never throws: private mode, cleared data. */
+export function rememberedSetting(): CaptureSetting | null {
+  try {
+    const stored = window.localStorage.getItem(REMEMBERED_KEY);
+    return SETTINGS.includes((stored ?? "") as CaptureSetting)
+      ? (stored as CaptureSetting)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Remember a correction for the next drive. Best-effort by design. */
+export function rememberSetting(setting: CaptureSetting): void {
+  try {
+    window.localStorage.setItem(REMEMBERED_KEY, setting);
+  } catch {
+    // The choice still holds for this drive; it just is not remembered.
+  }
+}
 
 /** How much history the classifier looks at. */
 export const WINDOW_MS = 4_000;
@@ -160,6 +199,14 @@ export function useDetectedSetting({ enabled }: { enabled: boolean }): DetectedS
     setting: DEFAULT_SETTING,
     source: "default",
   });
+
+  /* The remembered correction, read the same way the device class is.
+   *
+   * `useSyncExternalStore` rather than an effect: localStorage does not exist
+   * on the server, and a first client render that disagreed with the server's
+   * would be a hydration mismatch. It returns a string or null, so there is no
+   * new object per call to destabilise the snapshot. */
+  const remembered = useSyncExternalStore(subscribeNever, rememberedSetting, () => null);
   /** iOS only: set from the tap that asked. Elsewhere motion needs no answer. */
   const [granted, setGranted] = useState(false);
 
@@ -227,7 +274,12 @@ export function useDetectedSetting({ enabled }: { enabled: boolean }): DetectedS
     }
   }, [granted, desk]);
 
+  // In order of how much each one actually knows. A laptop needs no sensor; a
+  // live motion reading beats a week-old answer; and a week-old answer beats
+  // the fallback, which is what the recorder refuses to start a drive under.
   if (desk) return { setting: "desk", source: "device", requestMotion };
+  if (detected.source !== "default") return { ...detected, requestMotion };
+  if (remembered) return { setting: remembered, source: "remembered", requestMotion };
   return { ...detected, requestMotion };
 }
 

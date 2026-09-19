@@ -2,7 +2,11 @@
 
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import type { CaptureSetting } from "@voicemural/shared";
-import { useDetectedSetting, type SettingSource } from "@/lib/recorder/detect-setting";
+import {
+  rememberSetting,
+  useDetectedSetting,
+  type SettingSource,
+} from "@/lib/recorder/detect-setting";
 import { useSttLanguage } from "@/lib/recorder/language-store";
 import { useRecorder } from "@/lib/recorder/use-recorder";
 import { useVoice } from "@/lib/recorder/voice-store";
@@ -33,6 +37,15 @@ export interface CaptureContextValue {
   /** Null until the person corrects the detector; a correction is per visit. */
   chosenSetting: CaptureSetting | null;
   chooseSetting: (next: CaptureSetting | null) => void;
+  /**
+   * Whether the setting is still a guess nobody has confirmed.
+   *
+   * True only while `source` is `default`: no laptop, no accelerometer, no
+   * remembered answer. The recorder asks rather than starting, because the
+   * fallback is `driving` — 25-word replies and no screen — and Pilot 01 ran
+   * a stationary first-time user under exactly that.
+   */
+  settingUnknown: boolean;
 
   voiceId: string;
   chooseVoice: (next: string) => void;
@@ -41,7 +54,18 @@ export interface CaptureContextValue {
 
   /** Start a drive with whatever is currently selected. Safe to call twice. */
   startRecording: () => void;
+  /**
+   * Stop talking and open the debrief. The microphone stays on.
+   *
+   * Named `stopRecording` still, because that is what the button says and what
+   * every caller means by it — the change is what it does next. `finishDrive`
+   * is the other half.
+   */
   stopRecording: () => void;
+  /** Close the debrief window and end the drive. */
+  finishDrive: () => void;
+  /** True between the two: the three questions are on screen, mic still open. */
+  debriefing: boolean;
 }
 
 const CaptureContext = createContext<CaptureContextValue | null>(null);
@@ -81,7 +105,19 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
   // reading the board still needs the right profile. It stops for the duration
   // of the recording, which is when the phone is actually in a cradle.
   const detected = useDetectedSetting({ enabled: !isRecording });
-  const [chosenSetting, chooseSetting] = useState<CaptureSetting | null>(null);
+  const [chosenSetting, setChosenSetting] = useState<CaptureSetting | null>(null);
+
+  /* A correction is remembered, not just applied.
+   *
+   * It used to last one visit, which is right for a one-off and wrong for a
+   * seven-day study on a phone that may never grant the accelerometer: the
+   * participant would correct the same wrong guess every morning, or stop
+   * bothering and let the drive run under it. The detector reads this back as
+   * `remembered`, and any live sensor reading still outranks it. */
+  const chooseSetting = useCallback((next: CaptureSetting | null) => {
+    setChosenSetting(next);
+    if (next) rememberSetting(next);
+  }, []);
 
   // Per-browser preferences, remembered across visits. See their stores.
   const [voiceId, chooseVoice] = useVoice();
@@ -90,29 +126,43 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
   // Armed with the recording, for the whole drive — there is no separate
   // gesture to enter it. Everything it does is downstream of the microphone
   // stream the recorder publishes, so capture is unaffected either way.
+  // NOT DURING THE DEBRIEF. Capture keeps running after Stop so the answers to
+  // the three questions are recorded, but the conversation is over: the agent
+  // must not join a debrief about itself, and disconnecting here is also what
+  // tells the container the drive has ended (its `closed` handler cancels the
+  // pending offers that spoke 52.6 seconds after Stop on Pilot 01).
   const talkback = useTalkback({
     captureSessionId: recorder.currentSessionId,
-    enabled: TALKBACK_ENABLED && isRecording,
+    enabled: TALKBACK_ENABLED && isRecording && !recorder.debriefing,
   });
 
   const setting = chosenSetting ?? detected.setting;
   const source: SettingSource = chosenSetting ? "chosen" : detected.source;
+  const settingUnknown = source === "default";
 
   const { requestMotion } = detected;
-  const { start, stop } = recorder;
+  const { start, beginDebrief, stop } = recorder;
 
   const startRecording = useCallback(() => {
     // iOS gates the accelerometer behind a tap; this is the tap. The answer
     // arrives for the next recording, and this one starts now.
     void requestMotion();
+    // NOT WITH A GUESS NOBODY CONFIRMED. The caller shows the picker instead;
+    // this is the backstop, so no other path can start a drive under a
+    // setting that nothing observed. See `settingUnknown`.
+    if (settingUnknown) return;
     // Read HERE rather than held in state: `takeUseCase` clears as it reads, so
     // the example belongs to this drive and not to every later one, and this
     // provider is mounted for the whole app — holding it would mean deciding
     // when to forget it, which is the same question with more moving parts.
     void start(setting, source, voiceId, sttLanguage, takeUseCase());
-  }, [requestMotion, start, setting, source, voiceId, sttLanguage]);
+  }, [requestMotion, settingUnknown, start, setting, source, voiceId, sttLanguage]);
 
   const stopRecording = useCallback(() => {
+    void beginDebrief();
+  }, [beginDebrief]);
+
+  const finishDrive = useCallback(() => {
     void stop();
   }, [stop]);
 
@@ -126,12 +176,15 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       source,
       chosenSetting,
       chooseSetting,
+      settingUnknown,
       voiceId,
       chooseVoice,
       sttLanguage,
       chooseSttLanguage,
       startRecording,
       stopRecording,
+      finishDrive,
+      debriefing: recorder.debriefing,
     }),
     [
       recorder,
@@ -141,12 +194,15 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       setting,
       source,
       chosenSetting,
+      chooseSetting,
+      settingUnknown,
       voiceId,
       chooseVoice,
       sttLanguage,
       chooseSttLanguage,
       startRecording,
       stopRecording,
+      finishDrive,
     ],
   );
 

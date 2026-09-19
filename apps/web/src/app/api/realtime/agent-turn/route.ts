@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { captureSession, eq, getDb } from "@voicemural/db";
-import { verifyTicket } from "@voicemural/shared/realtime-ticket";
-import { recordAgentTurn } from "@voicemural/talkback";
+import { finishAgentTurn, recordAgentTurn } from "@voicemural/talkback";
+import { authoriseDrive, authoriseOpenDrive } from "@/lib/realtime/drive";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,7 +55,9 @@ const Body = z.object({
   // What prompted the turn. Accepted by `recordAgentTurn` from the start but
   // never by this route, so every turn — offers included — was stored as a
   // `reply`, and the analysis could not tell an unprompted turn from an answer.
-  kind: z.enum(["reply", "proactive_prompt", "confirmation_request", "backchannel"]).optional(),
+  kind: z
+    .enum(["reply", "proactive_prompt", "confirmation_request", "backchannel", "filler"])
+    .optional(),
   // Echoed from `/api/realtime/session` by the container, rather than stamped
   // here from this deployment's constant: a web deploy mid-drive changes the
   // constant, not the prompt the container is already running.
@@ -94,22 +95,14 @@ export async function POST(req: Request) {
 
   const { ticket, ...turn } = parsed.data;
 
-  let payload;
-  try {
-    payload = verifyTicket(ticket);
-  } catch {
-    return NextResponse.json({ error: "bad_ticket" }, { status: 401 });
+  // NO TURN INTO A CLOSED DRIVE. A 409 here is what the container reads as
+  // "the drive is over" — it closes its recorder and stops. See
+  // `authoriseOpenDrive`, and the turn Pilot 01 recorded 52.6s after Stop.
+  const auth = await authoriseOpenDrive(ticket);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
-
-  const rows = await getDb()
-    .select({ userId: captureSession.userId })
-    .from(captureSession)
-    .where(eq(captureSession.id, payload.captureSessionId))
-    .limit(1);
-
-  if (rows[0]?.userId !== payload.userId) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
+  const payload = auth;
 
   const id = await recordAgentTurn({
     ...turn,
@@ -125,4 +118,47 @@ export async function POST(req: Request) {
   // it — sequentially, from the same task, which is what keeps that foreign
   // key from racing this insert. Null when nothing was written.
   return NextResponse.json({ ok: true, id }, { headers: { "Cache-Control": "no-store" } });
+}
+
+/**
+ * When a turn actually stopped playing.
+ *
+ * The row is written the moment speech starts, because the echo filter cannot
+ * wait for playback — and until now its `endOffsetMs` was
+ * `len(text) / 14 * 1000`, an estimate nothing marked as one. The container
+ * patches it here when the transport reports the audio drained.
+ *
+ * NOT gated on the drive still being open, unlike POST. A turn whose audio was
+ * still playing when the person tapped Stop has its end measured a second
+ * later, and refusing that would leave the last turn of every drive carrying
+ * the estimate. It adds nothing to a finished transcript; it corrects a row
+ * that is already in it.
+ */
+const Finish = z.object({
+  ticket: z.string().min(1),
+  id: z.uuid(),
+  endOffsetMs: z.number().int().min(0),
+  speakTtfbMs: z.number().int().min(0).optional(),
+});
+
+export async function PATCH(req: Request) {
+  const parsed = Finish.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json({ error: "invalid_body" }, { status: 400 });
+  }
+
+  const { ticket, id, endOffsetMs, speakTtfbMs } = parsed.data;
+  const auth = await authoriseDrive(ticket);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.error }, { status: auth.status });
+  }
+
+  const updated = await finishAgentTurn({
+    id,
+    captureSessionId: auth.captureSessionId,
+    endOffsetMs,
+    speakTtfbMs,
+  });
+
+  return NextResponse.json({ ok: true, updated }, { headers: { "Cache-Control": "no-store" } });
 }

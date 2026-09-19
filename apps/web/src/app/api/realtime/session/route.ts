@@ -15,6 +15,7 @@ import {
   asSttLanguage,
   asVoiceId,
   composeSystemPrompt,
+  fillersFor,
   foldSummary,
   loadDriveSoFarText,
   webSearchSection,
@@ -149,6 +150,13 @@ export async function POST(req: Request) {
       // ASR provider. Empty for every drive recorded before this existed,
       // which is fine — detection was what those drives were running anyway.
       sttLanguage: asSttLanguage(row.sttLanguage),
+      // What the system says while it is WORKING rather than answering: the
+      // placeholder before a lookup, the reassurance if the lookup runs long,
+      // and the last resort of the open-question guard. Sent from here, in
+      // the drive's own language, rather than hard-coded in the container —
+      // a German phrase read to an English speaker is its own failure. See
+      // packages/talkback/src/fillers.ts for why they exist at all.
+      spokenFillers: fillersFor(asSttLanguage(row.sttLanguage)),
       driveSummary,
       // The container computes offsets against this so `agent_turn` shares a
       // clock with `utterance`, which is ms since the drive started.

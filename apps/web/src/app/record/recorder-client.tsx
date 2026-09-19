@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatOffset } from "@voicemural/shared";
 // The `/setting` subpath, NOT the package index: the index re-exports
 // retrieval.ts, which imports @voicemural/db, and that drags the Postgres
@@ -17,6 +17,7 @@ import { MicLevel } from "@/components/mic-level";
 import { useCues } from "@/lib/display/use-cues";
 import { CuePanel } from "./cue-panel";
 import { DraftPanel } from "./draft-panel";
+import { DebriefPanel, PreDriveItem, recordStudyResponse } from "./study-items";
 import { TopicTitle } from "./topic-title";
 
 /**
@@ -36,11 +37,36 @@ export function RecorderClient() {
     isBusy,
     setting,
     source,
+    settingUnknown,
     startRecording,
     stopRecording,
+    finishDrive,
+    debriefing,
   } = useCapture();
 
+  // Open by default when nothing has told us where they are. The fallback is
+  // `driving` — 25-word replies, no screen — and Pilot 01 ran a stationary
+  // first-time user under exactly that because the question was never put.
   const [showPicker, setShowPicker] = useState(false);
+  const pickerOpen = showPicker || settingUnknown;
+
+  /* The pre item's answer, held until a drive exists to attach it to.
+   *
+   * A rating is about a session and the session id is generated at the moment
+   * of starting, so the answer cannot be posted when it is given. Answering is
+   * never a precondition for recording: a participant who taps record straight
+   * away simply has no pre value, which is a missing cell rather than a lost
+   * drive. */
+  const pendingPre = useRef<Record<string, number>>({});
+  useEffect(() => {
+    const sessionId = rec.currentSessionId;
+    if (!sessionId) return;
+    const held = pendingPre.current;
+    pendingPre.current = {};
+    for (const [item, value] of Object.entries(held)) {
+      recordStudyResponse(sessionId, "pre", item, value);
+    }
+  }, [rec.currentSessionId]);
   const profile = SETTING_PROFILES[setting];
   const hearing = talk.status === "speaking";
 
@@ -87,12 +113,22 @@ export function RecorderClient() {
               // One tap, no confirmation: this target is 224px and is meant to
               // be hit without looking. The dock's 64px button arms first —
               // see `STOP_ARM_MS` there.
+              //
+              // It no longer ends the drive: it stops talk-back and opens the
+              // debrief below, with the microphone still running. The done
+              // button in that panel is what closes the session.
               stopRecording();
+              return;
+            }
+            // Nothing has said where they are, so ask rather than start under
+            // a guess. See `settingUnknown`.
+            if (settingUnknown) {
+              setShowPicker(true);
               return;
             }
             startRecording();
           }}
-          disabled={isBusy}
+          disabled={isBusy || debriefing}
           className={[
             "relative cursor-pointer flex size-56 items-center justify-center rounded-full text-2xl font-medium",
             "transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
@@ -105,16 +141,20 @@ export function RecorderClient() {
         >
           {isRecording && <MicLevel />}
           <span className="relative">
-            {isBusy ? "…" : isRecording ? "Stop" : "Record"}
+            {isBusy ? "…" : debriefing ? "Debrief" : isRecording ? "Stop" : "Record"}
           </span>
         </button>
 
         <p className="h-5 text-center text-sm text-white/40">
-          {isRecording ? (
+          {debriefing ? (
+            "Still recording — answer the three questions below."
+          ) : isRecording ? (
             profile.hint
+          ) : settingUnknown ? (
+            <span className="text-amber-200/80">Where are you? Pick one to start.</span>
           ) : (
             <>
-              {source === "chosen" ? "" : "Looks like: "}
+              {source === "chosen" || source === "remembered" ? "" : "Looks like: "}
               <span className="text-white/70">{profile.label}</span>
               {" · "}
               <button
@@ -128,19 +168,34 @@ export function RecorderClient() {
           )}
         </p>
 
-        {!isRecording && showPicker && <SettingPicker />}
+        {!isRecording && pickerOpen && <SettingPicker />}
 
         {!isRecording && <VoicePicker />}
 
         {!isRecording && <LanguagePicker />}
 
-        {TALKBACK_ENABLED && isRecording && <TopicTitle title={talk.title} />}
+        {/* Before the drive, and only when one can start: the item is about
+            what they are carrying now, and asking it under a settings sheet
+            they are still working through would be asking it too early. */}
+        {!isRecording && !settingUnknown && (
+          <PreDriveItem
+            onAnswer={(item, value) => {
+              pendingPre.current[item] = value;
+            }}
+          />
+        )}
 
-        {isRecording && <CuePanel cues={cues} />}
+        {TALKBACK_ENABLED && isRecording && !debriefing && <TopicTitle title={talk.title} />}
+
+        {debriefing && (
+          <DebriefPanel captureSessionId={rec.currentSessionId} onDone={finishDrive} />
+        )}
+
+        {isRecording && !debriefing && <CuePanel cues={cues} />}
 
         {/* Below the cue panel, because a draft is read deliberately and the
             glanceable lane must keep the position it has trained. */}
-        {isRecording && <DraftPanel drafts={cues.drafts} />}
+        {isRecording && !debriefing && <DraftPanel drafts={cues.drafts} />}
       </div>
 
       <footer className="w-full max-w-md space-y-3 text-sm">
