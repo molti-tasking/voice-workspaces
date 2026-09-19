@@ -1,3 +1,4 @@
+import type { Executor } from "@voicemural/db";
 import { appendUserOp } from "@voicemural/db/workspace";
 import type { PlannedEdit, StoredOp } from "@voicemural/workspace";
 import { capture } from "@/lib/analytics/server";
@@ -22,11 +23,25 @@ export async function applyBoardEdit(input: {
   captureSessionId?: string;
   /** PostHog's browser session, when the edit came from a browser. */
   analyticsSessionId?: string;
+  /**
+   * The transaction this edit is being planned and written inside.
+   *
+   * Both callers hold one (see `withBoardLock`): load, plan and apply are one
+   * critical section, and an append that reached for the pool instead would
+   * land outside the lock that is guarding it.
+   */
+  db?: Executor;
 }): Promise<void> {
   const { userId, ops, plan, by } = input;
 
   for (const row of plan.ops) {
-    await appendUserOp({ userId, id: row.id, op: row.op, captureSessionId: input.captureSessionId });
+    await appendUserOp({
+      userId,
+      id: row.id,
+      op: row.op,
+      captureSessionId: input.captureSessionId,
+      db: input.db,
+    });
   }
 
   const card = plan.card;

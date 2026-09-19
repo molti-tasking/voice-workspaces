@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { boardEnabledAt } from "@voicemural/db/board";
-import { loadOps } from "@voicemural/db/workspace";
+import { loadOps, withBoardLock } from "@voicemural/db/workspace";
 import { TaskState, planBoardEdit } from "@voicemural/workspace";
 import { sessionIdFrom } from "@/lib/analytics/server";
 import { applyBoardEdit } from "@/lib/board/apply-edit";
@@ -47,34 +47,60 @@ export async function POST(req: Request, { params }: { params: Promise<{ blockId
 
   const { blockId } = await params;
   const body = parsed.data;
-  const ops = await loadOps(userId);
 
-  // The page may be showing a block that speech has since revised. The gesture
-  // was aimed at the card, so the planner lands it on whatever block the card
-  // now is.
-  const plan = planBoardEdit(
-    ops,
-    body.action === "retire" ? { action: "retire" } : { action: "move", state: body.state },
-    { via: "user", opId: body.opId, target: { blockId } },
-  );
+  /* Under the SAME lock as the agent's route, and for the same reason.
+   *
+   * A drag and a spoken "drop that" write the same rows through the same
+   * planner, so they race the same way: each plans against a fold of the op log
+   * that the other is about to append to. One person dragging is not concurrent
+   * with itself, but a person dragging while the agent edits is — and that is
+   * an ordinary moment in a drive, not an edge case. See `withBoardLock`. */
+  const outcome = await withBoardLock(userId, async (db) => {
+    const ops = await loadOps(userId, db);
 
-  switch (plan.status) {
-    case "not_found":
-      return NextResponse.json({ error: "not_found" }, { status: 404 });
-    case "not_a_task":
-    case "ambiguous":
-    case "invalid":
-      return NextResponse.json({ error: "not_a_task" }, { status: 409 });
-    case "exists":
-    case "unchanged":
-      // Moving a card to the column it is already in is not a transition, and
-      // recording one would put a phantom "kept" in the measurement.
-      return NextResponse.json({ status: "unchanged", blockId: plan.card.blockId, state: plan.card.state });
-  }
+    // The page may be showing a block that speech has since revised. The
+    // gesture was aimed at the card, so the planner lands it on whatever block
+    // the card now is.
+    const plan = planBoardEdit(
+      ops,
+      body.action === "retire" ? { action: "retire" } : { action: "move", state: body.state },
+      { via: "user", opId: body.opId, target: { blockId } },
+    );
 
-  await applyBoardEdit({ userId, ops, plan, by: "user", analyticsSessionId: sessionIdFrom(req) ?? undefined });
+    switch (plan.status) {
+      case "not_found":
+        return { status: 404 as const, body: { error: "not_found" } };
+      case "not_a_task":
+      case "ambiguous":
+      case "invalid":
+        return { status: 409 as const, body: { error: "not_a_task" } };
+      case "exists":
+      case "unchanged":
+        // Moving a card to the column it is already in is not a transition, and
+        // recording one would put a phantom "kept" in the measurement.
+        return {
+          status: 200 as const,
+          body: { status: "unchanged", blockId: plan.card.blockId, state: plan.card.state },
+        };
+    }
 
-  return body.action === "retire"
-    ? NextResponse.json({ status: "ok", retired: true })
-    : NextResponse.json({ status: "ok", blockId: plan.card.blockId, state: plan.card.state });
+    await applyBoardEdit({
+      userId,
+      ops,
+      plan,
+      by: "user",
+      analyticsSessionId: sessionIdFrom(req) ?? undefined,
+      db,
+    });
+
+    return {
+      status: 200 as const,
+      body:
+        body.action === "retire"
+          ? { status: "ok", retired: true }
+          : { status: "ok", blockId: plan.card.blockId, state: plan.card.state },
+    };
+  });
+
+  return NextResponse.json(outcome.body, { status: outcome.status });
 }

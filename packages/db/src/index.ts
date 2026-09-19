@@ -64,6 +64,17 @@ export function getDb() {
 
 export type Database = ReturnType<typeof getDb>;
 
+/**
+ * Anything that can run a query: the pool, or one transaction on it.
+ *
+ * Query helpers take this so a caller holding a transaction can pass it in and
+ * have the work land INSIDE that transaction. Without it a helper would reach
+ * for `getDb()` and take a different connection out of the pool — which is
+ * silently wrong under a lock, because the critical section would be guarded
+ * while its writes happened outside.
+ */
+export type Executor = Database | Parameters<Parameters<Database["transaction"]>[0]>[0];
+
 /** Close the pool. Used by the worker's shutdown path and by scripts. */
 export async function closeDb(): Promise<void> {
   await client?.end({ timeout: 5 });
