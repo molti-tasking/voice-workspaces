@@ -249,6 +249,37 @@ export const captureSession = pgTable(
      */
     setting: captureSettingEnum("setting"),
     /**
+     * WHERE THAT SETTING CAME FROM: the device class, the accelerometer, a
+     * remembered choice, or the person correcting it before they started.
+     *
+     * Reported to PostHog since settings existed and stored nowhere, which is
+     * why Pilot 01 could be run stationary under the `driving` profile without
+     * that being visible in the data. `default` no longer reaches this column
+     * from the recorder — a drive with no evidence now asks — but old rows and
+     * any other client may still carry it, so it is text rather than an enum
+     * and readers treat an unknown value as "not stated".
+     */
+    settingSource: text("setting_source").$type<
+      "device" | "motion" | "remembered" | "chosen" | "default"
+    >(),
+    /**
+     * The DEBRIEF, as an interval inside the recording.
+     *
+     * Stop used to end the drive, and the three debrief questions were asked
+     * with the microphone already closed — so the answers to the only part of
+     * the study researchers are allowed to read were never recorded. Stop now
+     * opens this window instead: capture keeps running, talk-back is
+     * disconnected (the agent must not join a debrief), and the session closes
+     * when the person taps done or the idle sweep reaches it.
+     *
+     * Both are ms into the drive, on the `utterance` clock, so the utterances
+     * inside the window are exactly the debrief. NULL start means Stop
+     * predates this, or the drive was closed by the sweep without one; NULL
+     * end with a non-null start means the debrief was never closed out.
+     */
+    debriefStartedOffsetMs: integer("debrief_started_offset_ms"),
+    debriefEndedOffsetMs: integer("debrief_ended_offset_ms"),
+    /**
      * The worked example this drive was started from, or NULL for a drive
      * begun any other way — which is every drive before `/welcome` existed,
      * and every drive of the longitudinal deployment.
@@ -551,11 +582,22 @@ export const invocation = pgTable(
  * text with a model, a cost, a time-to-first-token, a truncation point and a
  * mode/persona in force.
  */
+/**
+ * What a spoken turn WAS.
+ *
+ * `filler` is the liveness placeholder — "Moment, ich schaue nach." spoken
+ * before a lookup, and the reassurance repeated while it runs. It reaches the
+ * speaker, so the echo filter has to know about it, and it is emphatically NOT
+ * a reply: counting it as one puts a 0.2s "turn" into the latency distribution
+ * and hides the 8.4s the person actually waited. Pilot 01 had no such rows at
+ * all, which is why a tool-backed turn was indistinguishable from a hang.
+ */
 export const agentTurnKindEnum = pgEnum("agent_turn_kind", [
   "reply",
   "proactive_prompt",
   "confirmation_request",
   "backchannel",
+  "filler",
 ]);
 
 export const agentTurn = pgTable(
@@ -574,6 +616,19 @@ export const agentTurn = pgTable(
     startOffsetMs: integer("start_offset_ms").notNull(),
     /** When speaking actually stopped: truncated by barge-in, or a natural end. */
     endOffsetMs: integer("end_offset_ms").notNull(),
+    /**
+     * Whether `endOffsetMs` was MEASURED at the speaker or estimated from the
+     * text.
+     *
+     * Until Pilot 01 every uninterrupted turn's end was `len(text) / 14`
+     * characters a second — an estimate nothing marked as one, so the
+     * turn-taking record could not be told from a measurement. The container
+     * now patches the row when the transport reports playback stopped (see
+     * `PlaybackClock` in bot.py) and sets this; false means the estimate still
+     * stands, which is every row written before this existed and every turn
+     * whose patch never arrived.
+     */
+    endMeasured: boolean("end_measured").notNull().default(false),
     kind: agentTurnKindEnum("kind").notNull().default("reply"),
     /**
      * The live ASR of the user turn this answers.
@@ -667,6 +722,15 @@ export const agentDecisionTriggerEnum = pgEnum("agent_decision_trigger", [
   "confirmation",
   "macro_offer",
   "agenda",
+  /**
+   * The driver's words are the ANSWER to a question the agent's last turn
+   * asked. A moment of its own because it is the one kind the model may not
+   * decline: in Pilot 01 the agent asked a yes/no question, heard "Ja.", read
+   * it as a backchannel and said nothing, and the drive ended in 40.4s of dead
+   * air. `agent_decision` rows with this trigger and outcome `declined` are
+   * the study's unanswered-answer count, whose target is zero.
+   */
+  "answer",
 ]);
 
 /**
@@ -736,11 +800,34 @@ export const agentDecision = pgTable(
      * against, which is why it is indexed.
      */
     subjectKey: text("subject_key"),
+    /**
+     * The MOMENT this decision belongs to, minted where the moment arose.
+     *
+     * One moment can produce more than one completion — a turn ended twice by
+     * the turn model and the stop-timeout both, a tool call and the answer
+     * that follows it — and every one of them lands here with the same
+     * `offsetMs`. Pilot 01 read as two `agent_decision` rows per offset with
+     * nothing to say which was the turn and which was its shadow. Rows sharing
+     * a `cueId` are the same moment; `authoritative` says which one counts.
+     */
+    cueId: text("cue_id"),
+    /**
+     * Whether this row is the one to count for its moment.
+     *
+     * The first decision of a moment is authoritative, unless a later one
+     * SPOKE and it did not — what the person heard is what the moment became.
+     * Analyses filter on this; the non-authoritative rows stay, because the
+     * double dispatch is itself a finding.
+     */
+    authoritative: boolean("authoritative").notNull().default(true),
     agentTurnId: uuid("agent_turn_id").references(() => agentTurn.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("agent_decision_session_offset_idx").on(t.captureSessionId, t.offsetMs),
+    index("agent_decision_session_cue_idx")
+      .on(t.captureSessionId, t.cueId)
+      .where(sql`${t.cueId} is not null`),
     // The context route counts asks per pending invocation on the turn path.
     index("agent_decision_session_subject_idx")
       .on(t.captureSessionId, t.subjectKey)
@@ -1369,5 +1456,133 @@ export const memoryEntry = pgTable(
     uniqueIndex("memory_entry_user_kind_ref_idx").on(t.userId, t.kind, t.refId),
     index("memory_entry_user_kind_model_idx").on(t.userId, t.kind, t.model),
     index("memory_entry_session_idx").on(t.captureSessionId),
+  ],
+);
+
+/* ---------------------------------------------------------------------------
+ * Study measures
+ *
+ * The three tables the relief measures need, and the reason they are tables
+ * rather than PostHog events: the analysis has to join them to a drive and to
+ * a board card, and it has to be reproducible from one export months later.
+ *
+ * ALL THREE ARE COUNTS. A rating is an integer on a stated scale, an outcome
+ * is one of three words this file names, an event is a kind and a timestamp.
+ * Nothing here holds anything a participant said or wrote, so the whole of it
+ * crosses the privacy boundary (`apps/worker/src/study/export.ts`) unchanged.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * When a rating was taken, relative to the drive it is about.
+ *
+ * `pre` and `post` bracket one session — the same item asked twice is what
+ * makes a change in mental load readable at all. `day7` is the review at the
+ * end of the week, which is about the week rather than about a session, and
+ * so carries no `captureSessionId`.
+ */
+export const studyResponsePhaseEnum = pgEnum("study_response_phase", ["pre", "post", "day7"]);
+
+/**
+ * A single rating, one row per item per asking.
+ *
+ * `item` is a short stable key (`mental_load`, `liveness_perceived`,
+ * `can_correct`) rather than the question's text, so rewording a question does
+ * not fork the series — the wording lives in
+ * `packages/shared/src/study-items.ts`, versioned with the prompt.
+ *
+ * `value` is the point on the scale. `scaleMax` is stored beside it rather
+ * than assumed, because a 1–7 item read as 1–5 two months later is a silent
+ * error no constraint would catch.
+ */
+export const studyResponse = pgTable(
+  "study_response",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** The drive this brackets. Null for `day7`, which is about the week. */
+    captureSessionId: uuid("capture_session_id").references(() => captureSession.id, {
+      onDelete: "cascade",
+    }),
+    phase: studyResponsePhaseEnum("phase").notNull(),
+    item: text("item").notNull(),
+    value: integer("value").notNull(),
+    scaleMax: integer("scale_max").notNull().default(7),
+    respondedAt: timestamp("responded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One answer per item per phase per drive: a re-tap corrects the answer
+    // rather than adding a second one, which is what makes a pre/post pair
+    // countable without deduplication in the analysis.
+    uniqueIndex("study_response_session_phase_item_idx").on(
+      t.userId,
+      t.captureSessionId,
+      t.phase,
+      t.item,
+    ),
+    index("study_response_user_at_idx").on(t.userId, t.respondedAt),
+  ],
+);
+
+/**
+ * What became of one board item at the day-7 review: done, still open, or lost.
+ *
+ * `lost` is the primary failure measure for offloading, and it is defined
+ * behaviourally, not by feeling: never revisited and not acted on. A system
+ * that writes many items to the board and never brings them back produces a
+ * high lost rate however good its latency looks.
+ */
+export const studyItemOutcomeEnum = pgEnum("study_item_outcome", ["done", "open", "lost"]);
+
+export const studyItemReview = pgTable(
+  "study_item_review",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** The card's stable identity: the root of its revision chain. */
+    cardId: text("card_id").notNull(),
+    /** The drive the review itself was recorded in, when it had one. */
+    captureSessionId: uuid("capture_session_id").references(() => captureSession.id, {
+      onDelete: "set null",
+    }),
+    outcome: studyItemOutcomeEnum("outcome").notNull(),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One verdict per card per review round. A correction replaces it.
+    uniqueIndex("study_item_review_user_card_idx").on(t.userId, t.cardId),
+    index("study_item_review_user_at_idx").on(t.userId, t.reviewedAt),
+  ],
+);
+
+/**
+ * Everything days 2–6 are allowed to record: that something was opened.
+ *
+ * Dictations and edits are already in `workspace_op`, so this table exists for
+ * the one thing that leaves no other trace — the participant opening the board
+ * or a card to look at it. That is the behaviour "revisit" is about, and
+ * without it a card someone re-read every morning and never edited is
+ * indistinguishable from one nobody ever saw again.
+ */
+export const studyEventKindEnum = pgEnum("study_event_kind", ["board_open", "card_open"]);
+
+export const studyEvent = pgTable(
+  "study_event",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    kind: studyEventKindEnum("kind").notNull(),
+    /** The card, for `card_open`. Null for `board_open`. */
+    cardId: text("card_id"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("study_event_user_at_idx").on(t.userId, t.occurredAt),
+    index("study_event_user_card_idx").on(t.userId, t.cardId).where(sql`${t.cardId} is not null`),
   ],
 );

@@ -59,8 +59,20 @@ import {
  * next VERSION of it rather than a new row. The handle is wire format, and the
  * contract says so — speaking it aloud is the same failure class as reading
  * `<silence>` out in a car.
+ *
+ * talkback-13 closes the hole Pilot 01 fell into: an answer to the agent's own
+ * question could be declined. The agent asked a yes/no question, the
+ * participant said "Ja.", the model read one word as a backchannel and replied
+ * `<silence>`, and the drive ended in 40.4 seconds of dead air. Three changes,
+ * and the mechanism matters more than the prose: the base prompt now says the
+ * next thing said after your question is its answer; the turn context carries
+ * `ANSWER_PENDING` when the container knows an answer is what just arrived;
+ * and `ANSWER_REQUIRED` is what the container puts in front of a model that
+ * declined one anyway. The container refuses to let that decline stand — see
+ * `AnswerGuard` in bot.py — so this text is the polite half of a rule that is
+ * also enforced.
  */
-export const TALKBACK_CONFIG_VERSION = "talkback-12";
+export const TALKBACK_CONFIG_VERSION = "talkback-13";
 
 /**
  * The default register: brief, and present.
@@ -100,6 +112,7 @@ You are NOT an assistant in the usual sense. Most of what you hear is someone wo
 
 WHEN TO SPEAK
 - A question put to you is ALWAYS answered, including hard or open ones like "what do you think?". Take the most likely reading and answer it. Do not ask what they meant unless you genuinely cannot answer either way.
+- IF YOUR OWN LAST TURN ASKED THEM SOMETHING, the next thing they say is its answer — even one bare word. "Yes", "Ja", "no", "the second one", an "mhm" the transcriber wrote down: all of those are answers to your question, not noise to let pass. Act on the answer in this reply. <silence> is not available on that turn, and neither is asking the same question over again.
 - Speak when you are addressed, even loosely. "Right?", "does that make sense?", "what was the other one?" are addressed to you.
 - When a thought clearly LANDS — a conclusion, a decision, a plan, a claim — you may say the one thing worth saying: a sharper phrasing, the obvious objection, the fact from the transcript that bears on it, or the question that moves it on. One sentence, then stop.
 - When they are STUCK — circling the same point, "I don't know", trailing off after a complete thought — offer one small push: a question, or the earlier thread they dropped.
@@ -184,6 +197,58 @@ export const SILENCE_NUDGE = `(An unprompted moment: they have been quiet for {s
 /** Substitute the placeholders the way `Offers` does in the container. */
 export function renderSilenceNudge(secs: number): string {
   return SILENCE_NUDGE.replace("{secs}", String(secs)).replace("{silence}", SILENCE_TOKEN);
+}
+
+/* ---------------------------------------------------------------------------
+ * The open question, and its answer
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Appended to the turn's context block when the container knows that what was
+ * just said is the ANSWER to a question the agent itself asked.
+ *
+ * The container knows because it watches its own spoken turns: a turn that
+ * ended in a question leaves an open question, and the driver's next words
+ * close it (`TurnRecorder` in bot.py, cue trigger `answer`). Lexical and
+ * coarse on purpose, and lopsided the safe way — a missed open question costs
+ * an ordinary turn, while a false one costs a turn the model may not decline,
+ * which is a turn it must make useful.
+ *
+ * Phrased as a fact and a prohibition rather than as encouragement, because
+ * the failure it exists for is a model reading "Ja." as a backchannel: the
+ * problem was never that the model was unwilling, it was that one word did
+ * not look like a turn.
+ *
+ * MIRRORED IN `bot.py` as `ANSWER_PENDING`.
+ */
+export const ANSWER_PENDING = `They have just ANSWERED the question your last turn asked. Whatever they said — even one word — is that answer. Act on it now: do the thing, or say what follows from it, in one short sentence. Do not ask the same question again, and do not reply ${SILENCE_TOKEN}.`;
+
+/**
+ * What the container puts in front of a model that declined an answer anyway.
+ *
+ * A user-role message and a second completion, the same shape the proactive
+ * engine uses, because the alternative — a canned sentence — is the system
+ * talking instead of answering. It runs ONCE per open question; if the second
+ * completion also declines, the container speaks
+ * `SpokenFillers.answerFallback` and the drive carries on, because 40 seconds
+ * of dead air is worse than an awkward sentence.
+ *
+ * MIRRORED IN `bot.py` as `ANSWER_REQUIRED`.
+ */
+export const ANSWER_REQUIRED = `(You just declined a turn that was their answer to your own question. That is not available here — they are waiting. Say the one short sentence that follows from their answer: do the thing they agreed to, or say what you will do, or say plainly that you did not catch it. Anything but ${SILENCE_TOKEN}.)`;
+
+/**
+ * Whether a spoken turn left a question open.
+ *
+ * A question mark in what actually reached the speaker. The same coarse test
+ * `agent_turn.kind` already uses for `confirmation_request`, and kept
+ * deliberately identical: two different notions of "the agent asked
+ * something" is how the confirmation path and this one would drift apart.
+ *
+ * MIRRORED IN `bot.py` as `ends_in_question`.
+ */
+export function leavesQuestionOpen(spoken: string): boolean {
+  return spoken.includes("?");
 }
 
 /**

@@ -74,16 +74,41 @@ class FakeRecorder:
     """Stands in for `TurnRecorder`: remembers each call instead of POSTing.
 
     `calls` are turns that reached the speaker; `declines` are completions
-    that did not. Kept apart the way the two tables are.
+    that did not. Kept apart the way the two tables are. `announcements` are
+    the fillers — spoken, written to `agent_turn`, and never a decision.
     """
 
     def __init__(self, cue=None):
         self.calls = []
         self.declines = []
+        self.announcements = []
+        self.tool_calls = []
+        self.metrics = []
+        self.playback_ends = []
+        self.dropped = 0
+        self.closed = False
         self.current = cue or bot.Cue("user_turn", None, 1_000)
 
     def cue(self):
         return self.current
+
+    def answering_question(self):
+        return self.current.trigger == "answer"
+
+    def note_metrics(self, metrics):
+        self.metrics.append(dict(metrics or {}))
+
+    def record_announcement(self, spoken):
+        self.announcements.append(spoken)
+
+    def note_playback_end(self, ttfb_ms=None):
+        self.playback_ends.append(ttfb_ms)
+
+    def drop_unended(self):
+        self.dropped += 1
+
+    def note_tool_call(self, name, latency_ms, error=None):
+        self.tool_calls.append({"name": name, "latencyMs": latency_ms, "error": error})
 
     def record(self, spoken, generated, *, started_ms=None, barged_in=False, cue=None, metrics=None):
         self.calls.append(
@@ -486,6 +511,9 @@ def test_a_spoken_reply_writes_the_turn_first_then_a_decision_pointing_at_it():
         "outcome": "spoke",
         "configVersion": "talkback-test",
         "latencyMs": decision["latencyMs"],
+        # The moment's id, so a second completion for the same moment can be
+        # told from a second moment. See `Cue.cue_id`.
+        "cueId": decision["cueId"],
         "agentTurnId": TURN_ID,
     }
 
@@ -971,8 +999,13 @@ def test_the_session_s_tools_become_pipecat_schemas_and_none_means_none():
     assert bot.BoardTools.schemas(None) is None
 
 
-def run_tool(tools, name, arguments):
-    """Call the handler as Pipecat would; return what the model was handed."""
+def run_tool(tools, name, arguments, llm=None):
+    """Call the handler as Pipecat would; return what the model was handed.
+
+    `llm` carries the frames a handler speaks — the liveness filler, and the
+    reassurance if the call runs long — because every tool-backed turn now
+    says something before it waits.
+    """
     from types import SimpleNamespace
 
     results = []
@@ -980,7 +1013,12 @@ def run_tool(tools, name, arguments):
     async def result_callback(result, **_):
         results.append(result)
 
-    params = SimpleNamespace(function_name=name, arguments=arguments, result_callback=result_callback)
+    params = SimpleNamespace(
+        function_name=name,
+        arguments=arguments,
+        result_callback=result_callback,
+        llm=llm or FakeLLM(),
+    )
     asyncio.run(tools.handle(params))
     return results
 
@@ -1631,3 +1669,535 @@ def test_ice_servers_refuses_to_offer_a_relay_it_cannot_authenticate(monkeypatch
 
     (only,) = bot.ice_servers()
     assert only.urls == "stun:stun.example.org:3478"
+
+
+def quiet_recorder():
+    """A recorder whose writes go nowhere.
+
+    For the tests about what it REMEMBERS rather than what it posts: `record`
+    schedules its write as a task, which needs a running loop, and these tests
+    are about the open-question state machine and nothing else.
+    """
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+    recorder._send = lambda turn, decision, pending=None: None
+    return recorder
+
+
+# --- Blocking fix 1: an answer to the agent's own question ------------------
+#
+# Pilot 01's last exchange, reproduced: the agent asked a yes/no question, the
+# participant said "Ja.", and the model replied <silence>. The gate suppressed
+# it correctly — and the drive ended in 40.4 seconds of dead air. These pin the
+# state that was missing, and the mechanism that no longer lets the silence
+# stand.
+
+
+def test_a_turn_that_ends_in_a_question_leaves_one_open():
+    recorder = quiet_recorder()
+    recorder.note_user("I should probably drop the third section.")
+    recorder.record("Shall I drop it?", "Shall I drop it?")
+    assert recorder._question_open is True
+
+    # The driver's next words are its ANSWER, whatever they are.
+    recorder.note_user("Ja.")
+    assert recorder.cue().trigger == "answer"
+    assert recorder.answering_question() is True
+
+
+def test_a_statement_leaves_no_question_open_and_the_next_words_are_an_ordinary_turn():
+    recorder = quiet_recorder()
+    recorder.note_user("Where did I leave the intro?")
+    recorder.record("Halfway through.", "Halfway through.")
+    assert recorder._question_open is False
+
+    recorder.note_user("Ja.")
+    assert recorder.cue().trigger == "user_turn"
+
+
+def test_an_answer_is_only_the_next_words_not_the_ones_after_that():
+    recorder = quiet_recorder()
+    recorder.record("Shall I drop it?", "Shall I drop it?")
+    recorder.note_user("Ja.")
+    assert recorder.cue().trigger == "answer"
+    recorder.note_user("Anyway, the other thing.")
+    assert recorder.cue().trigger == "user_turn"
+
+
+def test_a_parked_action_never_relabels_an_answer():
+    """The ask can keep for a turn. The question they just answered cannot."""
+    recorder = quiet_recorder()
+    recorder.record("Shall I drop it?", "Shall I drop it?")
+    recorder.note_user("Ja.")
+    recorder.note_pending("inv-1")
+    assert recorder.cue().trigger == "answer"
+
+
+class FakeAnswerGuard:
+    def __init__(self):
+        self.forced = []
+
+    async def unanswered(self, cue):
+        self.forced.append(cue)
+
+
+def test_a_declined_answer_is_recorded_and_never_left_as_silence():
+    """The whole of blocking fix 1, through the gate.
+
+    Two things have to happen, and only one of them used to: the decline is
+    written down (trigger `answer`, outcome `declined` — the unanswered-answer
+    count, target zero), AND the guard is asked to run the turn again.
+    """
+    recorder = FakeRecorder(cue=bot.Cue("answer", None, 1_000))
+    guard = FakeAnswerGuard()
+
+    async def run():
+        gate = bot.SilenceGate(recorder=recorder, answers=guard)
+
+        async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+            pass
+
+        gate.push_frame = capture
+        await gate.process_frame(LLMFullResponseStartFrame(), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(LLMTextFrame(text="<silence>"), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+
+    assert recorder.calls == []
+    assert len(recorder.declines) == 1
+    assert recorder.declines[0]["cue"].trigger == "answer"
+    assert [c.trigger for c in guard.forced] == ["answer"]
+
+
+def test_an_ordinary_decline_is_left_alone():
+    """The default stance is untouched everywhere else. A pause is thinking."""
+    recorder = FakeRecorder(cue=bot.Cue("user_turn", None, 1_000))
+    guard = FakeAnswerGuard()
+
+    async def run():
+        gate = bot.SilenceGate(recorder=recorder, answers=guard)
+
+        async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+            pass
+
+        gate.push_frame = capture
+        await gate.process_frame(LLMFullResponseStartFrame(), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(LLMTextFrame(text="<silence>"), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert len(recorder.declines) == 1
+    assert guard.forced == []
+
+
+def test_the_guard_runs_the_turn_again_once_and_then_speaks():
+    """Asked twice, declined twice: say something. Dead air is not available."""
+    from pipecat.frames.frames import LLMRunFrame, TTSSpeakFrame
+
+    context = FakeLLMContext()
+    recorder = FakeRecorder()
+    cue = bot.Cue("answer", None, 1_000)
+    pushed = []
+
+    async def run():
+        guard = bot.AnswerGuard(context, recorder, bot.FALLBACK_FILLERS)
+
+        async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+            pushed.append(frame)
+
+        guard.push_frame = capture
+        await guard.unanswered(cue)
+        await guard.unanswered(cue)
+
+    asyncio.run(run())
+
+    assert isinstance(pushed[0], LLMRunFrame)
+    assert context.get_messages()[-1]["content"] == bot.ANSWER_REQUIRED
+    assert isinstance(pushed[1], TTSSpeakFrame)
+    assert pushed[1].text == bot.FALLBACK_FILLERS["answerFallback"]
+    # Spoken, so the echo filter has to know about it.
+    assert recorder.announcements == [bot.FALLBACK_FILLERS["answerFallback"]]
+
+
+def test_a_new_question_gets_its_own_retry():
+    from pipecat.frames.frames import LLMRunFrame
+
+    context = FakeLLMContext()
+    pushed = []
+
+    async def run():
+        guard = bot.AnswerGuard(context, FakeRecorder(), bot.FALLBACK_FILLERS)
+
+        async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+            pushed.append(frame)
+
+        guard.push_frame = capture
+        await guard.unanswered(bot.Cue("answer", None, 1_000))
+        await guard.unanswered(bot.Cue("answer", None, 9_000))
+
+    asyncio.run(run())
+    assert [isinstance(f, LLMRunFrame) for f in pushed] == [True, True]
+
+
+def test_the_turn_context_tells_the_model_an_answer_is_pending():
+    recorder = quiet_recorder()
+    recall = bot.Recall(FakeLLMContext(), FakeSummary(), None, recorder)
+    recorder.record("Shall I drop it?", "Shall I drop it?")
+    recorder.note_user("Ja.")
+
+    block = recall._compose([], None, [], None, None, recorder.answering_question())
+    assert bot.ANSWER_PENDING in block
+    # And not on an ordinary turn, where saying nothing stays available.
+    recorder.note_user("Anyway.")
+    assert recall._compose([], None, [], None, None, recorder.answering_question()) is None
+
+
+# --- Blocking fix 2: nothing is spoken into a closed session ----------------
+
+
+def test_a_closed_recorder_writes_nothing_at_all():
+    """Pilot 01 wrote a turn 52.6 seconds after Stop. Not any more."""
+
+    def act(recorder):
+        recorder.close()
+        recorder.note_user("still here?")
+        recorder.record("I am.", "I am.")
+        recorder.record_announcement("Moment.")
+        recorder.decline()
+
+    assert posted_by(act) == []
+
+
+def test_a_409_from_the_turn_route_closes_the_recorder():
+    """The web app refusing a write is the answer, not a failure to retry."""
+    posted = []
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+
+    def post(route, payload):
+        posted.append((route, payload))
+        raise urllib.error.HTTPError("url", 409, "session ended", {}, None)
+
+    recorder._post = post
+
+    async def run():
+        recorder.record("Hello?", "Hello?")
+        await asyncio.sleep(0.2)
+        # Closed by the refusal: the next turn never even reaches the route.
+        recorder.record("Anyone?", "Anyone?")
+        await asyncio.sleep(0.2)
+
+    asyncio.run(run())
+    assert recorder.closed is True
+    assert [route for route, _ in posted] == ["agent-turn"]
+
+
+def test_a_closed_engine_cancels_its_timer_and_never_arms_again(monkeypatch):
+    engine = offers_with(monkeypatch, {"studyCondition": {"proactiveOffers": True}})
+
+    async def run():
+        await engine.process_frame(StartFrame(), FrameDirection.DOWNSTREAM)
+        assert engine._log == ["arm"]
+        engine.close()
+        assert engine._log == ["arm", "cancel"]
+        # The drive is over: speech, transcripts, nothing arms it again.
+        await engine.process_frame(
+            TranscriptionFrame(text="hello?", user_id="u", timestamp="t"),
+            FrameDirection.DOWNSTREAM,
+        )
+        assert engine._log == ["arm", "cancel"]
+
+    asyncio.run(run())
+
+
+def test_an_offer_that_fires_after_the_drive_ended_says_nothing():
+    """The timer had already fired; the recorder knows the drive is over."""
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+    recorder.close()
+    context = FakeContext()
+    offers = bot.Offers(
+        context, FakeRecall(), {"studyCondition": {"proactiveOffers": True}}, recorder
+    )
+    pushed = []
+
+    async def run():
+        async def capture(frame, direction=None):
+            pushed.append(frame)
+
+        offers.push_frame = capture
+        await offers._fire(0, opening=False)
+
+    asyncio.run(run())
+    assert pushed == []
+    assert context.messages == []
+
+
+# --- Blocking fix 3: the spoken liveness signal -----------------------------
+
+
+def test_a_board_call_says_something_before_it_waits():
+    """8.4 seconds of silence is indistinguishable from a dropped connection."""
+    from pipecat.frames.frames import TTSSpeakFrame
+
+    recorder = FakeRecorder()
+    tools = bot.BoardTools("ticket", recorder, bot.FALLBACK_FILLERS)
+    tools._post = lambda payload: {"ok": True, "changed": True}
+    llm = FakeLLM()
+
+    run_tool(tools, "move_task", {"card": "1225b3", "column": "dropped"}, llm)
+
+    spoken = [f.text for f in llm.pushed if isinstance(f, TTSSpeakFrame)]
+    assert spoken == [bot.FALLBACK_FILLERS["lookup"]]
+    # Written to agent_turn, or the echo filter hands it back as their speech.
+    assert recorder.announcements == spoken
+
+
+def test_a_slow_call_is_reassured_and_a_fast_one_is_not(monkeypatch):
+    from pipecat.frames.frames import TTSSpeakFrame
+
+    monkeypatch.setattr(bot, "REASSURE_AFTER_SECS", 0.05)
+    recorder = FakeRecorder()
+    llm = FakeLLM()
+
+    async def run(delay):
+        live = bot.Liveness(llm, recorder, bot.FALLBACK_FILLERS)
+        await live.begin(None)
+        await asyncio.sleep(delay)
+        await live.end()
+
+    asyncio.run(run(0.18))
+    spoken = [f.text for f in llm.pushed if isinstance(f, TTSSpeakFrame)]
+    assert spoken[0] == bot.FALLBACK_FILLERS["lookup"]
+    assert spoken[1:] == [bot.FALLBACK_FILLERS["stillWorking"]] * 2
+    assert recorder.announcements == spoken
+
+    # Capped: a call that never returns does not talk forever.
+    llm.pushed.clear()
+    recorder.announcements.clear()
+    asyncio.run(run(0.4))
+    assert len([f for f in llm.pushed if isinstance(f, TTSSpeakFrame)]) == 1 + bot.MAX_REASSURANCES
+
+    llm.pushed.clear()
+    asyncio.run(run(0.01))
+    assert [f.text for f in llm.pushed if isinstance(f, TTSSpeakFrame)] == [
+        bot.FALLBACK_FILLERS["lookup"]
+    ]
+
+
+def test_a_search_keeps_its_own_announcement_as_the_opening_filler():
+    from pipecat.frames.frames import TTSSpeakFrame
+
+    recorder = FakeRecorder()
+    search = bot.WebSearch("ticket", None, recorder, bot.FALLBACK_FILLERS)
+    search._post = lambda payload: {"ok": True, "results": []}
+    llm = FakeLLM()
+
+    run_tool(search, "search_web", {"query": "opening hours", "announcement": "Ich schaue kurz nach."}, llm)
+
+    spoken = [f.text for f in llm.pushed if isinstance(f, TTSSpeakFrame)]
+    assert spoken == ["Ich schaue kurz nach."]
+    assert recorder.announcements == spoken
+
+
+def test_a_filler_is_a_filler_and_carries_the_wait_it_covers():
+    def act(recorder):
+        recorder.note_user("what are the opening hours?")
+        recorder.note_metrics({"ttftMs": 310, "requestedModel": "alias", "resolvedModel": "real"})
+        recorder.record_announcement("Moment, ich schaue nach.")
+
+    posted = posted_by(act)
+    payload = only(posted, "agent-turn")
+    assert payload["kind"] == "filler"
+    # The numbers Pilot 01's announcements had none of.
+    assert payload["ttftMs"] == 310
+    assert payload["resolvedModel"] == "real"
+    assert "totalLatencyMs" in payload
+    # A filler is not a decision: the model's choices are the completions.
+    assert [route for route, _ in posted] == ["agent-turn"]
+
+
+def test_a_filler_neither_settles_an_ask_nor_opens_a_question():
+    recorder = quiet_recorder()
+    recorder.record("Shall I drop it?", "Shall I drop it?")
+    recorder.record_announcement("Moment, ich schaue nach.")
+    assert recorder._question_open is True
+
+
+def test_fillers_follow_the_drive_s_language_and_fall_back_whole():
+    assert bot.fillers_for({})["lookup"] == bot.FALLBACK_FILLERS["lookup"]
+    german = bot.fillers_for({"spokenFillers": {"lookup": "Moment, ich schaue nach."}})
+    assert german["lookup"] == "Moment, ich schaue nach."
+    # A partial object from a future deploy fills its gaps rather than raising
+    # a KeyError in the middle of a lookup.
+    assert german["stillWorking"] == bot.FALLBACK_FILLERS["stillWorking"]
+
+
+# --- Instrumentation --------------------------------------------------------
+
+
+def test_the_gate_keeps_the_model_litellm_actually_called():
+    """`resolved_model` was null on all fifteen turns of Pilot 01."""
+    recorder = FakeRecorder()
+    frames = [
+        LLMFullResponseStartFrame(),
+        MetricsFrame(data=[TTFBMetricsData(processor="llm", value=0.4, model="alias")]),
+        LLMTextFrame(text="The EICS one."),
+        LLMFullResponseEndFrame(),
+    ]
+
+    async def run():
+        gate = bot.SilenceGate(
+            recorder=recorder, llm_name="llm", resolved_model=lambda: "openrouter/real-model"
+        )
+
+        async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+            pass
+
+        gate.push_frame = capture
+        for frame in frames:
+            await gate.process_frame(frame, FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    metrics = recorder.calls[0]["metrics"]
+    assert metrics["requestedModel"] == "alias"
+    assert metrics["resolvedModel"] == "openrouter/real-model"
+
+
+def test_recall_times_the_asr_and_the_turn_carries_it():
+    """The biggest component of turn latency, and the column was always null."""
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+    recall = bot.Recall(FakeLLMContext(), FakeSummary(), None, recorder)
+
+    async def run():
+        async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+            pass
+
+        recall.push_frame = capture
+        await recall.process_frame(
+            bot.UserStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM
+        )
+        await asyncio.sleep(0.05)
+        await recall.process_frame(
+            TranscriptionFrame(text="what was the second paper?", user_id="u", timestamp="t"),
+            FrameDirection.DOWNSTREAM,
+        )
+
+    asyncio.run(run())
+    assert recorder._asr_ms is not None and recorder._asr_ms >= 40
+
+
+def test_the_asr_time_is_spent_once():
+    def act(recorder):
+        recorder.note_user("what was the second paper?", 1_700)
+        recorder.record("The EICS one.", "The EICS one.")
+        recorder.note_user("thanks")
+        recorder.record("Sure.", "Sure.")
+
+    turns = [p for route, p in posted_by(act) if route == "agent-turn"]
+    assert turns[0]["asrMs"] == 1_700
+    assert "asrMs" not in turns[1]
+
+
+def test_an_uninterrupted_turn_is_written_with_an_estimate_and_patched_with_the_truth():
+    """`end_offset_ms = len(text) / 14` was the only end any turn ever had."""
+    posted = []
+    patched = []
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+    recorder._post = lambda route, payload: (
+        posted.append((route, payload)) or {"ok": True, "id": TURN_ID}
+    )
+    recorder._patch = lambda payload: patched.append(payload) or {"ok": True}
+
+    async def run():
+        recorder.record("The EICS one.", "The EICS one.")
+        await asyncio.sleep(0.2)
+        recorder.note_playback_end(ttfb_ms=180)
+        await asyncio.sleep(0.2)
+
+    asyncio.run(run())
+
+    turn = only(posted, "agent-turn")
+    assert "endMeasured" not in turn  # the estimate says nothing about itself
+    (patch,) = patched
+    assert patch["id"] == TURN_ID
+    assert patch["speakTtfbMs"] == 180
+    assert patch["endOffsetMs"] >= turn["startOffsetMs"]
+
+
+def test_a_barged_in_turn_is_already_measured_and_waits_for_no_playback_end():
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+    recorder._post = lambda route, payload: {"ok": True, "id": TURN_ID}
+    patched = []
+    recorder._patch = lambda payload: patched.append(payload)
+
+    async def run():
+        recorder.record("The", "The deadline is in November.", barged_in=True)
+        await asyncio.sleep(0.2)
+        recorder.note_playback_end()
+        await asyncio.sleep(0.2)
+
+    asyncio.run(run())
+    assert patched == []
+
+
+def test_the_playback_clock_reports_the_end_and_the_voice_s_own_ttfb():
+    from pipecat.frames.frames import BotStoppedSpeakingFrame
+
+    recorder = FakeRecorder()
+
+    async def run():
+        clock = bot.PlaybackClock(recorder, tts_name="tts")
+
+        async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+            pass
+
+        clock.push_frame = capture
+        await clock.process_frame(
+            MetricsFrame(data=[TTFBMetricsData(processor="tts", value=0.22, model=None)]),
+            FrameDirection.DOWNSTREAM,
+        )
+        # The upstream copy is the one that reaches here; counting both would
+        # end two turns for one stop.
+        await clock.process_frame(BotStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
+
+    asyncio.run(run())
+    assert recorder.playback_ends == [220]
+
+
+def test_the_playback_clock_ignores_another_service_s_ttfb():
+    from pipecat.frames.frames import BotStoppedSpeakingFrame
+
+    recorder = FakeRecorder()
+
+    async def run():
+        clock = bot.PlaybackClock(recorder, tts_name="tts")
+
+        async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+            pass
+
+        clock.push_frame = capture
+        await clock.process_frame(
+            MetricsFrame(data=[TTFBMetricsData(processor="llm", value=0.9, model=None)]),
+            FrameDirection.DOWNSTREAM,
+        )
+        await clock.process_frame(BotStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
+
+    asyncio.run(run())
+    assert recorder.playback_ends == [None]
+
+
+def test_an_interruption_empties_the_queue_waiting_for_an_end():
+    """Otherwise every later turn is patched with the wrong row's end."""
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+    recorder._post = lambda route, payload: {"ok": True, "id": TURN_ID}
+    patched = []
+    recorder._patch = lambda payload: patched.append(payload)
+
+    async def run():
+        recorder.record("The EICS one.", "The EICS one.")
+        await asyncio.sleep(0.2)
+        recorder.drop_unended()
+        recorder.note_playback_end(ttfb_ms=180)
+        await asyncio.sleep(0.2)
+
+    asyncio.run(run())
+    assert patched == []
