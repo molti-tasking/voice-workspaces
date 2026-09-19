@@ -258,10 +258,18 @@ export const ANSWER_ACKNOWLEDGEMENTS: Readonly<Record<string, string>> = {
  * In order, one per keep-alive, and the list is the limit: after the last one
  * the agent falls silent rather than nagging.
  *
+ * EVERY PHRASE CARRIES AT LEAST THREE MEANINGFUL WORDS, which is not a style
+ * note. These are spoken aloud, so the microphone hears them and Whisper puts
+ * them in `utterance`; `isEcho` refuses to judge a line under `MIN_WORDS`
+ * because containment means nothing over two tokens, so a shorter filler could
+ * not be filtered out and would come back as the participant's own words.
+ * "Still looking." is two after `NOISE` is dropped, which is why it is not the
+ * phrase. `echo.test.ts` holds the line.
+ *
  * MIRRORED IN `bot.py` as `SEARCH_WAIT_PHRASES`.
  */
 export const SEARCH_WAIT_PHRASES: Readonly<Record<string, readonly string[]>> = {
-  en: ["Still looking.", "Bear with me, I am still searching."],
+  en: ["Still looking that up.", "Bear with me, I am still searching."],
   de: ["Ich suche noch.", "Hab ein bisschen Geduld, ich suche noch."],
 };
 

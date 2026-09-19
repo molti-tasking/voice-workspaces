@@ -1548,7 +1548,7 @@ ANSWER_ACKNOWLEDGEMENTS = {
     "de": "Entschuldige, das ist mir entgangen. Sag es noch mal.",
 }
 SEARCH_WAIT_PHRASES = {
-    "en": ("Still looking.", "Bear with me, I am still searching."),
+    "en": ("Still looking that up.", "Bear with me, I am still searching."),
     "de": ("Ich suche noch.", "Hab ein bisschen Geduld, ich suche noch."),
 }
 FALLBACK_PHRASE_LANGUAGE = "en"
@@ -2191,7 +2191,7 @@ class TurnRecorder:
         decision = self._decision(cue, "interrupted" if barged_in else "spoke", latency)
         self._send(payload, decision)
 
-    def record_announcement(self, spoken: str) -> None:
+    def record_announcement(self, spoken: str, kind: str = "reply") -> None:
         """A sentence spoken for a tool while it runs — "Let me look that up."
 
         Written to `agent_turn`, because it reached the speaker and the echo
@@ -2200,6 +2200,12 @@ class TurnRecorder:
         that called the tool and the one that answers from it, and both are
         recorded by the gate as usual. Nor does it settle an ask — it is not an
         answer to anything.
+
+        `kind` tells the announcement from the keep-alive that follows it: the
+        announcement is the model's own sentence and reads as a reply, while a
+        keep-alive is `backchannel` — this container's words, carrying no
+        content, and something the analysis will want to exclude from a turn
+        count without having to match on the text.
         """
         if not self._ticket or not self._started_at_ms or not spoken.strip():
             return
@@ -2214,7 +2220,7 @@ class TurnRecorder:
             "endOffsetMs": offset + int(len(spoken) / 14 * 1000),
             "text": spoken,
             "generatedText": spoken,
-            "kind": "reply",
+            "kind": kind,
         }
         if self._responding_to:
             payload["respondingToText"] = self._responding_to
@@ -2514,6 +2520,93 @@ class SearchingSound(BaseAudioMixer):
         return np.clip(mixed, -32768, 32767).astype(np.int16).tobytes()
 
 
+class KeepAlive(FrameProcessor):
+    """A word, while a turn the agent has already announced runs long.
+
+    WHAT IT ANSWERS. On the first formative pilot (19 Sep 2026) turns that
+    called a tool took a median of 8416ms where turns that did not took 1349,
+    and the tool itself never took more than 766. The gap is not the lookup: it
+    is the second model round trip, composing the answer once the result is
+    back, and through all of it the car is silent. The participant asked for
+    exactly this in her debrief, unprompted — a placeholder before a lookup,
+    and a periodic one during a long one. The first half already existed
+    (`WebSearch` speaks the model's own announcement); this is the second.
+
+    WHAT IT IS KEYED ON. The turn, not the tool call. Stopping when the search
+    result came back would fall silent at the precise moment the silence
+    starts. So it is armed when a tool announces itself and disarmed by the
+    agent actually speaking — an `LLMTextFrame` released by `SilenceGate`,
+    which sits directly upstream of this — or by the driver talking over it.
+
+    IT IS SPOKEN, SO IT IS RECORDED. Not optional: the agent's voice reaches
+    the microphone and is transcribed like any other sound, and `withoutEcho`
+    tells those lines from the driver's by comparing against `agent_turn`. A
+    filler that is not in that table comes back as the participant's own words.
+    Written as `backchannel`, the kind the schema has carried unused since it
+    was written, so a turn count can exclude it without matching on text.
+
+    IT RUNS OUT. Two phrases and then silence, because a system that keeps
+    announcing that it is still working is worse than one that is simply quiet
+    — and `SEARCH_WAIT_PHRASES` being the limit is what makes that legible.
+    """
+
+    # Long enough that an ordinary turn never reaches it (the median without a
+    # tool call is 1.3s, and with one the announcement has already been said),
+    # short enough to land inside the 8.4s a tool turn actually took.
+    AFTER_SECS = 6.0
+
+    def __init__(self, language: str | None = None, recorder: "TurnRecorder | None" = None):
+        super().__init__()
+        self._language = language
+        self._recorder = recorder
+        self._task: asyncio.Task | None = None
+
+    def begin(self) -> None:
+        """A tool has announced itself. Start counting from now."""
+        self.end()
+        self._task = self.create_task(self._wait(), name="keepalive:timer")
+
+    def end(self) -> None:
+        """The agent spoke, the driver spoke, or the pipeline went down."""
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+
+    async def _wait(self) -> None:
+        index = 0
+        while True:
+            await asyncio.sleep(self.AFTER_SECS)
+            phrase = search_wait_phrase(self._language, index)
+            if phrase is None:
+                # The list is the limit. Fall silent rather than nag.
+                self._task = None
+                return
+            index += 1
+            logger.info(f"[keepalive] still working after {self.AFTER_SECS:.0f}s — {phrase!r}")
+            # `append_to_context=False`, like the announcement it follows: the
+            # model did not write this and it says nothing about the
+            # conversation, so putting it in the context would only crowd out
+            # what did.
+            await self.push_frame(TTSSpeakFrame(phrase, append_to_context=False))
+            if self._recorder is not None:
+                self._recorder.record_announcement(phrase, kind="backchannel")
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        # Speech from the gate means the wait is over — which is the whole
+        # reason this sits downstream of it. An `LLMFullResponseEndFrame` is
+        # deliberately NOT a stop: on a tool-calling turn the first completion
+        # ends before the tool has even answered, and stopping there would give
+        # up exactly when the long part begins.
+        if isinstance(frame, (LLMTextFrame, InterruptionFrame, EndFrame, CancelFrame)):
+            self.end()
+        await self.push_frame(frame, direction)
+
+    async def cleanup(self):
+        self.end()
+        await super().cleanup()
+
+
 class WebSearch:
     """The agent's web search: a tool call, carried to the web app, with the
     driver kept informed while it runs.
@@ -2548,10 +2641,12 @@ class WebSearch:
         ticket: str | None,
         sound: SearchingSound | None = None,
         recorder: "TurnRecorder | None" = None,
+        keepalive: "KeepAlive | None" = None,
     ):
         self._ticket = ticket
         self._sound = sound
         self._recorder = recorder
+        self._keepalive = keepalive
 
     @classmethod
     def announcement(cls, arguments: dict) -> str:
@@ -2575,6 +2670,12 @@ class WebSearch:
             self._recorder.record_announcement(announcement)
         if self._sound is not None:
             self._sound.begin()
+        # From HERE, not from the search returning: what the driver waits
+        # through is the whole turn, and most of it is the model composing an
+        # answer after the result is already in. `KeepAlive` stops itself when
+        # the agent finally speaks.
+        if self._keepalive is not None:
+            self._keepalive.begin()
 
         error: str | None = None
         try:
@@ -3207,9 +3308,14 @@ def build_pipeline(
     recorder = TurnRecorder(
         ticket, session.get("startedAtEpochMs"), session.get("configVersion")
     )
+    # Says something while a turn that has already announced itself runs long.
+    # Its own processor because it needs a position in the pipeline (it speaks)
+    # and a task to count on; it sits between the gate and the TTS, so the
+    # gate's first released word disarms it on the way past.
+    keepalive = KeepAlive(phrase_language(session), recorder)
     if tools:
         board_tools = BoardTools(ticket, recorder)
-        web_search = WebSearch(ticket, searching_sound, recorder)
+        web_search = WebSearch(ticket, searching_sound, recorder, keepalive)
         for schema in tools.standard_tools:
             if schema.name == search_tool:
                 # Cancellable, and so synchronous: the model waits for the
@@ -3276,6 +3382,7 @@ def build_pipeline(
             SilenceGate(
                 summary, recorder, drafts, offers, llm_name=llm.name, title=title, answers=answers
             ),
+            keepalive,
             tts,
             transport.output(),
             aggregator.assistant(),

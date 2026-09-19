@@ -406,7 +406,7 @@ def test_the_phrases_match_the_typescript_they_mirror():
         "de": "Entschuldige, das ist mir entgangen. Sag es noch mal.",
     }
     assert bot.SEARCH_WAIT_PHRASES == {
-        "en": ("Still looking.", "Bear with me, I am still searching."),
+        "en": ("Still looking that up.", "Bear with me, I am still searching."),
         "de": ("Ich suche noch.", "Hab ein bisschen Geduld, ich suche noch."),
     }
 
@@ -1703,6 +1703,129 @@ def run_search(search, arguments, *, cancel_after=None):
 
     asyncio.run(run())
     return [f.text for f in llm.pushed if isinstance(f, bot.TTSSpeakFrame)], results
+
+
+# --- KeepAlive: a word while a turn that announced itself runs long ---------
+#
+# The pilot's numbers: turns that called a tool took a median of 8416ms against
+# 1349 for turns that did not, while the tool itself never took more than 766.
+# The gap is the model composing the answer AFTER the result is back, and the
+# car is silent through it. The participant asked for this herself.
+
+
+def keepalive_with(monkeypatch, recorder=None, language="en"):
+    """A keep-alive whose clock runs in milliseconds and whose speech is a list."""
+    monkeypatch.setattr(bot.KeepAlive, "AFTER_SECS", 0.05)
+    keepalive = bot.KeepAlive(language, recorder)
+    monkeypatch.setattr(keepalive, "create_task", lambda coro, name=None: asyncio.create_task(coro))
+    keepalive.pushed = []
+
+    async def push(frame, direction=None):
+        keepalive.pushed.append(frame)
+
+    keepalive.push_frame = push
+    return keepalive
+
+
+def spoken_by(keepalive):
+    return [f.text for f in keepalive.pushed if isinstance(f, bot.TTSSpeakFrame)]
+
+
+class RecordingRecorder:
+    def __init__(self):
+        self.announcements = []
+
+    def record_announcement(self, spoken, kind="reply"):
+        self.announcements.append((spoken, kind))
+
+
+def test_a_long_turn_gets_a_word_and_then_another_and_then_silence(monkeypatch):
+    recorder = RecordingRecorder()
+
+    async def run():
+        keepalive = keepalive_with(monkeypatch, recorder)
+        keepalive.begin()
+        await asyncio.sleep(0.4)  # far past the number of phrases there are
+        return keepalive
+
+    keepalive = asyncio.run(run())
+
+    # Two, in order, and then it falls silent rather than nagging.
+    assert spoken_by(keepalive) == list(bot.SEARCH_WAIT_PHRASES["en"])
+    # SPOKEN, THEREFORE RECORDED. `withoutEcho` reads `agent_turn` and nothing
+    # else; a filler that is not there comes back as the participant's words.
+    assert recorder.announcements == [(p, "backchannel") for p in bot.SEARCH_WAIT_PHRASES["en"]]
+
+
+def test_the_agent_speaking_ends_the_wait(monkeypatch):
+    async def run():
+        keepalive = keepalive_with(monkeypatch)
+        keepalive.begin()
+        # `SilenceGate` sits directly upstream, so its first released word
+        # passes through here. That is the wait being over.
+        await keepalive.process_frame(
+            LLMTextFrame(text="The Kiel one is open until six."), FrameDirection.DOWNSTREAM
+        )
+        await asyncio.sleep(0.2)
+        return keepalive
+
+    keepalive = asyncio.run(run())
+    assert spoken_by(keepalive) == []
+
+
+def test_the_driver_talking_over_it_ends_the_wait(monkeypatch):
+    async def run():
+        keepalive = keepalive_with(monkeypatch)
+        keepalive.begin()
+        await keepalive.process_frame(InterruptionFrame(), FrameDirection.DOWNSTREAM)
+        await asyncio.sleep(0.2)
+        return keepalive
+
+    keepalive = asyncio.run(run())
+    assert spoken_by(keepalive) == []
+
+
+def test_the_end_of_the_tool_calling_completion_does_not_end_the_wait(monkeypatch):
+    # THE POINT OF THE WHOLE THING. On a tool-calling turn the first completion
+    # ends before the tool has even answered; stopping there would fall silent
+    # exactly when the long part begins.
+    async def run():
+        keepalive = keepalive_with(monkeypatch)
+        keepalive.begin()
+        await keepalive.process_frame(LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM)
+        await asyncio.sleep(0.08)  # one interval, not two
+        return keepalive
+
+    keepalive = asyncio.run(run())
+    assert spoken_by(keepalive) == [bot.SEARCH_WAIT_PHRASES["en"][0]]
+
+
+def test_the_keep_alive_speaks_the_drive_s_language(monkeypatch):
+    async def run():
+        keepalive = keepalive_with(monkeypatch, language="de")
+        keepalive.begin()
+        await asyncio.sleep(0.08)  # one interval
+        return keepalive
+
+    keepalive = asyncio.run(run())
+    assert spoken_by(keepalive) == [bot.SEARCH_WAIT_PHRASES["de"][0]]
+
+
+def test_an_announced_search_starts_the_clock(monkeypatch):
+    # Armed by the announcement, NOT by the request going out: what the driver
+    # waits through is the turn, and the tool is the short part of it.
+    class Armed:
+        def __init__(self):
+            self.begun = 0
+
+        def begin(self):
+            self.begun += 1
+
+    keepalive = Armed()
+    search = bot.WebSearch("ticket", None, None, keepalive)
+    search._post = lambda payload: {"ok": True}
+    run_search(search, {"query": "q", "announcement": "Looking."})
+    assert keepalive.begun == 1
 
 
 class RecordingSound:
