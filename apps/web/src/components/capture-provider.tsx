@@ -3,6 +3,11 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import type { CaptureSetting } from "@voicemural/shared";
 import {
+  useConditionOverride,
+  type ConditionOverride,
+  type ToggleableFlag,
+} from "@/lib/recorder/condition-store";
+import {
   rememberSetting,
   useDetectedSetting,
   type SettingSource,
@@ -46,6 +51,14 @@ export interface CaptureContextValue {
    * a stationary first-time user under exactly that.
    */
   settingUnknown: boolean;
+
+  /**
+   * A per-drive override of the study condition, for the pilot's cold-start
+   * test. Sparse, and honoured by the server only for pilot accounts — see
+   * `condition-store.ts`.
+   */
+  conditionOverride: ConditionOverride;
+  toggleCondition: (flag: ToggleableFlag, value: boolean | null) => void;
 
   voiceId: string;
   chooseVoice: (next: string) => void;
@@ -122,6 +135,7 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
   // Per-browser preferences, remembered across visits. See their stores.
   const [voiceId, chooseVoice] = useVoice();
   const [sttLanguage, chooseSttLanguage] = useSttLanguage();
+  const [conditionOverride, toggleCondition] = useConditionOverride();
 
   // Armed with the recording, for the whole drive — there is no separate
   // gesture to enter it. Everything it does is downstream of the microphone
@@ -155,8 +169,17 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     // the example belongs to this drive and not to every later one, and this
     // provider is mounted for the whole app — holding it would mean deciding
     // when to forget it, which is the same question with more moving parts.
-    void start(setting, source, voiceId, sttLanguage, takeUseCase());
-  }, [requestMotion, settingUnknown, start, setting, source, voiceId, sttLanguage]);
+    void start(setting, source, voiceId, sttLanguage, takeUseCase(), conditionOverride);
+  }, [
+    requestMotion,
+    settingUnknown,
+    start,
+    setting,
+    source,
+    voiceId,
+    sttLanguage,
+    conditionOverride,
+  ]);
 
   const stopRecording = useCallback(() => {
     void beginDebrief();
@@ -177,6 +200,8 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       chosenSetting,
       chooseSetting,
       settingUnknown,
+      conditionOverride,
+      toggleCondition,
       voiceId,
       chooseVoice,
       sttLanguage,
@@ -196,6 +221,8 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       chosenSetting,
       chooseSetting,
       settingUnknown,
+      conditionOverride,
+      toggleCondition,
       voiceId,
       chooseVoice,
       sttLanguage,

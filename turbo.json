@@ -44,6 +44,11 @@
     "ELEVENLABS_MODEL_ID",
     "TALKBACK_ENABLED",
     "NEXT_PUBLIC_TALKBACK_ENABLED",
+    // The study's own switches. The second is inlined at build time, so it
+    // has to invalidate the build cache when it changes — a pilot bundle and
+    // a participant bundle are different artefacts.
+    "STUDY_PILOT_USER_IDS",
+    "NEXT_PUBLIC_STUDY_TOGGLES",
     "STORAGE_DIR",
     // Runtime knobs read by the worker and web. Listed with the rest so the
     // same .env that Compose interpolates from stays the single source.

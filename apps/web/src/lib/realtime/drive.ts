@@ -34,7 +34,7 @@ export type DriveAuth =
   | { ok: true; userId: string; captureSessionId: string }
   | { ok: false; status: 401 | 403 | 409; error: string };
 
-export async function authoriseOpenDrive(ticket: string): Promise<DriveAuth> {
+async function authorise(ticket: string, mustBeOpen: boolean): Promise<DriveAuth> {
   let payload;
   try {
     payload = verifyTicket(ticket);
@@ -58,26 +58,27 @@ export async function authoriseOpenDrive(ticket: string): Promise<DriveAuth> {
   if (!row || row.userId !== payload.userId) {
     return { ok: false, status: 403, error: "forbidden" };
   }
-  if (row.endedAt !== null || row.debriefStartedOffsetMs !== null) {
+  if (mustBeOpen && (row.endedAt !== null || row.debriefStartedOffsetMs !== null)) {
     return { ok: false, status: 409, error: "session_ended" };
   }
 
   return { ok: true, userId: payload.userId, captureSessionId: payload.captureSessionId };
 }
 
+/** Anything that would ADD to a drive's record. Refused once it is over. */
+export function authoriseOpenDrive(ticket: string): Promise<DriveAuth> {
+  return authorise(ticket, true);
+}
+
 /**
- * The same ticket check WITHOUT the "still open" rule.
+ * The same check WITHOUT the "still open" rule.
  *
  * For the one write that legitimately lands after the agent has stopped
  * talking: the measured end of a turn whose audio was still playing when the
- * drive closed. It corrects a row that already exists rather than adding a
- * new one to a finished transcript.
+ * drive closed. It corrects a row that already exists rather than adding a new
+ * one to a finished transcript, so refusing it would leave the last turn of
+ * every drive carrying the character-count estimate.
  */
-export async function authoriseDrive(
-  ticket: string,
-): Promise<Exclude<DriveAuth, { status: 409 }>> {
-  const auth = await authoriseOpenDrive(ticket);
-  if (auth.ok || auth.status !== 409) return auth as Exclude<DriveAuth, { status: 409 }>;
-  const payload = verifyTicket(ticket);
-  return { ok: true, userId: payload.userId, captureSessionId: payload.captureSessionId };
+export function authoriseDrive(ticket: string): Promise<DriveAuth> {
+  return authorise(ticket, false);
 }

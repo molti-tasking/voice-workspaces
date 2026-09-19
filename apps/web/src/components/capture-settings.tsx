@@ -6,6 +6,10 @@
 import { STT_LANGUAGES } from "@voicemural/talkback/language";
 import { SETTINGS, SETTING_PROFILES } from "@voicemural/talkback/setting";
 import { VOICES } from "@voicemural/talkback/voice";
+import {
+  STUDY_TOGGLES_ENABLED,
+  TOGGLEABLE,
+} from "@/lib/recorder/condition-store";
 import { TALKBACK_ENABLED, useCapture } from "./capture-provider";
 
 /**
@@ -218,5 +222,76 @@ export function LockedSummary() {
       <dt className="text-white/30">Language</dt>
       <dd className="text-white/70">{language}</dd>
     </dl>
+  );
+}
+
+/**
+ * The study arm for THIS drive. Pilot builds only.
+ *
+ * The next pilot is a cold-start test — the same person, two drives an hour
+ * apart, agenda offers on in one and off in the other — and the condition is
+ * otherwise a property of the participant, copied onto each drive at insert.
+ * Flipping it between two drives in an afternoon meant a database write with
+ * the researcher sitting in a car.
+ *
+ * TWO SWITCHES, BOTH OFF FOR PARTICIPANTS. This renders only in a bundle built
+ * with `NEXT_PUBLIC_STUDY_TOGGLES`, and the server honours an override only
+ * for accounts in `STUDY_PILOT_USER_IDS`. A participant who could flip their
+ * own arm is a participant whose phase cannot be analysed.
+ *
+ * Three states per flag, not two: `on`, `off` and `—`. "Not overridden" and
+ * "overridden to off" are different instructions, and collapsing them would
+ * make every drive carry an override whether or not anyone chose one.
+ */
+export function ConditionToggles() {
+  const { conditionOverride, toggleCondition, isBusy, isRecording } = useCapture();
+  if (!STUDY_TOGGLES_ENABLED) return null;
+
+  return (
+    <div className="w-full max-w-md space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+      <p className="text-xs font-medium text-amber-100/80">
+        Study arm for this drive — pilot accounts only
+      </p>
+      {TOGGLEABLE.map((flag) => {
+        const value = conditionOverride[flag];
+        return (
+          <fieldset
+            key={flag}
+            className="flex items-center justify-between gap-3"
+            disabled={isBusy || isRecording}
+          >
+            <legend className="sr-only">{flag}</legend>
+            <span className="font-mono text-xs text-white/50">{flag}</span>
+            <div className="flex gap-1">
+              {(
+                [
+                  ["—", null],
+                  ["off", false],
+                  ["on", true],
+                ] as const
+              ).map(([label, next]) => (
+                <button
+                  key={label}
+                  type="button"
+                  aria-pressed={value === next || (next === null && value === undefined)}
+                  onClick={() => toggleCondition(flag, next)}
+                  className={[
+                    "cursor-pointer rounded px-2 py-1 text-xs transition-colors disabled:opacity-50",
+                    (next === null && value === undefined) || value === next
+                      ? "bg-white/15 text-white"
+                      : "text-white/40 hover:text-white/70",
+                  ].join(" ")}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+        );
+      })}
+      <p className="text-xs text-white/30">
+        &ldquo;—&rdquo; leaves the participant&rsquo;s own condition in place.
+      </p>
+    </div>
   );
 }

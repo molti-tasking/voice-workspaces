@@ -352,6 +352,7 @@ export function useRecorder() {
     voiceId?: string,
     sttLanguage?: string | null,
     useCase?: UseCaseId,
+    conditionOverride?: Record<string, boolean>,
   ) => {
     if (runningRef.current) return;
 
@@ -441,6 +442,13 @@ export function useRecorder() {
       // in a dead zone still registers under the right one when the uploader
       // replays it.
       useCase,
+      // A per-drive override of the study condition, for the cold-start test.
+      // Honoured only for pilot accounts; the route says so when it drops one.
+      // Undefined rather than {} so an ordinary drive sends nothing at all.
+      conditionOverride:
+        conditionOverride && Object.keys(conditionOverride).length > 0
+          ? conditionOverride
+          : undefined,
     };
     await saveRegistration(registration);
 

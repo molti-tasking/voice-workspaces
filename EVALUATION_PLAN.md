@@ -30,6 +30,14 @@ between participants or study phases:
 Work in tier order. **Tier 0 and Tier 1 must be done before the first participant starts.**
 Tier 2 holds the behaviours the study varies. Tier 3 holds the measures.
 
+> **Pilot 01 changed what this plan measures.** See §9. The short version: the
+> system ran without a single error and failed the participant anyway, because
+> everything this plan measured was a property of the system rather than of the
+> person using it. The measures now run in three tiers — system behaviour,
+> steerability, relief — and the guiding principle is **optimise for relief,
+> not throughput**. A system that writes many items to the board and never
+> brings them back has failed.
+
 ---
 
 ## 2. Orientation
@@ -570,3 +578,63 @@ unless §5.2 decides otherwise.
    - a spoken offer writes `agent_turn.kind='proactive_prompt'`;
    - a spoken "yes" settles a pending invocation;
    - `study:export` contains no transcript text.
+
+---
+
+## 9. After Pilot 01 (19 Sep 2026)
+
+One formative session, `capture_session 8e14deb1`, with a first-time user. **The system ran
+without a single error and failed the participant at three separate moments.** That is the
+finding, and it is the reason this section exists: every measure in §6 was a property of the
+system — latency, turn counts, decline rate, error rate — and all of them were healthy.
+
+### 9.1 What happened, and what has been done about it
+
+| What the participant experienced | Why | Fixed by |
+|---|---|---|
+| Answered a yes/no question with "Ja." and got **40.4 s of dead air** | Nothing modelled "a question is open", so one word read as a backchannel and the model replied `<silence>` — which the gate correctly suppressed | `TurnRecorder` tracks the open question; the driver's next words are an `answer` cue; `AnswerGuard` refuses to let a decline under that cue stand, re-runs the turn with `ANSWER_REQUIRED`, and speaks a fallback if it declines twice |
+| A turn spoken **52.6 s after Stop**, written to the closed session's ledger | The browser went away, so no `EndFrame` travelled the pipeline and the offer timer was still armed | `build_pipeline` returns a `Drive`; the connection's `closed` handler cancels offers, seals the recorder and cancels the worker. `/agent-turn` and `/decision` answer **409** for an ended or debriefing drive, and the container closes itself on that |
+| **8.4 s median** on tool-backed turns (1.3 s without), in silence | Nothing was spoken while a tool ran, and in a car that is indistinguishable from a dropped connection | `Liveness` speaks a placeholder as the call starts and a reassurance every ~5 s, capped at two, in the drive's own language (`packages/talkback/src/fillers.ts`). Every filler is written to `agent_turn` as the new `filler` kind |
+| Run **stationary under the `driving` profile** — 25-word replies, no screen | With no accelerometer permission the detector fell back to `driving`, and nothing recorded that the profile had been guessed | The recorder asks rather than starting under a guess, corrections are remembered per browser, and `capture_session.setting_source` stores how the answer was reached |
+| The **debrief was never recorded** | Stop ended the session, so the three questions `/study` promises were asked with the microphone closed | Stop opens a debrief window instead (`debrief_started_offset_ms`); capture keeps running, talk-back disconnects, and done closes both |
+| `resolved_model`, `asr_ms`, `speak_ttfb_ms` **null on all 15 turns**; `end_offset_ms` an unmarked estimate; **two `agent_decision` rows per offset** | Nothing read the LLM's resolved name, nothing timed the ASR, the only metrics reader sat upstream of the TTS, and a moment that ran two completions produced two rows | Read from `llm.get_full_model_name()`; timed in `Recall`; `PlaybackClock` between the TTS and the transport (`end_measured` says which ends are real); every decision carries its moment's `cue_id` and `recordAgentDecision` keeps exactly one row `authoritative` |
+
+### 9.2 The measures, in three tiers
+
+`pnpm study:metrics [--user <id>] [--re-prompt-ms 5000] [--print]` computes all of them, per
+session and per participant, and writes one JSON file each. It reads transcript text inside the
+privacy boundary to classify two of the Tier 2 measures and returns counts only;
+`metrics.test.ts` seeds a sentinel into every text column and fails if it surfaces.
+
+**Tier 1 — system behaviour** (unchanged, and not the point). Response latency split by whether
+a tool ran; silent opportunities as a share of *deduplicated* moments; error rate.
+
+**Tier 2 — steerability.** Re-prompt rate (their words after *n* seconds of agent silence, *n*
+configurable); repeat-request rate; correction rate (spoken rejections, declined invocations and
+`judge()`'s reversed/corrected transitions, reported apart and pooled); intent throughput
+(directions that reached the board); and **unanswered answers, whose target is 0**.
+
+**Tier 3 — relief.** Mental load before and after the same drive (negative delta is the good
+direction); whether they could tell it was working; whether they could correct it; revisit rate
+by *day*; and the day-7 verdict per item — done / still open / **lost**. `lostRate` is the
+primary failure measure for offloading.
+
+### 9.3 The study flow the system now supports
+
+- **Day 1.** Pre item on the recorder → drive → Stop opens the debrief (microphone still open,
+  three questions, two post items) → done ends the session.
+- **Days 2–6.** Ordinary use. Counts only: `study_event` records board and card opens;
+  dictations and edits come from `workspace_op`, which already has them.
+- **Day 7.** `pnpm study:review --user <id>` lists the cards awaiting a verdict, oldest first;
+  `--card <id> --outcome done|open|lost` records one. `/api/study/review` takes the same
+  verdicts, so a spoken review session can write them without this changing.
+
+### 9.4 What is still open
+
+- The day-7 review is a CLI and an API route, not a voice session. Reading each item back aloud
+  and taking the answer by voice is the natural next step and is not built.
+- `intentThroughput` counts classifier-detected directions only. An intent the participant
+  expressed straight to the agent, which the agent carried out with a board tool, has no
+  `directive` row and does not appear in the denominator.
+- The pooled medians in a participant's summary are null on purpose: a median of medians is not
+  a median, and the per-session values are the ones to read.

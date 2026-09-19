@@ -9,6 +9,7 @@ import { formatOffset } from "@voicemural/shared";
 import { SETTING_PROFILES } from "@voicemural/talkback/setting";
 import { TALKBACK_ENABLED, useCapture } from "@/components/capture-provider";
 import {
+  ConditionToggles,
   LanguagePicker,
   SettingPicker,
   VoicePicker,
@@ -173,6 +174,9 @@ export function RecorderClient() {
         {!isRecording && <VoicePicker />}
 
         {!isRecording && <LanguagePicker />}
+
+        {/* Pilot builds only, and pilot accounts only. See `ConditionToggles`. */}
+        {!isRecording && <ConditionToggles />}
 
         {/* Before the drive, and only when one can start: the item is about
             what they are carrying now, and asking it under a settings sheet

@@ -191,6 +191,54 @@ spoken aloud. See "Drafts" below for the mechanism, and
 `draft-revise-when-asked` / `draft-new-when-different` /
 `draft-seen-not-rewritten` in `cases.ts` for what it is held to.
 
+### talkback-13: an answer to your own question cannot be declined
+
+Pilot 01 ended like this. The agent asked a yes/no question. The participant
+said *"Ja."* The model read one word as a backchannel and replied `<silence>`,
+`SilenceGate` suppressed it exactly as designed, and the drive finished in
+**40.4 seconds of dead air** with the participant waiting.
+
+Nothing was broken. The default stance is silence, a pause is thinking, and one
+word does not look like a turn — every rule fired correctly and the sum of them
+was a person being ignored at the one moment they had asked to be answered.
+
+So there is state for it now, and the prompt is only half the fix:
+
+- `TurnRecorder` watches its own spoken turns. One that ends in a question
+  leaves a question open, and the driver's next words — whatever they are —
+  arrive under an `answer` cue.
+- `Recall` puts `ANSWER_PENDING` in that turn's context block.
+- `SilenceGate` refuses to let a decline under that cue stand. It still writes
+  the decline (trigger `answer`, outcome `declined` — the study's
+  unanswered-answer count, target zero), then calls `AnswerGuard`, which runs
+  the turn again with `ANSWER_REQUIRED` in front of the model.
+- If *that* declines too, the guard speaks the drive's `answerFallback`. An
+  awkward sentence is worse than a good one and far better than dead air.
+
+Once per open question, keyed on the moment's `cue_id`, so a model that has
+made its position clear is not asked a third time.
+
+### Liveness: the system says something before it waits
+
+On the same pilot, a turn that called a tool took a **median of 8.4 seconds**
+against 1.3 for one that did not, and said nothing in between. In a car,
+"thinking" and "the connection has dropped" sound identical: there is no
+spinner, nothing to tap, and the only evidence either way is sound.
+
+`Liveness` wraps every tool call. It speaks a placeholder as the call starts —
+the model's own announcement where it wrote one, which the web search does,
+otherwise the drive's `lookup` filler — then a short reassurance every
+`REASSURE_AFTER_SECS`, capped at `MAX_REASSURANCES`. The phrases come from
+`packages/talkback/src/fillers.ts` via `/api/realtime/session`, in the language
+the drive chose; a German phrase read to an English speaker is its own failure.
+
+**Every filler is written to `agent_turn`, as kind `filler`.** Not bookkeeping:
+that table is the echo filter's only input, so a phrase that reached the
+speaker without a row there comes back through the microphone as something the
+participant said. The separate kind matters too — a 0.2-second placeholder
+counted as a reply would put a fast turn into the latency distribution and hide
+the eight seconds it was covering.
+
 ### Which voice
 
 Three ElevenLabs voices are offered on the recorder, from the catalogue in
@@ -457,6 +505,20 @@ turn.
 ---
 
 ## 🔴 Landmines
+
+**A pipeline outlives the browser that started it.** Nothing in Pipecat notices
+that a peer has gone away: an `EndFrame` only travels the pipeline if something
+sends one, and tapping Stop simply closes the WebRTC connection. On Pilot 01
+the offer timer was still armed, fired 52.6 seconds later, composed a turn,
+spoke it into a transport with no listener — and the web app wrote it to the
+closed session's ledger, after `ended_at`. `build_pipeline` returns a `Drive`
+now, and the connection's `closed` handler closes it: offers cancelled,
+recorder sealed, worker cancelled, in that order. The order matters — cancel
+the worker first and a timer that has already fired still posts its turn. The
+web app refuses independently (409 from `/agent-turn` and `/decision` for an
+ended or debriefing drive), because the container is a separate process on the
+other side of a network and the ledger is what has to be right in six months.
+
 
 **VAD is a pipeline stage, and `TransportParams` will not tell you.** Pipecat 1.7
 removed `vad_analyzer` from `TransportParams`, and pydantic's default `extra`
