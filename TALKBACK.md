@@ -191,6 +191,35 @@ spoken aloud. See "Drafts" below for the mechanism, and
 `draft-revise-when-asked` / `draft-new-when-different` /
 `draft-seen-not-rewritten` in `cases.ts` for what it is held to.
 
+### talkback-13: the agent finishes what it starts, and says so while it works
+
+Two things from the first formative pilot (19 Sep 2026), both in
+`PILOT_01.md`.
+
+**An answer the agent asked for is never met with silence.** It asked *"Soll
+ich die genauen Zeiten für einen davon suchen?"*, the participant said *"Ja."*,
+and the model returned `<silence>` — recorded faithfully as
+`user_turn -> declined`. Forty seconds later she asked *"Und dann?"*, got
+nothing again, stopped the recording and asked out loud whether the app had
+died. WHEN TO SPEAK said only that a question put to the agent is always
+answered; the converse was missing, and nothing tracked that the last spoken
+turn had asked something. Three layers now: the rule in WHEN TO SPEAK,
+`TurnRecorder.awaiting_question_answer` (measured on what was SPOKEN, not on
+`generatedText` — a question cut off before its first word is not one they can
+be answering), and `AnswerGuard`, which refuses the decline, re-runs the
+completion once with `ANSWER_RETRY_NUDGE`, and speaks a fixed sentence in the
+drive's own language if that declines too. The refused completion writes no
+turn and no decision: their words were one moment, and the re-run is what it
+became.
+
+**A turn that has announced itself says something while it runs.** Turns that
+called a tool took a median of 8416ms against 1349 for turns that did not,
+while the tool itself never exceeded 766 — the gap is the model composing the
+answer after the result is already back. `KeepAlive` is armed by a tool
+announcing itself and disarmed by the agent actually speaking, NOT by the tool
+returning, which would fall silent at the moment the silence starts. Two
+phrases and then quiet; the list is the limit.
+
 ### Which voice
 
 Three ElevenLabs voices are offered on the recorder, from the catalogue in
@@ -496,6 +525,32 @@ and 40 seconds later it closes with "Timeout establishing the connection to the
 remote peer" — which reads like a network fault. `candidate_from_sdp` wants the
 value *without* the `candidate:` prefix.
 
+**Pipecat runs inference MORE THAN ONCE inside one user turn, and the decision
+log has to say so.** `_on_user_turn_inference_triggered` pushes the aggregation
+it has so far and starts a completion; `_maybe_emit_user_turn_stopped` pushes
+again at the end of the turn — its own comment says "so multiple inferences in
+the same turn don't lose earlier segments". The first sees a half-finished
+sentence, which the prompt correctly answers with `<silence>` in about 400ms;
+the second sees the whole thing and speaks. Both are real completions and both
+become `agent_decision` rows, and on the first formative pilot sixteen of
+forty-eight rows shared an `offset_ms` with another. Counted by row the decline
+rate was 69%; counted by moment, 53%. `opportunity_seq` and `attempt` are what
+make the log countable — see the counting rule on `agent_decision` in the
+schema. The second dispatch is NOT suppressed: how a turn ends is the paper's
+independent variable, and `user_turn_stop_timeout` is one of the dials on it.
+
+**A sentence the container speaks with no completion behind it still has to be
+recorded — and still has to be long enough to filter.** The search
+announcement, the keep-alive while a long turn runs (`KeepAlive`), and the
+acknowledgement when a refused decline re-runs and declines again
+(`AnswerGuard`) are all spoken aloud, so the microphone hears them and Whisper
+puts them in `utterance`. `withoutEcho` tells them from the driver's words by
+comparing against `agent_turn` — but `isEcho` refuses to judge a line under
+`MIN_WORDS`, because containment over two tokens means nothing. So "Still
+looking." would be unfilterable however faithfully it was recorded, and the
+phrase is "Still looking that up." instead. `echo.test.ts` holds that floor for
+every fixed phrase the container speaks.
+
 **`agent_turn` is the echo filter's only input.** The agent's voice reaches the
 microphone through the speaker and is transcribed like any other sound;
 `withoutEcho` tells those lines from yours by comparing against what the agent is
@@ -516,8 +571,11 @@ badge on `/sessions/[id]` could never light; "<sil" was an interrupted
 `truncatedAtMs`, drops a held partial sentinel instead of speaking it, holds a
 reply that opens with `[` until the bracket closes, and strips `[Speaker N]`
 from speech (`strip_speaker_tags`; the tag stays in `generatedText`). The
-"spoke Xs" on an uninterrupted turn is still `len(text) / 14` — the container
-never learns when playback ended — and the page shows it as `~`. The narrated
+"spoke Xs" on an uninterrupted turn used to be `len(text) / 14`, because the
+container never learned when playback ended; it is measured now from the output
+transport's own `BotStoppedSpeakingFrame` — pushed BOTH ways, so the gate sees
+it from upstream — and `agent_turn.end_offset_measured` says which it was. The
+page shows the `~` only where it is earned. The narrated
 rule itself is a prompt failure; `two-people-narrated-rule` in `cases.ts` and
 the `narrated decision` check in `checks.ts` hold the line there.
 
@@ -849,6 +907,16 @@ must keep showing new content and new directions, and a reload mid-session must
 bring them back. Everything it renders comes from `workspace_op` and `directive`
 over `/api/record/cues`; if it ever stops when Pipecat does, something has been
 wired to the conversation that should not have been.
+
+**So is the debrief, which is the closest anything comes to coupling them.**
+Stop no longer tears the microphone down: it closes the drive and opens the
+post-drive debrief, and the chunk loop, the wake lock and the uploader carry on
+through it (see `capture_session.debrief_started_offset_ms`). Talk-back is the
+one thing that ends there — `isRecording` goes false, the peer connection
+closes, and the container learns the drive is over from the web app's 409 on
+its next write. Check both halves: the timer keeps counting and chunks keep
+uploading after Stop, and no `agent_turn` or `agent_decision` row appears for
+the session after `ended_at`.
 
 ---
 
