@@ -40,6 +40,41 @@ import {
  */
 export const BATCH_SIZE = Number(process.env.WORKSPACE_BATCH_SIZE ?? 8);
 
+/**
+ * How long a batch waits for the classifier before an unclassified line is
+ * treated as content.
+ *
+ * HANDLED DIRECTIONS STAY OUT OF THE WORKSPACE. The classifier's own prompt
+ * tells the model that a direction "drops out of the workspace", yet the
+ * extractor used to receive every line, so "mark this" — already done by the
+ * `mark` capability — could come back a second time as a claim or a task.
+ *
+ * But only a direction something ELSE handles is withheld: one the classifier
+ * matched to a capability, or one a person marked as a direction by hand. The
+ * first version withheld every direction, and that cut the board's only
+ * spoken path. "Let's remove this asymmetry already" was classified as a
+ * direction (verb `remove`), no capability matched it, the extractor never saw
+ * it, and the card it was about stayed on the board while the agent assured the
+ * driver it would go (15 Sep 2026). An unhandled direction about the person's
+ * own tasks is exactly what the extractor's prompt turns into `dropped`, so it
+ * goes through as speech.
+ *
+ * WHY WAIT, AND WHY NOT FOREVER. Classification runs per chunk and lands
+ * ~15-25s after speech; a batch reaching the extractor sooner would send a
+ * direction as content, a race decided by timing rather than by the words. So a
+ * batch holding a line still `unclassified` and younger than this is left alone
+ * — the cursor stays put and the SAME batch is taken once it has settled, which
+ * keeps batch boundaries a function of the transcript. But the classifier backs
+ * off for up to fifteen minutes on failure, and a workspace that stops updating
+ * for that long is a worse failure than a direction filed as content — which is
+ * exactly the error its prompt calls "a small loss". After the wait, the line
+ * counts as content.
+ *
+ * The sweep counts only settled speech toward a batch for the same reason
+ * (`usersWithPendingSpeech`), so a job is not spent on a batch that must skip.
+ */
+export const CLASSIFY_WAIT_MS = Number(process.env.WORKSPACE_CLASSIFY_WAIT_MS ?? 90_000);
+
 export interface ExtractionOutcome {
   segments: number;
   opsAppended: number;
@@ -56,11 +91,54 @@ export interface ExtractionOutcome {
  * rebuilding after a parser fix, makes no network calls at all — which is what
  * makes the workspace deterministic rather than merely re-derivable.
  */
-export async function extractWorkspace(userId: string): Promise<ExtractionOutcome> {
+export async function extractWorkspace(
+  userId: string,
+  now: Date = new Date(),
+): Promise<ExtractionOutcome> {
   const pending = await loadPendingSegments(userId, BATCH_SIZE);
 
   if (pending.length === 0) {
     return { segments: 0, opsAppended: 0, cacheHit: false, totalTokens: 0, skipped: "nothing pending" };
+  }
+
+  const unsettled = pending.some(
+    (s) =>
+      s.kind === "unclassified" &&
+      s.recordedAt !== undefined &&
+      now.getTime() - s.recordedAt.getTime() < CLASSIFY_WAIT_MS,
+  );
+  if (unsettled) {
+    return {
+      segments: 0,
+      opsAppended: 0,
+      cacheHit: false,
+      totalTokens: 0,
+      skipped: "awaiting classification",
+    };
+  }
+
+  const last = pending[pending.length - 1]!;
+  const sessionByUtterance = await sessionIdsForUtterances([last.id]);
+
+  // What the model sees. The cursor still moves past the whole batch —
+  // directions included — because they have been dealt with: by leaving them out.
+  //
+  // A LATER CORRECTION DOES NOT REWRITE THE PAST. When someone flips a line's
+  // kind by hand (`kindOverride`), ops already derived from it stay: the op
+  // log is append-only, and a live workspace that reshuffled whenever a label
+  // changed would be unreadable. The override applies to anything not yet
+  // extracted, and to a deliberate `workspace:rebuild`, which re-reads kinds
+  // as they stand. For the same reason a rebuild can differ from the live
+  // workspace where a line timed out as content and was classified afterwards
+  // — that batch misses the cache and is extracted again.
+  const content = pending.filter((s) => !(s.kind === "directive" && s.handledElsewhere));
+
+  if (content.length === 0) {
+    // Nothing but handled directions: nothing to extract, and no reason to pay
+    // a model to say so.
+    await advanceCursor(userId, last.id, last.occurredAt);
+    log.info("workspace batch was all directions", { userId, segments: pending.length });
+    return { segments: pending.length, opsAppended: 0, cacheHit: false, totalTokens: 0 };
   }
 
   const state = foldWorkspace(await loadOps(userId));
@@ -71,11 +149,11 @@ export async function extractWorkspace(userId: string): Promise<ExtractionOutcom
     promptVersion: PROMPT_VERSION,
     model: requestedModel,
     temperature: EXTRACTION_TEMPERATURE,
-    segments: pending,
+    segments: content,
     stateDigest: digest,
   });
 
-  const messages = buildExtractionPrompt(state, pending);
+  const messages = buildExtractionPrompt(state, content);
 
   // --- the cache -----------------------------------------------------------
   const cached = await findCachedExtraction(userId, inputHash);
@@ -115,7 +193,7 @@ export async function extractWorkspace(userId: string): Promise<ExtractionOutcom
       resolvedModel: result.resolvedModel,
       temperature: EXTRACTION_TEMPERATURE,
       seed: EXTRACTION_SEED,
-      inputSegmentIds: pending.map((s) => s.id),
+      inputSegmentIds: content.map((s) => s.id),
       stateDigest: digest,
       requestMessages: messages,
       rawResponse,
@@ -132,10 +210,8 @@ export async function extractWorkspace(userId: string): Promise<ExtractionOutcom
   // Against the pre-extraction fold: what this batch did to the board.
   const taskStats = taskOpStats(parsed.ops, state);
 
-  const last = pending[pending.length - 1]!;
-  const sourceIds = pending.map((s) => s.id);
-  const sessionByUtterance = await sessionIdsForUtterances([last.id]);
-
+  // Provenance is what the model was shown: an op never cites a direction.
+  const sourceIds = content.map((s) => s.id);
 
   const opsAppended = await appendOps({
     userId,
@@ -144,7 +220,7 @@ export async function extractWorkspace(userId: string): Promise<ExtractionOutcom
     occurredAt: last.occurredAt,
     // Places each op at the time of the earliest utterance it cites, so a
     // topic reads in the order things were actually said.
-    segmentTimes: new Map(pending.map((s) => [s.id, s.occurredAt])),
+    segmentTimes: new Map(content.map((s) => [s.id, s.occurredAt])),
     captureSessionId: sessionByUtterance.get(last.id),
     sourceUtteranceIds: sourceIds,
   });
@@ -157,7 +233,7 @@ export async function extractWorkspace(userId: string): Promise<ExtractionOutcom
     userId,
     extractionId,
     captureSessionId: sessionByUtterance.get(last.id),
-    segments: pending.length,
+    segments: content.length,
     opsAppended,
     messages,
     rawResponse,
@@ -183,11 +259,15 @@ export async function extractWorkspace(userId: string): Promise<ExtractionOutcom
   log.info("workspace extracted", {
     userId,
     segments: pending.length,
+    directions: pending.length - content.length,
     opsAppended,
     cacheHit,
     totalTokens,
   });
 
+  // The whole batch, not just its content: `extractWorkspaceFully` reads a
+  // short batch as the end of the transcript, and a batch with directions in
+  // it is not short.
   return { segments: pending.length, opsAppended, cacheHit, totalTokens };
 }
 

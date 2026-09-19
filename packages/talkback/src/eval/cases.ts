@@ -19,6 +19,19 @@ import type { EvalContext } from "./messages";
 
 export type TurnExpectation = "silent" | "speak" | "either";
 
+/**
+ * A board as `buildBoardContext` renders it, with the handles the tools take.
+ * Written out rather than folded from ops: the case must show exactly what the
+ * model saw, and a change to the rendering should be a visible edit here.
+ */
+const BOARD = [
+  "Their task board right now:",
+  "- [next] Write up the asymmetry argument. (card 1225b3 · Voice paper)",
+  "- [next] Email William about the start date. (card 9b04e1 · Research stay)",
+  "- [open] Build the evaluation system. (card 7a31c0 · Voice paper)",
+  "Their topics: Voice paper · Research stay",
+].join("\n");
+
 export interface EvalCase {
   id: string;
   /** Why this case exists, in one line. Shown next to a failure. */
@@ -42,8 +55,47 @@ export interface EvalCase {
     mustMention?: string[];
     /** Regex sources, case-insensitive. None may match a spoken reply. */
     mustNotMention?: string[];
+    /**
+     * For a case whose context shows the board — where the agent has its board
+     * tools, as it does live. An object: the model must call this tool, each
+     * named argument matching its regex (case-insensitive); nothing need be
+     * spoken on that step, since the reply comes after the tool answers. `null`:
+     * it must NOT call a tool. Absent: a call is a failure too, so an old case
+     * cannot quietly start editing boards.
+     */
+    toolCall?: { name: string; args?: Record<string, string> } | null;
+    /**
+     * What the reply must do with the `<draft>` tag, when that is the point.
+     *
+     * `{ revises: /3f9a2c/ }` — exactly one draft, revising a handle that
+     * matches. `{ revises: null }` — exactly one draft, and it is NEW. `null`
+     * — no draft at all, which is the case for "you already have one, do not
+     * rewrite it". Omitted where the draft tag is not what is being tested;
+     * `checkReply` then ignores drafts entirely, as it did before.
+     */
+    draft?: { revises: RegExp | null } | null;
   };
 }
+
+/**
+ * The drafts block, as `/api/realtime/context` pre-renders it.
+ *
+ * Taken verbatim from `buildDraftContext`'s output shape rather than built by
+ * calling it, so a case pins the WORDING the model actually sees: a change to
+ * the renderer that breaks the contract should fail here rather than quietly
+ * evaluate a prompt nothing produces. Bodies are short on purpose — the runner
+ * sets `maxTokens: 200`, and a case whose expected reply cannot fit is a
+ * broken case, not a failing prompt.
+ */
+const DRAFTS = [
+  "Drafts you have written on this drive, and which you can still see:",
+  'draft 3f9a2c "Email to William" (v1.0, written by you)',
+  'draft b7e40d "Reading list" (v1.1, last edited by them)',
+  "",
+  "draft 3f9a2c:\nWilliam — the pilot starts on Monday. I will send the consent form on Friday. Best, Anna",
+  "",
+  "draft b7e40d:\n- Suchman, Plans and Situated Actions\n- Schön, The Reflective Practitioner",
+].join("\n");
 
 export const CASES: EvalCase[] = [
   {
@@ -188,6 +240,21 @@ export const CASES: EvalCase[] = [
     },
     said: "Okay. That's the plan for the intro done, I think.",
     expect: { turn: "speak", mustMention: ["doc|send|go ahead|diary"] },
+  },
+  {
+    id: "pending-asked-once",
+    about: "An ask already let pass once is not spent on a driver who is still mid-thought.",
+    setting: "walking",
+    history: [
+      { role: "user", content: "Okay. That's the plan for the intro done, I think." },
+      { role: "assistant", content: "Want me to send yesterday's diary entry to the shared doc now?" },
+    ],
+    context: {
+      pending: "send yesterday's diary entry to the shared Google Doc",
+      pendingAskedCount: 1,
+    },
+    said: "and the related work section still needs the context switching papers, the Mark one and the",
+    expect: { turn: "either", mustNotMention: ["doc|diary|go ahead|send"] },
   },
   {
     id: "thread-settles-open-question",
@@ -345,6 +412,153 @@ export const CASES: EvalCase[] = [
     },
     expect: {
       turn: "silent",
+    },
+  },
+  // --- 15 Sep 2026 pilot drives, in their own words (talkback-9) ------------
+  {
+    id: "board-remove-drops",
+    about: "Asked to remove a task, the agent drops it — with the tool, at once, without asking.",
+    setting: "desk",
+    history: [{ role: "assistant", content: "I think you should write up the asymmetry argument." }],
+    context: { board: BOARD },
+    // 15 Sep 2026: "Got it, I'll mark that as dropped." — and the card stayed.
+    said: "Let's remove this asymmetry argument. I don't even understand it.",
+    expect: { turn: "either", toolCall: { name: "move_task", args: { card: "^1225b3$", column: "^dropped$" } } },
+  },
+  {
+    id: "board-delete-now",
+    about: "Pressed to delete a card itself, the agent does it rather than explaining why it cannot.",
+    setting: "desk",
+    history: [{ role: "user", content: "But I can still see the ticket on the board." }],
+    context: { board: BOARD },
+    // 15 Sep 2026: "I cannot move or delete anything on the board myself."
+    said: "No, I want you to delete it now. The asymmetry one. You are supposed to do things like this autonomously in the background.",
+    expect: { turn: "either", toolCall: { name: "move_task", args: { card: "^1225b3$", column: "^dropped$" } } },
+  },
+  {
+    id: "board-mark-done",
+    about: "\"Mark it done\" moves the card to done.",
+    setting: "walking",
+    context: { board: BOARD },
+    said: "I sent the email to William this morning, so mark that one done.",
+    expect: { turn: "either", toolCall: { name: "move_task", args: { card: "^9b04e1$", column: "^done$" } } },
+  },
+  {
+    id: "board-add-task",
+    about: "Asked to put a task on the board, the agent adds it, in the topic it belongs to.",
+    setting: "driving",
+    context: { board: BOARD },
+    said: "Put booking the flights to Stanford on next, for the research stay.",
+    expect: {
+      turn: "either",
+      toolCall: { name: "add_task", args: { text: "flight", topic: "research stay", column: "^next$" } },
+    },
+  },
+  {
+    id: "board-not-a-task",
+    about: "\"That was never a task\" takes the card off the board; it is not the same as dropping it.",
+    setting: "desk",
+    context: { board: BOARD },
+    said: "The evaluation system one was never really a task, it's the whole project. Take it off the board.",
+    expect: { turn: "either", toolCall: { name: "remove_task", args: { card: "^7a31c0$" } } },
+  },
+  {
+    id: "board-reword",
+    about: "Asked to reword a card, the agent changes its words and nothing else.",
+    setting: "desk",
+    context: { board: BOARD },
+    said: "Rename the asymmetry one to: draft the asymmetry section.",
+    expect: {
+      turn: "either",
+      toolCall: { name: "reword_task", args: { card: "^1225b3$", text: "draft the asymmetry section" } },
+    },
+  },
+  {
+    id: "board-mention-no-edit",
+    about: "A task mentioned while thinking aloud is not a request: the board is left alone.",
+    setting: "desk",
+    context: { board: BOARD },
+    said: "Reading the Mark paper yesterday changed how I see the asymmetry argument, the interruption cost is the real point.",
+    expect: { turn: "either", toolCall: null },
+  },
+  {
+    id: "paste-a-file",
+    about: "Offered a document at a desk, the agent does not invent a chat to paste it into.",
+    setting: "desk",
+    // Observed: "Go ahead and paste it." then "…paste the markdown file into the chat on your screen".
+    said: "I don't remember. May I paste some Markdown file somewhere to paste the context and you help me to understand the evaluation plan?",
+    expect: {
+      turn: "speak",
+      mustMention: ["read|describ|tell me|aloud|out loud"],
+      mustNotMention: ["go ahead and paste|paste it|into the chat|upload it|on your screen"],
+    },
+  },
+  {
+    id: "repeat-mistranscribed",
+    about: "A request to hear the question again, as live ASR mangled it, gets the question — not \"go ahead\".",
+    setting: "desk",
+    history: [
+      { role: "user", content: "Yeah. Let's do this." },
+      {
+        role: "assistant",
+        content: "Do you want to start by listing all the courses you're considering, or the deadlines you're already worried about?",
+      },
+    ],
+    // Live ASR's words; the driver said "Can you repeat the question?". Observed reply: "Go ahead."
+    said: "Can I repeat the question?",
+    expect: {
+      turn: "speak",
+      mustMention: ["course|deadline"],
+      mustNotMention: ["^go ahead"],
+    },
+  },
+
+  /* Drafts the agent can see, and what it does with them (talkback-12). The
+   * failure these close: the agent wrote a draft, forgot it existed, and
+   * answered "make it shorter" with a SECOND card. */
+  {
+    id: "draft-revise-when-asked",
+    about: "Asked to change a draft it can see, it rewrites THAT draft rather than writing a second one.",
+    setting: "desk",
+    context: { drafts: DRAFTS },
+    history: [
+      { role: "user", content: "Draft me an email to William about the pilot." },
+      { role: "assistant", content: "Written — it's on your screen." },
+    ],
+    said: "That's too formal. Make it shorter and warmer.",
+    expect: {
+      turn: "speak",
+      draft: { revises: /3f9a2c/ },
+      // The handle is wire format. Spoken to somebody at a desk it is
+      // nonsense; spoken to somebody driving it is the `<silence>` failure
+      // again.
+      mustNotMention: ["3f9a2c", "b7e40d", "handle"],
+    },
+  },
+  {
+    id: "draft-new-when-different",
+    about: "Asked for something else entirely, it writes a NEW draft rather than overwriting one it can see.",
+    setting: "desk",
+    context: { drafts: DRAFTS },
+    said: "Different thing — write me a short message to Niklas asking if Thursday still works.",
+    expect: {
+      turn: "speak",
+      draft: { revises: null },
+      mustNotMention: ["3f9a2c", "b7e40d"],
+    },
+  },
+  {
+    id: "draft-seen-not-rewritten",
+    about:
+      "Asked what it has already written, it says so from the listing — no draft tag, and never the handle aloud.",
+    setting: "driving",
+    context: { drafts: DRAFTS },
+    said: "What have you written down for me so far?",
+    expect: {
+      turn: "speak",
+      draft: null,
+      mustMention: ["william|reading list|email"],
+      mustNotMention: ["3f9a2c", "b7e40d"],
     },
   },
 ];

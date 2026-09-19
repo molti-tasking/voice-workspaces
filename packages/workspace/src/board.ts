@@ -9,11 +9,13 @@
  * Like the trajectory, nothing here is stored. A task is a block of kind
  * `task`, its column is the `state` on that block, and a transition is a
  * `revise_block` that changed the state. Speech moves cards through the
- * extractor; a person moves them through the board. Both are ops in the same
- * ledger, told apart by `via`.
+ * extractor; a person moves them through the board; the talk-back agent moves
+ * them when asked to, through a tool. All three are ops in the same ledger,
+ * told apart by `via`.
  *
- * The evaluation's primary measure falls out of that: for every speech-driven
- * transition, did the person keep it, reverse it, or never touch it. Nobody
+ * The evaluation's primary measure falls out of that: for every transition a
+ * machine made — the extractor's or the agent's — did the person keep it,
+ * reverse it, or never touch it. Nobody
  * reads the drives, so the person's own keep/reverse is the ground truth by
  * design — and it is read off the ledger, not off page views.
  *
@@ -30,7 +32,11 @@ import {
   type WorkspaceState,
 } from "./types";
 
-export type TransitionVia = "speech" | "user";
+/**
+ * Who moved the card: the extractor reading speech, the person, the agent —
+ * or, for the add that put an already-kept task on the board, the import.
+ */
+export type TransitionVia = "speech" | "user" | "agent" | "import";
 
 export interface TaskTransition {
   /** Root of the revision chain — stable across revisions, the card's identity. */
@@ -73,6 +79,15 @@ export interface Board {
   /** Every transition on every card, in ledger order. */
   transitions: TaskTransition[];
   sessions: LedgerSession[];
+  /**
+   * The fold this board was built from.
+   *
+   * Carried rather than re-folded by the caller, because a task brief needs
+   * the topic's other blocks and the superseded ones behind each card. Folding
+   * a second time would cost another pass and, worse, could be handed a
+   * different `asOf` — two views of one ledger that disagree.
+   */
+  workspace: WorkspaceState;
   asOf: Date | null;
 }
 
@@ -151,7 +166,7 @@ function transitionsFrom(
       to,
       at: stored.occurredAt,
       seq: stored.seq,
-      via: op.via === "user" ? "user" : "speech",
+      via: op.via ?? "speech",
       extractionId: stored.extractionId,
       captureSessionId: stored.captureSessionId,
       sourceUtteranceIds: stored.sourceUtteranceIds ?? [],
@@ -214,7 +229,7 @@ export function foldBoard(ops: readonly StoredOp[], opts: { asOf?: Date } = {}):
     );
   }
 
-  return { columns, cards, transitions, sessions, asOf: state.asOf };
+  return { columns, cards, transitions, sessions, workspace: state, asOf: state.asOf };
 }
 
 function emptyColumns(): Record<TaskState, BoardCard[]> {
@@ -259,10 +274,20 @@ export type TransitionOutcome =
   | "corrected"
   /** The person said it was not a task. */
   | "retired"
-  /** Speech moved it again before the person weighed in. */
+  /** Speech or the agent moved it again before the person weighed in. */
   | "superseded"
   /** Untouched, but not enough drives have passed to call it kept. */
   | "pending";
+
+/**
+ * How many later drives a speech-driven move must survive untouched to count
+ * as kept. Two: one commute is easy to miss; two is a choice.
+ *
+ * Here rather than on the board page because two readers must agree on it: the
+ * card the person sees, and `study:export`, which the analysis reads. A kept
+ * card on screen that the export calls pending would be two measurements.
+ */
+export const KEPT_AFTER_SESSIONS = 2;
 
 export interface JudgedTransition {
   transition: TaskTransition;
@@ -272,7 +297,19 @@ export interface JudgedTransition {
 }
 
 /**
- * Judge every speech transition by what happened to the card next.
+ * Judge every transition a machine made by what happened to the card next.
+ *
+ * Speech (the extractor) and the agent are both judged, and separately
+ * countable by `transition.via`: one infers a change from what was said, the
+ * other makes one because it was asked to, and "do people keep what the agent
+ * did when they asked it" is not the same finding as "do they keep what the
+ * extractor read into their speech". Only the person's own moves decide.
+ *
+ * Neither `user` nor `import` transitions are judged. What a person moved by
+ * hand is the verdict; what they imported is a card they brought with them.
+ * Every LATER transition on an imported card is judged as usual — an imported
+ * task that speech then moves to `done` is exactly the acceptance question,
+ * and one of the few ways to ask it on the first drive.
  *
  * "Kept" is inferred from drives elapsed, not from page views: the ledger is
  * the instrument, and a card that sat in `done` through two more commutes
@@ -301,7 +338,11 @@ export function judge(
 
   for (let i = 0; i < ordered.length; i += 1) {
     const t = ordered[i]!;
-    if (t.via !== "speech") continue;
+    // The person's own moves are the verdict, not a claim to be judged — and
+    // an imported card is the same thing at the other end: work they were
+    // already tracking, which no machine read into anything. Scoring either
+    // would count a card towards acceptance that nothing inferred.
+    if (t.via === "user" || t.via === "import") continue;
 
     const next = ordered.slice(i + 1).find((n) => n.cardId === t.cardId);
 
@@ -312,7 +353,7 @@ export function judge(
     }
 
     let outcome: TransitionOutcome;
-    if (next.via === "speech") outcome = "superseded";
+    if (next.via !== "user") outcome = "superseded";
     else if (next.to === "retired") outcome = "retired";
     else if (next.to === t.from) outcome = "reversed";
     else outcome = "corrected";
@@ -323,7 +364,7 @@ export function judge(
   return judged;
 }
 
-/** The speech transitions the person did not accept. */
+/** The machine-made transitions the person did not accept. */
 export function reversals(
   transitions: readonly TaskTransition[],
   opts: { withinSessions: number; sessions?: readonly LedgerSession[] },

@@ -7,6 +7,7 @@ import { useSttLanguage } from "@/lib/recorder/language-store";
 import { useRecorder } from "@/lib/recorder/use-recorder";
 import { useVoice } from "@/lib/recorder/voice-store";
 import { useTalkback, type TalkbackState } from "@/lib/talkback/use-talkback";
+import { takeUseCase } from "@/lib/use-cases";
 
 /**
  * Whether talk-back is built into this bundle.
@@ -104,7 +105,11 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     // iOS gates the accelerometer behind a tap; this is the tap. The answer
     // arrives for the next recording, and this one starts now.
     void requestMotion();
-    void start(setting, source, voiceId, sttLanguage);
+    // Read HERE rather than held in state: `takeUseCase` clears as it reads, so
+    // the example belongs to this drive and not to every later one, and this
+    // provider is mounted for the whole app — holding it would mean deciding
+    // when to forget it, which is the same question with more moving parts.
+    void start(setting, source, voiceId, sttLanguage, takeUseCase());
   }, [requestMotion, start, setting, source, voiceId, sttLanguage]);
 
   const stopRecording = useCallback(() => {

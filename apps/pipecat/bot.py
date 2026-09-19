@@ -20,13 +20,28 @@ WHAT IS HERE
   summary     A rolling summary of the drive, folded in the background off the
               live STT stream — see `RunningSummary` for why it lives here and
               not in the ledger.
+  title       Two to four words naming what is being talked about right now,
+              pushed to the browser as an RTVI server message for the title on
+              the recorder — see `TopicTitle`.
 
 WHAT IS FETCHED, NOT DUPLICATED
-  /api/realtime/session   the system prompt, the summary instruction, the
-                          voice, a seed summary for reconnects, and the
-                          drive's start time. Once per connection.
+  /api/realtime/session   the system prompt, the summary and title
+                          instructions, the voice, a seed summary for
+                          reconnects, and the drive's start time. Once per
+                          connection.
   /api/realtime/context   passages from PAST drives matching what was just
-                          said. Once per turn.
+                          said, and any parked action to ask about — settling
+                          the last ask first. Once per turn.
+  /api/realtime/search    a web search the agent asked for, as a tool call —
+                          only where the session offered one. The driver hears
+                          the call's announcement and `SearchingSound` meanwhile.
+
+WHAT IS WRITTEN BACK
+  /api/realtime/agent-turn  what reached the speaker. The echo filter's input.
+  /api/realtime/decision    every moment the model was given to speak and what
+                            it became — spoken, declined, or talked over.
+  /api/realtime/board       a board edit the agent was asked to make, as a tool
+                            call. What the call means is decided there.
 
 WHAT IS NOT HERE. Retrieval and echo filtering run in TypeScript against the
 ledger. A second implementation in Python would be a second thing to keep
@@ -34,23 +49,32 @@ correct, and only one of them would get fixed.
 """
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import time
+import urllib.error
 import urllib.request
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
+import numpy as np
 from aiortc.sdp import candidate_from_sdp
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
 
+from pipecat.audio.mixers.base_audio_mixer import BaseAudioMixer
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
@@ -62,13 +86,21 @@ from pipecat.frames.frames import (
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMRunFrame,
+    FunctionCallsStartedFrame,
     LLMTextFrame,
+    MetricsFrame,
+    MixerControlFrame,
+    MixerEnableFrame,
     StartFrame,
     TranscriptionFrame,
+    TTSSpeakFrame,
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
     VADUserStartedSpeakingFrame,
 )
+from pipecat.adapters.schemas.function_schema import FunctionSchema
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
+from pipecat.metrics.metrics import LLMUsageMetricsData, TTFBMetricsData
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -78,11 +110,16 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+# The board's one wire to the browser. The RTVI observer that PipelineWorker
+# installs turns this frame into a `server-message` on the data channel the
+# transcripts already use, so it can be pushed from anywhere in the pipeline.
+from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.openai.stt import OpenAISTTService
 from pipecat.transports.base_transport import TransportParams
-from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
+from pipecat.transports.smallwebrtc.connection import IceServer, SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.workers.runner import WorkerRunner
 
@@ -112,20 +149,104 @@ WEB_URL = os.getenv("WEB_URL", "http://host.docker.internal:3000").rstrip("/")
 # with a message that reads like a network blip. STUN is what lets it discover
 # its public mapping and hole-punch.
 #
-# STUN alone is usually enough from a datacenter host. If ICE still fails —
-# symmetric NAT, or UDP blocked — a TURN server is required, and this is the
-# variable that points at it:
-#
-#   ICE_SERVERS=stun:stun.example.org:3478,turn:user:pass@turn.example.org:3478
-#
 # Comma-separated. Empty disables ICE servers entirely, which is the right
 # setting for a purely local run and wrong for anything else. The default is a
 # public STUN server: it learns this container's IP and nothing about the
 # participant — no audio and no transcript passes through it — but point it at
 # AU infrastructure if even that is worth avoiding.
-ICE_SERVERS = [
+#
+# STUN IS NOT ENOUGH FROM A PHONE, which is what TURN_URLS below is for. This
+# variable is STUN only now; a `turn:` URL here carries no credential and coturn
+# answers 401 to the allocation, so it would gather no relay candidate while
+# looking configured.
+STUN_SERVERS = [
     s.strip() for s in os.getenv("ICE_SERVERS", "stun:stun.l.google.com:19302").split(",") if s.strip()
 ]
+
+# THE RELAY. Read the note above first; this is the half that makes talk-back
+# work from a car rather than from a desk.
+#
+# STUN gets a path whenever one side can be hole-punched. A mobile carrier is
+# the case where neither can: carrier-grade NAT is typically symmetric, so the
+# mapping the phone learns from STUN is not the mapping this container sends to.
+# No candidate pair forms, ICE sits in `checking`, and 60 seconds later the log
+# says "Timeout establishing the connection to the remote peer" — which reads
+# like a network blip and is not one. Meanwhile the pipeline runs perfectly:
+# the model composes an opening line, ElevenLabs synthesises it, and it is
+# spoken into a transport with nowhere to send it. The only symptom is silence.
+# A drive on 18 Sep 2026 from a Telekom mobile connection is what this is.
+#
+# A relay is the only fix. There is no STUN configuration that reaches a
+# symmetric NAT, because the problem is not discovery.
+#
+# The URLs are credentialed at USE time, not here:
+#
+#   TURN_URLS=turn:voice.example.com:3478,turn:voice.example.com:3478?transport=tcp
+#   TURN_SECRET=<the same static-auth-secret coturn holds>
+#
+# NOTE the credential does NOT go in the URL. aiortc reads the username and
+# password off the RTCIceServer object and its URI parser rejects a host
+# containing `:` outright, so the `turn:user:pass@host:port` form that this
+# comment used to recommend raises ValueError inside /offer and 500s the
+# handshake. It was never exercised because TURN was never deployed.
+TURN_URLS = [s.strip() for s in os.getenv("TURN_URLS", "").split(",") if s.strip()]
+TURN_SECRET = os.getenv("TURN_SECRET", "")
+# coturn checks expiry when an allocation is made AND when it is refreshed, so a
+# credential that dies mid-drive drops the audio rather than merely refusing a
+# new call. Twelve hours outlives any drive.
+TURN_TTL_SECONDS = int(os.getenv("TURN_TTL_SECONDS") or 12 * 60 * 60)
+
+
+def turn_credentials(now: float | None = None) -> tuple[str, str]:
+    """coturn's REST-API credential: an expiry-stamped name, HMAC'd.
+
+    Must stay byte-identical to `mintTurnCredentials` in
+    packages/shared/src/turn-credentials.ts — the browser and this container
+    authenticate to the same coturn with the same secret, and a mismatch fails
+    silently on whichever side got it wrong: coturn answers 401, that peer
+    gathers no relay candidate, and the call degrades back to the exact silent
+    timeout the relay was added to fix.
+
+    The label is random rather than anything about the participant: it is
+    written to coturn's log for every allocation and travels in the SDP, and
+    coturn itself only ever reads the expiry back out.
+    """
+    expiry = int((now if now is not None else time.time())) + TURN_TTL_SECONDS
+    username = f"{expiry}:{secrets.token_hex(6)}"
+    digest = hmac.new(TURN_SECRET.encode(), username.encode(), hashlib.sha1).digest()
+    return username, base64.b64encode(digest).decode()
+
+
+def ice_servers() -> list[IceServer]:
+    """STUN as configured, plus a freshly credentialed relay when there is one.
+
+    Both, not either. A direct path costs no relay bandwidth and is lower
+    latency, so TURN is the fallback ICE falls back TO rather than a
+    replacement — offering only the relay would push every drive through it,
+    including the ones on a LAN that never needed it.
+
+    Built per connection because the credential expires. aiortc uses at most one
+    STUN and one TURN server whatever it is given, so order matters: the first
+    of each wins.
+    """
+    servers = [IceServer(urls=url) for url in STUN_SERVERS]
+
+    if TURN_URLS and TURN_SECRET:
+        username, credential = turn_credentials()
+        servers.extend(
+            IceServer(urls=url, username=username, credential=credential)
+            for url in TURN_URLS
+        )
+    elif TURN_URLS or TURN_SECRET:
+        # Half-configured is the likelier of the two deployment mistakes, and it
+        # is invisible from the outside: the call still connects from a desk.
+        logger.warning(
+            "TURN is half-configured — %s is set and the other is not. "
+            "No relay will be offered, and talk-back will fail from a mobile network.",
+            "TURN_URLS" if TURN_URLS else "TURN_SECRET",
+        )
+
+    return servers
 
 # Folds the drive into a rolling summary. Falls back to MODEL_CONVERSE and
 # deliberately NOT to MODEL_FAST: each fold builds on the last, so a model that
@@ -404,6 +525,31 @@ def fetch_session(ticket: str | None) -> dict:
         return {"systemPrompt": FALLBACK_SYSTEM_PROMPT, "degraded": True}
 
 
+def user_turn_stop_timeout_secs() -> float:
+    """How long after the driver's last sound a turn is ended regardless.
+
+    Pipecat ends a turn when its turn model judges the utterance finished. When
+    it does not — a trailing "and the", or a final transcript landing after the
+    VAD stop, which Pipecat warns about at startup with our stop_secs=0.5 — a
+    fallback ends the turn after `user_turn_stop_timeout` of silence. Its
+    default is 5.0s, and on the 15 Sep 2026 pilot drive half the replies took
+    5.3-6.6s from the driver's words to the first spoken word while the model's
+    own first token took 0.3-0.5s: the fallback, every time. A reply that late
+    answers what was said two lines ago.
+
+    2.0 by default. Ending a turn early does not make the agent talk over a
+    thinker: the completion still runs through the prompt's "mid-thought, reply
+    <silence>" rule and SilenceGate, so the cost is a declined completion, not
+    an interruption. Clamped to 1-5s; `USER_TURN_STOP_TIMEOUT_SECS` tunes it
+    without a rebuild (but with --force-recreate).
+    """
+    try:
+        value = float(os.getenv("USER_TURN_STOP_TIMEOUT_SECS") or 2.0)
+    except ValueError:
+        value = 2.0
+    return min(5.0, max(1.0, value))
+
+
 def deepgram_utterance_end_ms() -> int:
     """`DEEPGRAM_UTTERANCE_END_MS`, never below the value Deepgram accepts.
 
@@ -667,6 +813,45 @@ class SpeakerTagger(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+def _litellm_chat(messages: list[dict], *, max_tokens: int, metadata: dict) -> str | None:
+    """One blocking chat completion against the proxy, for the background folds.
+
+    BLOCKING ON PURPOSE, and called through `asyncio.to_thread`: urllib is in the
+    standard library and this container already depends on the proxy being
+    reachable. An async HTTP client would be a second connection pool to reason
+    about for two calls a minute that nobody is waiting on.
+
+    Shared by `RunningSummary` and `TopicTitle` because they ask the same model
+    the same way and differ only in prompt and token budget — the summary's own
+    copy of this was the obvious thing for the title to drift away from.
+
+    `SUMMARISE_MODEL` for both, and temperature 0: these are folds, not
+    conversation. A title that comes back differently worded each call would
+    blur the recorder's title for no reason.
+    """
+    req = urllib.request.Request(
+        f"{LITELLM_BASE_URL}/chat/completions",
+        method="POST",
+        data=json.dumps(
+            {
+                "model": SUMMARISE_MODEL,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": 0,
+                # For Langfuse, through LiteLLM. Ignored by a proxy without it.
+                "metadata": metadata,
+            }
+        ).encode(),
+        headers={
+            "Authorization": f"Bearer {LITELLM_API_KEY}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as res:
+        body = json.loads(res.read())
+    return (body["choices"][0]["message"]["content"] or "").strip() or None
+
+
 class RunningSummary(FrameProcessor):
     """A rolling summary of the drive, kept in memory and never persisted.
 
@@ -778,30 +963,214 @@ class RunningSummary(FrameProcessor):
             if self._summary and self._summary.strip()
             else "Summary so far: (nothing yet)"
         )
-        req = urllib.request.Request(
-            f"{LITELLM_BASE_URL}/chat/completions",
-            method="POST",
-            data=json.dumps(
-                {
-                    "model": SUMMARISE_MODEL,
-                    "messages": [
-                        {"role": "system", "content": self._prompt},
-                        {"role": "user", "content": f"{prior}\n\nNewly spoken:\n{new_text}"},
-                    ],
-                    "max_tokens": 300,
-                    "temperature": 0,
-                    # For Langfuse, through LiteLLM. Ignored by a proxy without it.
-                    "metadata": self._metadata,
-                }
-            ).encode(),
-            headers={
-                "Authorization": f"Bearer {LITELLM_API_KEY}",
-                "Content-Type": "application/json",
-            },
+        return _litellm_chat(
+            [
+                {"role": "system", "content": self._prompt},
+                {"role": "user", "content": f"{prior}\n\nNewly spoken:\n{new_text}"},
+            ],
+            max_tokens=300,
+            metadata=self._metadata,
         )
-        with urllib.request.urlopen(req, timeout=30) as res:
-            body = json.loads(res.read())
-        return (body["choices"][0]["message"]["content"] or "").strip() or None
+
+
+def clean_title(raw: str | None, previous: str | None) -> str | None:
+    """Make a model's answer fit on a board, or decide it is not a change.
+
+    Pure, and separated from `TopicTitle` because this is where every shape the
+    model can return has to be survived: a quoted title, one wrapped in
+    asterisks, one with a full stop, one that is a whole sentence, the literal
+    word NONE, or the title it was already given back verbatim — which is the
+    COMMON case and the one the prompt asks for.
+
+    Returns None for "nothing to change", so the caller has exactly one test to
+    make and the title never re-animates to what it is already showing.
+
+    The caps are the board's, not the model's: four words and 32 characters is
+    what fits across a phone in a cradle at a size that can be read without
+    focusing. A longer answer is cut rather than rejected — a shortened subject
+    still names the subject, and rejecting it would leave the last title up
+    while the conversation has moved on.
+    """
+    if not raw:
+        return None
+
+    text = raw.strip()
+    # Markdown the model was not asked for, and the quotes it puts round a title
+    # because a title looks like a quotation.
+    text = re.sub(r"[*_`#]+", " ", text)
+    text = text.strip().strip("\"'“”‘’").strip()
+    # Trailing punctuation: a board has none, and "Funding round." and
+    # "Funding round" are the same title arriving twice.
+    text = re.sub(r"[\s.,;:!?\-–—]+$", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    if not text or text.upper() == "NONE":
+        return None
+
+    # Four words, then as many of them as fit — dropped whole. A board cut
+    # mid-word reads as a rendering fault rather than as a long subject, and a
+    # glance cannot tell the two apart.
+    words = text.split(" ")[:4]
+    while len(words) > 1 and len(" ".join(words)) > 32:
+        words.pop()
+    text = " ".join(words)[:32].strip()
+    # The cut can leave a trailing mark behind.
+    text = re.sub(r"[\s.,;:!?\-–—]+$", "", text)
+
+    if not text:
+        return None
+    # Case-insensitively, because a model that re-capitalises the same subject
+    # has not changed it.
+    if previous is not None and text.casefold() == previous.casefold():
+        return None
+    return text
+
+
+class TopicTitle(FrameProcessor):
+    """The live topic title: what is being talked about RIGHT NOW, in 2-4 words.
+
+    WHY THE CONTAINER. The browser has no transcript of its own worth naming —
+    it would have to ask the ledger, which trails live speech by 15 to 25
+    seconds through the batch capture path, and then poll for it on a phone that
+    is already holding a MediaRecorder open and a WebRTC call up. This process
+    has the live STT stream, which exists nowhere else, and a data channel to
+    the browser that the audio already needs. So the freshest source pushes, and
+    the phone makes no extra request. Same three reasons as `RunningSummary`,
+    which this sits next to.
+
+    WHY A RECENT WINDOW AND NOT THE SUMMARY. The running summary is the whole
+    drive — decisions, open questions, the thread of the argument — and a title
+    taken from it would name the drive, which barely changes over forty minutes.
+    The board has to answer a different question: what is being said in the last
+    minute or two. So this keeps its own short window (`WINDOW_CHARS`) and lets
+    the summary keep its own job.
+
+    IT NEVER BLOCKS A TURN. The call runs as a background task and pushes a
+    frame when it lands. A title that is a few seconds stale costs a glance
+    nothing; a turn that waits on one costs the conversation. One call in flight
+    at a time and NO QUEUE, for the same reason `_maybe_fold` has none: queued
+    calls would arrive out of order behind a slow model and the newest answer is
+    the only one worth having.
+
+    HOW IT REACHES THE SCREEN. `RTVIServerMessageFrame`, which the RTVI observer
+    that `PipelineWorker` installs serialises onto the same data channel the
+    transcripts use — so this works from anywhere in the pipeline and needs no
+    processor of its own downstream.
+
+    INERT WITHOUT A PROMPT. An older web app does not send `titlePrompt`, and a
+    degraded connection has no session at all. Then this makes no calls and
+    pushes nothing, and the browser simply never shows a board — which is the
+    right failure for a decorative surface on a study rig.
+    """
+
+    # How much recent speech the model is shown. Enough for a subject to be
+    # recognisable, short enough that last quarter-hour cannot outvote the last
+    # minute — which is the whole difference between this and the summary.
+    WINDOW_CHARS = 900
+    # Enough new speech to be worth naming, and never more often than this.
+    CALL_AFTER_CHARS = 160
+    MIN_GAP_SECONDS = 12
+    # A slow talker still gets a title: any new speech at all, after this long.
+    CALL_AFTER_SECONDS = 30
+
+    def __init__(self, title_prompt: str | None, metadata: dict | None = None):
+        super().__init__()
+        self._prompt = (title_prompt or "").strip()
+        self._metadata = metadata or {}
+        self._title: str | None = None
+        self._window = ""
+        self._new_chars = 0
+        self._last_call = time.monotonic()
+        self._task: asyncio.Task | None = None
+
+    @property
+    def title(self) -> str | None:
+        return self._title
+
+    def note_agent(self, text: str) -> None:
+        """Record what the driver actually HEARD.
+
+        Called by `SilenceGate` rather than observed as a frame, for the same
+        reason the summary is: the gate is the only place that knows the final
+        text, after the sentinel is stripped and a declined turn is dropped.
+
+        It belongs in the window because half of what names a subject is the
+        answer — "the Tuesday deadline" is often the agent's phrase for what the
+        driver has been circling, and a board built only from the microphone
+        would keep missing it.
+        """
+        if text.strip():
+            self._append(f"(you said) {text.strip()}")
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, TranscriptionFrame) and frame.text.strip():
+            self._append(frame.text.strip())
+
+        # Pushed on IMMEDIATELY, before anything is decided about it. Nothing
+        # downstream waits on the board.
+        await self.push_frame(frame, direction)
+
+        if isinstance(frame, TranscriptionFrame) and frame.text.strip():
+            self._maybe_name()
+
+    def _append(self, text: str) -> None:
+        if not self._prompt or not text.strip():
+            return
+        self._window = f"{self._window} {text.strip()}".strip()[-self.WINDOW_CHARS :]
+        self._new_chars += len(text.strip())
+
+    def _maybe_name(self) -> None:
+        elapsed = time.monotonic() - self._last_call
+        enough = self._new_chars >= self.CALL_AFTER_CHARS and elapsed >= self.MIN_GAP_SECONDS
+        overdue = self._new_chars > 0 and elapsed >= self.CALL_AFTER_SECONDS
+        if not (enough or overdue):
+            return
+        if self._task is not None and not self._task.done():
+            return
+        # `create_task`, not `asyncio.create_task`, because this task PUSHES A
+        # FRAME — the same reason `Offers` uses it. Pipecat's task manager is
+        # what keeps that push inside the processor's own lifecycle, and what
+        # cancels it cleanly when the pipeline goes down.
+        # `_name_topic`, not `_name`: FrameProcessor already owns `_name`, and it
+        # is a string — shadowing it fails at the call, not at the definition.
+        self._task = self.create_task(self._name_topic(), name="title:call")
+
+    async def _name_topic(self) -> None:
+        window, self._new_chars = self._window, 0
+        self._last_call = time.monotonic()
+        if not window:
+            return
+
+        current = self._title or "(none yet)"
+        try:
+            raw = await asyncio.to_thread(
+                _litellm_chat,
+                [
+                    {"role": "system", "content": self._prompt},
+                    {
+                        "role": "user",
+                        "content": f"Current title: {current}\n\nRecent speech:\n{window}",
+                    },
+                ],
+                max_tokens=16,
+                metadata=self._metadata,
+            )
+        except Exception as err:
+            # Logged and dropped. The next trigger retries against a window that
+            # still holds this speech, so nothing is lost but one call — and a
+            # board is not worth failing a drive over.
+            logger.warning(f"[title] naming failed, will retry: {err}")
+            return
+
+        title = clean_title(raw, self._title)
+        if title is None:
+            return
+
+        self._title = title
+        logger.info(f"[title] {title}")
+        await self.push_frame(RTVIServerMessageFrame(data={"type": "title", "title": title}))
 
 
 class Recall(FrameProcessor):
@@ -842,11 +1211,23 @@ class Recall(FrameProcessor):
         # the whole mechanism that stops the prompt growing without bound.
         self._message: dict | None = None
 
-    def _fetch(self, said: str) -> tuple[list[dict], list[dict], dict | None, str | None]:
+    def _fetch(
+        self, said: str, answering: str | None = None
+    ) -> tuple[
+        list[dict], list[dict], dict | None, str | None, str | None, str | None
+    ]:
+        body: dict = {"ticket": self._ticket, "said": said}
+        # The invocation the agent's last turn asked about. The route resolves
+        # these words as the answer and settles it BEFORE reading what is still
+        # pending, so the question just answered is never put back in front of
+        # the model on the turn that answered it. Which words count as yes is
+        # decided there, in TypeScript, once — not here.
+        if answering:
+            body["answering"] = answering
         req = urllib.request.Request(
             f"{WEB_URL}/api/realtime/context",
             method="POST",
-            data=json.dumps({"ticket": self._ticket, "said": said}).encode(),
+            data=json.dumps(body).encode(),
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=5) as res:
@@ -860,6 +1241,13 @@ class Recall(FrameProcessor):
                 # one decision, and splitting it across two languages is how the
                 # two would drift.
                 body.get("board"),
+                body.get("settled"),
+                # Same, from `buildDraftContext`: the handles the model needs to
+                # revise a draft are derived from row ids this process never
+                # sees. Absent from an older web deploy, which reads as "no
+                # drafts" — the container then writes new drafts, which is
+                # exactly the behaviour before this existed.
+                body.get("drafts"),
             )
 
     def _compose(
@@ -868,6 +1256,7 @@ class Recall(FrameProcessor):
         pending: dict | None = None,
         threads: list[dict] | None = None,
         board: str | None = None,
+        drafts: str | None = None,
     ) -> str | None:
         sections: list[str] = []
         # THE BOARD FIRST, ahead even of where things stand. It is the most
@@ -893,6 +1282,14 @@ class Recall(FrameProcessor):
                     f"[{p.get('when', 'earlier')}] {p.get('text', '')}" for p in passages
                 )
             )
+        # The drafts come after the quotes and before the drive summary. They
+        # are THIS drive's own output — not dated material from past ones — so
+        # they sit with the current drive; and the summary still has to be last,
+        # because it is what "that", "the second one" and "what I just said"
+        # resolve against. Mirrored in packages/talkback/src/eval/messages.ts —
+        # change one, change both.
+        if drafts:
+            sections.append(drafts)
         summary = self._summary.summary
         if summary and summary.strip():
             sections.append(f"So far in this drive:\n{summary.strip()}")
@@ -909,12 +1306,21 @@ class Recall(FrameProcessor):
         # asymmetry the whole design rests on is that additive things fire
         # freely while irreversible things ask — and asking in the middle of
         # somebody's sentence is its own kind of damage.
+        #
+        # The second ask is worded to be let go of. The route stops sending the
+        # action after two asks (MAX_CONFIRMATION_ASKS in repertoire.ts); this
+        # is what stops the model spending the repeat at the first pause.
         if pending and pending.get("restatement"):
             ask = (
                 "They earlier asked for this, and it has not happened yet because it "
                 f"cannot be undone: {pending['restatement']}\n"
-                "If they are between thoughts, ask in one short sentence whether to go "
-                "ahead. If they are mid-thought, say nothing and it will keep."
+                + (
+                    "You have already asked about it once. Ask one more time only if they "
+                    "have plainly finished a thought; otherwise leave it and it will keep."
+                    if (pending.get("askedCount") or 0) > 0
+                    else "If they are between thoughts, ask in one short sentence whether to go "
+                    "ahead. If they are mid-thought, say nothing and it will keep."
+                )
             )
             block = f"{block}\n\n{ask}" if block else ask
 
@@ -929,7 +1335,7 @@ class Recall(FrameProcessor):
         block exists, and the next compose replaces it anyway.
         """
         if self._message is None:
-            content = self._compose([], None, [], None)
+            content = self._compose([], None, [], None, None)
             if content:
                 self._message = {"role": "system", "content": content}
                 self._context.add_message(self._message)
@@ -981,6 +1387,12 @@ class Recall(FrameProcessor):
             # request that produced it.
             if self._drafts is not None:
                 self._drafts.note_user(frame.text)
+            # Taken whether or not the fetch below happens or succeeds: these
+            # are the ONE set of words that could answer the ask, and the next
+            # set cannot.
+            answering = (
+                self._recorder.take_awaiting_answer() if self._recorder is not None else None
+            )
 
             passages: list[dict] = []
             threads: list[dict] = []
@@ -989,11 +1401,12 @@ class Recall(FrameProcessor):
             # degraded drive has no ticket and never enters it, and a fetch that
             # raises leaves it unbound. Either way `_compose` below reads it.
             board: str | None = None
+            drafts: str | None = None
             if self._ticket:
                 try:
                     # The search query is what was said, not who said it.
-                    passages, threads, pending, board = await asyncio.to_thread(
-                        self._fetch, strip_speaker_tag(frame.text)
+                    passages, threads, pending, board, settled, drafts = await asyncio.to_thread(
+                        self._fetch, strip_speaker_tag(frame.text), answering
                     )
                     if passages:
                         logger.info(f"[recall] {len(passages)} passage(s) from past drives")
@@ -1001,17 +1414,30 @@ class Recall(FrameProcessor):
                         logger.info(f"[recall] {len(threads)} thread(s) from the workspace")
                     if board:
                         logger.info(f"[board] {board.count(chr(10) + '- ')} live task(s) in view")
+                    if answering:
+                        logger.info(f"[confirm] answer to {answering}: {settled or 'unclear'}")
+                    if drafts:
+                        logger.info(f"[draft] {drafts.count(chr(10) + 'draft ')} draft(s) in view")
                     if pending:
-                        logger.info(f"[recall] pending confirmation {pending.get('invocationId')}")
+                        logger.info(
+                            f"[recall] pending confirmation {pending.get('invocationId')}"
+                            f" (asked {pending.get('askedCount') or 0}x)"
+                        )
                 except Exception as err:
                     # Never fatal. An agent that has forgotten the past is worth
                     # far more than one that stops talking, and the capture
                     # ledger is untouched either way.
                     logger.warning(f"[recall] failed, continuing without it: {err}")
 
+            # What the model is about to be asked to answer, for the decision
+            # record: this turn is ABOUT the parked action when the ask is in
+            # front of it, whether or not the model ends up asking.
+            if self._recorder is not None and pending:
+                self._recorder.note_pending(pending.get("invocationId"))
+
             # Composed even when retrieval failed: the running summary is local
             # and still worth putting in front of the model.
-            content = self._compose(passages, pending, threads, board)
+            content = self._compose(passages, pending, threads, board, drafts)
             if content:
                 # REPLACE, never append. Calling add_message every turn used to
                 # stack a new block onto a context that is never pruned — by turn
@@ -1058,8 +1484,20 @@ _TAG_PREFIXES = (SILENCE_TOKEN, DRAFT_OPEN, DRAFT_CLOSE)
 # whether to take them, via the sentinel as always. The prompt's own offer
 # stance (talkback-6) is what makes it take them.
 
-# Off by env for a study arm that needs the purely-reactive behaviour back.
+# The FALLBACK for whether offers run. A study arm is a property of the drive,
+# not of this container — one container serves every participant — so the
+# drive's own `studyCondition.proactiveOffers` from /api/realtime/session
+# decides. This only applies when there is no such answer: a degraded
+# connection, whose drive is already off the study's record.
 PROACTIVE_OFFERS = os.getenv("PROACTIVE_OFFERS", "true").lower() in ("1", "true", "yes")
+
+
+def offers_enabled(session: dict) -> bool:
+    """Whether this drive's condition runs the proactive engine."""
+    condition = session.get("studyCondition")
+    if session.get("degraded") or not isinstance(condition, dict):
+        return PROACTIVE_OFFERS
+    return bool(condition.get("proactiveOffers", PROACTIVE_OFFERS))
 
 # How many seconds of quiet may follow a completed, unanswered thought before
 # the engine offers a turn, by proactivity level.
@@ -1112,9 +1550,13 @@ class Offers(FrameProcessor):
     WHAT fires: a user-role instruction (the mirrored templates above) added
     to the context, then an `LLMRunFrame` — the same frame the user aggregator
     pushes to run a normal turn — so the completion, the gate, the recorder
-    and the barge-in plumbing are all the normal ones. An offered turn that
-    speaks is an `agent_turn` like any other; one that declines leaves no
-    trace but this log.
+    and the barge-in plumbing are all the normal ones. The recorder is told
+    first that the moment is an offer, so an offered turn that speaks is an
+    `agent_turn` of kind `proactive_prompt`, and one that declines is an
+    `agent_decision` saying so rather than a log line.
+
+    WHETHER it runs at all is the drive's study condition (`offers_enabled`),
+    read once per connection.
 
     WHY A TIMER PER OFFER rather than a loop: each silence is armed fresh
     from the frames that ended it, so the interval always reflects the current
@@ -1129,10 +1571,18 @@ class Offers(FrameProcessor):
     # A declined offer never waits longer than this to try again.
     BACKOFF_CAP_SECS = 120
 
-    def __init__(self, context: LLMContext, recall: "Recall", session: dict):
+    def __init__(
+        self,
+        context: LLMContext,
+        recall: "Recall",
+        session: dict,
+        recorder: "TurnRecorder | None" = None,
+    ):
         super().__init__()
         self._context = context
         self._recall = recall
+        self._recorder = recorder
+        self._enabled = offers_enabled(session)
         # The setting's proactivity level, arrived via /api/realtime/session —
         # the same value that governs how forthcoming the prompt is allowed to
         # be. Missing (a degraded connection) falls back to the driving
@@ -1159,7 +1609,7 @@ class Offers(FrameProcessor):
         concerned, so it must not count as the "reply" the never-twice rule
         waits for — but it IS a declined offer, so it backs off.
         """
-        if not PROACTIVE_OFFERS:
+        if not self._enabled:
             return
         if spoke:
             self._awaiting_user = True
@@ -1203,6 +1653,8 @@ class Offers(FrameProcessor):
         # The engine has now had its turn. If the model speaks, the
         # never-twice rule holds until the driver replies; if it declines,
         # note_agent_turn backs off and re-arms.
+        if self._recorder is not None:
+            self._recorder.note_offer("opening" if opening else "silence_offer")
         self._context.add_message({"role": "user", "content": instruction})
         logger.info(
             f"[offers] {'opening the drive' if opening else f'{int(delay)}s of quiet'} — offering a turn"
@@ -1214,7 +1666,7 @@ class Offers(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
-        if PROACTIVE_OFFERS:
+        if self._enabled:
             if isinstance(frame, StartFrame):
                 if not self._opened:
                     self._arm(self.OPENING_GRACE_SECS, opening=True)
@@ -1244,7 +1696,10 @@ def extract_drafts(reply: str) -> tuple[str, list[dict]]:
     a draft, so an unterminated block runs to the end of the completion rather
     than being thrown away over seven missing characters.
 
-    Returns (speech, drafts) where each draft is {"title", "text"}.
+    Returns (speech, drafts) where each draft is {"title", "text"} plus
+    {"revises": handle} when the tag named a draft it replaces. The key is
+    ABSENT on a new draft rather than empty, which is how the write path tells
+    "this is new" from "this replaces something" without a sentinel value.
     """
     drafts: list[dict] = []
     speech = ""
@@ -1266,13 +1721,21 @@ def extract_drafts(reply: str) -> tuple[str, list[dict]]:
             break
 
         speech += rest[:open_at]
-        title_match = re.search(r'title\s*=\s*"([^"]*)"', rest[open_at:open_end])
+        attributes = rest[open_at:open_end]
+        title_match = re.search(r'title\s*=\s*"([^"]*)"', attributes)
         title = title_match.group(1).strip() if title_match else ""
+        revises_match = re.search(r'revises\s*=\s*"([^"]*)"', attributes)
+        revises = revises_match.group(1).strip() if revises_match else ""
 
         close_at = rest.find(DRAFT_CLOSE, open_end)
         body = rest[open_end + 1 :] if close_at == -1 else rest[open_end + 1 : close_at]
         if body.strip():
-            drafts.append({"title": title, "text": body.strip()})
+            draft = {"title": title, "text": body.strip()}
+            # Only when non-empty: `revises=""` is a model filling in the
+            # attribute it was shown rather than naming a draft.
+            if revises:
+                draft["revises"] = revises
+            drafts.append(draft)
         if close_at == -1:
             break
         rest = rest[close_at + len(DRAFT_CLOSE) :]
@@ -1323,8 +1786,33 @@ def strip_speaker_tags(text: str) -> str:
     return SPEAKER_TAG.sub("", text)
 
 
+@dataclass(frozen=True)
+class Cue:
+    """What the model is being asked to respond to, and since when.
+
+    `trigger` is one of the `agent_decision_trigger` values. `subject_key` is
+    what the moment is about when it is about one thing — the parked
+    invocation for a confirmation. `at_ms` is wall clock, the moment the cue
+    arose: the driver's final words, or the offer timer firing.
+    """
+
+    trigger: str
+    subject_key: str | None = None
+    at_ms: int | None = None
+
+
+# Unprompted moments: the engine made them, nobody spoke. A turn taken in one
+# is a `proactive_prompt`, whatever it says.
+OFFER_TRIGGERS = ("opening", "silence_offer", "agenda", "macro_offer")
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
 class TurnRecorder:
-    """Writes down what the agent said, for the filter that reads it back.
+    """Writes down what the agent said, for the filter that reads it back —
+    and what it chose not to say, for the study.
 
     🔴 NOT bookkeeping. `agent_turn` is what the echo filter consults: the
     agent's voice reaches the microphone through the speaker, is transcribed
@@ -1338,13 +1826,41 @@ class TurnRecorder:
 
     It is also the paper's turn-taking record. A live conversation cannot be
     replayed, so these rows are the only evidence it happened.
+
+    TWO TABLES, KEPT APART. Every completion the gate sees end becomes an
+    `agent_decision` — spoke, declined, or talked over. Only one that reached
+    the speaker also becomes an `agent_turn`. A declined turn must never be
+    written to `agent_turn`: the echo filter would then discard the driver's
+    own words for resembling a sentence the car never played.
+
+    THE CUE. The processors that see a moment arise — `Recall` for the
+    driver's words, `Offers` for the timer — tell this object; the gate
+    snapshots it when a completion starts, so a later cue cannot relabel a
+    turn already in flight.
     """
 
-    def __init__(self, ticket: str | None, started_at_ms: int | None):
+    def __init__(
+        self,
+        ticket: str | None,
+        started_at_ms: int | None,
+        config_version: str | None = None,
+    ):
         self._ticket = ticket
         self._started_at_ms = started_at_ms
+        # Echoed from /api/realtime/session: the version of the prompt this
+        # container is actually running, which a web deploy mid-drive does
+        # not change.
+        self._config_version = config_version
         self._seq = 0
+        self._decision_seq = 0
         self._responding_to: str | None = None
+        self._cue = Cue("user_turn")
+        # The invocation the last spoken turn asked about, until the driver's
+        # next words are sent as its answer — or a later turn moves on.
+        self._awaiting_answer: str | None = None
+        # Board tools called since the last recorded turn, for `toolCalls` on
+        # the turn that reports them.
+        self._tool_calls: list[dict] = []
 
     def note_user(self, text: str) -> None:
         """What the driver just said, told to us from upstream.
@@ -1355,6 +1871,36 @@ class TurnRecorder:
         """
         if text.strip():
             self._responding_to = text
+            self._cue = Cue("user_turn", None, _now_ms())
+
+    def note_pending(self, invocation_id: str | None) -> None:
+        """The driver's turn carries a parked action to ask about.
+
+        Only a turn the driver started can: the ask arrives with /context,
+        which only their words fetch. Keeps the moment's clock — the ask did
+        not make the moment, their words did.
+        """
+        if invocation_id and self._cue.trigger == "user_turn":
+            self._cue = Cue("confirmation", invocation_id, self._cue.at_ms)
+
+    def note_offer(self, trigger: str) -> None:
+        """The proactive engine is about to run a turn nobody asked for."""
+        self._cue = Cue(trigger, None, _now_ms())
+
+    def cue(self) -> Cue:
+        return self._cue
+
+    def note_tool_call(self, name: str, latency_ms: int, error: str | None = None) -> None:
+        """A tool the agent called; attached to the turn that speaks about it."""
+        call: dict = {"name": name, "latencyMs": max(0, latency_ms)}
+        if error:
+            call["error"] = error[:500]
+        self._tool_calls.append(call)
+
+    def take_awaiting_answer(self) -> str | None:
+        """The invocation an answer now would settle, handed over once."""
+        invocation_id, self._awaiting_answer = self._awaiting_answer, None
+        return invocation_id
 
     def record(
         self,
@@ -1363,8 +1909,11 @@ class TurnRecorder:
         *,
         started_ms: int | None = None,
         barged_in: bool = False,
+        cue: Cue | None = None,
+        metrics: dict | None = None,
     ) -> None:
-        """Fire and forget. A failure here must never cost the driver a reply.
+        """A turn that reached the speaker. Fire and forget: a failure here
+        must never cost the driver a reply.
 
         `started_ms` is the wall clock when the first word was released to
         TTS, which is when speech began. `barged_in` means the person spoke
@@ -1374,22 +1923,29 @@ class TurnRecorder:
         badge and the paper's turn-taking record read them. Before they were
         sent, a reply cut off after one word was filed as a complete turn
         that said "The".
+
+        `metrics` is what the gate saw of the LLM's own timing for this
+        completion: `ttftMs`, `promptTokens`, `completionTokens`,
+        `requestedModel`, each only when measured.
         """
         if not self._ticket or not self._started_at_ms or not spoken.strip():
             return
 
+        cue = cue or self._cue
         seq, self._seq = self._seq, self._seq + 1
-        now = int(time.time() * 1000)
+        now = _now_ms()
         # Milliseconds into the drive, on the same clock as `utterance` — which
         # is what lets the two be read as one dialogue, and what the echo filter
         # compares intervals against.
         offset = max(0, (started_ms or now) - self._started_at_ms)
+        kind = self._kind(cue, generated if barged_in else spoken)
         payload = {
             "ticket": self._ticket,
             "seq": seq,
             "startOffsetMs": offset,
             "text": spoken,
             "generatedText": generated,
+            "kind": kind,
         }
         if barged_in:
             end = max(offset, now - self._started_at_ms)
@@ -1401,26 +1957,144 @@ class TurnRecorder:
             # Roughly 14 characters a second of speech. An estimate, and marked
             # as one: the container never learns when playback actually ended.
             payload["endOffsetMs"] = offset + int(len(spoken) / 14 * 1000)
+        # Only a turn the driver's words prompted answers them. An offer
+        # answers nothing, and filing it against their last line — often
+        # minutes old — would make the transcript say it did.
+        if self._responding_to and cue.trigger not in OFFER_TRIGGERS:
+            payload["respondingToText"] = self._responding_to
+        if self._config_version:
+            payload["configVersion"] = self._config_version
+        latency = self._latency(cue, started_ms or now)
+        if latency is not None:
+            # From the moment to the first word released: what "did it feel
+            # fast" was about. Not the moment to audio — the TTS's own delay
+            # happens downstream of anything this container can time per turn.
+            payload["totalLatencyMs"] = latency
+        for key in ("ttftMs", "promptTokens", "completionTokens", "requestedModel"):
+            if metrics and metrics.get(key) is not None:
+                payload[key] = metrics[key]
+        if self._tool_calls:
+            payload["toolCalls"], self._tool_calls = self._tool_calls[:8], []
+
+        # Whatever this turn was, it is now the last thing the driver heard.
+        # An ask makes their next words its answer; anything else means their
+        # next words answer that instead.
+        self._awaiting_answer = cue.subject_key if kind == "confirmation_request" else None
+
+        decision = self._decision(cue, "interrupted" if barged_in else "spoke", latency)
+        self._send(payload, decision)
+
+    def record_announcement(self, spoken: str) -> None:
+        """A sentence spoken for a tool while it runs — "Let me look that up."
+
+        Written to `agent_turn`, because it reached the speaker and the echo
+        filter must know that. NOT a decision, and it does not take the tool
+        calls pending for the next turn: the model's decision is the completion
+        that called the tool and the one that answers from it, and both are
+        recorded by the gate as usual. Nor does it settle an ask — it is not an
+        answer to anything.
+        """
+        if not self._ticket or not self._started_at_ms or not spoken.strip():
+            return
+        seq, self._seq = self._seq, self._seq + 1
+        offset = max(0, _now_ms() - self._started_at_ms)
+        payload = {
+            "ticket": self._ticket,
+            "seq": seq,
+            "startOffsetMs": offset,
+            "endOffsetMs": offset + int(len(spoken) / 14 * 1000),
+            "text": spoken,
+            "generatedText": spoken,
+            "kind": "reply",
+        }
         if self._responding_to:
             payload["respondingToText"] = self._responding_to
+        if self._config_version:
+            payload["configVersion"] = self._config_version
+        self._send(payload, None)
+
+    def decline(self, *, interrupted: bool = False, cue: Cue | None = None) -> None:
+        """A completion that reached nobody: the model declined, or the driver
+        spoke before its first word. Writes a decision and NO turn.
+        """
+        if not self._ticket or not self._started_at_ms:
+            return
+        cue = cue or self._cue
+        latency = self._latency(cue, _now_ms()) if not interrupted else None
+        self._send(None, self._decision(cue, "interrupted" if interrupted else "declined", latency))
+
+    @staticmethod
+    def _kind(cue: Cue, said: str) -> str:
+        if cue.trigger in OFFER_TRIGGERS:
+            return "proactive_prompt"
+        # The ask was in front of the model, but it is told to let the question
+        # keep while they are mid-thought — so only a turn that asks something
+        # counts as the ask. Lexical and coarse, and lopsided the safe way: a
+        # missed ask costs a re-ask; a false one would take the driver's next
+        # words as an answer to a question never put.
+        if cue.trigger == "confirmation" and "?" in said:
+            return "confirmation_request"
+        return "reply"
+
+    @staticmethod
+    def _latency(cue: Cue, until_ms: int) -> int | None:
+        return max(0, until_ms - cue.at_ms) if cue.at_ms else None
+
+    def _decision(self, cue: Cue, outcome: str, latency: int | None) -> dict:
+        seq, self._decision_seq = self._decision_seq, self._decision_seq + 1
+        started_at_ms = self._started_at_ms or 0
+        decision = {
+            "ticket": self._ticket,
+            "seq": seq,
+            "offsetMs": max(0, (cue.at_ms or _now_ms()) - started_at_ms),
+            "trigger": cue.trigger,
+            "outcome": outcome,
+        }
+        if self._config_version:
+            decision["configVersion"] = self._config_version
+        if latency is not None:
+            decision["latencyMs"] = latency
+        if cue.subject_key:
+            decision["subjectKey"] = cue.subject_key
+        return decision
+
+    def _send(self, turn: dict | None, decision: dict | None) -> None:
+        """Both writes, in ONE task, turn first.
+
+        Sequential on purpose: the decision points at the turn's row, and the
+        turn route hands back that id. Two independent tasks would race the
+        foreign key; this way a lost turn only costs the decision its pointer.
+        """
 
         async def send() -> None:
+            turn_id = None
+            if turn is not None:
+                try:
+                    response = await asyncio.to_thread(self._post, "agent-turn", turn)
+                    turn_id = (response or {}).get("id")
+                except Exception as err:
+                    logger.warning(f"[turn] not recorded, echo filter will be blind: {err}")
+            if decision is None:
+                return
+            if turn_id:
+                decision["agentTurnId"] = turn_id
             try:
-                await asyncio.to_thread(self._post, payload)
+                await asyncio.to_thread(self._post, "decision", decision)
             except Exception as err:
-                logger.warning(f"[turn] not recorded, echo filter will be blind: {err}")
+                logger.warning(f"[decision] not recorded: {err}")
 
         asyncio.create_task(send())
 
-    def _post(self, payload: dict) -> None:
+    def _post(self, route: str, payload: dict) -> dict | None:
         req = urllib.request.Request(
-            f"{WEB_URL}/api/realtime/agent-turn",
+            f"{WEB_URL}/api/realtime/{route}",
             method="POST",
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=5):
-            pass
+        with urllib.request.urlopen(req, timeout=5) as res:
+            raw = res.read()
+            return json.loads(raw) if raw else None
 
 
 def _partial_tail(text: str, token: str) -> str:
@@ -1437,6 +2111,294 @@ def _partial_tail(text: str, token: str) -> str:
     return ""
 
 
+class BoardTools:
+    """The agent's hands on the task board: tool calls, carried to the web app.
+
+    DUMB ON PURPOSE. The tools, their schemas and what each call means all live
+    in TypeScript (packages/talkback/src/board-tools.ts, and the planner the
+    board page also uses). This registers whatever `/api/realtime/session` sent
+    and posts each call back to `/api/realtime/board` verbatim, so there is one
+    definition of "move this card" and it is not in Python.
+
+    The result goes back to the model as the tool's answer, and the agent
+    speaks from it — so a failure is returned as words ("the board could not
+    be reached; nothing was changed") rather than raised, or the model would
+    have nothing to say and might claim the change anyway.
+
+    Not cancelled by an interruption: the driver asked for the edit, and
+    talking over the confirmation does not take the request back. The write is
+    idempotent on `opId` should anything retry it.
+    """
+
+    def __init__(self, ticket: str | None, recorder: "TurnRecorder | None" = None):
+        self._ticket = ticket
+        self._recorder = recorder
+
+    @staticmethod
+    def schemas(tools: list[dict]) -> ToolsSchema | None:
+        """Pipecat's form of the OpenAI function tools the session sent."""
+        functions = []
+        for tool in tools or []:
+            fn = tool.get("function") or {}
+            params = fn.get("parameters") or {}
+            if not fn.get("name"):
+                continue
+            functions.append(
+                FunctionSchema(
+                    name=fn["name"],
+                    description=fn.get("description") or "",
+                    properties=params.get("properties") or {},
+                    required=params.get("required") or [],
+                )
+            )
+        return ToolsSchema(standard_tools=functions) if functions else None
+
+    async def handle(self, params: FunctionCallParams) -> None:
+        started = time.monotonic()
+        name = params.function_name
+        payload = {
+            "ticket": self._ticket,
+            "opId": str(uuid.uuid4()),
+            "tool": name,
+            "arguments": dict(params.arguments or {}),
+        }
+        error: str | None = None
+        try:
+            result = await asyncio.to_thread(self._post, payload)
+            if not result.get("ok"):
+                error = str(result.get("error") or "refused")
+        except Exception as err:
+            error = str(err)
+            result = {"ok": False, "error": "The board could not be reached. Nothing was changed."}
+        latency_ms = int((time.monotonic() - started) * 1000)
+        logger.info(f"[board] {name} -> {'ok' if result.get('ok') else 'refused'} in {latency_ms}ms")
+        if self._recorder is not None:
+            self._recorder.note_tool_call(name, latency_ms, error)
+        await params.result_callback(result)
+
+    def _post(self, payload: dict) -> dict:
+        if not self._ticket:
+            return {"ok": False, "error": "No board is connected to this drive. Nothing was changed."}
+        req = urllib.request.Request(
+            f"{WEB_URL}/api/realtime/board",
+            method="POST",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as res:
+                return json.loads(res.read() or b"{}")
+        except urllib.error.HTTPError as err:
+            return {"ok": False, "error": f"The board refused the request ({err.code}). Nothing was changed."}
+
+
+class SearchingSound(BaseAudioMixer):
+    """The cue a driver hears while a web search runs: two soft rising blips,
+    every 1.2 seconds, until the result is back.
+
+    WHY A SOUND AT ALL. A search is the one moment the agent is working and
+    audibly doing nothing — the announcement ends, then several seconds of
+    silence that in a car cannot be told apart from a dropped connection. The
+    cue says "still on it" without words to listen to.
+
+    WHY A MIXER, NOT AUDIO FRAMES. Pushed as frames, the cue would queue in
+    line with the announcement's speech and interleave with it chunk by chunk.
+    A mixer is summed into whatever the transport is sending at that instant —
+    speech or silence — so it can start the moment the call arrives and play
+    under the announcement, ducked, rather than after it. And Pipecat marks the
+    bot as speaking only for TTS and speech frames, never for a mixer's plain
+    output, so the cue cannot hold off the driver's turn or trip interruption.
+
+    SYNTHESISED, NOT A FILE. No sound asset to ship or license, no `soundfile`
+    dependency in the image, and it is generated at whatever rate the transport
+    runs at, so there is no resampling to get wrong.
+
+    Idle it returns the transport's audio untouched. Only drives that were
+    offered a search get one at all (see `build_pipeline`).
+    """
+
+    PERIOD_SECS = 1.2
+    BLIPS = ((0.0, 660.0), (0.14, 880.0))  # (start, Hz): a rising pair, not an alarm
+    BLIP_SECS = 0.12
+    # Of full scale. Well under speech, which ElevenLabs delivers near peak.
+    LEVEL = 0.12
+    # Under the announcement's own words, so the cue never competes with them.
+    DUCKED = 0.3
+    # Transport audio louder than this is speech. About -36 dBFS.
+    SPEECH_PEAK = 500
+
+    def __init__(self):
+        super().__init__()
+        self._loop: np.ndarray | None = None
+        self._pos = 0
+        self._active = False
+        self._gain = 0.0
+
+    @classmethod
+    def synthesise(cls, sample_rate: int) -> np.ndarray:
+        """One period of the cue, as float samples in int16 scale."""
+        period = np.zeros(int(cls.PERIOD_SECS * sample_rate), dtype=np.float32)
+        t = np.arange(int(cls.BLIP_SECS * sample_rate), dtype=np.float32) / sample_rate
+        # An 8ms attack and a fast exponential decay: a soft tap, no click.
+        envelope = np.minimum(1.0, t / 0.008) * np.exp(-t / 0.03)
+        for start_secs, hz in cls.BLIPS:
+            start = int(start_secs * sample_rate)
+            period[start : start + len(t)] += np.sin(2 * np.pi * hz * t) * envelope
+        return period * (cls.LEVEL * 32767)
+
+    @property
+    def active(self) -> bool:
+        return self._active
+
+    def begin(self) -> None:
+        self._active = True
+
+    def end(self) -> None:
+        """Stop. The cue fades over one chunk rather than cutting mid-blip."""
+        self._active = False
+
+    async def start(self, sample_rate: int):
+        self._loop = self.synthesise(sample_rate)
+
+    async def stop(self):
+        self._active = False
+
+    async def process_frame(self, frame: MixerControlFrame):
+        if isinstance(frame, MixerEnableFrame):
+            self._active = frame.enable
+
+    async def mix(self, audio: bytes) -> bytes:
+        return self.mix_now(audio)
+
+    def mix_now(self, audio: bytes) -> bytes:
+        if self._loop is None or (not self._active and self._gain == 0.0):
+            return audio
+        out = np.frombuffer(audio, dtype=np.int16)
+        if len(out) == 0:
+            return audio
+
+        speaking = int(np.abs(out.astype(np.int32)).max()) > self.SPEECH_PEAK
+        target = (self.DUCKED if speaking else 1.0) if self._active else 0.0
+        # Ramp across the chunk from where the last one ended, so neither
+        # ducking nor stopping is a step the ear hears as a click.
+        ramp = np.linspace(self._gain, target, len(out), dtype=np.float32)
+        positions = (self._pos + np.arange(len(out))) % len(self._loop)
+        mixed = out.astype(np.float32) + self._loop[positions] * ramp
+
+        self._gain = target
+        # Faded out: the next search starts on its first blip, not mid-period.
+        self._pos = 0 if target == 0.0 else (self._pos + len(out)) % len(self._loop)
+        return np.clip(mixed, -32768, 32767).astype(np.int16).tobytes()
+
+
+class WebSearch:
+    """The agent's web search: a tool call, carried to the web app, with the
+    driver kept informed while it runs.
+
+    DUMB ON PURPOSE, like `BoardTools`: the tool, its schema, the SearXNG
+    request and what a result looks like to the model are all TypeScript
+    (packages/talkback/src/web-search.ts). This posts the call's arguments to
+    `/api/realtime/search` and hands back whatever comes.
+
+    WHAT THE DRIVER HEARS, in order: the call's `announcement` spoken at once —
+    the model wrote it, in the language of the conversation — with
+    `SearchingSound` starting under it and running until the result is back,
+    and then the answer, from the completion Pipecat runs on the result. The
+    announcement is spoken HERE rather than left to the model because a model
+    that calls a tool often says nothing first, and the driver would sit
+    through the search in silence.
+
+    CANCELLED BY AN INTERRUPTION, unlike a board edit. The model waits for this
+    result before it answers; if the driver starts talking, what they say next
+    is the thing to respond to, and a search they talked over should neither
+    keep the cue playing nor come back later as an answer to a moment that has
+    passed.
+    """
+
+    # Past the web app's own 5s budget, so the route's failure — which says
+    # why — arrives before this gives up on it.
+    TIMEOUT_SECS = 7
+    MAX_ANNOUNCEMENT_CHARS = 160
+
+    def __init__(
+        self,
+        ticket: str | None,
+        sound: SearchingSound | None = None,
+        recorder: "TurnRecorder | None" = None,
+    ):
+        self._ticket = ticket
+        self._sound = sound
+        self._recorder = recorder
+
+    @classmethod
+    def announcement(cls, arguments: dict) -> str:
+        """What to say as the search starts. The model's sentence, or a plain one."""
+        said = " ".join(str(arguments.get("announcement") or "").split())
+        if said:
+            return said[: cls.MAX_ANNOUNCEMENT_CHARS]
+        query = " ".join(str(arguments.get("query") or "").split())
+        return f"Searching the web for {query}." if query and len(query) <= 60 else "Let me look that up."
+
+    async def handle(self, params: FunctionCallParams) -> None:
+        started = time.monotonic()
+        name = params.function_name
+        arguments = dict(params.arguments or {})
+
+        announcement = self.announcement(arguments)
+        # Not appended to the context: the model did not generate it as a
+        # reply, and the call it came with is already there.
+        await params.llm.push_frame(TTSSpeakFrame(announcement, append_to_context=False))
+        if self._recorder is not None:
+            self._recorder.record_announcement(announcement)
+        if self._sound is not None:
+            self._sound.begin()
+
+        error: str | None = None
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(self._post, {"ticket": self._ticket, "arguments": arguments}),
+                timeout=self.TIMEOUT_SECS,
+            )
+            if not result.get("ok"):
+                error = str(result.get("error") or "refused")
+        except asyncio.CancelledError:
+            if self._recorder is not None:
+                self._recorder.note_tool_call(name, int((time.monotonic() - started) * 1000), "cancelled")
+            logger.info("[search] cancelled by the driver talking")
+            raise
+        except TimeoutError:
+            error = "timed out"
+            result = {"ok": False, "error": "The search took too long and was abandoned."}
+        except Exception as err:
+            error = str(err)
+            result = {"ok": False, "error": "The search could not be reached."}
+        finally:
+            if self._sound is not None:
+                self._sound.end()
+
+        latency_ms = int((time.monotonic() - started) * 1000)
+        # Never the query: it is the participant's question.
+        logger.info(f"[search] {'ok' if result.get('ok') else 'failed'} in {latency_ms}ms")
+        if self._recorder is not None:
+            self._recorder.note_tool_call(name, latency_ms, error)
+        await params.result_callback(result)
+
+    def _post(self, payload: dict) -> dict:
+        if not self._ticket:
+            return {"ok": False, "error": "Search is not available on this connection."}
+        req = urllib.request.Request(
+            f"{WEB_URL}/api/realtime/search",
+            method="POST",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.TIMEOUT_SECS) as res:
+                return json.loads(res.read() or b"{}")
+        except urllib.error.HTTPError as err:
+            return {"ok": False, "error": f"The search was refused ({err.code})."}
+
+
 class DraftRecorder:
     """Posts drafts to the web app, which is what makes them outlive the drive.
 
@@ -1448,10 +2410,18 @@ class DraftRecorder:
     words whenever they resembled a draft they had asked for.
     """
 
-    def __init__(self, ticket: str | None, started_at_ms: int | None):
+    def __init__(
+        self, ticket: str | None, started_at_ms: int | None, first_seq: int = 0
+    ):
         self._ticket = ticket
         self._started_at_ms = started_at_ms
-        self._seq = 0
+        # SEEDED, not zero. `seq` is unique per drive and `recordDraft` resolves
+        # a collision by doing nothing, which is right for a retried POST and
+        # catastrophic for a reconnect: a second container counting from 0 again
+        # would have every draft for the rest of the drive accepted with a 200
+        # and silently dropped. `/api/realtime/session` returns `nextDraftSeq`
+        # from the ledger so this process carries on where the last one stopped.
+        self._seq = first_seq
         self._responding_to: str | None = None
 
     def note_user(self, text: str) -> None:
@@ -1476,6 +2446,12 @@ class DraftRecorder:
             }
             if self._responding_to:
                 payload["respondingToText"] = self._responding_to
+            # The handle of the draft this replaces, when the model named one.
+            # The web app resolves it against THIS drive's drafts and falls open
+            # to a new draft if it matches none or more than one, so a
+            # hallucinated handle costs a version link and never a draft.
+            if draft.get("revises"):
+                payload["revises"] = draft["revises"]
             payloads.append(payload)
 
         async def send() -> None:
@@ -1531,12 +2507,21 @@ class SilenceGate(FrameProcessor):
         recorder: TurnRecorder | None = None,
         drafts: DraftRecorder | None = None,
         offers: "Offers | None" = None,
+        llm_name: str | None = None,
+        # Keyword-only in effect, and LAST, so every existing positional
+        # construction of the gate — the tests included — keeps working.
+        title: "TopicTitle | None" = None,
     ):
         super().__init__()
         self._summary = summary
+        self._title = title
         self._recorder = recorder
         self._drafts = drafts
         self._offers = offers
+        # Whose metrics are this completion's. Every upstream service's
+        # MetricsFrame passes through here — the STT's included — so they are
+        # told apart by the processor that measured them.
+        self._llm_name = llm_name
         self._text = ""
         self._spoken = ""
         self._holding = True
@@ -1548,6 +2533,17 @@ class SilenceGate(FrameProcessor):
         # true between the tags, where nothing may reach TTS.
         self._pending = ""
         self._in_draft = False
+        # Between a completion's start and its end or interruption. An
+        # InterruptionFrame outside one is the driver starting to talk while
+        # the agent had nothing in flight, which is not a decision about anything.
+        self._in_response = False
+        # This completion asked for tools rather than (or before) speaking.
+        # Its silence is not a decline: the answer is the completion Pipecat
+        # runs once the tool's result is in.
+        self._calling_tools = False
+        # The recorder's cue as it stood when this completion started.
+        self._cue: "Cue | None" = None
+        self._turn_metrics: dict = {}
 
     def _reset(self) -> None:
         """Back to the state before a completion: holding, nothing spoken."""
@@ -1557,6 +2553,29 @@ class SilenceGate(FrameProcessor):
         self._first_spoke_ms = None
         self._pending = ""
         self._in_draft = False
+        self._in_response = False
+        self._calling_tools = False
+        self._cue = None
+        self._turn_metrics = {}
+
+    def _note_metrics(self, frame: MetricsFrame) -> None:
+        """Keep this completion's LLM timing and token counts.
+
+        Pipecat measures them and pushes them downstream as frames, which
+        nothing read: the latency columns on `agent_turn` were always empty.
+        The LLM's frames arrive between its response start and end, so the
+        reset at start is what keeps one turn's numbers off the next.
+        """
+        for data in frame.data:
+            if self._llm_name and data.processor != self._llm_name:
+                continue
+            if isinstance(data, TTFBMetricsData):
+                self._turn_metrics["ttftMs"] = int(data.value * 1000)
+            elif isinstance(data, LLMUsageMetricsData):
+                self._turn_metrics["promptTokens"] = data.value.prompt_tokens
+                self._turn_metrics["completionTokens"] = data.value.completion_tokens
+            if data.model:
+                self._turn_metrics["requestedModel"] = data.model
 
     def _for_speech(self, chunk: str) -> str:
         """Strip draft blocks out of streaming text, tag-safe across frames.
@@ -1612,6 +2631,8 @@ class SilenceGate(FrameProcessor):
             self._first_spoke_ms = int(time.time() * 1000)
         if self._summary is not None:
             self._summary.note_agent(text)
+        if self._title is not None:
+            self._title.note_agent(text)
         # ACCUMULATE ONLY. This runs per released fragment as the reply streams,
         # so recording here writes a row per word — "Yes", ",", " I", " can" —
         # which is worse than no rows at all: the echo filter would then be
@@ -1641,6 +2662,14 @@ class SilenceGate(FrameProcessor):
 
         if isinstance(frame, LLMFullResponseStartFrame):
             self._reset()
+            self._in_response = True
+            if self._recorder is not None:
+                self._cue = self._recorder.cue()
+        elif isinstance(frame, MetricsFrame):
+            self._note_metrics(frame)
+        elif isinstance(frame, FunctionCallsStartedFrame):
+            self._calling_tools = True
+            logger.info(f"[turn] calling {', '.join(c.function_name for c in frame.function_calls)}")
         elif isinstance(frame, LLMTextFrame):
             self._text += frame.text
             if self._holding:
@@ -1679,7 +2708,15 @@ class SilenceGate(FrameProcessor):
                         self._text,
                         started_ms=self._first_spoke_ms,
                         barged_in=True,
+                        cue=self._cue,
+                        metrics=self._turn_metrics,
                     )
+            elif self._in_response and self._recorder is not None:
+                # Talked over before a word came out — or while a decline was
+                # still being held. Nothing reached the speaker, so no turn;
+                # but the moment was there and the driver took it back, which
+                # is what efficient dismissal looks like from the inside.
+                self._recorder.decline(interrupted=True, cue=self._cue)
             # Partial words or none: either way the driver heard the agent try,
             # which is what the never-twice rule keys on, not how much of it
             # landed. A turn interrupted before its first word never reached
@@ -1716,14 +2753,28 @@ class SilenceGate(FrameProcessor):
             # that actually reached the speaker. An interrupted turn was already
             # written above and `_reset` emptied `_spoken`, so this cannot
             # write it twice.
+            #
+            # A decline writes its DECISION instead — the silence the agent
+            # chose, which used to exist only as the log line above.
             if self._recorder is not None and self._spoken.strip():
-                self._recorder.record(self._spoken, self._text, started_ms=self._first_spoke_ms)
+                self._recorder.record(
+                    self._spoken,
+                    self._text,
+                    started_ms=self._first_spoke_ms,
+                    cue=self._cue,
+                    metrics=self._turn_metrics,
+                )
+            elif self._recorder is not None and self._in_response and not self._calling_tools:
+                self._recorder.decline(cue=self._cue)
             # The proactive engine needs the same fact the summary does: what
             # the turn BECAME. A spoken turn (including a declined-looking one
             # that released words) sets the awaiting-reply rule; a decline
             # re-arms with backoff. Reported from here for the same reason as
             # `note_agent` — this is the only place that knows.
-            if self._offers is not None:
+            # A completion that only called a tool has not finished its turn —
+            # the reply comes from the next one — so it neither blocks the
+            # engine as a spoken turn nor backs it off as a declined one.
+            if self._offers is not None and not (self._calling_tools and not self._spoken.strip()):
                 self._offers.note_agent_turn(bool(self._spoken.strip()))
             self._reset()
 
@@ -1751,6 +2802,15 @@ def build_pipeline(
     anything else — authorisation is the ticket's job.
     """
     session = session or {"systemPrompt": FALLBACK_SYSTEM_PROMPT, "degraded": True}
+    # Tools need a ticket to act with and a real session to have been offered
+    # them; a degraded connection gets neither.
+    tools_allowed = bool(ticket) and not session.get("degraded")
+    # Which offered tool is the web search, named by the session rather than
+    # known here. Only a drive that has one gets the cue mixed into its output:
+    # a mixer changes how the transport paces audio, and a drive without search
+    # should run exactly as it did before search existed.
+    search_tool = session.get("webSearchTool") if tools_allowed else None
+    searching_sound = SearchingSound() if search_tool else None
     transport = SmallWebRTCTransport(
         webrtc_connection=connection,
         # NO `vad_analyzer` here. Pipecat 1.7 removed that field from
@@ -1760,6 +2820,7 @@ def build_pipeline(
         params=TransportParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
+            audio_out_mixer=searching_sound,
         ),
     )
 
@@ -1842,9 +2903,13 @@ def build_pipeline(
     # sits on a live audio stream and never sends a single request.
     vad = VADProcessor(vad_analyzer=silero())
 
-    context = LLMContext(
-        [{"role": "system", "content": session.get("systemPrompt") or FALLBACK_SYSTEM_PROMPT}]
-    )
+    # The tools, only where the session offered them — board tools for a person
+    # whose board is on, the web search where an instance is configured — on a
+    # connection with a ticket to act with. The prompt the session composed
+    # says the same, so the model is never told it has hands it does not have.
+    tools = BoardTools.schemas(session.get("tools") or []) if tools_allowed else None
+    messages = [{"role": "system", "content": session.get("systemPrompt") or FALLBACK_SYSTEM_PROMPT}]
+    context = LLMContext(messages, tools=tools) if tools else LLMContext(messages)
 
     # Seeded from the ledger on connect so a mid-drive reconnect — a tunnel, a
     # dropped socket — does not restart the conversation with no idea what the
@@ -1855,17 +2920,47 @@ def build_pipeline(
         seed=session.get("driveSummary"),
         metadata=litellm_metadata("talkback.summary", session, capture_session_id),
     )
+    # The live topic title on the recorder. Its own short window of recent
+    # speech rather than the summary above, because the title answers "what
+    # now" and the summary answers "what so far" — see the class. Inert when the
+    # web app sends no `titlePrompt`.
+    title = TopicTitle(
+        session.get("titlePrompt"),
+        metadata=litellm_metadata("talkback.title", session, capture_session_id),
+    )
     # Offsets are measured against the drive's own start, the same clock
     # `utterance` uses — which is what lets the two tables be read as one
     # dialogue, and what the echo filter compares intervals against.
-    recorder = TurnRecorder(ticket, session.get("startedAtEpochMs"))
-    drafts = DraftRecorder(ticket, session.get("startedAtEpochMs"))
+    recorder = TurnRecorder(
+        ticket, session.get("startedAtEpochMs"), session.get("configVersion")
+    )
+    if tools:
+        board_tools = BoardTools(ticket, recorder)
+        web_search = WebSearch(ticket, searching_sound, recorder)
+        for schema in tools.standard_tools:
+            if schema.name == search_tool:
+                # Cancellable, and so synchronous: the model waits for the
+                # result to answer from. See `WebSearch`.
+                llm.register_function(schema.name, web_search.handle, cancel_on_interruption=True)
+            else:
+                llm.register_function(schema.name, board_tools.handle, cancel_on_interruption=False)
+        logger.info(f"[tools] {', '.join(s.name for s in tools.standard_tools)}")
+    drafts = DraftRecorder(
+        ticket,
+        session.get("startedAtEpochMs"),
+        # Absent from an older web deploy, and from a degraded session call —
+        # both mean "no drafts known", which is what 0 says.
+        first_seq=int(session.get("nextDraftSeq") or 0),
+    )
     # A SECOND analyzer, deliberately, not the same instance: this one drives
     # turn completion and interruption in the aggregator, and the two keep
     # independent state.
     aggregator = LLMContextAggregatorPair(
         context,
-        user_params=LLMUserAggregatorParams(vad_analyzer=silero()),
+        user_params=LLMUserAggregatorParams(
+            vad_analyzer=silero(),
+            user_turn_stop_timeout=user_turn_stop_timeout_secs(),
+        ),
     )
 
     # The proactive engine. After Recall so it can ask it to materialise the
@@ -1873,7 +2968,8 @@ def build_pipeline(
     # pushes to run an unprompted turn flows into the aggregator's own run
     # path — the same one a normal turn takes.
     recall = Recall(context, summary, ticket, recorder, drafts)
-    offers = Offers(context, recall, session)
+    offers = Offers(context, recall, session, recorder)
+    logger.info(f"[study] condition {session.get('studyCondition') or 'none (degraded)'}")
 
     pipeline = Pipeline(
         [
@@ -1887,6 +2983,9 @@ def build_pipeline(
             # Before Recall: the summary must see this turn's speech, and Recall
             # reads the summary when it composes the block.
             summary,
+            # After the summary and before Recall: both read the same
+            # transcription frame, and neither waits on the other.
+            title,
             recall,
             offers,
             aggregator.user(),
@@ -1895,7 +2994,7 @@ def build_pipeline(
             # still records what the model generated, so a declined turn is
             # visible in the context as a turn that happened, while never
             # reaching the speaker.
-            SilenceGate(summary, recorder, drafts, offers),
+            SilenceGate(summary, recorder, drafts, offers, llm_name=llm.name, title=title),
             tts,
             transport.output(),
             aggregator.assistant(),
@@ -1950,6 +3049,48 @@ async def healthz():
     return {"ok": True, "backend": "pipecat", "connections": len(connections)}
 
 
+def log_candidates(label: str, answer: dict) -> None:
+    """Say what path this container is actually offering the browser.
+
+    The single most useful line in the log when a call goes silent, and it was
+    missing for the whole of the drive that motivated it. Without it a failed
+    call leaves only "Timeout establishing the connection to the remote peer",
+    which is a symptom shared by every possible cause, and the remote
+    candidates — which say what the PHONE could offer and nothing about this
+    side.
+
+    Read it as: `host` only means no STUN answered and nothing outside this
+    host's network can reach it; `srflx` means STUN worked and a direct path is
+    possible where NAT allows one; `relay` means coturn issued an allocation and
+    the call will work even from a mobile carrier. No `relay` line when TURN_URLS
+    is set means the credential was rejected or UDP to coturn is blocked, and
+    the next mobile drive will be silent.
+    """
+    kinds: dict[str, int] = {}
+    for line in (answer.get("sdp") or "").splitlines():
+        if not line.startswith("a=candidate:"):
+            continue
+        # "a=candidate:<foundation> <component> <proto> <priority> <ip> <port> typ <type> ..."
+        fields = line.split()
+        if "typ" not in fields:
+            continue
+        kind = fields[fields.index("typ") + 1]
+        kinds[kind] = kinds.get(kind, 0) + 1
+
+    logger.info(
+        "[ice] %s candidates: %s",
+        label,
+        ", ".join(f"{k}={n}" for k, n in sorted(kinds.items())) or "NONE",
+    )
+    if "relay" not in kinds and TURN_URLS:
+        logger.warning(
+            "[ice] TURN is configured but no relay candidate was gathered — "
+            "check the coturn credential and that UDP to %s is open. "
+            "Calls from a mobile network will time out.",
+            ", ".join(TURN_URLS),
+        )
+
+
 @app.post("/offer")
 async def offer(request: dict, background_tasks: BackgroundTasks):
     """WebRTC signalling: the browser offers, this answers.
@@ -1971,13 +3112,15 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
     if pc_id and pc_id in connections:
         connection = connections[pc_id]
         await connection.renegotiate(sdp=sdp, type=kind, restart_pc=request.get("restart_pc", False))
-        return connection.get_answer()
+        answer = connection.get_answer()
+        log_candidates("answer (renegotiated)", answer)
+        return answer
 
     if len(connections) >= MAX_CONNECTIONS:
         logger.warning("refusing offer: %d connections already open", len(connections))
         return JSONResponse({"error": "server busy"}, status_code=503)
 
-    connection = SmallWebRTCConnection(ice_servers=ICE_SERVERS)
+    connection = SmallWebRTCConnection(ice_servers=ice_servers())
     await connection.initialize(sdp=sdp, type=kind)
 
     @connection.event_handler("closed")
@@ -2006,6 +3149,7 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
     background_tasks.add_task(run)
 
     answer = connection.get_answer()
+    log_candidates("answer", answer)
     connections[answer["pc_id"]] = connection
     return JSONResponse(answer)
 

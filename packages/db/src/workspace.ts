@@ -13,6 +13,7 @@ import type {
 import {
   agentTurn,
   captureSession,
+  directive,
   extraction,
   utterance,
   workspaceCursor,
@@ -96,13 +97,16 @@ export async function loadPendingSegments(
       kind: utterance.kind,
       kindOverride: utterance.kindOverride,
       occurredAt,
+      createdAt: utterance.createdAt,
       captureSessionId: utterance.captureSessionId,
+      resolvedCapabilityId: directive.capabilityId,
     })
     .from(utterance)
     .innerJoin(
       captureSession,
       eq(utterance.captureSessionId, captureSession.id),
     )
+    .leftJoin(directive, eq(directive.utteranceId, utterance.id))
     .where(
       and(
         eq(captureSession.userId, userId),
@@ -119,6 +123,8 @@ export async function loadPendingSegments(
     text: r.text,
     occurredAt: new Date(r.occurredAt),
     kind: r.kindOverride ?? r.kind,
+    recordedAt: r.createdAt,
+    handledElsewhere: r.kindOverride === "directive" || r.resolvedCapabilityId !== null,
   }));
 }
 
@@ -363,7 +369,7 @@ export async function appendOps(input: AppendOpsInput): Promise<number> {
 }
 
 /**
- * Append one op a person posted, not the extractor.
+ * Append one op a person or the talk-back agent posted, not the extractor.
  *
  * Its own writer because `appendOps` is built around an extraction: it needs
  * an `extractionId` and refuses a second batch under the same one. A board
@@ -378,6 +384,13 @@ export async function appendUserOp(input: {
   id: string;
   op: WorkspaceOp;
   occurredAt?: Date;
+  /**
+   * The drive it happened in, when it happened in one. The agent's edits do;
+   * a drag on the board page does not. Carried because acceptance is judged in
+   * drives elapsed AFTER a transition, and the drive that made it must not
+   * count as a chance to have undone it.
+   */
+  captureSessionId?: string;
 }): Promise<"inserted" | "duplicate"> {
   const { type, ...payload } = input.op;
 
@@ -387,7 +400,7 @@ export async function appendUserOp(input: {
       id: input.id,
       userId: input.userId,
       extractionId: null,
-      captureSessionId: null,
+      captureSessionId: input.captureSessionId ?? null,
       occurredAt: input.occurredAt ?? new Date(),
       type,
       payload: payload as Record<string, unknown>,
@@ -400,11 +413,18 @@ export async function appendUserOp(input: {
 }
 
 /**
- * The ops a person posted, in `seq` order.
+ * The ops a person, the agent or an import posted, in `seq` order.
  *
  * What `workspace:rebuild` and `workspace:reparse` must save before they clear
- * the log and restore after: a rebuild that dropped the manual gestures would
- * delete the measurement.
+ * the log and restore after: a rebuild that dropped the manual gestures — or
+ * the agent's edits, which nothing could re-derive — would delete the
+ * measurement. Their drive comes too, which acceptance is counted from.
+ *
+ * `import` is in the filter for a blunter reason than measurement: an imported
+ * card exists in no transcript, so a rebuild that left it behind would silently
+ * empty the board of every task the person brought with them. Imported ops
+ * restore exactly, since they mint their own topic and block ids and reference
+ * nothing the extractor made.
  */
 export async function loadUserOps(userId: string): Promise<StoredOp[]> {
   const rows = await getDb()
@@ -414,13 +434,14 @@ export async function loadUserOps(userId: string): Promise<StoredOp[]> {
       occurredAt: workspaceOp.occurredAt,
       type: workspaceOp.type,
       payload: workspaceOp.payload,
+      captureSessionId: workspaceOp.captureSessionId,
     })
     .from(workspaceOp)
     .where(
       and(
         eq(workspaceOp.userId, userId),
         isNull(workspaceOp.extractionId),
-        sql`${workspaceOp.payload}->>'via' = 'user'`,
+        sql`${workspaceOp.payload}->>'via' in ('user', 'agent', 'import')`,
       ),
     )
     .orderBy(asc(workspaceOp.seq));
@@ -430,6 +451,7 @@ export async function loadUserOps(userId: string): Promise<StoredOp[]> {
     seq: Number(r.seq),
     occurredAt: r.occurredAt,
     op: { type: r.type, ...r.payload } as WorkspaceOp,
+    captureSessionId: r.captureSessionId ?? undefined,
     sourceUtteranceIds: [],
   }));
 }
@@ -583,6 +605,59 @@ export async function loadSessionUtterances(
     text: r.text,
   }));
 }
+
+/**
+ * The utterances a set of ids names — the lines behind a task brief.
+ *
+ * Scoped by user, which is the whole security story here: the ids come off
+ * block spans written by a model, so an id that belongs to someone else's
+ * drive is a normal failure mode rather than an attack, and either way the
+ * join simply does not return it. `sessionIdsForUtterances` deliberately is
+ * not reused for the same reason — it is not scoped by user.
+ *
+ * Ordered by wall-clock time, so a brief reads forwards however the caller
+ * collected the ids.
+ */
+export async function loadUtterancesByIds(
+  userId: string,
+  ids: readonly string[],
+): Promise<TimelineUtterance[]> {
+  /*
+   * `utterance.id` is a uuid column, so Postgres THROWS on a malformed
+   * literal rather than returning no rows — one garbled span id would turn the
+   * brief page into a 500. Span ids are unchecked model output (`toSpans` in
+   * @voicemural/workspace), so they are filtered to UUID shape here rather
+   * than trusted.
+   */
+  const wanted = [...new Set(ids)].filter((id) => UUID.test(id));
+  if (wanted.length === 0) return [];
+
+  const occurredAt = sql<Date>`${captureSession.startedAt} + make_interval(secs => ${utterance.startOffsetMs} / 1000.0)`;
+
+  const rows = await getDb()
+    .select({
+      id: utterance.id,
+      captureSessionId: utterance.captureSessionId,
+      occurredAt,
+      text: utterance.text,
+      kind: utterance.kind,
+      kindOverride: utterance.kindOverride,
+    })
+    .from(utterance)
+    .innerJoin(captureSession, eq(utterance.captureSessionId, captureSession.id))
+    .where(and(eq(captureSession.userId, userId), inArray(utterance.id, wanted)))
+    .orderBy(asc(occurredAt), asc(utterance.id));
+
+  return rows.map((r) => ({
+    id: r.id,
+    captureSessionId: r.captureSessionId,
+    occurredAt: new Date(r.occurredAt),
+    kind: r.kindOverride ?? r.kind,
+    text: r.text,
+  }));
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Every extraction as a marker on the timeline.
@@ -746,16 +821,31 @@ export async function loadTimelineMarkers(
   return markers;
 }
 
-/** Users with transcribed speech that extraction has not yet consumed. */
+/**
+ * Users with transcribed speech that extraction has not yet consumed.
+ *
+ * With `classifyWaitMs`, only SETTLED speech counts toward the batch: an
+ * utterance already classified, or one that has waited longer than that for
+ * its verdict. Extraction will not take a batch still waiting on the
+ * classifier (see `extractWorkspace`), so counting unsettled speech would
+ * enqueue a job that can only skip — and a skipped job holds its throttle
+ * slot for the next five minutes.
+ */
 export async function usersWithPendingSpeech(
   minSegments: number,
+  options: { classifyWaitMs?: number } = {},
 ): Promise<string[]> {
   const occurredAt = sql`${captureSession.startedAt} + make_interval(secs => ${utterance.startOffsetMs} / 1000.0)`;
+  const settled =
+    options.classifyWaitMs === undefined
+      ? sql`true`
+      : sql`(coalesce(${utterance.kindOverride}, ${utterance.kind}) <> 'unclassified'
+          or ${utterance.createdAt} < now() - make_interval(secs => ${options.classifyWaitMs / 1000}))`;
 
   const rows = await getDb()
     .select({
       userId: captureSession.userId,
-      pending: sql<number>`count(*)::int`,
+      pending: sql<number>`count(*) filter (where ${settled})::int`,
       sessionEnded: sql<boolean>`bool_or(${captureSession.endedAt} is not null)`,
     })
     .from(utterance)
@@ -777,7 +867,8 @@ export async function usersWithPendingSpeech(
 
   // Extract once a batch has built up, or as soon as a drive has ended — a
   // closed session will never accumulate more, so waiting would strand it.
+  // An ended drive still needs something settled to take, or the job skips.
   return rows
-    .filter((r) => r.pending >= minSegments || r.sessionEnded)
+    .filter((r) => r.pending >= minSegments || (r.sessionEnded && r.pending > 0))
     .map((r) => r.userId);
 }

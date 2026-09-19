@@ -26,6 +26,16 @@ import type { DraftCue } from "@/lib/display/use-cues";
  * from the top. That reasoning does not transfer: this list is short, appended
  * to, and read deliberately rather than glanced at. Nothing here is cut — a
  * draft clipped to eight words is not a draft.
+ *
+ * ## Why the version label, and why nothing else
+ *
+ * "Make it shorter" appends a VERSION to the draft that is already here, so the
+ * text changes inside the card the person is looking at. Without the label the
+ * only evidence of that would be the words themselves being different, which is
+ * exactly the kind of thing a screen in the corner of someone's eye cannot
+ * report. So the label and the time are shown, and nothing more: editing,
+ * history and Restore live on `/sessions/[id]`, because this panel only exists
+ * in settings where the person's hands are somewhere else.
  */
 export function DraftPanel({ drafts }: { drafts: DraftCue[] }) {
   if (drafts.length === 0) return null;
@@ -62,6 +72,11 @@ function DraftCard({ draft }: { draft: DraftCue }) {
         <h3 className="min-w-0 flex-1 truncate text-[11px] tracking-wide text-white/40 uppercase">
           {draft.title || "Draft"}
         </h3>
+        {/* `v2.1 · 14:32`. Tabular so the number does not shift the Copy button
+            around as versions accumulate. */}
+        <span className="shrink-0 font-mono text-[10px] text-white/25 tabular-nums">
+          {draft.version} · {formatTime(draft.at)}
+        </span>
         <button
           type="button"
           onClick={() => void copy()}
@@ -92,4 +107,18 @@ function DraftCard({ draft }: { draft: DraftCue }) {
       </p>
     </article>
   );
+}
+
+/**
+ * The clock time a version was written.
+ *
+ * Formatted in the browser, unlike `/sessions/[id]` — this panel is only ever
+ * rendered client-side, from a stream that starts after mount, so there is no
+ * server render for it to disagree with. A malformed timestamp renders as
+ * nothing rather than "Invalid Date" in the corner of a driver's eye.
+ */
+function formatTime(at: string): string {
+  const when = new Date(at);
+  if (Number.isNaN(when.getTime())) return "";
+  return when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }

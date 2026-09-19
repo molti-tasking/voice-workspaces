@@ -100,6 +100,15 @@ export interface AnalyticsEventMap {
     voice_id?: string | null;
     /** The transcription language stored on the session; null = auto-detect. */
     stt_language?: string | null;
+    /**
+     * Which worked example on `/welcome` started this drive; null for one begun
+     * any other way.
+     *
+     * The seeding is deliberate and so is measuring it: a capability somebody
+     * was shown is not one they grew, so the probe has to be able to say which
+     * drives were prompted and which were not.
+     */
+    use_case?: string | null;
   };
   /**
    * Emitted once per session by the worker, after late chunks have settled.
@@ -133,13 +142,15 @@ export interface AnalyticsEventMap {
    * matching `user_signed_in` may never arrive, and the gap between the two is
    * the OAuth drop-off worth seeing.
    *
-   * `location` separates the two gestures that look identical in aggregate —
-   * signing in cold from the landing page, versus a guest upgrading an account
-   * that already holds recordings.
+   * `location` separates the gestures that look identical in aggregate —
+   * signing in cold from the landing page, a guest upgrading an account that
+   * already holds recordings, and an invited peer arriving on `/welcome`, where
+   * the drop-off between reading the page and recording anything is the number
+   * the probe cares about.
    */
   sign_in_started: {
     provider: "github" | "google";
-    location: "landing" | "account_menu" | "guest_banner";
+    location: "landing" | "account_menu" | "guest_banner" | "welcome";
   };
   user_signed_out: { is_guest: boolean };
   guest_account_upgraded: {
@@ -265,27 +276,96 @@ export interface AnalyticsEventMap {
     awaiting_review: number;
   };
   /**
-   * A manual move. Yield monitoring only: the acceptance measure itself — did
-   * the person keep, reverse or never touch a speech-driven transition — needs
-   * "never touched", which only the ledger can answer, so it is computed from
-   * the ops (`judge` in @voicemural/workspace) rather than from these events.
+   * A move made on the board page or by the talk-back agent. Yield monitoring
+   * only: the acceptance measure itself — did the person keep, reverse or
+   * never touch a machine-made transition — needs "never touched", which only
+   * the ledger can answer, so it is computed from the ops (`judge` in
+   * @voicemural/workspace) rather than from these events.
    */
   board_card_moved: {
     block_id: string;
     card_id: string;
     from_state: TaskStateName;
     to_state: TaskStateName;
+    /** Who made this move: the person on the board page, or the agent asked aloud. */
+    by: "user" | "agent";
     /** Who last moved this card before now. Null when it was only ever added. */
-    previous_via: "speech" | "user" | null;
+    previous_via: "speech" | "user" | "agent" | "import" | null;
     /** True when this move puts the card back where speech had moved it from. */
     reverses_speech: boolean;
+    /** True when this move puts the card back where the agent had moved it from. */
+    reverses_agent: boolean;
     sessions_since_last_transition: number;
   };
   board_card_retired: {
     block_id: string;
     card_id: string;
     state: TaskStateName;
-    previous_via: "speech" | "user" | null;
+    by: "user" | "agent";
+    previous_via: "speech" | "user" | "agent" | "import" | null;
+  };
+  /** A task the agent put on the board because it was asked to. */
+  board_card_added: {
+    card_id: string;
+    state: TaskStateName;
+    by: "agent";
+    /** Whether the task needed a new topic to live in. */
+    topic_created: boolean;
+  };
+  /** A task the agent reworded because it was asked to. Ids only: the words are content. */
+  board_card_reworded: {
+    card_id: string;
+    block_id: string;
+    by: "agent";
+  };
+  /**
+   * One task's brief opened — the record behind a card, read at the desk.
+   *
+   * Ids and counts only: the words are content. `utterance_count` is how many
+   * cited lines actually resolved, so zero is the fallback case rather than a
+   * card with nothing said about it.
+   */
+  board_card_viewed: {
+    card_id: string;
+    state: TaskStateName;
+    utterance_count: number;
+    step_count: number;
+    stale_sessions: number;
+    /** Whether the scrubber was moved off "now" before this render. */
+    has_as_of: boolean;
+  };
+  /**
+   * Every active task read at once. Ids and counts only: the words are content.
+   *
+   * `uncited` is how many of those cards quote nothing — the yield question
+   * for spans, which is what T2.4 is measured on.
+   */
+  board_brief_viewed: {
+    card_count: number;
+    topic_count: number;
+    uncited: number;
+    has_as_of: boolean;
+  };
+  /**
+   * A board the person already kept elsewhere, brought in as cards.
+   *
+   * Counts only — the tasks are the person's own work and their words never
+   * leave the database, exactly as for every other board event. `format` says
+   * which reader understood the paste, which is the one thing worth knowing
+   * when someone reports that their import came out wrong.
+   */
+  board_imported: {
+    format: "trello-json" | "table" | "outline";
+    /** Cards actually written. */
+    card_count: number;
+    /** Topics this import had to open. */
+    topics_created: number;
+    /** Refused because the board or the paste already had them. */
+    skipped_duplicate: number;
+    /** Refused for any other reason: too long, past the cap, archived. */
+    skipped_other: number;
+    /** How many columns the import landed in — one means nothing was mapped. */
+    columns_used: number;
   };
 
   transcription_failed: {

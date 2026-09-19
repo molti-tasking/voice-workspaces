@@ -190,7 +190,7 @@ me."* Unprompted support must **offer and never assign**. A declined offer must 
 
    | Change | Bump | Also |
    |---|---|---|
-   | Talk-back prompt | `TALKBACK_CONFIG_VERSION` (`prompt.ts`, now `"talkback-7"`) | |
+   | Talk-back prompt | `TALKBACK_CONFIG_VERSION` (`prompt.ts`, now `"talkback-12"`) | |
    | Extraction prompt or input | `PROMPT_VERSION` (`packages/workspace/src/extract.ts`, now `"4"`) | Update the fingerprint test in `extract.test.ts` |
    | Classifier or macro prompt | `CLASSIFY_PROMPT_VERSION` / `MACRO_PROMPT_VERSION` | |
 9. **Every new spoken behaviour gets eval cases** in `packages/talkback/src/eval/cases.ts`, and
@@ -533,6 +533,16 @@ they are correctness fixes.
 - **T3.3 Behavioural reliance, already built.** `judge()` in `packages/workspace/src/board.ts`
   labels each speech-driven task move as kept, reversed, corrected, and so on. Make sure T1.3
   exports it.
+  - **Imported cards are not in the denominator.** `/board/import` lets a participant bring in a
+    board they already keep (Trello, Jira, Notion, a list), and those ops carry a fourth `via`,
+    `"import"`. `judge()` skips them exactly as it skips a person's own move: an imported card
+    nobody touched for two drives is not an accepted machine-made transition. Everything speech
+    or the agent does to an imported card *afterwards* is judged normally, which is the reason to
+    offer the import at all — it puts real work on the board before drive one, so the acceptance
+    measure has something to measure in the first week rather than the third.
+  - The export needs no change for it: `workspace_op.via` already comes through verbatim, so
+    `"import"` appears as a fourth value and imported adds appear as `board_transition` rows with
+    `outcome: null`. The analysis should filter on `via` rather than assume three values.
 
 ---
 

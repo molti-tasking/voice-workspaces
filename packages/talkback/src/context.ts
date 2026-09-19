@@ -1,6 +1,8 @@
+import { loadSessionDrafts } from "@voicemural/db/drafts";
 import { loadOps } from "@voicemural/db/workspace";
 import { buildBoardContext, type BoardContext } from "./board-context";
 import { MAX_CONTEXT_CHARS, trimToBudget } from "./budget";
+import { buildDraftContext, type DraftContext } from "./draft-context";
 import { mergePassages } from "./memory";
 import { recallFromMemory } from "./memory-search";
 import { describeWhen, loadDriveSoFar, searchTranscripts } from "./retrieval";
@@ -61,6 +63,17 @@ export interface TurnContext {
    * for why it is sight-only.
    */
   board: BoardContext;
+  /**
+   * What it has written down for them ON THIS DRIVE, and can still see.
+   *
+   * The fourth arm, and the only one about the agent's own output rather than
+   * the person's. Without it the agent could write a draft and then have no
+   * idea it had, so "make that shorter" produced a second card instead of a
+   * second version. Scoped to the current drive, unlike the other three: a
+   * draft from last Tuesday is not what "that" means, and the handles it would
+   * add are prompt noise for a draft nobody is about to revise.
+   */
+  drafts: DraftContext;
 }
 
 /** Rendered threads may take this much of the turn; passages get the rest. */
@@ -80,14 +93,29 @@ export async function buildTurnContext(
   userId: string,
   captureSessionId: string,
   said: string,
+  options: {
+    /**
+     * Whether this person's board is switched on (`user.board_enabled_at`).
+     * Off, the agent is not shown the board at all: a participant in the phase
+     * before the board must not hear about a board they cannot see — and,
+     * since the agent can now edit it, must not have one edited either.
+     */
+    board?: boolean;
+  } = {},
 ): Promise<TurnContext> {
-  // Three arms in parallel. The board fold is pure CPU over ops already in
+  const showBoard = options.board ?? true;
+  // Four arms in parallel. The board fold is pure CPU over ops already in
   // Postgres, so it costs one query rather than a model call, and running it
-  // alongside the two searches keeps it off the turn's critical path.
-  const [lexical, memory, ops] = await Promise.all([
+  // alongside the two searches keeps it off the turn's critical path. The
+  // drafts are one indexed read of this drive's own rows.
+  const [lexical, memory, ops, drafts] = await Promise.all([
     searchTranscripts(userId, said, { excludeSessionId: captureSessionId }),
     recallFromMemory(userId, said, { excludeSessionId: captureSessionId }),
-    loadOps(userId),
+    showBoard ? loadOps(userId) : Promise.resolve([]),
+    /* Fails open to nothing. An agent that cannot see its own drafts writes a
+     * new one instead of a revision, which is the behaviour before this
+     * existed; an agent that does not answer at all is a dead turn. */
+    loadSessionDrafts(captureSessionId).catch(() => []),
   ]);
 
   const merged = mergePassages(lexical, memory.passages);
@@ -108,7 +136,12 @@ export async function buildTurnContext(
     .filter((t) => keptThreads.has(t.text))
     .map((t) => ({ topicId: t.topicId, text: t.text }));
 
-  return { passages, threads, board: buildBoardContext(ops) };
+  return {
+    passages,
+    threads,
+    board: showBoard ? buildBoardContext(ops) : { text: null, shown: 0, total: 0 },
+    drafts: buildDraftContext(drafts),
+  };
 }
 
 /**

@@ -249,6 +249,48 @@ There is no admin UI for it; enable someone with `pnpm db:studio` or
 `UPDATE "user" SET board_enabled_at = now() WHERE id = '…';`. `pnpm
 workspace:show` prints tasks as `(task/<state>)`.
 
+**Starting with a board you already have.** Nobody arrives with nothing in
+flight, and the extractor only ever hears a task that gets *said* — so until
+the work someone is already carrying is on the board, the first drives talk
+past it. `/board/import` takes a Trello JSON export, a Jira or Trello CSV, a
+Notion table, or a plain list, and adds the tasks as cards. The columns other
+tools use are mapped onto the five tenses (`taskStateFor` in
+`packages/workspace/src/board-import.ts`); a heading the mapping does not
+recognise becomes a **topic** rather than a column, which is what lets a
+Trello-shaped export and a Notion-shaped one both read correctly.
+
+Three things about it are deliberate, and all three are load-bearing:
+
+- **The parse happens in the browser.** A pasted export carries assignees,
+  reporters and whatever else the source adds; only the lines the person
+  confirms are sent. `parseBoard` is pure, so it runs where the paste already
+  is.
+- **Imported ops carry `via: "import"`, and `judge()` does not score them.**
+  They are the person's own record of their own work, not a reading of their
+  speech; a hundred imported cards sitting untouched would otherwise read as a
+  hundred accepted machine-made transitions. Everything speech does to them
+  *afterwards* is judged as usual — which is the point, because it gets the
+  acceptance question asked on the first drive instead of the tenth.
+- **Imported blocks carry no spans.** No utterance said them, so there is
+  nothing to seek back to, and the card says where it came from instead.
+
+`loadUserOps` keeps import ops alongside the manual and agent ones, so
+`workspace:rebuild` restores an imported board rather than emptying it.
+
+Study participants and conditions have validating commands rather than SQL,
+because a mistyped condition does not fail — the drive silently runs the
+defaults:
+
+| Command | Does |
+|---|---|
+| `pnpm study:participant --user <id> --id P07` | the pseudonym PostHog and the export join on (`--clear` removes it) |
+| `pnpm study:condition --user <id> --set '{"agendaOffers":true}'` | the condition for that person's NEXT drives; each drive freezes its own copy (`--clear` resets to today's behaviour) |
+| `pnpm study:condition --user <id>` | print the template and the last ten drives' conditions |
+| `pnpm study:export` | one JSONL file per participant into `storage/study-export/` — counts, timings, ids and enums, no transcript, agent or workspace text |
+
+`--include-text` on the export is refused unless `--user` is listed in
+`STUDY_PILOT_USER_IDS`: it exists for the researcher's own pilot account only.
+
 ---
 
 ## Deployment (Coolify)

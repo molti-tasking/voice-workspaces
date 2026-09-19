@@ -289,7 +289,8 @@ function isoOrUndefined(value: Date | string | null | undefined): string | undef
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
-async function refreshPersonProperties(userId: string): Promise<void> {
+/** Exported for its test; the sweep calls it once per reported session. */
+export async function refreshPersonProperties(userId: string): Promise<void> {
   const db = getDb();
 
   const [sessions] = await db
@@ -326,7 +327,7 @@ async function refreshPersonProperties(userId: string): Promise<void> {
     .where(eq(extraction.userId, userId));
 
   const [userRow] = await db
-    .select({ isAnonymous: user.isAnonymous })
+    .select({ isAnonymous: user.isAnonymous, studyParticipantId: user.studyParticipantId })
     .from(user)
     .where(eq(user.id, userId))
     .limit(1);
@@ -364,6 +365,11 @@ async function refreshPersonProperties(userId: string): Promise<void> {
       blocks_count: ops?.blocks ?? 0,
       extractions_count: extractions?.total ?? 0,
       ...(lastSessionAt ? { last_session_at: lastSessionAt } : {}),
+      // The analysis's only join key from PostHog to a participant. Sent only
+      // when set: an absent property is "not in the study", where a null
+      // written over it would erase a pseudonym someone assigned by mistake
+      // and then corrected — and PostHog keeps no history to recover it.
+      ...(userRow?.studyParticipantId ? { study_participant_id: userRow.studyParticipantId } : {}),
     },
     firstSessionAt ? { first_session_at: firstSessionAt } : undefined,
   );

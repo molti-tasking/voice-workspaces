@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CaptureSetting } from "@voicemural/shared";
 import { capture } from "@/lib/analytics/client";
+import type { UseCaseId } from "@/lib/use-cases";
 import {
   clearOpenSession,
   deleteRegistration,
@@ -330,6 +331,7 @@ export function useRecorder() {
     source?: "device" | "motion" | "default" | "chosen",
     voiceId?: string,
     sttLanguage?: string | null,
+    useCase?: UseCaseId,
   ) => {
     if (runningRef.current) return;
 
@@ -409,6 +411,11 @@ export function useRecorder() {
       voiceId,
       // Null is normal (auto-detect); undefined on the wire keeps zod happy.
       sttLanguage: sttLanguage ?? undefined,
+      // Which worked example on `/welcome` sent them here, if any. Part of the
+      // saved registration rather than a separate call, so a drive that starts
+      // in a dead zone still registers under the right one when the uploader
+      // replays it.
+      useCase,
     };
     await saveRegistration(registration);
 

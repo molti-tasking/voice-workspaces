@@ -55,17 +55,18 @@ type Move =
  * refresh, because the ledger has no memory of it. A gesture that silently does
  * nothing is worse than one that is not offered.
  *
- * ## Drag is an addition, never the only way
+ * ## Drag moves; one button retires
  *
- * The element adapter is built on native HTML5 drag events, which do not fire
- * on touch and are not reachable from a keyboard. The buttons on every card are
- * therefore not a fallback — they are the primary path, and drag is a
- * convenience on top for whoever is at a desk with a mouse. Nothing is reachable
- * only by dragging.
+ * Moving a card is drag only. Per-column buttons on every card duplicated it
+ * and were removed at the maintainer's call — the board is a desk view. The
+ * cost is known and accepted: the element adapter is built on native HTML5
+ * drag events, which do not fire on touch and are not reachable from a
+ * keyboard, so a card cannot be moved from a phone. "Not a task" stays a
+ * button, because no column means that.
  */
 export function BoardSurface({ cards }: { cards: CardView[] }) {
   const router = useRouter();
-  const [, startTransition] = useTransition();
+  const [busy, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
   /*
@@ -110,12 +111,20 @@ export function BoardSurface({ cards }: { cards: CardView[] }) {
           if (!res.ok) {
             // A drag that springs back with no explanation reads as a bug in
             // the page. Say so — the optimistic state has already reverted.
-            setError("That move was not saved. The board is unchanged.");
+            setError(
+              move.kind === "retire"
+                ? "That card was not removed. The board is unchanged."
+                : "That move was not saved. The board is unchanged.",
+            );
             return;
           }
           router.refresh();
         } catch {
-          setError("Offline — that move was not saved.");
+          setError(
+            move.kind === "retire"
+              ? "Offline — that card was not removed."
+              : "Offline — that move was not saved.",
+          );
         }
       });
     },
@@ -129,6 +138,14 @@ export function BoardSurface({ cards }: { cards: CardView[] }) {
         { action: "set_state", state: to },
         { kind: "set_state", cardId, to },
       ),
+    [send],
+  );
+
+  // "Not a task". Only a button can say it: there is no column to drop a card
+  // into that means "this should never have been a card".
+  const retireCard = useCallback(
+    (cardId: string, blockId: string) =>
+      send(blockId, { action: "retire" }, { kind: "retire", cardId }),
     [send],
   );
 
@@ -169,6 +186,8 @@ export function BoardSurface({ cards }: { cards: CardView[] }) {
             key={state}
             state={state}
             cards={shown.filter((c) => c.state === state)}
+            onRetire={retireCard}
+            busy={busy}
           />
         ))}
       </div>
@@ -176,7 +195,17 @@ export function BoardSurface({ cards }: { cards: CardView[] }) {
   );
 }
 
-function Column({ state, cards }: { state: TaskState; cards: CardView[] }) {
+function Column({
+  state,
+  cards,
+  onRetire,
+  busy,
+}: {
+  state: TaskState;
+  cards: CardView[];
+  onRetire: (cardId: string, blockId: string) => void;
+  busy: boolean;
+}) {
   const ref = useRef<HTMLElement | null>(null);
   const [over, setOver] = useState(false);
 
@@ -214,7 +243,12 @@ function Column({ state, cards }: { state: TaskState; cards: CardView[] }) {
       </h2>
       <div className="space-y-3">
         {cards.map((card) => (
-          <BoardCard key={card.cardId} card={card} />
+          <BoardCard
+            key={card.cardId}
+            card={card}
+            onRetire={() => onRetire(card.cardId, card.blockId)}
+            busy={busy}
+          />
         ))}
       </div>
     </section>

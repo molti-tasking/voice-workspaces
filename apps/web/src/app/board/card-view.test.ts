@@ -116,6 +116,40 @@ describe("markerFor", () => {
     );
   });
 
+  it("says the agent moved it — or added it — when it was asked to", () => {
+    expect(markerFor(card({ lastTransition: transition({ via: "agent" }) }))).toBe("moved here by the agent");
+    expect(markerFor(card({ lastTransition: transition({ via: "agent", from: null, to: "open" }) }))).toBe(
+      "added by the agent",
+    );
+    const kept = { transition: transition({ via: "agent" }), outcome: "kept" } as JudgedTransition;
+    expect(markerFor(card({ lastTransition: transition({ via: "agent" }) }), kept)).toBe(
+      "moved here by the agent · kept",
+    );
+  });
+
+  it("calls it back when the person undoes what the agent did", () => {
+    const agent = transition({ from: "next", to: "dropped", via: "agent", seq: 1 });
+    const user = transition({ from: "dropped", to: "next", via: "user", seq: 2 });
+    expect(markerFor(card({ lastTransition: user, history: [agent, user], state: "next" }))).toBe(
+      "you moved it back",
+    );
+  });
+
+  it("says an imported card came from another board, and never claims it was kept", () => {
+    const imported = transition({ from: null, to: "next", via: "import" });
+    expect(markerFor(card({ lastTransition: imported, state: "next" }))).toBe(
+      "brought in from another board",
+    );
+
+    // `judge()` does not score an import, so no outcome should ever reach this
+    // branch — and if one did, the card must not turn it into a verdict about
+    // the machine.
+    const kept = { transition: imported, outcome: "kept" } as JudgedTransition;
+    expect(markerFor(card({ lastTransition: imported, state: "next" }), kept)).toBe(
+      "brought in from another board",
+    );
+  });
+
   it("stays quiet at one stale drive — one commute is easy to miss", () => {
     expect(markerFor(card({ staleSessions: 1 }))).toBe("moved here by speech");
   });

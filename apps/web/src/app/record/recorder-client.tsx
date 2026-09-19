@@ -13,10 +13,11 @@ import {
   SettingPicker,
   VoicePicker,
 } from "@/components/capture-settings";
+import { MicLevel } from "@/components/mic-level";
 import { useCues } from "@/lib/display/use-cues";
-import type { TalkbackTurn } from "@/lib/talkback/types";
 import { CuePanel } from "./cue-panel";
 import { DraftPanel } from "./draft-panel";
+import { TopicTitle } from "./topic-title";
 
 /**
  * The recorder screen.
@@ -93,7 +94,7 @@ export function RecorderClient() {
           }}
           disabled={isBusy}
           className={[
-            "cursor-pointer flex size-56 items-center justify-center rounded-full text-2xl font-medium",
+            "relative cursor-pointer flex size-56 items-center justify-center rounded-full text-2xl font-medium",
             "transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
             isRecording
               ? hearing
@@ -102,7 +103,10 @@ export function RecorderClient() {
               : "bg-ink-soft text-white ring-1 ring-line",
           ].join(" ")}
         >
-          {isBusy ? "…" : isRecording ? "Stop" : "Record"}
+          {isRecording && <MicLevel />}
+          <span className="relative">
+            {isBusy ? "…" : isRecording ? "Stop" : "Record"}
+          </span>
         </button>
 
         <p className="h-5 text-center text-sm text-white/40">
@@ -130,9 +134,7 @@ export function RecorderClient() {
 
         {!isRecording && <LanguagePicker />}
 
-        {TALKBACK_ENABLED && isRecording && talk.turns.length > 0 && (
-          <Exchange turns={talk.turns} speaking={talk.status === "speaking"} />
-        )}
+        {TALKBACK_ENABLED && isRecording && <TopicTitle title={talk.title} />}
 
         {isRecording && <CuePanel cues={cues} />}
 
@@ -207,81 +209,6 @@ export function RecorderClient() {
   );
 }
 
-/**
- * The conversation as it happens.
- *
- * BOTH halves, because only one of them was ever visible and that made the
- * common failure undiagnosable: when a reply seems wrong, the first thing you
- * need to know is whether the question was heard correctly. A single line of
- * agent text cannot answer that, and by the time the session transcript is
- * available the drive is over.
- *
- * The hook caps this at MAX_VISIBLE_TURNS and drops turns the silence gate
- * declined, so what is on screen is what was actually said aloud.
- *
- * Sided like `/sessions/[id]` — agent tinted and boxed, driver plain — so the
- * live view and the recorded one read the same way.
- */
-function Exchange({
-  turns,
-  speaking,
-}: {
-  turns: TalkbackTurn[];
-  speaking: boolean;
-}) {
-  const last = turns[turns.length - 1];
-
-  return (
-    <ol
-      className="flex w-full max-w-md flex-col gap-1.5 text-sm"
-      // Never announced. A screen reader reading this out would interrupt the
-      // driver mid-thought, which is the failure the whole design avoids.
-      aria-live="off"
-    >
-      {turns.map((turn, index) => {
-        // Older turns recede rather than disappear: the newest is what matters
-        // at a glance, the rest is there if you look.
-        const faded = index < turns.length - 2;
-        return (
-          <li
-            key={turn.id}
-            className={
-              turn.role === "agent" ? "flex justify-start" : "flex justify-end"
-            }
-          >
-            <span
-              className={[
-                "max-w-[85%] rounded-lg px-3 py-1.5",
-                // `transition-opacity` only — no layout animation. This renders
-                // on a warm phone that is also holding a MediaRecorder open.
-                "transition-opacity motion-reduce:transition-none",
-                turn.role === "agent"
-                  ? "rounded-tl-sm border border-sky-400/25 bg-sky-400/10 text-sky-50"
-                  : "rounded-tr-sm bg-white/6 text-white/90",
-                faded ? "opacity-40" : "opacity-100",
-              ].join(" ")}
-            >
-              {turn.speaker != null && (
-                // Only present once the container has heard more than one
-                // voice. A single driver never sees this.
-                <span className="mr-1.5 font-mono text-[0.7em] uppercase tracking-wide text-white/40">
-                  S{turn.speaker}
-                </span>
-              )}
-              {turn.text}
-              {speaking && turn === last && turn.role === "agent" && (
-                <span className="ml-1 animate-pulse text-white/40 motion-reduce:animate-none">
-                  ▍
-                </span>
-              )}
-            </span>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
 function StatusPills({
   pending,
   uploading,
@@ -301,8 +228,9 @@ function StatusPills({
     <div className="flex items-center gap-2 text-xs">
       {recording && wakeLock && <Pill label="awake" tone="ok" />}
       {/* Only worth showing when it is NOT working. A healthy socket needs no
-          pill: the transcript appearing is the evidence, and a car dashboard
-          should not carry an indicator for every subsystem that is fine. */}
+          pill: the topic title naming what is being talked about is the
+          evidence, and a car dashboard should not carry an indicator for every
+          subsystem that is fine. */}
       {talkback === "degraded" && <Pill label="talk offline" tone="warn" />}
       {talkback === "connecting" && <Pill label="talk…" tone="warn" />}
       {/* Connected but amnesiac. Distinct from "talk offline" because the

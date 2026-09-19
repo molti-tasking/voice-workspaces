@@ -1,4 +1,10 @@
-import { agentTurn, getDb } from "@voicemural/db";
+import {
+  agentDecision,
+  agentDecisionOutcomeEnum,
+  agentDecisionTriggerEnum,
+  agentTurn,
+  getDb,
+} from "@voicemural/db";
 import { log } from "@voicemural/telemetry";
 
 /**
@@ -43,12 +49,18 @@ export interface AgentTurnRecord {
   /** Text, so "unknown" stays distinguishable from "free". */
   costUsd?: string;
   configVersion?: string;
+  /** Tools the turn called before speaking, in order. */
+  toolCalls?: { name: string; latencyMs: number; error?: string }[];
   error?: string;
 }
 
-export async function recordAgentTurn(record: AgentTurnRecord): Promise<void> {
+/**
+ * Returns the new row's id, so the decision that produced the turn can point
+ * at it — or null when nothing was written: a duplicate seq, or a failure.
+ */
+export async function recordAgentTurn(record: AgentTurnRecord): Promise<string | null> {
   try {
-    await getDb()
+    const rows = await getDb()
       .insert(agentTurn)
       .values({
         captureSessionId: record.captureSessionId,
@@ -71,14 +83,66 @@ export async function recordAgentTurn(record: AgentTurnRecord): Promise<void> {
         completionTokens: record.completionTokens,
         costUsd: record.costUsd,
         configVersion: record.configVersion,
+        toolCalls: record.toolCalls ?? [],
         error: record.error,
       })
       // A reconnect restarts the turn counter, so a seq can repeat within a
       // drive. Dropping the duplicate is right: the conversation is ephemeral
       // and no downstream reader depends on a contiguous sequence.
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ id: agentTurn.id });
+    return rows[0]?.id ?? null;
   } catch (err) {
     log.error("could not record agent turn", {
+      captureSessionId: record.captureSessionId,
+      userId: record.userId,
+      seq: record.seq,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+export type AgentDecisionTrigger = (typeof agentDecisionTriggerEnum.enumValues)[number];
+export type AgentDecisionOutcome = (typeof agentDecisionOutcomeEnum.enumValues)[number];
+
+export interface AgentDecisionRecord {
+  captureSessionId: string;
+  /** For log attribution only. */
+  userId: string;
+  seq: number;
+  offsetMs: number;
+  trigger: AgentDecisionTrigger;
+  outcome: AgentDecisionOutcome;
+  configVersion?: string;
+  latencyMs?: number;
+  subjectKey?: string;
+  agentTurnId?: string;
+}
+
+/**
+ * Persist what the model did with one moment it was given, spoken or not.
+ *
+ * Never throws, for the reason `recordAgentTurn` never throws. Not idempotent
+ * on seq: a reconnect restarts the container's counter, and unlike a turn a
+ * decision has no audio interval an echo filter could double-count, so a
+ * repeated seq is simply two moments.
+ */
+export async function recordAgentDecision(record: AgentDecisionRecord): Promise<void> {
+  try {
+    await getDb().insert(agentDecision).values({
+      captureSessionId: record.captureSessionId,
+      seq: record.seq,
+      offsetMs: record.offsetMs,
+      trigger: record.trigger,
+      outcome: record.outcome,
+      configVersion: record.configVersion,
+      latencyMs: record.latencyMs,
+      subjectKey: record.subjectKey,
+      agentTurnId: record.agentTurnId,
+    });
+  } catch (err) {
+    log.error("could not record agent decision", {
       captureSessionId: record.captureSessionId,
       userId: record.userId,
       seq: record.seq,

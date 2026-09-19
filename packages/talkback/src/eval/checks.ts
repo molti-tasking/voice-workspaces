@@ -19,6 +19,8 @@ export interface CheckResult {
   spoken: string;
   /** Titles of any `<draft>` blocks — text kept, never spoken, and not checked as speech. */
   drafts: string[];
+  /** `revises` handles, aligned with `drafts`; undefined where the draft is new. */
+  revises: (string | undefined)[];
   words: number;
   failures: string[];
   pass: boolean;
@@ -43,20 +45,89 @@ export function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
 }
 
-export function checkReply(kase: EvalCase, rawReply: string, maxReplyWords: number): CheckResult {
+export interface MadeToolCall {
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export function checkReply(
+  kase: EvalCase,
+  rawReply: string,
+  maxReplyWords: number,
+  toolCalls: readonly MadeToolCall[] = [],
+): CheckResult {
   const failures: string[] = [];
+
+  // A step that called a tool is judged on the call. Its words, if any, are
+  // still held to the output contract below; its silence is not a decline.
+  const expected = kase.expect.toolCall;
+  if (expected) {
+    const call = toolCalls.find((c) => c.name === expected.name);
+    if (!call) {
+      failures.push(
+        toolCalls.length
+          ? `called ${toolCalls.map((c) => c.name).join(", ")}, expected ${expected.name}`
+          : `did not call ${expected.name}`,
+      );
+    } else {
+      for (const [key, source] of Object.entries(expected.args ?? {})) {
+        const value = call.arguments[key];
+        if (typeof value !== "string" || !new RegExp(source, "i").test(value)) {
+          failures.push(`${expected.name}.${key} = ${JSON.stringify(value)}, expected /${source}/`);
+        }
+      }
+    }
+    if (!rawReply.trim()) {
+      return { silent: false, spoken: "", drafts: [], revises: [], words: 0, failures, pass: failures.length === 0 };
+    }
+  } else if (toolCalls.length) {
+    failures.push(`unexpected tool call: ${toolCalls.map((c) => `${c.name}(${JSON.stringify(c.arguments)})`).join(", ")}`);
+    if (!rawReply.trim()) {
+      return { silent: false, spoken: "", drafts: [], revises: [], words: 0, failures, pass: false };
+    }
+  }
+
   const silent = isSilence(rawReply);
   // `extractDrafts` mirrors `bot.py`: the draft body never reaches TTS, so it is
   // not held to the word cap, and what remains is `cleanReply`-ed speech.
   const extracted = silent ? null : extractDrafts(rawReply);
   const spoken = extracted?.speech ?? "";
   const drafts = extracted?.drafts.map((d) => d.title) ?? [];
+  const revises = extracted?.drafts.map((d) => d.revises) ?? [];
   const words = countWords(spoken);
 
-  if (kase.expect.turn === "silent" && !silent) {
+  /* What the reply did with the draft tag, when that is what the case is about.
+   *
+   * Checked here rather than left to the judge because it is mechanical: either
+   * the tag carries a handle that resolves to the draft they asked about, or it
+   * does not. The judge's question is whether the new text is any good; this
+   * one's is whether the person ends up with one draft or two, and getting that
+   * wrong is the whole failure talkback-12 exists to close. */
+  if (kase.expect.draft !== undefined) {
+    const wanted = kase.expect.draft;
+    if (wanted === null) {
+      if (drafts.length > 0) {
+        failures.push(`wrote ${drafts.length} draft(s) where none was wanted`);
+      }
+    } else if (extracted === null || extracted.drafts.length !== 1) {
+      failures.push(`expected exactly one draft, got ${extracted?.drafts.length ?? 0}`);
+    } else {
+      const got = extracted.drafts[0]!.revises;
+      if (wanted.revises === null && got !== undefined) {
+        failures.push(`revised ${got} where a NEW draft was wanted`);
+      }
+      if (wanted.revises !== null && (got === undefined || !wanted.revises.test(got))) {
+        // A rewrite aimed at nothing is the old behaviour: a second card with
+        // no link to the one it replaced.
+        failures.push(`expected revises matching ${wanted.revises}, got ${got ?? "a new draft"}`);
+      }
+    }
+  }
+
+  if (kase.expect.turn === "silent" && !silent && !expected) {
     failures.push(`spoke when it should have stayed silent: ${JSON.stringify(spoken)}`);
   }
-  if (kase.expect.turn === "speak" && silent) {
+  if (kase.expect.turn === "speak" && silent && !expected) {
     failures.push("stayed silent when it should have spoken");
   }
 
@@ -82,5 +153,5 @@ export function checkReply(kase: EvalCase, rawReply: string, maxReplyWords: numb
     }
   }
 
-  return { silent, spoken, drafts, words, failures, pass: failures.length === 0 };
+  return { silent, spoken, drafts, revises, words, failures, pass: failures.length === 0 };
 }

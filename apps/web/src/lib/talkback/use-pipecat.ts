@@ -3,20 +3,12 @@
 import {
   PipecatClient,
   RTVIEvent,
-  type BotOutputData,
   type Participant,
-  type TranscriptData,
 } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import { useEffect, useState } from "react";
 import { subscribeStream } from "@/lib/recorder/mic-bus";
-import {
-  MAX_VISIBLE_TURNS,
-  OFF,
-  type TalkbackOptions,
-  type TalkbackState,
-  type TalkbackTurn,
-} from "./types";
+import { OFF, type TalkbackOptions, type TalkbackState } from "./types";
 
 /**
  * The live conversation, over Pipecat.
@@ -32,24 +24,74 @@ import {
  * canceller, because the media path is WebRTC either way.
  */
 /**
- * How the BROWSER finds a path to the container for the audio.
+ * How the BROWSER finds a path to the container for the audio — the FALLBACK.
  *
  * The mirror of `ICE_SERVERS` in apps/pipecat/bot.py, and needed for the same
  * reason on this side: only the SDP exchange goes over HTTPS, the media is
  * peer-to-peer. A browser behind a home router has to learn its own public
  * mapping before the container can send it anything.
  *
- * Comma-separated, and inlined at BUILD time like every NEXT_PUBLIC_ value —
- * changing it needs a rebuild, not a restart. Empty disables ICE servers, which
- * is right on a LAN and wrong anywhere else.
+ * STUN ONLY, and that is the whole reason this is no longer the primary source.
+ * A relay needs a credential, and every NEXT_PUBLIC_ value is inlined at BUILD
+ * time into a bundle anyone can read — so a TURN credential put here would be
+ * public and permanent. `/api/realtime/ice` mints one per connection instead,
+ * and this is what is used when that route cannot be reached.
+ *
+ * Comma-separated. Empty disables ICE servers, which is right on a LAN and
+ * wrong anywhere else.
  */
-const ICE_SERVERS: RTCIceServer[] = (
+const FALLBACK_ICE_SERVERS: RTCIceServer[] = (
   process.env.NEXT_PUBLIC_ICE_SERVERS || "stun:stun.l.google.com:19302"
 )
   .split(",")
   .map((url) => url.trim())
   .filter(Boolean)
   .map((urls) => ({ urls }));
+
+/**
+ * The ICE configuration for this connection, relay credential and all.
+ *
+ * WHY A RELAY IS NOT OPTIONAL. STUN gets a path whenever one side can be
+ * hole-punched, which is why talk-back worked from a desk on Wi-Fi for weeks
+ * and failed on the first drive that used it for what it is for. Mobile
+ * carriers run carrier-grade NAT, which is typically symmetric: the mapping the
+ * phone learns from STUN is not the mapping the container sends to, no
+ * candidate pair ever forms, and the call sits in `checking` until it times out
+ * about a minute later. The bot composes its opening line and speaks it into a
+ * transport with no path; the only symptom is silence.
+ *
+ * Failure here is NOT fatal and must not be: without TURN the call still
+ * connects wherever STUN is enough, which includes every LAN and most home
+ * broadband. Degrading to the build-time list is strictly better than refusing
+ * to connect at all.
+ */
+async function iceServers(): Promise<RTCIceServer[]> {
+  try {
+    const res = await fetch("/api/realtime/ice", { cache: "no-store" });
+    if (!res.ok) {
+      console.warn(`[talkback:pipecat] no ICE config — ${res.status}`);
+      return FALLBACK_ICE_SERVERS;
+    }
+    const { iceServers: servers } = (await res.json()) as {
+      iceServers: RTCIceServer[];
+    };
+    // An empty list is a legitimate answer on a LAN, but so is a malformed one
+    // from an older deployment, and the two are indistinguishable here. Prefer
+    // the build-time list, which at least names a STUN server.
+    if (!Array.isArray(servers) || servers.length === 0) {
+      return FALLBACK_ICE_SERVERS;
+    }
+    console.info(
+      `[talkback:pipecat] ICE: ${servers.length} server(s), relay ${
+        servers.some((s) => s.username) ? "available" : "NOT configured"
+      }`,
+    );
+    return servers;
+  } catch (err) {
+    console.warn(`[talkback:pipecat] no ICE config — ${String(err)}`);
+    return FALLBACK_ICE_SERVERS;
+  }
+}
 
 export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
   const { captureSessionId, enabled } = options;
@@ -81,6 +123,12 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
       patch({ status: "connecting", memory: "ready", error: null });
       console.info(`[talkback:pipecat] connecting to ${url}`);
 
+      /* Started here and awaited below, so the relay credential is minted while
+       * the context ticket is in flight rather than after it. Two round trips in
+       * series before the first word is two too many when the driver has
+       * already started talking. */
+      const icePromise = iceServers();
+
       /* The Python container has no Better Auth session and should not gain
        * one, so it carries a signed ticket instead — the same mechanism the
        * WebSocket path uses. It spends this once per turn against
@@ -108,9 +156,8 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
       // should not be discovered afterwards from thin answers.
       if (!ticket) patch({ memory: "unavailable" });
 
-      /* One key per agent turn, so every `bot-output` for that reply lands in
-       * the same bubble. Reset when the bot starts speaking again. */
-      let agentTurnKey = `agent-${Date.now()}`;
+      const ice = await icePromise;
+      if (disposed) return;
 
       const next = new PipecatClient({
         transport: new SmallWebRTCTransport({
@@ -128,8 +175,9 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
            * reachable — which is exactly why it survived every local test and
            * only appeared once the container was in a datacentre.
            *
-           * Build-time, like the URL above: it is baked into the bundle. */
-          iceServers: ICE_SERVERS,
+           * Fetched per connection rather than baked into the bundle, because
+           * the relay half of it is a credential — see `iceServers` above. */
+          iceServers: ice,
           webrtcRequestParams: {
             endpoint: `${url}/offer`,
             // Rides along with the SDP offer, so the bot has it before the
@@ -140,10 +188,7 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
         enableMic: true,
         enableCam: false,
         callbacks: {
-          onBotStartedSpeaking: () => {
-            agentTurnKey = `agent-${Date.now()}`;
-            patch({ status: "speaking" });
-          },
+          onBotStartedSpeaking: () => patch({ status: "speaking" }),
           onBotStoppedSpeaking: () => patch({ status: "listening" }),
           onDisconnected: () => {
             if (!disposed)
@@ -153,72 +198,28 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
       });
       client = next;
 
-      /* Both halves of the exchange, on screen as it happens.
+      /* THE LIVE TOPIC TITLE, pushed by the container.
        *
-       * Appended rather than replaced: seeing only the latest line makes it
-       * impossible to tell a misheard question from a bad answer, which is the
-       * first thing anybody needs to know when a reply seems wrong. */
-      const append = (
-        role: TalkbackTurn["role"],
-        text: string,
-        key?: string,
-      ) => {
-        // `[Speaker 2] …` is how the container marks a line once it has heard
-        // more than one voice. Shown as a label rather than read as text.
-        const tagged = /^\[Speaker (\d+)\]\s*/.exec(text);
-        const speaker = tagged ? Number(tagged[1]) : null;
-        const trimmed = (tagged ? text.slice(tagged[0].length) : text).trim();
-        if (!trimmed) return;
-        setState((prev) => {
-          const turns = [...prev.turns];
-          const last = turns[turns.length - 1];
-
-          /* ACCUMULATE INTO THE CURRENT TURN, and never trust the event to be
-           * emitted once.
-           *
-           * A reply arrives as several `bot-output` events, and on the RTVI 1.x
-           * wire format — which is what Pipecat serves this client — they carry
-           * no stable `segment_id` and the same sentence is emitted more than
-           * once. Keying on the id alone produced a column of duplicate bubbles:
-           * "I'm doing well, thank you." three times for one reply.
-           *
-           * So the turn owns the bubble, not the event. Text already present is
-           * dropped, anything new is appended, and the bubble closes when the
-           * other speaker starts. That is correct for both wire formats and for
-           * whatever the next one does. */
-          if (last && last.id === key) {
-            const already = last.text.includes(trimmed);
-            if (already) return prev;
-            turns[turns.length - 1] = { ...last, text: `${last.text} ${trimmed}`.trim() };
-          } else {
-            turns.push({
-              id: key ?? `${role}-${Date.now()}-${turns.length}`,
-              role,
-              text: trimmed,
-              speaker,
-            });
-          }
-          const merged = turns[turns.length - 1]!;
-          return {
-            ...prev,
-            turns: turns.slice(-MAX_VISIBLE_TURNS),
-            reply: role === "agent" ? merged.text : prev.reply,
-          };
-        });
-      };
-
-
-      next.on(RTVIEvent.UserTranscript, (data: TranscriptData) => {
-        // Interim results rewrite themselves several times a second. Only the
-        // final text is worth putting in front of someone driving.
-        if (data?.final) append("you", data.text);
-      });
-
-      next.on(RTVIEvent.BotOutput, (data: BotOutputData) => {
-        // A turn the silence gate declined never reaches the speaker, so it
-        // must not appear here either — the screen should show what was said.
-        if (data?.will_be_spoken === false) return;
-        append("agent", data.text, agentTurnKey);
+       * The screen used to render the last eight turns of the exchange. It was
+       * the wrong thing to show somebody in a car cradle — reading is the one
+       * thing they cannot do — and it re-rendered this provider on every
+       * streamed fragment of every reply, on a phone that is also holding a
+       * MediaRecorder open. Two to four words naming the subject costs one
+       * render when the subject actually changes.
+       *
+       * Named in the voice container rather than here or in the worker: it sits
+       * next to the running summary, on the freshest copy of what was said (see
+       * `TopicTitle` in apps/pipecat/bot.py), and rides the data channel that
+       * the audio already needs — so the phone makes no extra request.
+       *
+       * `serverMessage` carries the frame's `data` payload directly and is
+       * typed `any`, so this is the boundary where it gets checked: an older
+       * container sends nothing at all, and a future one may send other kinds
+       * of server message through the same event. */
+      next.on(RTVIEvent.ServerMessage, (data) => {
+        if (data?.type !== "title") return;
+        const { title } = data as { title?: unknown };
+        if (typeof title === "string") patch({ title });
       });
 
       next.on(

@@ -35,6 +35,19 @@ export interface TranscriptSegment {
   text: string;
   /** Optional Midas-touch classification of the raw stream (see note below). */
   kind?: "content" | "directive" | "unclassified";
+  /**
+   * When the segment entered the ledger, as opposed to when it was said.
+   * Optional, like `kind`: only a pipeline that classifies asynchronously
+   * needs to know how long a segment has been waiting for its verdict.
+   */
+  recordedAt?: Date;
+  /**
+   * For a `directive`: whether something other than the workspace deals with
+   * it — the classifier matched it to a capability, or a person marked the
+   * line as a direction by hand. Only those are withheld from extraction; see
+   * CLASSIFY_WAIT_MS in apps/worker/src/jobs/extract-workspace.ts.
+   */
+  handledElsewhere?: boolean;
 }
 
 /* ---------------------------------------------------------------------------
@@ -70,8 +83,23 @@ export type TaskState = z.infer<typeof TaskState>;
  * retiring one — carries `"user"`, so the fold can tell a person's correction
  * from the model's reading of their speech. That distinction is the
  * measurement: whether a speech-driven transition was kept or reversed.
+ *
+ * `"agent"` is the talk-back agent acting on the board because it was asked
+ * to, through a tool, mid-conversation. A third source, not a kind of either:
+ * it is a machine acting like speech does, but on an explicit request and at
+ * once, and whether people keep what it did is measured separately from
+ * whether they keep what the extractor inferred.
+ *
+ * `"import"` is a board the person already kept somewhere else — Trello,
+ * Jira, Notion, a list in a notes app — brought in once so the first drive
+ * talks about work that already exists. It is the person's own claim about
+ * their own work, not a reading of their speech, so `judge()` does not score
+ * it: an imported card counted as "kept" would inflate the acceptance measure
+ * with cards no machine ever inferred. It carries no spans, because no
+ * utterance said it.
  */
-export type OpVia = "user";
+export const OpVia = z.enum(["user", "agent", "import"]);
+export type OpVia = z.infer<typeof OpVia>;
 
 /** A span of derived text traced back to the utterance it came from. */
 export const BlockSpan = z.object({
@@ -97,7 +125,7 @@ export interface Block {
   text: string;
   /** Only on a `task`; absent on every other kind. Defaults to `open`. */
   state?: TaskState;
-  /** Set on a block a person posted from the board, not the extractor. */
+  /** Set on a block posted from the board or by the agent, not the extractor. */
   via?: OpVia;
   spans: BlockSpan[];
   /** When the speech behind this block was said. */
@@ -140,6 +168,8 @@ export const WorkspaceOp = z.discriminatedUnion("type", [
      * icons needed no enum migration on a deployed database.
      */
     icon: z.string().min(1).optional(),
+    /** Set when the agent opened the topic to hold a task it was asked to add. */
+    via: OpVia.optional(),
   }),
   z.object({
     type: z.literal("rename_topic"),
@@ -162,7 +192,7 @@ export const WorkspaceOp = z.discriminatedUnion("type", [
     text: z.string().min(1),
     /** Only meaningful for `task`; ignored elsewhere. */
     state: TaskState.optional(),
-    via: z.enum(["user"]).optional(),
+    via: OpVia.optional(),
     spans: z.array(BlockSpan).default([]),
   }),
   z.object({
@@ -178,13 +208,13 @@ export const WorkspaceOp = z.discriminatedUnion("type", [
      * block's state — a sharper wording is not a transition.
      */
     state: TaskState.optional(),
-    via: z.enum(["user"]).optional(),
+    via: OpVia.optional(),
     spans: z.array(BlockSpan).default([]),
   }),
   z.object({
     type: z.literal("retire_block"),
     blockId: z.string().min(1),
-    via: z.enum(["user"]).optional(),
+    via: OpVia.optional(),
   }),
   z.object({
     type: z.literal("move_block"),

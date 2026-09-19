@@ -1,15 +1,23 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { captureSession, eq, getDb } from "@voicemural/db";
+import { boardEnabledAt } from "@voicemural/db/board";
+import { nextDraftSeq } from "@voicemural/db/drafts";
+import { resolveStudyCondition } from "@voicemural/shared";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import {
+  BOARD_EDITING,
+  BOARD_TOOLS,
   SUMMARY_PROMPT,
   TALKBACK_CONFIG_VERSION,
+  TITLE_PROMPT,
+  WEB_SEARCH_TOOL,
   asSttLanguage,
   asVoiceId,
   composeSystemPrompt,
   foldSummary,
   loadDriveSoFarText,
+  webSearchSection,
 } from "@voicemural/talkback";
 
 export const runtime = "nodejs";
@@ -63,6 +71,7 @@ export async function POST(req: Request) {
       setting: captureSession.setting,
       voiceId: captureSession.voiceId,
       sttLanguage: captureSession.sttLanguage,
+      studyCondition: captureSession.studyCondition,
     })
     .from(captureSession)
     .where(eq(captureSession.id, payload.captureSessionId))
@@ -85,12 +94,41 @@ export async function POST(req: Request) {
   const driveSoFar = await loadDriveSoFarText(payload.captureSessionId).catch(() => "");
   const driveSummary = driveSoFar ? await foldSummary(null, driveSoFar) : null;
 
-  const composed = composeSystemPrompt({ setting: row.setting });
+  /* Where the container's draft counter should resume.
+   *
+   * Same reconnect story as the summary seed above, and a worse failure: the
+   * counter restarting at 0 collides with rows this drive already has, and the
+   * unique index turns every later draft into a silent no-op. Fails open to 0
+   * — which is exactly the behaviour before this existed, so a broken read
+   * costs a reconnected drive its drafts rather than costing every drive its
+   * connection. */
+  const draftSeq = await nextDraftSeq(payload.captureSessionId).catch(() => 0);
+
+  // The board, and the agent's hands on it, only where the person has a board.
+  // Decided once per connection, because the tools are registered once per
+  // connection: a board switched on mid-drive shows up in the turn context
+  // (the context route checks every turn) but the agent can only read it
+  // until the next drive, which the base prompt handles.
+  const boardEditable = (await boardEnabledAt(payload.userId).catch(() => null)) !== null;
+  // Web search wherever an instance is configured. Checked here rather than
+  // only in `/search` so a deployment without one never tells the model it can
+  // look things up.
+  const webSearch = Boolean(process.env.SEARXNG_URL);
+  const composed = composeSystemPrompt({
+    setting: row.setting,
+    sections: [...(boardEditable ? [BOARD_EDITING] : []), ...(webSearch ? [webSearchSection()] : [])],
+  });
 
   return NextResponse.json(
     {
       systemPrompt: composed.prompt,
       summaryPrompt: SUMMARY_PROMPT,
+      // The live topic title, folded in the container next to the summary and
+      // pushed to the browser as an RTVI server message. Sent here for the same
+      // reason as the summary instruction: one copy of the text, in TypeScript.
+      // An older web app that does not send this leaves the container's
+      // `TopicTitle` inert, which is the right failure — no board, no calls.
+      titlePrompt: TITLE_PROMPT,
       // Echoed so a turn can be interpreted from the container's own logs, and
       // so `bot.py` need not parse prose to know the reply cap.
       setting: composed.setting,
@@ -115,7 +153,27 @@ export async function POST(req: Request) {
       // The container computes offsets against this so `agent_turn` shares a
       // clock with `utterance`, which is ms since the drive started.
       startedAtEpochMs: new Date(row.startedAt).getTime(),
+      // The container seeds `DraftRecorder` from this rather than counting from
+      // zero, so a reconnect mid-drive cannot collide with the drafts already
+      // written. See `nextDraftSeq`.
+      nextDraftSeq: draftSeq,
       configVersion: TALKBACK_CONFIG_VERSION,
+      // The study condition frozen onto THIS drive when it opened — not the
+      // participant's current template, which may have moved to the next
+      // phase since. Resolved, so the container reads flags and never
+      // defaults. A drive from before conditions existed reads as the
+      // defaults, which is what it ran under unless the container's
+      // PROACTIVE_OFFERS said otherwise.
+      studyCondition: resolveStudyCondition(row.studyCondition).condition,
+      // OpenAI-format function tools for the container to register as they
+      // are. Board tools only when the board is on, and then the prompt says
+      // nothing about editing it either; every call comes back to
+      // /api/realtime/board.
+      tools: [...(boardEditable ? BOARD_TOOLS : []), ...(webSearch ? [WEB_SEARCH_TOOL] : [])],
+      // Which of those is the search, so the container can route it to
+      // /api/realtime/search, speak its announcement and play the cue —
+      // without a tool name hard-coded in Python. Null when not offered.
+      webSearchTool: webSearch ? WEB_SEARCH_TOOL.function.name : null,
     },
     { headers: { "Cache-Control": "no-store" } },
   );

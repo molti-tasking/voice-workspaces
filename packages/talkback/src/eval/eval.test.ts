@@ -4,7 +4,7 @@ import { OUTPUT_CONTRACT, SYSTEM_PROMPT } from "../prompt";
 import { CASES, findCases } from "./cases";
 import { checkReply } from "./checks";
 import { parseJudgement, renderTurnForJudge } from "./judge";
-import { flushLangfuse, langfuseConfig, startLangfuse, traceTurn } from "./langfuse";
+import { langfuseConfig, startLangfuse, traceTurn } from "./langfuse";
 import { buildTurnMessages, composeContextBlock } from "./messages";
 
 const silentCase = CASES.find((c) => c.id === "mid-sentence")!;
@@ -72,6 +72,46 @@ describe("the deterministic checks", () => {
     expect(result.pass).toBe(true);
   });
 
+  it("holds a revision to revising, and a new draft to being new", () => {
+    const revise = CASES.find((c) => c.id === "draft-revise-when-asked")!;
+    expect(
+      checkReply(revise, 'Shorter.<draft revises="3f9a2c" title="Email">Pilot Monday.</draft>', 25)
+        .pass,
+    ).toBe(true);
+    // The old behaviour: a second card with nothing linking it to the first.
+    expect(
+      checkReply(revise, 'Shorter.<draft title="Email">Pilot Monday.</draft>', 25).failures,
+    ).toEqual(expect.arrayContaining([expect.stringMatching(/expected revises/)]));
+    // Right intent, wrong draft.
+    expect(
+      checkReply(revise, 'Shorter.<draft revises="b7e40d" title="Email">x</draft>', 25).failures,
+    ).toEqual(expect.arrayContaining([expect.stringMatching(/expected revises/)]));
+
+    const fresh = CASES.find((c) => c.id === "draft-new-when-different")!;
+    expect(
+      checkReply(fresh, 'Done.<draft title="Niklas">Does Thursday work?</draft>', 25).pass,
+    ).toBe(true);
+    expect(
+      checkReply(fresh, 'Done.<draft revises="3f9a2c" title="Niklas">x</draft>', 25).failures,
+    ).toEqual(expect.arrayContaining([expect.stringMatching(/where a NEW draft was wanted/)]));
+
+    const none = CASES.find((c) => c.id === "draft-seen-not-rewritten")!;
+    expect(checkReply(none, "An email to William and a reading list.", 25).pass).toBe(true);
+    expect(
+      checkReply(none, 'Here.<draft title="Email">again</draft>', 25).failures,
+    ).toEqual(expect.arrayContaining([expect.stringMatching(/where none was wanted/)]));
+  });
+
+  it("says a handle read aloud is a failure, however right the draft was", () => {
+    const revise = CASES.find((c) => c.id === "draft-revise-when-asked")!;
+    const spoken = checkReply(
+      revise,
+      'Shortened 3f9a2c.<draft revises="3f9a2c" title="Email">Pilot Monday.</draft>',
+      25,
+    );
+    expect(spoken.failures).toContain("must not say: /3f9a2c/");
+  });
+
   it("strips a sentinel emitted alongside speech and flags it", () => {
     const result = checkReply(eitherCase, "<silence> That closes it.", 25);
     expect(result.spoken).toBe("That closes it.");
@@ -91,6 +131,32 @@ describe("the deterministic checks", () => {
     expect(checkReply(narrated, "<silence>", 25).pass).toBe(true);
     expect(checkReply(narrated, "Yes, I can hear you both.", 25).pass).toBe(true);
     expect(checkReply(eitherCase, "I'll stay silent on that one.", 25).failures).toContain("narrated decision");
+  });
+});
+
+describe("the tool-call checks", () => {
+  const dropCase = CASES.find((c) => c.id === "board-remove-drops")!;
+  const hands = CASES.find((c) => c.id === "board-mention-no-edit")!;
+
+  it("passes the expected call with matching arguments, and needs no words on that step", () => {
+    const result = checkReply(dropCase, "", 60, [{ name: "move_task", arguments: { card: "1225b3", column: "dropped" } }]);
+    expect(result.pass).toBe(true);
+  });
+
+  it("fails the wrong tool, a wrong argument, or no call at all", () => {
+    expect(checkReply(dropCase, "", 60, [{ name: "remove_task", arguments: { card: "1225b3" } }]).failures[0]).toMatch(
+      /called remove_task, expected move_task/,
+    );
+    expect(
+      checkReply(dropCase, "", 60, [{ name: "move_task", arguments: { card: "1225b3", column: "done" } }]).failures[0],
+    ).toMatch(/column/);
+    expect(checkReply(dropCase, "Dropped it.", 60).failures).toContain("did not call move_task");
+  });
+
+  it("fails a tool call where none was wanted", () => {
+    const result = checkReply(hands, "", 60, [{ name: "move_task", arguments: { card: "1225b3", column: "done" } }]);
+    expect(result.pass).toBe(false);
+    expect(result.failures[0]).toMatch(/unexpected tool call/);
   });
 });
 
@@ -119,12 +185,47 @@ describe("the turn messages, which mirror bot.py", () => {
     expect(block.endsWith("That is background. Answer only what was just said to you.")).toBe(true);
   });
 
+  it("put the board ahead of everything, as Recall._compose does", () => {
+    const block = composeContextBlock({
+      board: "Their task board right now:\n- [doing] ethics form",
+      threads: [{ text: "Topic: Field study" }],
+    })!;
+    expect(block.indexOf("Their task board right now:")).toBe(0);
+    expect(block.indexOf("[doing] ethics form")).toBeLessThan(block.indexOf("Where things stand"));
+  });
+
+  it("put the drafts after the quotes and before the drive, as `_compose` does", () => {
+    const block = composeContextBlock({
+      threads: [{ text: "Topic: Field study" }],
+      passages: [{ when: "yesterday", text: "call Niklas" }],
+      drafts: 'Drafts you have written on this drive, and which you can still see:\ndraft 3f9a2c "Email" (v1.0, written by you)',
+      summary: "- Decision: x",
+    })!;
+
+    expect(block.indexOf("Drafts you have written")).toBeGreaterThan(
+      block.indexOf("From their past recordings:"),
+    );
+    // The summary stays LAST, closest to the user's message: that is what
+    // "that" and "the second one" resolve against.
+    expect(block.indexOf("So far in this drive:")).toBeGreaterThan(
+      block.indexOf("Drafts you have written"),
+    );
+  });
+
   it("append the pending confirmation ask after the background, or alone", () => {
     const withBlock = composeContextBlock({ summary: "- x", pending: "send the diary" })!;
     expect(withBlock).toMatch(/Answer only what was just said to you\.\n\nThey earlier asked for this/);
     const alone = composeContextBlock({ pending: "send the diary" })!;
     expect(alone.startsWith("They earlier asked for this")).toBe(true);
     expect(alone).toContain("cannot be undone: send the diary");
+  });
+
+  it("word a repeat ask so it can be let go of", () => {
+    const first = composeContextBlock({ pending: "send the diary", pendingAskedCount: 0 })!;
+    const repeat = composeContextBlock({ pending: "send the diary", pendingAskedCount: 1 })!;
+    expect(first).toContain("ask in one short sentence");
+    expect(repeat).toContain("already asked about it once");
+    expect(repeat).not.toContain("ask in one short sentence");
   });
 
   it("order the turn as system, history, context block, then what was said", () => {
@@ -240,6 +341,18 @@ describe("langfuse", () => {
       { exporter },
     );
 
+    // Record the scores instead of queueing them for delivery: this test is
+    // about what gets built, and a real queue would reach for the network.
+    const scored: { name: string; value: unknown; dataType: string; span: string }[] = [];
+    langfuse.client.score.observation = (observation, data) => {
+      scored.push({
+        name: data.name,
+        value: data.value,
+        dataType: String(data.dataType),
+        span: observation.otelSpan.spanContext().spanId,
+      });
+    };
+
     const startedAt = new Date("2026-09-08T10:00:00Z");
     const traceId = traceTurn(langfuse, {
       name: "eval · stuck",
@@ -305,10 +418,14 @@ describe("langfuse", () => {
     expect(hrTimeMs(generation.startTime)).toBe(startedAt.getTime());
     expect(hrTimeMs(generation.endTime)).toBe(startedAt.getTime() + 1500);
 
-    await flushLangfuse(langfuse).catch(() => {
-      // The score queue posts to https://lf.example, which does not exist here.
-      // The span export is what this test is about and has already been read.
-    });
+    // Scored against the ROOT OBSERVATION, so each score carries an
+    // observation id as well as a trace id.
+    expect(scored).toEqual([
+      { name: "checks_pass", value: 1, dataType: "NUMERIC", span: root.spanContext().spanId },
+      { name: "judge_verdict", value: "pass", dataType: "CATEGORICAL", span: root.spanContext().spanId },
+    ]);
+
+    await langfuse.provider.shutdown();
   });
 });
 

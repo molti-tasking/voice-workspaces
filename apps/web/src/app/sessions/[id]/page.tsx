@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, asc, eq, getDb } from "@voicemural/db";
-import { loadSessionDrafts } from "@voicemural/db/drafts";
+import { loadSessionDraftHistory } from "@voicemural/db/drafts";
 import { agentTurn, audioChunk, captureSession, utterance } from "@voicemural/db/schema";
 import { findCoverageGaps, formatOffset } from "@voicemural/shared";
 import { AppDock } from "@/components/app-dock";
@@ -82,6 +82,7 @@ export default async function SessionPage({
       ttftMs: agentTurn.ttftMs,
       speakTtfbMs: agentTurn.speakTtfbMs,
       totalLatencyMs: agentTurn.totalLatencyMs,
+      toolCalls: agentTurn.toolCalls,
       error: agentTurn.error,
     })
     .from(agentTurn)
@@ -97,7 +98,21 @@ export default async function SessionPage({
     (c) => c.status === "stored" || c.status === "transcribing",
   );
 
-  const drafts = await loadSessionDrafts(id);
+  /* Every version, not just the current one: the card carries Edit, a history
+   * and Restore now, and fetching the history from the client would mean a
+   * second round trip for something this page already has an open connection
+   * for.
+   *
+   * Times are formatted HERE, on the server, like every other date on this
+   * page. `toLocaleTimeString` in a client component renders in the server's
+   * locale during SSR and the browser's on hydration, and React tears the tree
+   * down over the mismatch — which on this page would take the transcript with
+   * it. */
+  const drafts = (await loadSessionDraftHistory(id)).map((draft) => ({
+    ...draft,
+    current: withTime(draft.current),
+    earlier: draft.earlier.map(withTime),
+  }));
 
   return (
     <div className="mx-auto max-w-3xl px-6 pt-10 pb-40">
@@ -170,6 +185,17 @@ export default async function SessionPage({
       <AppDock />
     </div>
   );
+}
+
+/** One version with its time already rendered. See the note at the call site. */
+function withTime<T extends { createdAt: Date }>(version: T): T & { at: string } {
+  return {
+    ...version,
+    at: version.createdAt.toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+  };
 }
 
 function Banner({

@@ -32,7 +32,7 @@ vi.mock("@voicemural/telemetry", async (importOriginal) => {
 });
 
 const { closeDb, eq, getDb } = await import("@voicemural/db");
-const { audioChunk, captureSession, user, utterance } = await import(
+const { audioChunk, capability, captureSession, directive, user, utterance } = await import(
   "@voicemural/db/schema"
 );
 const {
@@ -43,7 +43,7 @@ const {
   resetCursor,
 } = await import("@voicemural/db/workspace");
 const { foldWorkspace, transitionsOf } = await import("@voicemural/workspace");
-const { extractWorkspace } = await import("./extract-workspace");
+const { CLASSIFY_WAIT_MS, extractWorkspace } = await import("./extract-workspace");
 
 const USER_ID = "test-extract-user";
 const SESSION_ID = "00000000-0000-4000-8000-0000000000e1";
@@ -74,7 +74,9 @@ function reply(content: string) {
 const { isDatabaseReachable } = await import("@voicemural/db/testing");
 const describeIfDb = (await isDatabaseReachable()) ? describe : describe.skip;
 
-async function seedTranscript(lines: string[]) {
+type Kind = "content" | "directive" | "unclassified";
+
+async function seedTranscript(lines: (string | { text: string; kind: Kind })[]) {
   const db = getDb();
   await db.delete(user).where(eq(user.id, USER_ID));
   await db
@@ -103,16 +105,25 @@ async function seedTranscript(lines: string[]) {
     })
     .returning({ id: audioChunk.id });
 
-  await db.insert(utterance).values(
-    lines.map((text, i) => ({
-      captureSessionId: SESSION_ID,
-      chunkId: chunk!.id,
-      startOffsetMs: i * 1000,
-      endOffsetMs: i * 1000 + 900,
-      text,
-      kind: "content" as const,
-    })),
-  );
+  return db
+    .insert(utterance)
+    .values(
+      lines.map((line, i) => ({
+        captureSessionId: SESSION_ID,
+        chunkId: chunk!.id,
+        startOffsetMs: i * 1000,
+        endOffsetMs: i * 1000 + 900,
+        text: typeof line === "string" ? line : line.text,
+        kind: typeof line === "string" ? ("content" as const) : line.kind,
+      })),
+    )
+    .returning({ id: utterance.id, text: utterance.text });
+}
+
+/** Everything the model was shown on call `n`, as one string. */
+function sentOnCall(n = 0): string {
+  const messages = chatMock.mock.calls[n]?.[0] as { content: string }[] | undefined;
+  return (messages ?? []).map((m) => m.content).join("\n");
 }
 
 const LINES = [
@@ -344,5 +355,130 @@ describeIfDb("extractWorkspace", () => {
     const outcome = await extractWorkspace(USER_ID);
     expect(outcome.skipped).toBe("nothing pending");
     expect(chatMock).not.toHaveBeenCalled();
+  });
+});
+
+describeIfDb("extractWorkspace, with directions in the stream", () => {
+  const DIRECTION = "Mark this as the intro's main claim.";
+  const CAPABILITY_ID = "00000000-0000-4000-8000-0000000000e9";
+
+  beforeEach(() => {
+    chatMock.mockReset();
+    chatMock.mockResolvedValue(reply(RESPONSE));
+  });
+
+  afterAll(async () => {
+    await getDb().delete(user).where(eq(user.id, USER_ID));
+    await closeDb();
+  });
+
+  /** The classifier's verdict on a line, as recordClassifications writes it. */
+  async function classifyAsDirection(utteranceId: string, handledBy: "capability" | null) {
+    const db = getDb();
+    if (handledBy) {
+      await db
+        .insert(capability)
+        .values({ id: CAPABILITY_ID, userId: USER_ID, type: "action", name: "mark" })
+        .onConflictDoNothing();
+    }
+    await db.insert(directive).values({
+      utteranceId,
+      captureSessionId: SESSION_ID,
+      verb: "mark",
+      restatement: "Marking that.",
+      capabilityId: handledBy ? CAPABILITY_ID : null,
+      confidence: 90,
+    });
+  }
+
+  /**
+   * The classifier's prompt promises a direction "drops out of the workspace".
+   * Kept for a direction a capability already carried out: never shown to the
+   * model, never cited by an op, and still consumed, so it is not waited on.
+   */
+  it("never sends a handled direction to the model, and moves past it", async () => {
+    const rows = await seedTranscript([
+      ...LINES.slice(0, 3),
+      { text: DIRECTION, kind: "directive" },
+      ...LINES.slice(3, 7),
+    ]);
+    const directionId = rows.find((r) => r.text === DIRECTION)!.id;
+    await classifyAsDirection(directionId, "capability");
+
+    const outcome = await extractWorkspace(USER_ID);
+
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    expect(sentOnCall()).not.toContain(DIRECTION);
+    expect(sentOnCall()).toContain(LINES[0]);
+    expect(outcome.segments).toBe(8); // the whole batch was consumed
+
+    const ops = await loadOps(USER_ID);
+    expect(ops.flatMap((o) => o.sourceUtteranceIds)).not.toContain(directionId);
+    const [stored] = await loadExtractions(USER_ID);
+    expect(stored?.inputSegmentIds).not.toContain(directionId);
+
+    expect((await extractWorkspace(USER_ID)).skipped).toBe("nothing pending");
+  });
+
+  /**
+   * 15 Sep 2026: "Let's remove this asymmetry already" was a direction no
+   * capability handles. Withheld, the card it named stayed on the board. An
+   * unhandled direction about the person's own work is speech the extractor
+   * is written to act on.
+   */
+  it("sends a direction nothing handles, so speech can still drop a task", async () => {
+    const REMOVE = "Let's remove this asymmetry already.";
+    const rows = await seedTranscript([...LINES.slice(0, 7), { text: REMOVE, kind: "directive" }]);
+    await classifyAsDirection(rows.find((r) => r.text === REMOVE)!.id, null);
+
+    await extractWorkspace(USER_ID);
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    expect(sentOnCall()).toContain(REMOVE);
+  });
+
+  it("withholds a line a person marked as a direction by hand", async () => {
+    const rows = await seedTranscript([...LINES.slice(0, 7), DIRECTION]);
+    await getDb()
+      .update(utterance)
+      .set({ kindOverride: "directive" })
+      .where(eq(utterance.id, rows.find((r) => r.text === DIRECTION)!.id));
+
+    await extractWorkspace(USER_ID);
+    expect(sentOnCall()).not.toContain(DIRECTION);
+  });
+
+  it("calls no model for a batch that is all handled directions", async () => {
+    const rows = await seedTranscript(LINES.map((_, i) => ({ text: `${DIRECTION} ${i}`, kind: "directive" as const })));
+    for (const row of rows) await classifyAsDirection(row.id, "capability");
+    const outcome = await extractWorkspace(USER_ID);
+    expect(chatMock).not.toHaveBeenCalled();
+    expect(outcome.opsAppended).toBe(0);
+    expect((await extractWorkspace(USER_ID)).skipped).toBe("nothing pending");
+  });
+
+  /**
+   * The race T0.4 closes. A line the classifier has not reached yet may be a
+   * direction, so the batch waits — without moving the cursor, so the same
+   * eight lines are taken when it resumes. Past the wait, the line is content.
+   */
+  it("waits for an unclassified line, then sends it as content after the timeout", async () => {
+    await seedTranscript([...LINES.slice(0, 7), { text: DIRECTION, kind: "unclassified" }]);
+
+    const early = await extractWorkspace(USER_ID);
+    expect(early.skipped).toBe("awaiting classification");
+    expect(chatMock).not.toHaveBeenCalled();
+
+    const later = new Date(Date.now() + CLASSIFY_WAIT_MS + 1_000);
+    const outcome = await extractWorkspace(USER_ID, later);
+    expect(outcome.segments).toBe(8);
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    expect(sentOnCall()).toContain(DIRECTION);
+  });
+
+  it("does not wait on a line the classifier has already settled", async () => {
+    await seedTranscript([...LINES.slice(0, 7), { text: DIRECTION, kind: "directive" }]);
+    const outcome = await extractWorkspace(USER_ID);
+    expect(outcome.skipped).toBeUndefined();
+    expect(chatMock).toHaveBeenCalledTimes(1);
   });
 });

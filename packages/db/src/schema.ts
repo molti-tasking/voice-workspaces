@@ -12,6 +12,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 /* ---------------------------------------------------------------------------
@@ -36,13 +37,44 @@ export const user = pgTable("user", {
    */
   isAnonymous: boolean("is_anonymous").notNull().default(false),
   /**
-   * When the task board was switched on for this participant, or null.
+   * When the task board was switched on for this person.
    *
-   * Nullable rather than a flag so the before/after phase of the study is a
-   * timestamp on the row, not a deploy date someone has to remember. Not a
-   * Better Auth field; set by hand via SQL or Drizzle Studio.
+   * ON BY DEFAULT since the peer week. It used to be null until a researcher
+   * ran an UPDATE, which made the board the study's before/after phase gate —
+   * and made every new account experience the system with its most visible
+   * capability dark. That is exactly what the first peers reported: "it seemed
+   * like an organizer for voice memos". Nothing was wrong; the agent simply
+   * had no board to act on, so `BOARD_EDITING` was never composed into the
+   * prompt and its four tools were never registered.
+   *
+   * STILL A TIMESTAMP, not a flag, and still nullable. It keeps recording WHEN
+   * somebody got the board, which is what an analysis needs, and a researcher
+   * can still null it deliberately. But it is no longer the phase gate: a
+   * before/after design needs a mechanism that does not also decide whether a
+   * new sign-up sees a working product. Not a Better Auth field.
    */
-  boardEnabledAt: timestamp("board_enabled_at", { withTimezone: true }),
+  boardEnabledAt: timestamp("board_enabled_at", { withTimezone: true }).defaultNow(),
+  /**
+   * The pseudonym this person carries in the study's analysis, or null for
+   * everyone who is not a participant (the researchers, pilots, guests).
+   *
+   * The analysis joins PostHog events and `study:export` files to people by
+   * this and nothing else — never by name or email, which the analysis must
+   * not need. Unique so two rows can never claim one participant; set by hand,
+   * like `boardEnabledAt`, or with `pnpm study:participant`.
+   */
+  studyParticipantId: text("study_participant_id").unique(),
+  /**
+   * The study condition this person's NEXT drives run under, or null for
+   * today's behaviour.
+   *
+   * Only a template. Every drive copies the resolved condition onto its own
+   * `capture_session.study_condition` when it opens, so a phase change is one
+   * write here — new drives pick it up, drives already recorded keep what
+   * they ran under. Shape: `StudyCondition` in @voicemural/shared, validated on
+   * the way in by `pnpm study:condition` and on the way out at session insert.
+   */
+  studyCondition: jsonb("study_condition").$type<Record<string, unknown>>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -139,6 +171,19 @@ export const captureSettingEnum = pgEnum("capture_setting", [
   "desk",
 ]);
 
+/**
+ * Which of the three worked examples on `/welcome` a drive was started from.
+ *
+ * Mirrors `CaptureUseCase` in `@voicemural/shared` — that package owns the wire
+ * format, this one the column. See the contract for why a seeded example has to
+ * be visible in the data rather than remembered afterwards.
+ */
+export const captureUseCaseEnum = pgEnum("capture_use_case", [
+  "think_aloud",
+  "draft",
+  "recall",
+]);
+
 export const macroProposalStatusEnum = pgEnum("macro_proposal_status", [
   "proposed",
   "accepted",
@@ -151,6 +196,18 @@ export const chunkStatusEnum = pgEnum("chunk_status", [
   "transcribed",
   "failed",
 ]);
+
+/**
+ * Who wrote a draft version.
+ *
+ * The same two parties `workspace_op.via` already distinguishes — see `OpVia`
+ * in `packages/workspace/src/types.ts` — and for the same reason: the study
+ * compares what the model produced with what the person did to it afterwards,
+ * and that comparison is only possible if each version says which of them it
+ * came from. It is also what decides the number: the agent owns the major, the
+ * person owns the minor (see `agentDraftVersion`).
+ */
+export const agentDraftAuthorEnum = pgEnum("agent_draft_author", ["agent", "user"]);
 
 /* ---------------------------------------------------------------------------
  * Capture
@@ -192,6 +249,15 @@ export const captureSession = pgTable(
      */
     setting: captureSettingEnum("setting"),
     /**
+     * The worked example this drive was started from, or NULL for a drive
+     * begun any other way — which is every drive before `/welcome` existed,
+     * and every drive of the longitudinal deployment.
+     *
+     * Fixed at insert and never updated, exactly like `setting` above: it
+     * records the intent the recording began under.
+     */
+    useCase: captureUseCaseEnum("use_case"),
+    /**
      * The ElevenLabs voice the system spoke with, chosen before starting.
      *
      * Text rather than an enum: voices are named by opaque provider ids and the
@@ -226,6 +292,22 @@ export const captureSession = pgTable(
      * re-index after a model change.
      */
     memoryIndexedAt: timestamp("memory_indexed_at", { withTimezone: true }),
+    /**
+     * The study condition this drive ran under, copied from
+     * `user.study_condition` when the session was inserted and never written
+     * again — the same rule as `setting` and `voiceId`, for the same reason: a
+     * drive whose second half ran under different rules cannot be analysed as
+     * either.
+     *
+     * Stored RESOLVED, defaults filled in, rather than as the sparse template
+     * the researcher wrote. A default that changes next month must not
+     * reinterpret the drives recorded under the old one.
+     *
+     * NULL only for drives recorded before conditions existed. Those ran under
+     * the container's `PROACTIVE_OFFERS` environment variable, which nothing
+     * recorded — say so in the analysis rather than guess.
+     */
+    studyCondition: jsonb("study_condition").$type<Record<string, unknown>>(),
     /** Active mode/persona at capture time, for reconstructing what was in force. */
     activeModeId: uuid("active_mode_id"),
     activePersonaId: uuid("active_persona_id"),
@@ -568,6 +650,112 @@ export const agentTurnRelations = relations(agentTurn, ({ one }) => ({
   captureSession: one(captureSession, {
     fields: [agentTurn.captureSessionId],
     references: [captureSession.id],
+  }),
+}));
+
+/**
+ * What prompted the model to consider a turn.
+ *
+ * `macro_offer` and `agenda` are written by nothing yet. They are the study's
+ * two varied behaviours (EVALUATION_PLAN.md T2.5, T2.8), declared now so the
+ * migration that brings them in does not also have to alter a type in use.
+ */
+export const agentDecisionTriggerEnum = pgEnum("agent_decision_trigger", [
+  "user_turn",
+  "opening",
+  "silence_offer",
+  "confirmation",
+  "macro_offer",
+  "agenda",
+]);
+
+/**
+ * What the turn became.
+ *
+ * No `error`. A completion that fails raises an ErrorFrame that Pipecat sends
+ * UPSTREAM, away from the gate that writes these rows, so the container cannot
+ * tell a failed turn from one still in flight. Add the value together with a
+ * writer that can observe it, not before.
+ */
+export const agentDecisionOutcomeEnum = pgEnum("agent_decision_outcome", [
+  "spoke",
+  "declined",
+  "interrupted",
+]);
+
+/**
+ * Every moment the model was given to speak, and what it did with it.
+ * Append-only.
+ *
+ * A SEPARATE TABLE FROM `agent_turn`, for the reason `agent_turn` is separate
+ * from `utterance`: `agent_turn` is the echo filter's only input, and a row in
+ * it asserts that audio reached the speaker. A declined turn produced no audio.
+ * Writing one there would teach the filter to discard the driver's speech for
+ * matching words the car never heard.
+ *
+ * Yet the declines are the data. A silence the agent chose is how guideline G3
+ * (time services to the task) shows up in a drive; an offer it made and the
+ * driver talked over is G8 (efficient dismissal); and "a declined offer is
+ * never repeated" is a rule that can only be kept against a stored record of
+ * the decline. Before this table all of it was a log line.
+ *
+ * One row per completion the gate saw end, spoken or not. A spoken or
+ * interrupted row points at its `agent_turn` when that write succeeded first.
+ */
+export const agentDecision = pgTable(
+  "agent_decision",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    captureSessionId: uuid("capture_session_id")
+      .notNull()
+      .references(() => captureSession.id, { onDelete: "cascade" }),
+    /**
+     * Monotonic per connection, not per drive: a reconnect restarts it, as it
+     * restarts `agent_turn.seq`. Order by `offsetMs` when reading a drive.
+     * Not unique for the same reason.
+     */
+    seq: integer("seq").notNull(),
+    /**
+     * When the moment arose — the driver's final words, or the offer timer
+     * firing — as ms into the drive, on the `utterance` clock.
+     */
+    offsetMs: integer("offset_ms").notNull(),
+    trigger: agentDecisionTriggerEnum("trigger").notNull(),
+    outcome: agentDecisionOutcomeEnum("outcome").notNull(),
+    /** `TALKBACK_CONFIG_VERSION` of the prompt the container was running. */
+    configVersion: text("config_version"),
+    /**
+     * From the moment to the first word released to speech; for a decline,
+     * to the end of the completion that declined. Null when unmeasured.
+     */
+    latencyMs: integer("latency_ms"),
+    /**
+     * What the moment was ABOUT, when it was about one thing: the invocation
+     * id for a confirmation, the proposal id for a macro offer, a topic key for
+     * an agenda offer. The key "never offer a declined subject again" is kept
+     * against, which is why it is indexed.
+     */
+    subjectKey: text("subject_key"),
+    agentTurnId: uuid("agent_turn_id").references(() => agentTurn.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("agent_decision_session_offset_idx").on(t.captureSessionId, t.offsetMs),
+    // The context route counts asks per pending invocation on the turn path.
+    index("agent_decision_session_subject_idx")
+      .on(t.captureSessionId, t.subjectKey)
+      .where(sql`${t.subjectKey} is not null`),
+  ],
+);
+
+export const agentDecisionRelations = relations(agentDecision, ({ one }) => ({
+  captureSession: one(captureSession, {
+    fields: [agentDecision.captureSessionId],
+    references: [captureSession.id],
+  }),
+  agentTurn: one(agentTurn, {
+    fields: [agentDecision.agentTurnId],
+    references: [agentTurn.id],
   }),
 }));
 
@@ -980,6 +1168,15 @@ export const workspaceOpRelations = relations(workspaceOp, ({ one }) => ({
  * Durable on purpose. The point of a draft is copying it later, which usually
  * means after the drive, from a different device — so it outlives the
  * conversation exactly the way the ledger does.
+ *
+ * LINEAGE, NOT CONTENT. This row is the draft's IDENTITY — which drive it came
+ * from, where in it, and which request produced the first version — and it is
+ * never updated. Everything that can change lives in `agent_draft_version`,
+ * one append-only row per version, exactly the split `capability` /
+ * `capability_version` already uses. Nothing reads `title`/`text` here any
+ * more: they are still written, as a frozen copy of v1.0, because the append-
+ * only rule says a column that recorded what the agent produced does not stop
+ * recording it just because a better home exists.
  */
 export const agentDraft = pgTable(
   "agent_draft",
@@ -1005,6 +1202,86 @@ export const agentDraft = pgTable(
     // retry must not leave two copies of the same draft on the screen.
     uniqueIndex("agent_draft_session_seq_idx").on(t.captureSessionId, t.seq),
     index("agent_draft_session_idx").on(t.captureSessionId),
+  ],
+);
+
+/**
+ * Every version a draft has ever had, newest LAST by number rather than by time.
+ *
+ * WHY VERSIONS AT ALL. A draft is the one thing on the screen the person asked
+ * for by name, and the first answer is rarely the one they send. Before this,
+ * a draft was insert-only: "make it shorter" produced a SECOND card, the first
+ * one stayed on the page looking equally current, and a typo in a name could
+ * only be fixed by copying the text somewhere else. Both of those lose the
+ * thing the feature is for.
+ *
+ * NUMBERING SAYS WHO. The agent owns the major and the person owns the minor:
+ * the agent's first draft is v1.0, the person editing it gives v1.1, an agent
+ * rewrite gives v2.0, a later edit of that gives v2.1. So the label is not
+ * decoration — read off a card weeks later it says, without any extra column
+ * being consulted, how many times the model rewrote this and how much hand
+ * editing each of its attempts needed. That is the measurement the study wants
+ * out of drafts, and it is free.
+ *
+ * THE NEWEST VERSION IS ALWAYS THE CURRENT ONE. A restore does not move a
+ * pointer back; it APPENDS a copy of the restored version with the next number
+ * and records what it came from, so restoring v1.1 while at v1.3 gives v1.4.
+ * The record stays append-only (EVALUATION_PLAN.md §4), and "what did they end
+ * up with" is `order by (major, minor) desc limit 1` rather than a flag that
+ * two writers can disagree about.
+ *
+ * ORDERED BY `(major, minor)`, NEVER BY `createdAt`. Clock skew between the
+ * web app and the container, or two versions inside the same millisecond, would
+ * otherwise be able to make an older version look current.
+ */
+export const agentDraftVersion = pgTable(
+  "agent_draft_version",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    draftId: uuid("draft_id")
+      .notNull()
+      .references(() => agentDraft.id, { onDelete: "cascade" }),
+    /** Bumped by an agent rewrite. See the numbering note above. */
+    major: integer("major").notNull(),
+    /** Bumped by a person's edit, and reset to 0 by each agent rewrite. */
+    minor: integer("minor").notNull(),
+    author: agentDraftAuthorEnum("author").notNull(),
+    /** The tag's `title`, or the person's. Empty when neither supplied one. */
+    title: text("title").notNull().default(""),
+    /** The body, verbatim. Markdown allowed: this is read, never spoken. */
+    text: text("text").notNull(),
+    /**
+     * The version this one was restored from, when it was a restore.
+     *
+     * Self-referencing, so the column's type is only known once the table is,
+     * which is what `AnyPgColumn` is for. `set null` rather than cascade: a
+     * version is never deleted today, and if one ever were, losing the
+     * provenance label is better than losing the restored text with it.
+     */
+    restoredFromVersionId: uuid("restored_from_version_id").references(
+      (): AnyPgColumn => agentDraftVersion.id,
+      { onDelete: "set null" },
+    ),
+    /**
+     * What was said to get THIS version, when the agent wrote it.
+     *
+     * On v1.0 it is the request that produced the draft; on an agent rewrite it
+     * is the change they asked for ("make it shorter"). Per version rather than
+     * per draft because that is the only way to read a rewrite back against the
+     * instruction it was following. Null on a person's edit — they did not ask
+     * anybody for it — and on a restore.
+     */
+    respondingToText: text("responding_to_text"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One row per (draft, major, minor). Two writers racing on the same number
+    // — the person's Save and the agent's rewrite landing together — must lose
+    // one of them at the database rather than leave two rows claiming to be
+    // v2.0. `appendDraftVersion` takes a row lock as well, so this is the
+    // backstop rather than the mechanism.
+    uniqueIndex("agent_draft_version_number_idx").on(t.draftId, t.major, t.minor),
+    index("agent_draft_version_draft_idx").on(t.draftId),
   ],
 );
 

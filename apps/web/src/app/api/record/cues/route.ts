@@ -208,10 +208,16 @@ async function buildCues(
    * So it is never truncated to a cue budget and never ages out: all of them,
    * in the order they were asked for. */
   const drafts = (await loadSessionDrafts(captureSessionId)).map((d) => ({
+    // The LINEAGE id: an agent rewrite is a new VERSION of this draft, so the
+    // panel must replace the card rather than grow a second one claiming to be
+    // just as current.
     id: d.id,
     title: d.title,
     text: d.text,
-    at: d.createdAt.toISOString(),
+    version: d.version,
+    // The current version's time, not the lineage's. "14:32" next to text that
+    // was rewritten at 14:40 is worse than no time at all.
+    at: d.updatedAt.toISOString(),
   }));
 
   return {

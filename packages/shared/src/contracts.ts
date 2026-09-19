@@ -41,6 +41,86 @@ export const CaptureSetting = z.enum(["driving", "walking", "hands_busy", "desk"
 export type CaptureSetting = z.infer<typeof CaptureSetting>;
 
 /**
+ * Which of the three invited use cases a drive was started from, if any.
+ *
+ * WHY THIS IS RECORDED. The peer week hands people three worked examples on
+ * `/welcome`, because two of them told us plainly they could not start without
+ * one ("I didn't really know what it could do so I didn't know how to get
+ * started"). Seeding examples is a real cost to the repertoire claim — a
+ * capability the user was shown is not one they grew — so the seeding has to be
+ * visible in the data rather than remembered afterwards. With this column,
+ * "which example did they pick, and which did they abandon after one drive" is
+ * a count; without it, it is an anecdote.
+ *
+ * NULL for every drive started any other way: straight from `/record`, from a
+ * bookmark, or before this existed. That is the unseeded case, and it is the
+ * one the longitudinal deployment will be made entirely of.
+ *
+ * Immutable per recording, like `setting` and `voiceId`, for the same reason:
+ * it describes the intent a drive began under, and a drive whose second half
+ * claims a different one is not interpretable.
+ *
+ * - `think_aloud`  work a problem out; end by moving something on the board
+ * - `draft`        get text you can paste, then change it by voice
+ * - `recall`       come back the next day and pick up the thread
+ */
+export const CaptureUseCase = z.enum(["think_aloud", "draft", "recall"]);
+export type CaptureUseCase = z.infer<typeof CaptureUseCase>;
+
+/**
+ * The behaviours the field study varies, for one drive.
+ *
+ * Researcher-set on `user.study_condition`, copied RESOLVED onto
+ * `capture_session.study_condition` when a drive opens, and never changed on
+ * that row again — see the column comments for why both halves matter.
+ *
+ * EVERY DEFAULT IS TODAY'S BEHAVIOUR. An empty object, a null template and a
+ * drive that predates conditions all mean "the system as it shipped", so
+ * turning the study on changes nothing until someone writes a field.
+ *
+ * Varied per participant and phase, not per container: one Pipecat container
+ * serves every drive, and an environment variable cannot tell two participants
+ * apart. Two arms were chosen (EVALUATION_PLAN.md §5.1); the flags for them
+ * exist before the behaviours do so assignment can be tested now, and they do
+ * nothing until those behaviours land. Adding a field later is additive: old
+ * rows parse with its default.
+ *
+ * Strict, so an unknown key is an error rather than ignored. `agendaOffer:
+ * true` (no s) would otherwise parse cleanly into the control arm, and nobody
+ * would find out until the analysis.
+ */
+export const StudyCondition = z.strictObject({
+  /**
+   * Whether the container offers unprompted turns out of silence (`Offers` in
+   * bot.py). Replaces the container-wide `PROACTIVE_OFFERS`, which remains
+   * only as the fallback for a drive whose session call failed.
+   */
+  proactiveOffers: z.boolean().default(true),
+  /** Opening, re-entry and transition offers sized to the drive (T2.5). Inert until built. */
+  agendaOffers: z.boolean().default(false),
+  /** Offer a detected macro by voice rather than only on /repertoire (T2.8). Inert until built. */
+  voiceMacroOffers: z.boolean().default(false),
+});
+export type StudyCondition = z.infer<typeof StudyCondition>;
+
+/**
+ * A stored condition, resolved, never throwing.
+ *
+ * Read on the recorder's path, where a hand-edited template with a typo must
+ * not stop a drive from being registered. `ok: false` means the value did not
+ * parse and the defaults stand in — the caller logs that, loudly, because a
+ * participant silently running the wrong arm is a lost phase.
+ */
+export function resolveStudyCondition(
+  stored: unknown,
+): { ok: true; condition: StudyCondition } | { ok: false; condition: StudyCondition } {
+  const parsed = StudyCondition.safeParse(stored ?? {});
+  return parsed.success
+    ? { ok: true, condition: parsed.data }
+    : { ok: false, condition: StudyCondition.parse({}) };
+}
+
+/**
  * Container families we can persist and decode, codec parameters allowed —
  * `MediaRecorder.isTypeSupported` answers for the bare container, but some
  * engines then report the chosen type with a `;codecs=…` suffix. Anything
@@ -87,6 +167,8 @@ export const CaptureSessionCreate = z.object({
    * codes are all two letters.
    */
   sttLanguage: z.string().min(2).max(35).optional(),
+  /** Which worked example on `/welcome` started this drive. See `CaptureUseCase`. */
+  useCase: CaptureUseCase.optional(),
   deviceInfo: z
     .object({
       userAgent: z.string().max(512).optional(),

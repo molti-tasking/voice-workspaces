@@ -3,6 +3,7 @@
 import { draggable } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import { useEffect, useRef, useState } from "react";
 import { topicIcon } from "@/app/workspace/icons";
+import { Link } from "@/components/nav-link";
 import type { CardView } from "./card-view";
 import type { DragData } from "./drag";
 
@@ -16,8 +17,25 @@ import type { DragData } from "./drag";
  * A client component since the board gained drag and drop. It draws from
  * `CardView` rather than the fold's `BoardCard`, so the revision history and
  * the full block never cross into the browser.
+ *
+ * MOVING IS DRAG ONLY; "NOT A TASK" IS A BUTTON. A button per column
+ * duplicated what dragging already does, and the board is used at a desk, so
+ * the per-state buttons are gone. "Not a task" stays, because no column means
+ * "this should never have been a card" — without it a speech-made card that
+ * is wrong could only be dragged to `dropped`, and a drop and a retirement
+ * are different findings (guideline G9). It calls the board's `send`, so it
+ * shares the drag's optimistic update, revert and error line.
  */
-export function BoardCard({ card }: { card: CardView }) {
+export function BoardCard({
+  card,
+  onRetire,
+  busy = false,
+}: {
+  card: CardView;
+  onRetire: () => void;
+  /** A change is in flight; a second one now would race it. */
+  busy?: boolean;
+}) {
   const ref = useRef<HTMLElement | null>(null);
   const [dragging, setDragging] = useState(false);
   const Icon = topicIcon(card.topicIcon);
@@ -43,9 +61,9 @@ export function BoardCard({ card }: { card: CardView }) {
     <article
       ref={ref}
       /*
-       * The whole card drags, as on every board this resembles. The buttons
-       * inside still take a click — a native drag only begins once the pointer
-       * moves — so the accessible path is not shadowed by the convenient one.
+       * The whole card drags, as on every board this resembles. The button
+       * inside still takes a click — a native drag only begins once the
+       * pointer moves.
        */
       className={[
         "rounded-xl border border-line bg-ink-soft/40 p-3",
@@ -78,6 +96,38 @@ export function BoardCard({ card }: { card: CardView }) {
           {card.marker}
         </p>
       )}
+
+      <div className="mt-2 flex items-center justify-between">
+        {/*
+          `draggable={false}` matters. An anchor is natively draggable, so a
+          drag that starts on this link would carry a URL rather than the
+          card's `DragData` — and the board's monitor, which reads that data,
+          would silently ignore the drop. Turning the anchor's own drag off
+          hands the gesture to the card, so grabbing the link moves the card
+          and a plain click still navigates.
+
+          The label is the generic word "brief", never the task's own words:
+          PostHog autocapture is on, and it sends the text of what was clicked.
+        */}
+        <Link
+          href={card.href}
+          draggable={false}
+          title="What was said about this task, and how it got here"
+          className="rounded px-1.5 py-0.5 text-[10px] text-white/25 hover:text-white/60 focus-visible:text-white/80 focus-visible:outline-none"
+        >
+          brief
+        </Link>
+
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onRetire}
+          title="Remove this card — it was not a task"
+          className="rounded px-1.5 py-0.5 text-[10px] text-white/25 hover:text-white/60 focus-visible:text-white/80 focus-visible:outline-none disabled:opacity-40"
+        >
+          not a task
+        </button>
+      </div>
     </article>
   );
 }

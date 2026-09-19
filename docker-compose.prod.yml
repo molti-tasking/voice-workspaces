@@ -42,6 +42,10 @@ services:
       args:
         - NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN}
         - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
+        # PostHog's Next.js config uploads source maps during this image build.
+        - POSTHOG_API_KEY=${POSTHOG_API_KEY}
+        - POSTHOG_PROJECT_ID=${POSTHOG_PROJECT_ID}
+        - POSTHOG_HOST=${POSTHOG_HOST}
         # Prerendered pages bake their absolute URLs (canonical, og:image) at
         # build time. Also passed as runtime environment below, for auth.
         - BETTER_AUTH_URL=${BETTER_AUTH_URL}
@@ -80,11 +84,23 @@ services:
       # The memory index. Optional — unset keeps recall lexical. Web embeds the
       # query per turn; the worker builds the index. See TALKBACK.md, "Memory".
       - MODEL_EMBED=${MODEL_EMBED:-}
+      # Talk-back's web search. Optional — unset, the agent is not offered it.
+      # See TALKBACK.md, "Web search".
+      - SEARXNG_URL=${SEARXNG_URL:-}
       - STORAGE_DIR=/data/storage
       # Also needed at runtime, not just as a build arg: the server-side client
       # in the route handlers and Better Auth hooks reads them per process.
       - NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN}
       - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
+      # How the BROWSER finds a path for the audio, served per connection by
+      # /api/realtime/ice. RUNTIME, not a build arg, and that is the point: the
+      # relay half is a credential, so it cannot be inlined into a bundle
+      # anyone can read — and ICE can now be repointed with a restart instead
+      # of a rebuild. The build arg above remains the fallback.
+      - ICE_SERVERS=${ICE_SERVERS:-stun:stun.l.google.com:19302}
+      - TURN_URLS=${TURN_URLS:-}
+      - TURN_SECRET=${TURN_SECRET:-}
+      - TURN_TTL_SECONDS=${TURN_TTL_SECONDS:-43200}
     volumes:
       - audio-data:/data/storage
     depends_on:
@@ -183,8 +199,15 @@ services:
       # Only signalling goes through Traefik; the media is peer-to-peer, so
       # behind NAT this container needs STUN to discover its public mapping.
       # Without it ICE never completes and calls time out looking like a
-      # network fault. TURN goes here too if STUN is not enough.
+      # network fault. STUN ONLY — the relay is the two variables below.
       - ICE_SERVERS=${ICE_SERVERS:-stun:stun.l.google.com:19302}
+      # The relay, and the reason talk-back works from a phone. STUN is enough
+      # only while one side can be hole-punched; a mobile carrier's NAT is
+      # symmetric, so neither can, and the call times out in silence. Must be
+      # the same secret coturn holds — see the `coturn` service below.
+      - TURN_URLS=${TURN_URLS:-}
+      - TURN_SECRET=${TURN_SECRET:-}
+      - TURN_TTL_SECONDS=${TURN_TTL_SECONDS:-43200}
       # Prompt observability. Unset (the default) and none of this runs — no
       # exporter, no spans, no dependency on Langfuse being up. See
       # `setup_langfuse_tracing` in apps/pipecat/bot.py.
@@ -205,6 +228,8 @@ services:
       - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
       - DEEPGRAM_MODEL=${DEEPGRAM_MODEL:-nova-3}
       - DEEPGRAM_UTTERANCE_END_MS=${DEEPGRAM_UTTERANCE_END_MS:-1000}
+      # Pipecat ends a turn after this much silence if its turn model has not.
+      - USER_TURN_STOP_TIMEOUT_SECS=${USER_TURN_STOP_TIMEOUT_SECS:-2.0}
       - ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY:-}
       # Fallback live-path language when a session states none (per-drive
       # choices arrive via /api/realtime/session). Unset = auto-detect.
@@ -233,13 +258,14 @@ services:
       # /pipecat, so the browser's request is same-origin.
       #
       # ⚠️ MEDIA DOES NOT GO THROUGH TRAEFIK. SmallWebRTC is peer-to-peer: only
-      # the SDP exchange below is HTTP. The audio itself needs a direct UDP path
-      # between the browser and this container, so behind NAT — which is where
-      # a Coolify host usually sits — ICE will fail and the call will connect,
-      # sit in `connecting`, and time out after ~40s with a message that reads
-      # like a network blip. A TURN server (or host networking plus open UDP)
-      # is required before this is usable in production. Untested in production
-      # as of 2026-08-25.
+      # the SDP exchange below is HTTP. The audio itself needs a UDP path
+      # between the browser and this container, and Traefik has nothing to do
+      # with finding one — so a talk-back fault is almost never a routing fault.
+      #
+      # That path comes from ICE: STUN for the direct case, and the `coturn`
+      # service below for the case STUN cannot reach, which is every phone on
+      # mobile data. Confirmed broken from a Telekom mobile connection on
+      # 18 Sep 2026 with STUN alone; see the note on `coturn`.
       - traefik.enable=true
       - traefik.http.routers.vm-pc.rule=Host(`${REALTIME_HOST}`) && PathPrefix(`/pipecat`)
       - traefik.http.routers.vm-pc.entrypoints=https
@@ -252,6 +278,101 @@ services:
       - traefik.http.middlewares.vm-pc-strip.stripprefix.prefixes=/pipecat
       - traefik.http.routers.vm-pc.middlewares=vm-pc-strip
       - traefik.http.services.vm-pc.loadbalancer.server.port=7860
+
+  # ---------------------------------------------------------------------------
+  # coturn — the relay that makes talk-back work away from a desk
+  # ---------------------------------------------------------------------------
+  #
+  # WHY THIS EXISTS. Only signalling goes through Traefik; the audio is
+  # peer-to-peer. STUN is enough to find a direct path whenever at least one end
+  # can be hole-punched, which covers a laptop on home Wi-Fi — and covered every
+  # test this project ran for months. It is NOT enough from a phone on mobile
+  # data: carriers run carrier-grade NAT, which is typically symmetric, so the
+  # mapping the phone learns from STUN is not the mapping the container sends
+  # to. No candidate pair forms and the call sits in `checking` until it times
+  # out about a minute later.
+  #
+  # Nothing in that failure names NAT. The bot composes its opening line,
+  # ElevenLabs synthesises it, and it is spoken into a transport with nowhere to
+  # send it, while the phone still uploads chunks over HTTPS and fills the
+  # transcript on screen — so the drive looks recorded and merely mute. That is
+  # a drive on 18 Sep 2026, and it is what this service fixes. There is no STUN
+  # configuration that reaches a symmetric NAT; a relay is the only answer.
+  #
+  # HOST NETWORKING, deliberately. coturn hands out the address it believes it
+  # has, so inside a bridge it would advertise a 172.x relay no browser can
+  # reach. On the host it sees the real one and needs no --external-ip.
+  #
+  # If Coolify refuses host networking on this resource, the alternative is to
+  # delete `network_mode: host`, publish the ports, and tell coturn its public
+  # address — all three, or the relay it advertises will be wrong:
+  #
+  #   ports:
+  #     - "3478:3478/udp"
+  #     - "3478:3478/tcp"
+  #     - "49160-49179:49160-49179/udp"
+  #   # and add to `command`:  --external-ip=${TURN_EXTERNAL_IP}
+  #
+  # WHAT PASSES THROUGH IT. Relayed drives carry the same audio the direct path
+  # would, and only for the calls that could not find a direct one — the ICE
+  # candidate pair still prefers a direct path when there is one. It runs on
+  # this host, so no third party sees the audio, which is the same line
+  # STT_PROVIDER and LANGFUSE_HOST are drawn on.
+  coturn:
+    image: coturn/coturn:4.7-alpine
+    network_mode: host
+    restart: unless-stopped
+    # Flags rather than a mounted turnserver.conf, so there is one file to read
+    # and nothing to keep in step with it.
+    command:
+      - --listening-port=3478
+      - --realm=${TURN_REALM:-voicemural}
+      - --fingerprint
+      # The credential scheme. `--use-auth-secret` makes coturn accept a
+      # username of `<expiry>:<label>` whose password is the HMAC-SHA1 of it
+      # under this secret — so the browser can be handed a credential that is
+      # useless tomorrow without the secret ever leaving the server. Minted by
+      # packages/shared/src/turn-credentials.ts and, for the bot's own half, by
+      # `turn_credentials` in apps/pipecat/bot.py. The two must agree byte for
+      # byte; a mismatch shows up as a 401 here and silence on the drive.
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET}
+      # The relay range, which must match whatever is published or opened on the
+      # host firewall. One allocation per call and MAX_CONNECTIONS is 16 in
+      # bot.py, so twenty ports is already generous.
+      - --min-port=${TURN_MIN_PORT:-49160}
+      - --max-port=${TURN_MAX_PORT:-49179}
+      # NOT AN OPEN PROXY. Without these an authenticated client can ask the
+      # relay to send to anything this host can reach, which from inside the
+      # datacentre includes the database, the internal Docker networks and the
+      # cloud metadata endpoint. A TURN server is a packet forwarder that runs
+      # on your network; these are the lines that keep it pointed outward.
+      - --no-multicast-peers
+      - --denied-peer-ip=0.0.0.0-0.255.255.255
+      - --denied-peer-ip=10.0.0.0-10.255.255.255
+      - --denied-peer-ip=127.0.0.0-127.255.255.255
+      - --denied-peer-ip=169.254.0.0-169.254.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+      - --denied-peer-ip=192.168.0.0-192.168.255.255
+      - --denied-peer-ip=::1
+      - --denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+      - --denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+      # Bounds what a leaked credential is worth. Generous for one voice call,
+      # which is roughly 50 kbps each way.
+      - --user-quota=12
+      - --total-quota=100
+      # TLS would need a certificate this container does not have — Traefik
+      # holds the one for this domain. Plain 3478 over UDP and TCP is what the
+      # browser and aiortc both use; `turns:` on 5349 is a later step and needs
+      # a cert mount, not a flag.
+      - --no-tls
+      - --no-dtls
+      # The CLI listens on 5766 with a default password. Nothing uses it.
+      - --no-cli
+      # Into the container log, where Coolify shows it, rather than a file
+      # inside a container nobody will exec into.
+      - --log-file=stdout
+      - --simple-log
 
 volumes:
   audio-data:

@@ -32,7 +32,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chat } from "@voicemural/llm";
-import { OPENING_NUDGE, TALKBACK_CONFIG_VERSION, renderSilenceNudge } from "../prompt";
+import { BOARD_TOOLS } from "../board-tools";
+import { BOARD_EDITING, OPENING_NUDGE, TALKBACK_CONFIG_VERSION, renderSilenceNudge } from "../prompt";
 import { SETTINGS, type Setting } from "../setting";
 import { findCases, type EvalCase } from "./cases";
 import { checkReply, type CheckResult } from "./checks";
@@ -153,6 +154,7 @@ interface TurnReport {
   /** The OpenTelemetry trace it was exported under, or "" if it was not. */
   traceId: string;
   reply: string;
+  toolCalls: { name: string; arguments: Record<string, unknown> }[];
   check: CheckResult;
   judgement: Judgement | null;
   judgeError?: string;
@@ -177,8 +179,13 @@ async function runTurn(
       ? renderSilenceNudge(kase.offer.quietSecs)
       : OPENING_NUDGE
     : undefined;
+  // A case that shows the board runs with the board as a live participant has
+  // it: the editing section composed in and the four tools offered. The
+  // session route makes the same pairing, so the eval never tests a model that
+  // can see a board it has no hands for, or hands with no board.
+  const boardOn = Boolean(kase.context?.board);
   const { composed, messages } = buildTurnMessages({
-    compose: { base: args.base, setting },
+    compose: { base: args.base, setting, sections: boardOn ? [BOARD_EDITING] : [] },
     history: kase.history,
     context: kase.context,
     said: kase.said,
@@ -206,6 +213,7 @@ async function runTurn(
     temperature: null,
     maxTokens: 200,
     metadata,
+    ...(boardOn ? { tools: BOARD_TOOLS } : {}),
   });
   generations.push({
     name: "talkback.eval.turn",
@@ -217,7 +225,7 @@ async function runTurn(
     usage: { input: result.usage.promptTokens, output: result.usage.completionTokens },
   });
 
-  const check = checkReply(kase, result.content, composed.maxReplyWords);
+  const check = checkReply(kase, result.content, composed.maxReplyWords, result.toolCalls ?? []);
 
   let judgement: Judgement | null = null;
   let judgeError: string | undefined;
@@ -251,6 +259,7 @@ async function runTurn(
     // Assigned by OpenTelemetry when the turn is exported, below.
     traceId: "",
     reply: result.content,
+    toolCalls: result.toolCalls ?? [],
     check,
     judgement,
     judgeError,
@@ -267,7 +276,8 @@ async function runTurn(
 function line(report: TurnReport, runs: number): string {
   const mark = report.check.pass && report.judgement?.verdict !== "fail" ? "✓" : "✗";
   const id = runs > 1 ? `${report.id}#${report.run}` : report.id;
-  const said = report.check.silent ? "<silence>" : `"${report.check.spoken}"`;
+  const calls = report.toolCalls.map((c) => `→ ${c.name}(${JSON.stringify(c.arguments)}) `).join("");
+  const said = `${calls}${report.check.silent ? "<silence>" : `"${report.check.spoken}"`}`;
   const words = report.check.silent ? "" : ` (${report.check.words}w)`;
   const judge = report.judgement
     ? `  judge ${JUDGE_AXES.map((a) => `${a.split("_")[0]!.slice(0, 5)}=${report.judgement![a]}`).join(" ")} → ${report.judgement.verdict}`
@@ -323,7 +333,16 @@ async function main(): Promise<void> {
           startedAt: new Date(),
           traceId: "",
           reply: "",
-          check: { silent: false, spoken: "", drafts: [], words: 0, failures: [`error: ${message}`], pass: false },
+          toolCalls: [],
+          check: {
+            silent: false,
+            spoken: "",
+            drafts: [],
+            revises: [],
+            words: 0,
+            failures: [`error: ${message}`],
+            pass: false,
+          },
           judgement: null,
           generations: [],
           messages: [],

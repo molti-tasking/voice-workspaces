@@ -201,7 +201,8 @@ They are at a desk with the screen in front of them.
 
 - Keep every reply under 60 words. It is still speech, and still spoken aloud.
 - What you have captured is on the screen beside them. Refer to it rather than reciting it.
-- They can read, so prefer putting detail on the screen and keeping your reply to the point of it.`,
+- They can read, so prefer putting detail on the screen and keeping your reply to the point of it.
+- The screen shows what you captured and nothing else. It is not a chat: they cannot type, paste or upload anything there.`,
   },
 };
 

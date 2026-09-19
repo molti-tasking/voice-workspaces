@@ -23,6 +23,7 @@ import {
   invocation,
   macroProposal,
   memoryEntry,
+  outlet,
   user,
   utterance,
   workspaceCursor,
@@ -343,5 +344,283 @@ describeIfDb("migrateGuestData", () => {
       .from(memoryEntry)
       .where(eq(memoryEntry.userId, TARGET_ID));
     expect(entries).toHaveLength(1);
+  });
+});
+
+/**
+ * The guest is not always arriving at an empty account.
+ *
+ * Anyone who has signed in before and comes back as a guest — cleared cookie,
+ * installed app instead of the browser tab, a second phone — has a target that
+ * already owns rows. Every table below keys a unique index on `user_id`, so the
+ * blanket reassignment these used to get raised 23505 inside the transaction,
+ * Better Auth's after-hook rethrew it, and the OAuth callback answered 500. The
+ * person saw a blank screen after choosing their Google account and, because
+ * the guest cookie survived, saw it again on every retry.
+ */
+describeIfDb("migrateGuestData onto an account that already has data", () => {
+  beforeEach(cleanup);
+  afterAll(async () => {
+    await cleanup();
+    await closeDb();
+  });
+
+  /** Both sides hold a workspace cursor — `user_id` is its primary key. */
+  it("merges two workspace cursors instead of failing the sign-in", async () => {
+    const db = getDb();
+    await makeGuestWithHistory();
+    await makeUser(TARGET_ID, false);
+    await seedStarterRepertoire(TARGET_ID);
+
+    const guestWatermark = new Date("2026-03-01T10:00:00Z");
+    const targetWatermark = new Date("2026-03-05T10:00:00Z");
+
+    await db.insert(workspaceCursor).values({
+      userId: GUEST_ID,
+      lastOccurredAt: guestWatermark,
+    });
+    await db.insert(workspaceCursor).values({
+      userId: TARGET_ID,
+      lastOccurredAt: targetWatermark,
+    });
+
+    const result = await migrateGuestData(GUEST_ID, TARGET_ID);
+    expect(result.cursorMerged).toBe(true);
+
+    await db.delete(user).where(eq(user.id, GUEST_ID));
+
+    const cursors = await db
+      .select()
+      .from(workspaceCursor)
+      .where(inArray(workspaceCursor.userId, [GUEST_ID, TARGET_ID]));
+
+    // One row, on the target, at the *earlier* of the two watermarks: anything
+    // after it is still pending, so no speech is stranded unprojected.
+    expect(cursors).toHaveLength(1);
+    expect(cursors[0]?.userId).toBe(TARGET_ID);
+    expect(cursors[0]?.lastOccurredAt?.toISOString()).toBe(guestWatermark.toISOString());
+  });
+
+  it("treats a target that has never been projected as the earlier watermark", async () => {
+    const db = getDb();
+    await makeGuestWithHistory();
+    await makeUser(TARGET_ID, false);
+
+    await db.insert(workspaceCursor).values({
+      userId: GUEST_ID,
+      lastOccurredAt: new Date("2026-03-01T10:00:00Z"),
+    });
+    await db.insert(workspaceCursor).values({ userId: TARGET_ID });
+
+    await migrateGuestData(GUEST_ID, TARGET_ID);
+
+    const [cursor] = await db
+      .select()
+      .from(workspaceCursor)
+      .where(eq(workspaceCursor.userId, TARGET_ID));
+
+    expect(cursor?.lastOccurredAt).toBeNull();
+  });
+
+  /** `(user_id, name)` is unique on `outlet`, exactly as on `capability`. */
+  it("renames a colliding outlet rather than dropping the destination", async () => {
+    const db = getDb();
+    await makeGuestWithHistory();
+    await makeUser(TARGET_ID, false);
+
+    await db.insert(outlet).values({
+      userId: GUEST_ID,
+      name: "notes",
+      kind: "markdown",
+      config: { path: "guest.md" },
+    });
+    await db.insert(outlet).values({
+      userId: TARGET_ID,
+      name: "notes",
+      kind: "markdown",
+      config: { path: "target.md" },
+    });
+
+    const result = await migrateGuestData(GUEST_ID, TARGET_ID);
+    expect(result.outletsRenamedOnCollision).toContain("notes → notes (guest)");
+
+    await db.delete(user).where(eq(user.id, GUEST_ID));
+
+    const outlets = await db
+      .select({ name: outlet.name, config: outlet.config })
+      .from(outlet)
+      .where(eq(outlet.userId, TARGET_ID));
+
+    // Both survive; neither configuration is lost to the merge.
+    expect(outlets.map((o) => o.name).sort()).toEqual(["notes", "notes (guest)"]);
+  });
+
+  /** `(user_id, canonical_form)` is unique — the key that makes re-detection idempotent. */
+  it("keeps the decided macro proposal when both sides hold the same form", async () => {
+    const db = getDb();
+    await makeGuestWithHistory();
+    await makeUser(TARGET_ID, false);
+
+    // The guest declined it. "What they tried to add and failed" is a stated
+    // field-study measure, so the refusal is the row that has to survive.
+    await db.insert(macroProposal).values({
+      userId: GUEST_ID,
+      canonicalForm: "chase|invoice",
+      proposedName: "chase the invoice",
+      restatement: "Chasing the invoice.",
+      markdown: "Chase the invoice.",
+      sessionCount: 3,
+      status: "declined",
+      decidedAt: new Date(),
+    });
+    await db.insert(macroProposal).values({
+      userId: TARGET_ID,
+      canonicalForm: "chase|invoice",
+      proposedName: "chase the invoice",
+      restatement: "Chasing the invoice.",
+      markdown: "Chase the invoice.",
+      sessionCount: 2,
+      status: "proposed",
+    });
+
+    const result = await migrateGuestData(GUEST_ID, TARGET_ID);
+    expect(result.duplicatesResolved).toBe(1);
+
+    await db.delete(user).where(eq(user.id, GUEST_ID));
+
+    const proposals = await db
+      .select({ status: macroProposal.status, sessionCount: macroProposal.sessionCount })
+      .from(macroProposal)
+      .where(eq(macroProposal.userId, TARGET_ID));
+
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]?.status).toBe("declined");
+  });
+
+  /** `(user_id, kind, ref_id)` is unique — and every row is re-derivable. */
+  it("drops a duplicate memory entry, which the indexer rebuilds", async () => {
+    const db = getDb();
+    await makeGuestWithHistory();
+    await makeUser(TARGET_ID, false);
+
+    for (const userId of [GUEST_ID, TARGET_ID]) {
+      await db.insert(memoryEntry).values({
+        userId,
+        kind: "topic",
+        refId: "shared-topic-id",
+        occurredAt: new Date(),
+        text: `a topic as ${userId} saw it`,
+        contentHash: "hash",
+        model: "test-embed",
+        embedding: [0.1, 0.2],
+      });
+    }
+
+    const result = await migrateGuestData(GUEST_ID, TARGET_ID);
+    expect(result.duplicatesResolved).toBe(1);
+
+    await db.delete(user).where(eq(user.id, GUEST_ID));
+
+    const entries = await db
+      .select({ id: memoryEntry.id })
+      .from(memoryEntry)
+      .where(and(eq(memoryEntry.userId, TARGET_ID), eq(memoryEntry.refId, "shared-topic-id")));
+
+    expect(entries).toHaveLength(1);
+  });
+
+  /**
+   * `(user_id, input_hash)` is unique on `extraction`, and `workspace_op`
+   * cascades from it — so the ops have to be re-pointed before the duplicate
+   * goes, or resolving the collision deletes the ledger it was protecting.
+   */
+  it("re-points the ledger at the surviving extraction rather than losing ops", async () => {
+    const db = getDb();
+    await makeGuestWithHistory();
+    await makeUser(TARGET_ID, false);
+
+    const row = {
+      inputHash: "identical-input-hash",
+      promptVersion: "4",
+      requestedModel: "test-model",
+      resolvedModel: "test-model",
+      temperature: "0",
+      stateDigest: "test-digest",
+      requestMessages: [{ role: "user", content: "…" }],
+      rawResponse: "{}",
+    };
+
+    const [guestExtraction] = await db
+      .insert(extraction)
+      .values({ userId: GUEST_ID, ...row })
+      .returning({ id: extraction.id });
+    await db.insert(extraction).values({ userId: TARGET_ID, ...row });
+
+    await db.insert(workspaceOp).values({
+      userId: GUEST_ID,
+      extractionId: guestExtraction!.id,
+      captureSessionId: SESSION_ID,
+      occurredAt: new Date(),
+      type: "create_topic",
+      payload: { id: "t1", title: "Guest topic" },
+    });
+
+    const result = await migrateGuestData(GUEST_ID, TARGET_ID);
+    expect(result.duplicatesResolved).toBe(1);
+
+    await db.delete(user).where(eq(user.id, GUEST_ID));
+
+    const ops = await db
+      .select({ extractionId: workspaceOp.extractionId })
+      .from(workspaceOp)
+      .where(eq(workspaceOp.userId, TARGET_ID));
+
+    // The op survived the deduplication, still traceable to a model call.
+    expect(ops).toHaveLength(1);
+    expect(ops[0]?.extractionId).not.toBeNull();
+
+    const extractions = await db
+      .select({ id: extraction.id })
+      .from(extraction)
+      .where(eq(extraction.userId, TARGET_ID));
+    expect(extractions).toHaveLength(1);
+  });
+
+  /**
+   * The whole thing at once, which is what a returning guest actually looks
+   * like. Before the per-key resolutions this raised
+   * `workspace_cursor_pkey` and took the sign-in down with it.
+   */
+  it("completes for a guest returning to an account they already used", async () => {
+    const db = getDb();
+    await makeGuestWithHistory();
+    await makeUser(TARGET_ID, false);
+    await seedStarterRepertoire(TARGET_ID);
+
+    await db.insert(workspaceCursor).values({ userId: GUEST_ID, lastOccurredAt: new Date() });
+    await db.insert(workspaceCursor).values({ userId: TARGET_ID, lastOccurredAt: new Date() });
+    for (const userId of [GUEST_ID, TARGET_ID]) {
+      await db.insert(outlet).values({ userId, name: "notes", kind: "markdown" });
+      await db.insert(memoryEntry).values({
+        userId,
+        kind: "topic",
+        refId: "shared-topic-id",
+        occurredAt: new Date(),
+        text: "a topic",
+        contentHash: "hash",
+        model: "test-embed",
+        embedding: [0.1, 0.2],
+      });
+    }
+
+    await expect(migrateGuestData(GUEST_ID, TARGET_ID)).resolves.toBeDefined();
+
+    await db.delete(user).where(eq(user.id, GUEST_ID));
+
+    const sessions = await db
+      .select({ id: captureSession.id })
+      .from(captureSession)
+      .where(eq(captureSession.id, SESSION_ID));
+    expect(sessions).toHaveLength(1);
   });
 });

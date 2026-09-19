@@ -15,20 +15,37 @@ import type { ChatMessage } from "@voicemural/llm";
 import { composeSystemPrompt, type ComposeInputs, type ComposedPrompt } from "../prompt";
 
 export interface EvalContext {
+  /**
+   * The rendered task board, as `/api/realtime/context` returns it
+   * (`buildBoardContext`). Was missing from the port while `Recall._compose`
+   * put it first, so every eval ran against a context the container never sends.
+   */
+  board?: string;
   /** Where things stand on the topics touched, as `/api/realtime/context` returns them. */
   threads?: { text: string }[];
   /** From past drives, as `/api/realtime/context` returns them. */
   passages?: { when: string; text: string }[];
+  /**
+   * The drafts written on this drive, PRE-RENDERED by `buildDraftContext`.
+   *
+   * A string rather than rows, because that is what the route sends: the
+   * listing, the handles and the budget are decided in TypeScript so the
+   * container and the eval cannot render them differently.
+   */
+  drafts?: string;
   /** The container's running summary of the current drive. */
   summary?: string;
   /** A parked irreversible action, restated for the person. */
   pending?: string;
+  /** How often the agent has already asked about `pending` this drive. */
+  pendingAskedCount?: number;
 }
 
 /** Mirrors `Recall._compose`. Returns null when there is nothing to say. */
 export function composeContextBlock(context: EvalContext | undefined): string | null {
   if (!context) return null;
   const sections: string[] = [];
+  if (context.board) sections.push(context.board);
   if (context.threads?.length) {
     sections.push(
       "Where things stand, from their earlier sessions:\n" +
@@ -40,6 +57,14 @@ export function composeContextBlock(context: EvalContext | undefined): string | 
       "From their past recordings:\n" +
         context.passages.map((p) => `[${p.when}] ${p.text}`).join("\n\n"),
     );
+  }
+  // After the quotes and before the drive summary, mirroring `_compose`: the
+  // drafts are this drive's own output, so they belong next to the drive rather
+  // than among the dated material from past ones — and the summary stays LAST,
+  // closest to the user's message, because that is what anaphora resolves
+  // against.
+  if (context.drafts?.trim()) {
+    sections.push(context.drafts.trim());
   }
   if (context.summary?.trim()) {
     sections.push(`So far in this drive:\n${context.summary.trim()}`);
@@ -53,8 +78,11 @@ export function composeContextBlock(context: EvalContext | undefined): string | 
     const ask =
       "They earlier asked for this, and it has not happened yet because it " +
       `cannot be undone: ${context.pending}\n` +
-      "If they are between thoughts, ask in one short sentence whether to go " +
-      "ahead. If they are mid-thought, say nothing and it will keep.";
+      ((context.pendingAskedCount ?? 0) > 0
+        ? "You have already asked about it once. Ask one more time only if they " +
+          "have plainly finished a thought; otherwise leave it and it will keep."
+        : "If they are between thoughts, ask in one short sentence whether to go " +
+          "ahead. If they are mid-thought, say nothing and it will keep.");
     block = block ? `${block}\n\n${ask}` : ask;
   }
   return block;

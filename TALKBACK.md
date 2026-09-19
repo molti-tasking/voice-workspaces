@@ -68,9 +68,17 @@ session and should not gain one. The context ticket gets a drive-length TTL via
 
 ```
 transport.input() → vad → Trace("in") → stt → Trace("stt") → summary
-  → Recall → aggregator.user() → llm → SilenceGate → tts
+  → title → Recall → aggregator.user() → llm → SilenceGate → tts
   → transport.output() → aggregator.assistant()
 ```
+
+`title` (`TopicTitle`) names what is being talked about **right now** in two to
+four words, off its own short window of recent speech rather than the
+whole-drive summary, and pushes each change to the browser as an
+`RTVIServerMessageFrame` over the data channel the audio already needs. The
+recorder shows it as a plain title that blurs across when the subject changes.
+It never blocks a turn, and it is inert unless
+`/api/realtime/session` sent a `titlePrompt`.
 
 `Trace` logs exactly three things — audio-frame counts, VAD start/stop,
 transcriptions. Those separate the three otherwise-identical silent failures:
@@ -164,6 +172,25 @@ the sentinel available, so every unprompted turn is optional all the way down.
 The eval suite covers the engine's turns (`offer-*` cases in `cases.ts`), with
 the nudge standing in the driver's slot exactly as the container places it.
 
+### talkback-12: the agent can see, and change, what it wrote down
+
+Up to `talkback-11` the agent could write a draft and then had no idea it had.
+Asked to change one it wrote a SECOND card from whatever it remembered of the
+conversation, and the person was left with two, neither marked as superseding
+the other — on the one lane of the screen they had asked for by name. On the
+17 Sep 2026 drive the participant said so out loud: *"I wanted you to have
+updated the evaluation use case prompt, but instead you just gave me updated
+use case prompt."*
+
+`talkback-12` puts this drive's drafts in the turn, each with a short handle, and
+adds `revises="…"` to the keep section of `OUTPUT_CONTRACT`: the whole new text,
+against a named draft, which the write path turns into the next VERSION of it.
+The rules are narrow on purpose — only a draft they asked to change, only one
+whose text is actually visible, anything else is a new draft, and never a handle
+spoken aloud. See "Drafts" below for the mechanism, and
+`draft-revise-when-asked` / `draft-new-when-different` /
+`draft-seen-not-rewritten` in `cases.ts` for what it is held to.
+
 ### Which voice
 
 Three ElevenLabs voices are offered on the recorder, from the catalogue in
@@ -185,9 +212,8 @@ Once the live STT hears a **second voice**, `SpeakerTagger` in `bot.py`
 prefixes every transcript from then on with `[Speaker N]`, numbered in order
 of first appearance so Speaker 1 is the driver. The tag is written into the
 text on purpose — it is the one thing that reaches the LLM, the running
-summary, `agent_turn.respondingToText` and the browser's live exchange alike
-(the recorder lifts it into a small `S2` label). `Recall` strips it before
-searching the ledger. A one-person drive is byte-for-byte what it was before:
+summary, the topic title's window and `agent_turn.respondingToText` alike.
+`Recall` strips it before searching the ledger. A one-person drive is byte-for-byte what it was before:
 nothing is tagged until there are two.
 
 The prompt has a section for it: a conversation between the people in the car
@@ -264,12 +290,16 @@ a self-hosted one keeps them at AU. Same line as `STT_PROVIDER`.
 Ask for something to take away — "draft me an email to William", "write me a
 prompt for that", "note that down" — and the model wraps it in `<draft
 title="...">...</draft>`. The body is never spoken. It is stored and shown with
-a Copy button.
+a Copy button. Ask to change it — "make it shorter", "warmer", "fix the name" —
+and it comes back as `<draft revises="3f9a2c" …>`, a new VERSION of the same
+draft rather than a second card.
 
 The tags are declared in `OUTPUT_CONTRACT`, so they sit in the same
 last-and-wins section as the `<silence>` sentinel and a composed stanza cannot
-countermand them. `extractDrafts` (TypeScript) and `extract_drafts` (bot.py) are
-mirrors of each other and both tested; change one and change the other.
+countermand them. `extractDrafts` (`prompt.ts`) and `extract_drafts` (`bot.py`)
+are mirrors of each other; change one and change the other. Both sides have
+their own copies of the same cases — `prompt.test.ts` and the Drafts section of
+`test_bot.py` — so a change to one that is not ported fails on the other.
 
 **Two paths, for two different failures.** `SilenceGate._for_speech` strips the
 block from the *stream*, tag-safe across frame boundaries, so a body split as
@@ -285,13 +315,131 @@ the agent said aloud; filing a draft as a turn would teach it to delete the
 participant's own words whenever they resembled something they had asked for.
 
 **Durable on purpose.** The container POSTs to `/api/realtime/draft`
-(ticket-authorised, ownership re-resolved, idempotent on `(session, seq)`), and
-both readers come from Postgres — the live panel via `/api/record/cues`, and
-`/sessions/[id]` afterwards. That matters most for `driving`, where
-`displayAllowed` is false and the cue stream never opens: a draft asked for at
-110 km/h is written, stored, and waiting at the desk. It is also the one panel
-that is tappable, which the cue panel's no-tap rule explicitly is not — there is
-no voice equivalent of "put this on my clipboard".
+(ticket-authorised, ownership re-resolved), and both readers come from
+Postgres — the live panel via `/api/record/cues`, and `/sessions/[id]`
+afterwards. That matters most for `driving`, where `displayAllowed` is false and
+the cue stream never opens: a draft asked for at 110 km/h is written, stored,
+and waiting at the desk. It is also the one panel that is tappable, which the
+cue panel's no-tap rule explicitly is not — there is no voice equivalent of
+"put this on my clipboard".
+
+### Versions
+
+A draft is not one row. `agent_draft` is its IDENTITY — the drive, the offset,
+the container's `seq` — and is never updated; `agent_draft_version` holds every
+version, append-only, one row each. The same split as `capability` /
+`capability_version`, and it is what makes a rewrite the SAME draft rather than
+a second card claiming to be just as current.
+
+**The agent owns the major, the person owns the minor.** v1.0 is what the agent
+first wrote, the person editing it gives v1.1, an agent rewrite gives v2.0,
+editing that gives v2.1. So the label on a card says, with nothing else
+consulted, how many times the model tried and how much hand editing each attempt
+needed.
+
+**The newest version is always the current one.** A restore does not rewind: it
+appends a copy of the chosen version with the next number and a note of where it
+came from, so restoring v1.1 while at v1.3 gives v1.4 "restored from v1.1". The
+record stays append-only and "what did they end up with" is
+`order by (major, minor) desc limit 1` — never by `createdAt`, because the web
+app and the container keep different clocks.
+
+Both writers go through `appendDraftVersion`, which takes a row lock on the
+lineage joined to `capture_session` (ownership and the read-then-append in one
+transaction). It answers `unchanged` before `conflict`, so a double-submit costs
+nothing rather than raising a conflict over a difference that does not exist. A
+person's edit sends the version it was aimed at; a 409 hands back the head and
+the editor keeps what was typed.
+
+Editing, history and Restore live on `/sessions/[id]`. `/record` shows only
+`v2.1 · 14:32` — enough that a rewrite landing in the same card is visible, and
+nothing more, because that panel only exists where the hands are elsewhere.
+
+### Handles, and `revises`
+
+`/api/realtime/context` shows the agent the drafts from THIS drive
+(`draft-context.ts`): a one-line listing of up to six, then as many bodies as fit
+in 2000 characters, newest first. A body that does not fit is skipped whole and
+marked "text not shown" — a truncated body is worse than none, because the model
+cannot tell it is truncated and would rewrite the draft deleting the half it
+never saw.
+
+Each draft carries a six-hex-character handle derived from its LINEAGE id, so it
+survives every rewrite and nothing is stored for it. To change a draft the model
+writes the whole new text as `<draft revises="3f9a2c" title="…">`, and the route
+resolves the handle against that drive's own drafts. Exactly one match becomes
+the next version; none or several writes a NEW draft instead — the stance
+`fold.ts` takes for a `revise_block` naming a block it cannot find. Losing the
+link costs a version number; guessing wrong overwrites text somebody spent a
+drive on.
+
+The prompt says twice that a handle is never spoken: "three eff nine ay two see"
+read to a driver is the `<silence>` failure again. `draft-seen-not-rewritten`
+in the eval checks it.
+
+`revises` is ABSENT on a new draft rather than empty, which is what lets an
+older container and a newer web app — or the reverse — run together in either
+deploy order.
+
+### `seq` is seeded, not counted from zero
+
+`DraftRecorder` numbers drafts with its own counter, and `agent_draft` is unique
+on `(session, seq)` so a retried POST cannot leave two copies on the screen.
+That idempotency is exactly what made a RECONNECT silent: a second container
+counting from 0 again collided with rows the drive already had, and every draft
+for the rest of the drive was accepted with a 200, logged as "stored", and
+dropped. `/api/realtime/session` now returns `nextDraftSeq` from the ledger and
+the container starts there.
+
+## Web search
+
+Ask something current — "when is the CHI deadline?", "look up what Pipecat's
+latest release is" — and the agent searches a SearXNG instance and answers in a
+sentence, naming the site. Off unless `SEARXNG_URL` is set (web app only); then
+`/api/realtime/session` composes `webSearchSection()` — which carries today's
+date, the only place the prompt does — into the prompt, offers
+`search_web`, and names it in `webSearchTool` so the container can route it
+without a tool name hard-coded in Python.
+
+**What the driver hears, in order.** The call's `announcement` — a sentence the
+model writes as a tool argument, in the language of the conversation — spoken
+the moment the call arrives; `SearchingSound`, two soft rising blips every 1.2s,
+starting under it and running until the result is back; then the answer, from
+the completion Pipecat runs on the result. The announcement is an argument
+rather than something the model says first because a model calling a tool
+frequently says nothing, and the search would be dead air — which in a car
+sounds like a dropped connection.
+
+**The cue is a mixer, not frames.** Queued as audio frames it would interleave
+with the announcement chunk by chunk. `SearchingSound` is summed into whatever
+the transport sends, ducked to 30% under speech, faded over one chunk when it
+stops. Pipecat marks the bot as speaking only for TTS and speech frames, so the
+cue never holds off the driver's turn. Only drives offered search get a mixer:
+it changes how the output transport paces audio.
+
+**Cancelled by an interruption**, unlike a board edit. The model waits for the
+result; if the driver starts talking, their words are what to answer, and a
+search they talked over neither keeps the cue going nor comes back later.
+
+**The announcement is an `agent_turn`**, because it reached the speaker and the
+echo filter must know. It writes no `agent_decision` and does not take the
+turn's `toolCalls` — the decisions are the completion that called the tool and
+the one that answers, as for a board edit. `search_web` appears in the answering
+turn's `toolCalls` with its latency, or `cancelled`.
+
+**What reaches the model** is `searchResultForModel`: at most two direct
+answers and five results as site, title and a 280-character snippet — no URLs,
+since it must never read one out and prompt size is the biggest lever on
+time-to-first-word. Failures come back as `ok: false` with a sentence to say.
+The route gives SearXNG 5s; the container gives the route 7s.
+
+**What leaves.** The query, which is the participant's question in the model's
+words, goes to the instance and on to its engines. It is never logged, on
+either side. A study that uses this needs it on the information sheet.
+
+Setup failures look like search failures: a 403 is an instance without `json`
+in `search.formats`, a 429 its bot limiter. The web log says which
+(`[search] SearXNG answered 403`).
 
 ## Confirmations reach the driver on the turn path
 
@@ -317,6 +465,30 @@ connects perfectly and then never hears a word. It is needed in two places:
 `VADProcessor` before the STT (batch Whisper extends `SegmentedSTTService` and
 only transcribes on VAD frames), and `LLMUserAggregatorParams(vad_analyzer=...)`
 for turn completion. Separate analyzer instances — they keep independent state.
+
+**STUN gets you as far as a desk, and no further.** Talk-back ran for months on
+STUN alone because every test was a laptop on Wi-Fi, where hole-punching works.
+The first drive on mobile data — 18 Sep 2026, Telekom — recorded four utterances
+and heard nothing back. Carrier-grade NAT is typically symmetric, so the mapping
+the phone learns from STUN is not the mapping the container sends to; no
+candidate pair forms and ICE sits in `checking` until `Timeout establishing the
+connection to the remote peer` about a minute later.
+
+Three things make that hard to read. Nothing in the log names NAT. The pipeline
+runs *perfectly* — the model composes an opening line, ElevenLabs synthesises it,
+and it is spoken into a transport with nowhere to send it. And capture is
+unaffected, because chunks upload over HTTPS on a different path entirely, so the
+transcript fills on screen and the drive looks recorded and merely mute. The tell
+is in the bot's own LLM context: no user message in it at all, only the silence
+prompts.
+
+The fix is the `coturn` service in `docker-compose.prod.yml`, and it is a relay
+or nothing — no STUN configuration reaches a symmetric NAT, because the problem
+is not discovery. `[ice] answer candidates:` in the container log now says which
+path was actually offered; `relay=` in that line is the thing to look for, and a
+`turn:` URL in `ICE_SERVERS` is NOT it (that variable is STUN only — a relay
+needs a credential, which aiortc reads off the server object and not out of the
+URL).
 
 **`PATCH /offer` is not optional.** The JS client trickles ICE candidates there.
 Without the route they get a 405, the peer connection never leaves `connecting`,
@@ -560,6 +732,63 @@ tail of it out, where the old POST-per-turn needed no such step.
 **Not built, deliberately:** a Langfuse *dataset* of the cases with dataset
 runs. It is the natural next step once the case set stabilises, but today the
 cases change with every drive and a file in the repo is the right home.
+
+## Deploying the relay (coturn)
+
+Nothing here is automatic. The `coturn` service ships in
+`docker-compose.prod.yml`, but it starts with an empty secret and the app only
+offers a relay once both halves are set — so a deploy that skips this looks
+exactly like the deploy before it, right down to working from a desk.
+
+**In Coolify, on this resource's environment variables:**
+
+```
+TURN_SECRET=<openssl rand -hex 32>
+TURN_URLS=turn:voice.example.com:3478,turn:voice.example.com:3478?transport=tcp
+```
+
+`TURN_URLS` uses the same hostname Traefik already serves, because its DNS
+already points at this host — coturn answers on 3478 beside Traefik's 443, not
+through it. `TURN_REALM`, `TURN_TTL_SECONDS`, `TURN_MIN_PORT` and
+`TURN_MAX_PORT` have working defaults.
+
+**On the host firewall, and in the cloud provider's firewall if there is one:**
+
+```
+3478/udp   3478/tcp   49160-49179/udp
+```
+
+The relay range is the one place a partial configuration bites quietly: coturn
+will accept the allocation, hand out a port nothing can reach, and the call
+fails the same way it failed without TURN at all.
+
+**A rebuild is not needed.** This was the point of moving ICE to
+`/api/realtime/ice`: the browser fetches its configuration per connection rather
+than reading a `NEXT_PUBLIC_` value inlined at build time, so TURN can be
+repointed with a restart. `NEXT_PUBLIC_ICE_SERVERS` is only the fallback for when
+that route cannot be reached.
+
+**Confirming it works**, in descending order of how much it tells you:
+
+1. `[ice] answer candidates:` in the pipecat log should list `relay=` alongside
+   `host=` and `srflx=`. If TURN is configured and no relay appears, the line
+   below it says so explicitly — that is a rejected credential or blocked UDP,
+   not a browser problem.
+2. `[talkback:pipecat] ICE: n server(s), relay available` in the phone's console.
+3. A drive from mobile data with Wi-Fi switched off. This is the only test that
+   would have caught the original fault, and it is worth doing on the carrier
+   the study's participants actually use.
+
+**What passes through it.** Only the calls that could not find a direct path —
+the candidate pair still prefers a direct one, so a drive on home Wi-Fi is
+unaffected. It runs on this host, so relayed audio reaches no third party, which
+is the same line `STT_PROVIDER` and `LANGFUSE_HOST` are drawn on.
+
+**What it is not.** coturn is a packet forwarder running inside your network, so
+the `--denied-peer-ip` flags in the compose file are load-bearing: without them
+an authenticated client can ask the relay to send to the database, the internal
+Docker networks, or the cloud metadata endpoint. Do not drop them when adding a
+peer range.
 
 ## Testing locally
 

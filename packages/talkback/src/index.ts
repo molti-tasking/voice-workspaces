@@ -33,8 +33,17 @@ export {
   buildBoardContext,
   type BoardContext,
 } from "./board-context";
-export { SUMMARY_PROMPT, foldSummary } from "./summary";
 export {
+  MAX_DRAFT_CONTEXT_CHARS,
+  buildDraftContext,
+  draftHandle,
+  type DraftContext,
+  type DraftForContext,
+} from "./draft-context";
+export { SUMMARY_PROMPT, foldSummary } from "./summary";
+export { TITLE_PROMPT } from "./title";
+export {
+  BOARD_EDITING,
   OUTPUT_CONTRACT,
   SILENCE_TOKEN,
   SYSTEM_PROMPT,
@@ -73,7 +82,30 @@ export {
   sttLanguageProfile,
   type SttLanguageProfile,
 } from "./language";
-export { recordAgentTurn, type AgentTurnRecord } from "./agent-turns";
+export {
+  BOARD_TOOLS,
+  BOARD_TOOL_NAMES,
+  boardEditFromToolCall,
+  type BoardToolName,
+  type ToolDefinition,
+} from "./board-tools";
+export {
+  WEB_SEARCH_TOOL,
+  WEB_SEARCH_TOOL_NAME,
+  searchResultForModel,
+  searxngRequest,
+  webSearchFromToolCall,
+  webSearchSection,
+  type SearchResultForModel,
+} from "./web-search";
+export {
+  recordAgentDecision,
+  recordAgentTurn,
+  type AgentDecisionOutcome,
+  type AgentDecisionRecord,
+  type AgentDecisionTrigger,
+  type AgentTurnRecord,
+} from "./agent-turns";
 export {
   contentWords,
   describeWhen,

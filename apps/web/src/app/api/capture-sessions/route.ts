@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { and, captureSession, desc, eq, getDb } from "@voicemural/db";
-import { CaptureSessionCreate } from "@voicemural/shared";
+import { and, captureSession, desc, eq, getDb, user } from "@voicemural/db";
+import { CaptureSessionCreate, resolveStudyCondition } from "@voicemural/shared";
 import { asSttLanguage } from "@voicemural/talkback/language";
 import { asVoiceId } from "@voicemural/talkback/voice";
 import { capture, sessionIdFrom } from "@/lib/analytics/server";
@@ -29,7 +29,7 @@ export async function POST(req: Request) {
   }
 
   const db = getDb();
-  const { id, startedAt, deviceInfo, setting } = parsed.data;
+  const { id, startedAt, deviceInfo, setting, useCase } = parsed.data;
   // Narrowed to the catalogue, never rejected: a stale browser offering a voice
   // that has since been retired must still be able to register its recording.
   // Unknown becomes null, which the container reads as "use the fallback".
@@ -62,6 +62,28 @@ export async function POST(req: Request) {
     return NextResponse.json({ id, resumed: true });
   }
 
+  // The study condition, frozen onto the drive here and nowhere else — the
+  // resume paths above and below never touch it, exactly like `setting`. Read
+  // only on a fresh insert, so a phase change the researcher makes mid-drive
+  // applies from the participant's next drive, not halfway through this one.
+  //
+  // A template that does not parse must not cost the participant their
+  // recording: the drive is registered under the defaults and the mistake is
+  // logged, because a phase silently run as the control arm is otherwise only
+  // discovered in the analysis.
+  const [template] = await db
+    .select({ studyCondition: user.studyCondition })
+    .from(user)
+    .where(eq(user.id, userId))
+    .limit(1);
+  const resolved = resolveStudyCondition(template?.studyCondition);
+  if (!resolved.ok) {
+    console.error("user.study_condition does not parse; this drive runs under the defaults", {
+      userId,
+      captureSessionId: id,
+    });
+  }
+
   // Conflict-safe rather than check-then-insert: two concurrent creates of
   // the same id (a client retry racing its own timed-out request) would else
   // both pass the `existing` check above and the loser would surface a unique
@@ -78,6 +100,11 @@ export async function POST(req: Request) {
       setting,
       voiceId,
       sttLanguage,
+      // Which worked example on `/welcome` sent them here, or null for a drive
+      // begun any other way. Set on the fresh insert only, like `setting` and
+      // the condition above: a resumed drive keeps the intent it started with.
+      useCase,
+      studyCondition: resolved.condition,
     })
     .onConflictDoNothing({ target: captureSession.id })
     .returning({ id: captureSession.id });
@@ -113,7 +140,16 @@ export async function POST(req: Request) {
   capture(
     userId,
     "capture_session_opened",
-    { capture_session_id: id, resumed: false, setting: setting ?? null, voice_id: voiceId, stt_language: sttLanguage },
+    {
+      capture_session_id: id,
+      resumed: false,
+      setting: setting ?? null,
+      voice_id: voiceId,
+      stt_language: sttLanguage,
+      // Which example was picked — and, by its absence, how many drives people
+      // start without one once they know what the system is for.
+      use_case: useCase ?? null,
+    },
     { sessionId: sessionIdFrom(req) },
   );
 

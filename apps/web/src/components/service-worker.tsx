@@ -24,8 +24,15 @@ export function ServiceWorker() {
 
     // Registration competes with the recorder's first paint for bandwidth on a
     // phone that has just woken up, and nothing on screen depends on it.
+    // The build id is what makes this a *different* script URL each deploy,
+    // and so the only thing that gets the worker — and its cache — replaced.
+    // See the comment at the top of public/sw.js.
     const register = () => {
-      void navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      const version = process.env.NEXT_PUBLIC_BUILD_ID ?? "dev";
+      void navigator.serviceWorker.register(
+        `/sw.js?v=${encodeURIComponent(version)}`,
+        { scope: "/" },
+      );
     };
     if (document.readyState === "complete") register();
     else window.addEventListener("load", register, { once: true });

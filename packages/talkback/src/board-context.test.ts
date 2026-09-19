@@ -50,18 +50,22 @@ function move(blockId: string, from: string, text: string, state: string, sessio
 }
 
 describe("buildBoardContext", () => {
-  it("sends nothing when there is no live task", () => {
+  it("says an empty board is empty, and still names the topics a task could go in", () => {
     seq = 0;
-    expect(buildBoardContext([topic()]).text).toBeNull();
+    expect(buildBoardContext([topic()]).text).toBe(
+      "Their task board right now: nothing open.\nTheir topics: Papers",
+    );
   });
 
-  it("renders each live task with its column", () => {
+  it("renders each live task with its column, the handle to act on it, and its topic", () => {
     seq = 0;
     const { text, shown } = buildBoardContext([
       topic(),
       task("b1", "Submit the EICS paper.", "next"),
     ]);
-    expect(text).toBe("Their task board right now:\n- [next] Submit the EICS paper.");
+    expect(text).toBe(
+      "Their task board right now:\n- [next] Submit the EICS paper. (card b1 · Papers)\nTheir topics: Papers",
+    );
     expect(shown).toBe(1);
   });
 
@@ -89,7 +93,7 @@ describe("buildBoardContext", () => {
       task("b2", "A next one.", "next"),
       task("b3", "A doing one.", "doing"),
     ]);
-    const lines = text!.split("\n").slice(1);
+    const lines = text!.split("\n").filter((l) => l.startsWith("- "));
     expect(lines.map((l) => l.match(/^- \[(\w+)\]/)?.[1])).toEqual(["doing", "next", "open"]);
   });
 
@@ -102,7 +106,7 @@ describe("buildBoardContext", () => {
       task("b2", "Newer.", "open", "s2"),
       task("b3", "Newest.", "open", "s3"),
     ];
-    expect(buildBoardContext(ops).text).toContain("Old one. (untouched for 2 drives)");
+    expect(buildBoardContext(ops).text).toContain("Old one. (card b1 · Papers · untouched for 2 drives)");
 
     seq = 0;
     const oneDrive = [topic(), task("b1", "Old one.", "doing", "s1"), task("b2", "Newer.", "open", "s2")];
@@ -132,6 +136,8 @@ describe("buildBoardContext", () => {
     const { text, shown, total } = buildBoardContext(ops);
     expect(total).toBe(60);
     expect(shown).toBeLessThan(60);
-    expect(text!.length).toBeLessThanOrEqual(MAX_BOARD_CHARS + "Their task board right now:\n".length);
+    expect(text!.length).toBeLessThanOrEqual(
+      MAX_BOARD_CHARS + "Their task board right now:\n".length + "\nTheir topics: Papers".length,
+    );
   });
 });

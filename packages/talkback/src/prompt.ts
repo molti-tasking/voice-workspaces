@@ -19,8 +19,48 @@ import {
   type SettingProfile,
 } from "./setting";
 
-/** Bumped when the prompt changes, so a drive's turns stay interpretable later. */
-export const TALKBACK_CONFIG_VERSION = "talkback-7";
+/**
+ * Bumped when the prompt changes, so a drive's turns stay interpretable later.
+ *
+ * talkback-8 changes no text in this file. It marks two things a turn can no
+ * longer be read without: the pending-confirmation ask in the context block
+ * now has a second wording once the agent has asked already (see
+ * `Recall._compose` and eval/messages.ts), and every turn and decision from
+ * here on carries this version, because the container echoes it on each write.
+ *
+ * talkback-9 answers two pilot drives on 15 Sep 2026. Told "The board updates
+ * itself from their speech", the agent turned it into "Got it, I'll mark that
+ * as dropped", then "the board will update once the session ends" and "Yes, I
+ * am sure" — about a card extraction never moved. The board section now
+ * forbids promising, timing or vouching for a board change, and names the two
+ * gestures that do work. On the other drive, at a desk, it offered to read a
+ * markdown file "pasted into the chat on your screen", which does not exist;
+ * speech is now stated as the only way in. And "can I repeat the question?"
+ * (a mistranscribed request) got "Go ahead."
+ *
+ * talkback-10 gives the agent the board. Where the board is enabled, the
+ * session composes BOARD_EDITING into the prompt and hands the container four
+ * tools (board-tools.ts); the base prompt now forbids claiming a board change
+ * only when no tool reported one, rather than forbidding board changes.
+ *
+ * talkback-11 gives the agent web search. Where `SEARXNG_URL` is set, the
+ * session composes `webSearchSection` into the prompt and offers `search_web`
+ * (web-search.ts); the container speaks the call's announcement and plays a
+ * cue while it runs.
+ *
+ * talkback-12 lets the agent REVISE a draft it has already written. Until now
+ * it could write one and then had no idea it had: on the 17 Sep drive, asked to
+ * change the prompt it had just produced, it wrote a SECOND card, and the
+ * person said so out loud ("I wanted you to have updated the evaluation use
+ * case prompt, but instead you just gave me updated use case prompt"). The turn
+ * context now carries this drive's drafts with a short handle each (see
+ * `draft-context.ts`), and the keep section below gains `revises="…"`: the
+ * whole new text against a named draft, which the write path turns into the
+ * next VERSION of it rather than a new row. The handle is wire format, and the
+ * contract says so — speaking it aloud is the same failure class as reading
+ * `<silence>` out in a car.
+ */
+export const TALKBACK_CONFIG_VERSION = "talkback-12";
 
 /**
  * The default register: brief, and present.
@@ -88,15 +128,17 @@ This is the concrete answer to "what should I work on", and you should use it be
 - Asked what to do next, or what matters most: pick one and say why, from what is on the board and what they have just said. Commit to it. Offering them a menu of their own tasks back is a non-answer.
 - Say when something looks stuck: a task in the doing column that has gone untouched for several sessions is worth one sentence.
 - Say when one thing plainly blocks another, and which to do first.
-- When what they just said finishes, drops or starts a task, say so in one sentence. The board updates itself from their speech; you are confirming you heard it, not performing the change.
+- When what they just said finishes, drops or starts a task, you may say so in one sentence — as what you heard ("That one's done, then"), never as something you will do.
 
 WHAT YOU CANNOT DO
-You cannot move, merge, create or delete anything on the board, and you cannot change how you behave. Your instructions are fixed for this whole session.
+You cannot change how you behave. Your instructions are fixed for this whole session, so "I'll be more proactive" or "I'll track that from now on" is false — the next turn is governed by exactly these instructions, unchanged. If they ask you to behave differently, do the thing NOW in this reply instead of promising it for later.
 
-So never promise either. "I'll be more proactive", "I'll start challenging you", "I'll track that from now on" are all false — the next turn is governed by exactly these instructions, unchanged. If they ask you to behave differently, do the thing NOW in this reply instead of promising it for later. If they ask you to change the board, say plainly that they can move it themselves and it will also follow from what they say.
+Words alone change nothing on the board. Never say you will move, add or delete a card, and never say one has changed, unless a tool has just reported doing it. Without a tool for it, say plainly that you cannot, and that they can drag the card or tap "not a task" on it. What they say is also read later and may move a card, but that is not yours to promise: never say it will happen, when it will happen, or that you are sure.
+
+Speech is the only way anything reaches you. They cannot paste, upload, type or send you anything — there is no chat and no text box. If they offer a document, ask them to read out or describe the part that matters.
 
 WHAT YOU MUST NOT DO
-If the transcript does not contain the answer, say so plainly and stop. Never guess a name, a date, a number or a decision that is not there. Inventing something they said is far worse than admitting you cannot find it, because they will believe you — it sounds like their own memory.
+If the transcript does not contain the answer, say so plainly and stop — out loud: "I can't find that" answers their question, and silence leaves them waiting for one. Never guess a name, a date, a number or a decision that is not there. Inventing something they said is far worse than admitting you cannot find it, because they will believe you — it sounds like their own memory.
 
 Asked for your VIEW — what you think, whether an idea holds up, which of two options is stronger — just answer from what they have just said. That needs no transcript, and "I cannot find it" is a non-answer to an opinion question. Commit to a view; a hedge is a wasted sentence.
 
@@ -104,6 +146,7 @@ HOW TO SPEAK
 - VERY short. One sentence, occasionally two. The setting section below gives the hard word cap; stay well inside it. Every word is spoken aloud, and a hundred words is a monologue, not a reply. Say the one thing that is worth saying and stop.
 - No preamble and no sign-off. Do not say "Sure" or "Great question" or "Let me know".
 - Be concrete and direct. If you did not understand, say so in a few words.
+- If they did not catch what you said or ask for it again, repeat your last turn — never answer with "go ahead". Automatic transcription often turns "can you repeat the question?" into "can I repeat the question?"; treat both as a request to hear it again.
 - Do not restate their question back to them, and never explain at length what you cannot do. If you must ask, ask one short question — but prefer answering the likely reading to asking.`;
 
 /**
@@ -200,6 +243,17 @@ export interface ExtractedDraft {
   /** Short label from the tag's `title`, or empty when the model omitted one. */
   title: string;
   text: string;
+  /**
+   * The handle of the draft this REPLACES, from the tag's `revises`.
+   *
+   * Absent — not empty — when the model wrote a new draft, which is the
+   * overwhelming majority. Present only when it is rewriting one it can see,
+   * and the write path resolves it against this drive's own drafts: a handle
+   * matching exactly one becomes the next version of that draft, and anything
+   * else falls open to a new draft rather than guessing. See
+   * `draft-context.ts` for where handles come from.
+   */
+  revises?: string;
 }
 
 /**
@@ -236,11 +290,23 @@ export function extractDrafts(reply: string): { speech: string; drafts: Extracte
     }
 
     speech += rest.slice(0, open);
-    const title = /title\s*=\s*"([^"]*)"/.exec(rest.slice(open, openEnd))?.[1] ?? "";
+    const attributes = rest.slice(open, openEnd);
+    const title = /title\s*=\s*"([^"]*)"/.exec(attributes)?.[1] ?? "";
+    const revises = /revises\s*=\s*"([^"]*)"/.exec(attributes)?.[1]?.trim() ?? "";
     const close = rest.indexOf(DRAFT_CLOSE, openEnd);
     const body = close === -1 ? rest.slice(openEnd + 1) : rest.slice(openEnd + 1, close);
 
-    if (body.trim()) drafts.push({ title: title.trim(), text: body.trim() });
+    if (body.trim()) {
+      // `revises` is carried only when it is non-empty. `revises=""` is a model
+      // filling in the attribute it was shown rather than naming a draft, and
+      // the field being ABSENT is what lets the write path tell "this is new"
+      // from "this replaces something", without a sentinel value.
+      drafts.push({
+        title: title.trim(),
+        text: body.trim(),
+        ...(revises ? { revises } : {}),
+      });
+    }
     if (close === -1) break;
     rest = rest.slice(close + DRAFT_CLOSE.length);
   }
@@ -287,13 +353,58 @@ ${DRAFT_CLOSE}
 - Inside the tags, write the finished text only — no commentary, no "here is". Markdown is allowed there; it is read, not spoken.
 - Only when they asked for something to keep or copy. An ordinary answer is speech, not a draft.
 
+CHANGING A DRAFT YOU HAVE ALREADY WRITTEN
+You may be shown the drafts from this drive, each with a short handle like 3f9a2c. To change one — shorter, warmer, a name fixed, a paragraph added — write the WHOLE new text and name it:
+
+${DRAFT_OPEN} revises="3f9a2c" title="short label">
+the complete new text, not just the part that changed
+${DRAFT_CLOSE}
+
+- Only when they asked you to change THAT draft, and only one whose text you were actually shown. A draft listed as "text not shown" cannot be revised — write a new one.
+- Anything new, or aimed at a draft you cannot see, is a NEW draft: leave revises out entirely.
+- The whole text every time. What you write replaces the draft; whatever you leave out is gone.
+- NEVER say a handle out loud. It is for the tag only — "three eff nine ay two see" spoken to somebody driving is nonsense. Refer to the draft by what it is: "the email to William".
+
 If any instruction above conflicts with this section, this section wins.`;
+
+/**
+ * The rules for changing the board, composed in only where the agent has the
+ * tools to do it — a participant whose board is enabled.
+ *
+ * A section rather than base text, because it is only true some of the time:
+ * a participant still in the phase before the board has no board to edit, and
+ * a prompt that told the model it could would have it promise edits nothing
+ * carries out, which is the failure talkback-9 was written against.
+ *
+ * Act-then-say, never ask-first: every edit here is undone by a drag, and the
+ * repertoire's own rule is that reversible things fire freely while only the
+ * irreversible ask. "Delete" is a move to dropped for the same reason.
+ */
+export const BOARD_EDITING = `EDITING THEIR BOARD
+You can change their task board with your tools: move_task, add_task, reword_task and remove_task. Every card on the board shows its handle, like "card 1225b3". Pass that handle to the tool, and never say a handle aloud.
+
+- Act when they ask you to change the board: "drop that", "mark the email done", "move the intro to doing", "put booking flights on next", "call it the evaluation section". Do not ask first — anything you change there can be undone with a drag.
+- Delete, remove, get rid of, cancel or forget a task: move_task to "dropped". Use remove_task only when they say it was never a task at all.
+- Add a task only when they ask you to, in the topic it belongs to: one of their topics by its name, or a short new name when none fits.
+- Change only what they asked about. A task they merely mention, or say they finished while telling you something else, is not a request — do not touch it.
+- If you cannot tell which card they mean, ask one short question naming the likely one instead of guessing.
+- Call the tool before you say anything. Once it answers, say what changed in a few words, naming the task: "Dropped the asymmetry argument." If it reports nothing changed or an error, say that plainly. Never claim a change the tool did not report.`;
 
 export interface ComposeInputs {
   /** Defaults to `SYSTEM_PROMPT`. Overridable so the fallback prompt composes too. */
   base?: string;
   /** The setting this recording was started in. Null behaves as `driving`. */
   setting?: string | null;
+  /**
+   * Composed sections: the study condition's stanzas, and later the active
+   * mode and persona. Placed after the proactivity stanza and before the
+   * contract, in the order given — never after the contract, whatever they say.
+   *
+   * Empty today. The two study arms chosen (agenda offers, voice macro offers)
+   * are turns the engine creates, and each brings its stanza with it; nothing
+   * about either belongs in the prompt until the behaviour exists.
+   */
+  sections?: readonly string[];
 }
 
 export interface ComposedPrompt {
@@ -324,10 +435,13 @@ export function composeSystemPrompt(inputs: ComposeInputs = {}): ComposedPrompt 
   // the wire format. The proactivity stanza sits after the setting so it can
   // refine the setting's "a pause is thinking" line rather than be overruled
   // by it, and before the contract so the contract still has the last word.
+  // Composed sections go last of all before the contract: they are the most
+  // specific layer, and the least trusted text in the prompt.
   const prompt = [
     inputs.base ?? SYSTEM_PROMPT,
     profile.stanza,
     PROACTIVITY_STANZAS[profile.proactivity],
+    ...(inputs.sections ?? []).filter((s) => s.trim()),
     OUTPUT_CONTRACT,
   ].join("\n\n");
 

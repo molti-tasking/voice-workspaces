@@ -31,11 +31,14 @@ import {
   unresolvedDirectives,
 } from "./repertoire";
 import {
+  agentDecision,
+  agentTurn,
   audioChunk,
   capability,
   capabilityOrigin,
   capabilityVersion,
   captureSession,
+  invocation,
   user,
   utterance,
 } from "./schema";
@@ -264,6 +267,111 @@ describeIfDb("repertoire", () => {
     await settleInvocation(invocationId!, false);
     expect(await pendingConfirmation(SESSION_A)).toBeNull();
     expect((await invocationStats(USER_ID))[0]?.fires).toBe(1);
+  });
+
+  /** Park an outbound action in `session`, the way the invoker does. */
+  async function park(n: number, session = SESSION_A, chunk = CHUNK_A): Promise<string> {
+    const versionId = await addCapability(C(10 + n), `to-doc-${n}`, { reversible: false, confirm: true });
+    await addUtterance(U(20 + n), session, chunk, "Send that to the doc.", n * 1000);
+    await recordClassifications([
+      {
+        utteranceId: U(20 + n),
+        captureSessionId: session,
+        kind: "directive",
+        confidence: 85,
+        verb: "send",
+        restatement: `Sending item ${n} to the doc.`,
+        capabilityId: C(10 + n),
+      },
+    ]);
+    const id = await recordInvocation({
+      capabilityId: C(10 + n),
+      capabilityVersionId: versionId,
+      captureSessionId: session,
+      triggeringUtteranceId: U(20 + n),
+      confirmed: null,
+    });
+    return id!;
+  }
+
+  /** The agent asking about `invocationId`, as the container records it. */
+  async function ask(invocationId: string, seq: number, kind: "confirmation_request" | "reply" = "confirmation_request") {
+    const db = getDb();
+    const [turn] = await db
+      .insert(agentTurn)
+      .values({
+        captureSessionId: SESSION_A,
+        seq,
+        startOffsetMs: seq * 1000,
+        endOffsetMs: seq * 1000 + 500,
+        kind,
+        text: "Shall I send it?",
+        generatedText: "Shall I send it?",
+      })
+      .returning({ id: agentTurn.id });
+    await db.insert(agentDecision).values({
+      captureSessionId: SESSION_A,
+      seq,
+      offsetMs: seq * 1000,
+      trigger: "confirmation",
+      outcome: "spoke",
+      subjectKey: invocationId,
+      agentTurnId: turn!.id,
+    });
+  }
+
+  it("settles a spoken yes and a spoken no, once each, and stops offering them", async () => {
+    const yes = await park(1);
+    const no = await park(2);
+
+    expect(await settleInvocation(yes, true, SESSION_A)).toBe(true);
+    // Already settled: the second answer changes nothing.
+    expect(await settleInvocation(yes, false, SESSION_A)).toBe(false);
+    expect((await pendingConfirmation(SESSION_A))?.invocationId).toBe(no);
+
+    expect(await settleInvocation(no, false, SESSION_A)).toBe(true);
+    expect(await pendingConfirmation(SESSION_A)).toBeNull();
+
+    const rows = await getDb()
+      .select({ id: invocation.id, confirmed: invocation.confirmed })
+      .from(invocation)
+      .where(inArray(invocation.id, [yes, no]));
+    expect(Object.fromEntries(rows.map((r) => [r.id, r.confirmed]))).toEqual({ [yes]: true, [no]: false });
+  });
+
+  it("refuses to settle another drive's action", async () => {
+    const other = await park(3, SESSION_B, CHUNK_B);
+    expect(await settleInvocation(other, true, SESSION_A)).toBe(false);
+    expect((await pendingConfirmation(SESSION_B))?.invocationId).toBe(other);
+  });
+
+  /**
+   * The ask, and one repeat. A question let pass twice steps aside — and lets
+   * the next parked action be asked about, rather than blocking it for the
+   * rest of the drive — without being recorded as refused.
+   */
+  it("asks about an action at most twice, then moves on without refusing it", async () => {
+    const first = await park(4);
+    const second = await park(5);
+
+    expect(await pendingConfirmation(SESSION_A)).toMatchObject({ invocationId: first, askedCount: 0 });
+    await ask(first, 0);
+    expect(await pendingConfirmation(SESSION_A)).toMatchObject({ invocationId: first, askedCount: 1 });
+    await ask(first, 1);
+    expect(await pendingConfirmation(SESSION_A)).toMatchObject({ invocationId: second, askedCount: 0 });
+
+    const [row] = await getDb()
+      .select({ confirmed: invocation.confirmed })
+      .from(invocation)
+      .where(inArray(invocation.id, [first]));
+    expect(row?.confirmed).toBeNull();
+  });
+
+  it("does not count a turn about something else as an ask", async () => {
+    const parked = await park(6);
+    await ask(parked, 0, "reply");
+    await ask(parked, 1, "reply");
+    expect(await pendingConfirmation(SESSION_A)).toMatchObject({ invocationId: parked, askedCount: 0 });
   });
 
   it("lists live capability names for the classifier's vocabulary", async () => {

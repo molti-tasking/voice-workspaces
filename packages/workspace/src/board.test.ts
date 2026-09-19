@@ -176,9 +176,9 @@ describe("judge", () => {
     expect(judge(board.transitions, { withinSessions: 2, sessions: board.sessions }).at(-1)?.outcome).toBe("pending");
   });
 
-  it("judges speech only — a manual move is the verdict, not the defendant", () => {
+  it("never judges a manual move — it is the verdict, not the defendant", () => {
     const ops = [...spoken(), op(D3, move("b3", "b2", "next", "user"))];
-    expect(judge(transitionsOf(ops), { withinSessions: 2 }).every((j) => j.transition.via === "speech")).toBe(true);
+    expect(judge(transitionsOf(ops), { withinSessions: 2 }).every((j) => j.transition.via !== "user")).toBe(true);
   });
 
   it("lists the reversals", () => {

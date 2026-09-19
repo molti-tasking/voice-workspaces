@@ -15,6 +15,7 @@
     "@atlaskit/pragmatic-drag-and-drop": "^3.1.0",
     "@pipecat-ai/client-js": "^1.13.0",
     "@pipecat-ai/small-webrtc-transport": "^1.10.6",
+    "@posthog/nextjs-config": "^1.11.1",
     "@voicemural/db": "workspace:*",
     "@voicemural/llm": "workspace:*",
     "@voicemural/shared": "workspace:*",

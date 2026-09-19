@@ -53,9 +53,19 @@ interface CuePayload {
  * rules that keep the rest of the panel still.
  */
 export interface DraftCue {
+  /** The LINEAGE id, so a rewrite replaces the card rather than adding one. */
   id: string;
   title: string;
   text: string;
+  /**
+   * `v2.1` — which attempt this is, and how much of it was the person's.
+   *
+   * Shown because a rewrite lands in the SAME card: without the label, "make it
+   * shorter" would change the text under the person's eyes with nothing on
+   * screen saying it had happened.
+   */
+  version: string;
+  /** When the CURRENT version was written, not when the draft was first asked for. */
   at: string;
 }
 
