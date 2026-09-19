@@ -60,6 +60,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -78,6 +79,8 @@ from pipecat.audio.mixers.base_audio_mixer import BaseAudioMixer
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
     CancelFrame,
     EndFrame,
     Frame,
@@ -1953,6 +1956,60 @@ class Cue:
 OFFER_TRIGGERS = ("opening", "silence_offer", "agenda", "macro_offer")
 
 
+class Playback:
+    """When the speaker actually started and stopped, for ONE spoken turn.
+
+    WHY IT EXISTS. `end_offset_ms` was `len(text) / 14` — about fourteen
+    characters a second — because the container never learned when playback
+    ended. On the first formative pilot that overstated the agent's measured
+    speech by about 8%, and `/sessions/[id]` showed every duration with a `~`
+    because it could not honestly do otherwise.
+
+    It can be measured. The output transport pushes `BotStartedSpeakingFrame`
+    and `BotStoppedSpeakingFrame` BOTH ways when audio actually starts and
+    stops, so `SilenceGate` — upstream of it — sees them without a second
+    processor. The catch is that they arrive after `LLMFullResponseEndFrame`,
+    which is where a turn is written, so the write waits on this rather than
+    moving.
+
+    ONLY A MATCHED PAIR COUNTS. A stop with no start of its own is ignored:
+    the keep-alive speaks while the answer is still generating, and one
+    continuous speaking run over both would otherwise end the answer's turn at
+    the filler's last word. The waiter times out instead and the estimate
+    stands, which is the conservative wrong answer rather than the confident
+    one.
+    """
+
+    def __init__(self):
+        self._stopped = asyncio.Event()
+        self.started_ms: int | None = None
+        self.stopped_ms: int | None = None
+
+    def started(self, at_ms: int) -> None:
+        if self.started_ms is None:
+            self.started_ms = at_ms
+
+    def stopped(self, at_ms: int) -> None:
+        # First stop wins, and only after a start we saw. Both guards are about
+        # a later turn's audio landing on a turn already written.
+        if self._stopped.is_set() or self.started_ms is None:
+            return
+        self.stopped_ms = at_ms
+        self._stopped.set()
+
+    def abandon(self) -> None:
+        """Stop anything waiting. The drive ended, or the driver talked over it."""
+        self._stopped.set()
+
+    async def wait(self, timeout: float) -> None:
+        try:
+            await asyncio.wait_for(self._stopped.wait(), timeout)
+        except (TimeoutError, asyncio.TimeoutError):
+            # Not an error worth a line: a turn whose audio was merged into a
+            # neighbouring one still has an estimate, and the row says which.
+            pass
+
+
 def _now_ms() -> int:
     return int(time.time() * 1000)
 
@@ -2104,6 +2161,7 @@ class TurnRecorder:
         barged_in: bool = False,
         cue: Cue | None = None,
         metrics: dict | None = None,
+        playback: "Playback | None" = None,
     ) -> None:
         """A turn that reached the speaker. Fire and forget: a failure here
         must never cost the driver a reply.
@@ -2117,9 +2175,16 @@ class TurnRecorder:
         sent, a reply cut off after one word was filed as a complete turn
         that said "The".
 
-        `metrics` is what the gate saw of the LLM's own timing for this
-        completion: `ttftMs`, `promptTokens`, `completionTokens`,
-        `requestedModel`, each only when measured.
+        `metrics` is what the gate saw of this turn's timing: `ttftMs`,
+        `promptTokens`, `completionTokens`, `requestedModel`, `resolvedModel`
+        and `asrMs`, each only when measured.
+
+        `playback` is the speaker's own account of the turn, and it is not
+        ready yet: `BotStoppedSpeakingFrame` arrives after the completion ends.
+        The row is composed now — the seq is taken here, so ordering holds —
+        and POSTED once playback settles or a bounded wait gives up, whichever
+        comes first. `end_offset_ms` is then measured rather than the old
+        `len(text) / 14`, and `end_offset_measured` says which it was.
         """
         if not self._ticket or not self._started_at_ms or not spoken.strip():
             return
@@ -2152,10 +2217,18 @@ class TurnRecorder:
             payload["bargedIn"] = True
             # How far into the turn the cut came — what the page shows as "heard".
             payload["truncatedAtMs"] = end - offset
+            # Measured, and it always was: the interruption is the one moment
+            # the container knows for certain that playback stopped. Said on
+            # the row rather than left to a reader to infer from `bargedIn`,
+            # so the column means one thing everywhere.
+            payload["endOffsetMeasured"] = True
         else:
-            # Roughly 14 characters a second of speech. An estimate, and marked
-            # as one: the container never learns when playback actually ended.
+            # Roughly 14 characters a second of speech. Still the FALLBACK, and
+            # now marked as one on the row rather than only in a comment: it
+            # stands when the transport never reported a matched start and stop
+            # for this turn. See `Playback`.
             payload["endOffsetMs"] = offset + int(len(spoken) / 14 * 1000)
+            payload["endOffsetMeasured"] = False
         # Only a turn the driver's words prompted answers them. An offer
         # answers nothing, and filing it against their last line — often
         # minutes old — would make the transcript say it did.
@@ -2169,7 +2242,19 @@ class TurnRecorder:
             # fast" was about. Not the moment to audio — the TTS's own delay
             # happens downstream of anything this container can time per turn.
             payload["totalLatencyMs"] = latency
-        for key in ("ttftMs", "promptTokens", "completionTokens", "requestedModel"):
+        for key in (
+            "ttftMs",
+            "promptTokens",
+            "completionTokens",
+            "requestedModel",
+            # What the proxy answered WITH, which is not what was asked for: an
+            # alias resolves, a fallback fires, and only the response says so.
+            "resolvedModel",
+            # The transcription's own time to first byte. Measured on the STT
+            # service's metrics rather than inferred, and by far the largest
+            # term in how fast a turn feels (TALKBACK.md → Latency).
+            "asrMs",
+        ):
             if metrics and metrics.get(key) is not None:
                 payload[key] = metrics[key]
         if self._tool_calls:
@@ -2189,7 +2274,14 @@ class TurnRecorder:
         self._asked_question = _ends_in_question(spoken)
 
         decision = self._decision(cue, "interrupted" if barged_in else "spoke", latency)
-        self._send(payload, decision)
+        # A barge-in has its end already, measured at the interruption, so it
+        # waits for nothing.
+        self._send(
+            payload,
+            decision,
+            playback=None if barged_in else playback,
+            first_word_ms=started_ms,
+        )
 
     def record_announcement(self, spoken: str, kind: str = "reply") -> None:
         """A sentence spoken for a tool while it runs — "Let me look that up."
@@ -2212,12 +2304,17 @@ class TurnRecorder:
         if self._session_ended:
             return
         seq, self._seq = self._seq, self._seq + 1
-        offset = max(0, _now_ms() - self._started_at_ms)
+        now = _now_ms()
+        offset = max(0, now - self._started_at_ms)
         payload = {
             "ticket": self._ticket,
             "seq": seq,
             "startOffsetMs": offset,
             "endOffsetMs": offset + int(len(spoken) / 14 * 1000),
+            # This path has no `Playback` to wait on — it is spoken from inside
+            # a tool handler, nowhere near the gate — so the end is the old
+            # estimate, and the row says so rather than looking measured.
+            "endOffsetMeasured": False,
             "text": spoken,
             "generatedText": spoken,
             "kind": kind,
@@ -2226,6 +2323,13 @@ class TurnRecorder:
             payload["respondingToText"] = self._responding_to
         if self._config_version:
             payload["configVersion"] = self._config_version
+        # The one timing this path really has, and the one that matters most:
+        # from the driver's words to the first thing they hear back. It was
+        # null on all three announcements of the first pilot, which is why the
+        # session's median latency read as the second round trip only.
+        latency = self._latency(self._cue, now)
+        if latency is not None:
+            payload["totalLatencyMs"] = latency
         self._send(payload, None)
 
     def decline(self, *, interrupted: bool = False, cue: Cue | None = None) -> None:
@@ -2273,16 +2377,50 @@ class TurnRecorder:
             decision["subjectKey"] = cue.subject_key
         return decision
 
-    def _send(self, turn: dict | None, decision: dict | None) -> None:
+    # How long a turn's row waits for the speaker to finish before it is
+    # written with the estimate instead. The spoken part of the turn plus a
+    # margin, clamped: a wait that outlived the drive would cost the echo
+    # filter a row, which is a far worse failure than an estimated duration.
+    PLAYBACK_WAIT_MIN_SECS = 3.0
+    PLAYBACK_WAIT_MAX_SECS = 20.0
+
+    def _send(
+        self,
+        turn: dict | None,
+        decision: dict | None,
+        playback: "Playback | None" = None,
+        first_word_ms: int | None = None,
+    ) -> None:
         """Both writes, in ONE task, turn first.
 
         Sequential on purpose: the decision points at the turn's row, and the
         turn route hands back that id. Two independent tasks would race the
         foreign key; this way a lost turn only costs the decision its pointer.
+
+        `playback` delays the POST until the speaker has finished, so the row
+        can carry a measured end. Bounded, and the fallback is the row that
+        would have been written anyway.
         """
 
         async def send() -> None:
             turn_id = None
+            if turn is not None and playback is not None:
+                spoken_secs = len(turn.get("text") or "") / 14
+                await playback.wait(
+                    min(
+                        self.PLAYBACK_WAIT_MAX_SECS,
+                        max(self.PLAYBACK_WAIT_MIN_SECS, spoken_secs + 3.0),
+                    )
+                )
+                if playback.stopped_ms is not None and self._started_at_ms:
+                    end = max(turn["startOffsetMs"], playback.stopped_ms - self._started_at_ms)
+                    turn["endOffsetMs"] = end
+                    turn["endOffsetMeasured"] = True
+                if playback.started_ms is not None and first_word_ms is not None:
+                    # From the first word released to TTS to the first audible
+                    # sample: the part of the wait that happens downstream of
+                    # anything the gate can time for itself.
+                    turn["speakTtfbMs"] = max(0, playback.started_ms - first_word_ms)
             if turn is not None:
                 try:
                     response = await asyncio.to_thread(self._post, "agent-turn", turn)
@@ -2836,6 +2974,8 @@ class SilenceGate(FrameProcessor):
         # construction of the gate — the tests included — keeps working.
         title: "TopicTitle | None" = None,
         answers: "AnswerGuard | None" = None,
+        stt_name: str | None = None,
+        resolved_model: Callable[[], str] | None = None,
     ):
         super().__init__()
         self._summary = summary
@@ -2848,6 +2988,24 @@ class SilenceGate(FrameProcessor):
         # MetricsFrame passes through here — the STT's included — so they are
         # told apart by the processor that measured them.
         self._llm_name = llm_name
+        # The STT's, told apart the same way. Its time to first byte is the
+        # largest term in how fast a turn feels (TALKBACK.md → Latency) and the
+        # `asr_ms` column has been empty since it was written.
+        self._stt_name = stt_name
+        # What the proxy ANSWERED with. Pipecat keeps it on the service, off
+        # `chunk.model`, which is the only place the resolution behind an alias
+        # or a fallback is visible; the metrics frame carries the requested
+        # name and cannot say. Read at the end of a completion rather than
+        # stored, so it is this turn's answer.
+        self._resolved_model = resolved_model
+        # The STT measures BEFORE a completion starts, so this cannot live in
+        # `_turn_metrics`, which `_reset` empties on every LLMFullResponseStart.
+        # The most recent transcription is the one that prompted this turn.
+        self._asr_ms: int | None = None
+        # The speaker's own account of the turn being spoken right now. NOT
+        # cleared by `_reset`: the stop frame arrives after the completion ends,
+        # and the row waits for it. A new turn's first released word replaces it.
+        self._playback: Playback | None = None
         self._text = ""
         self._spoken = ""
         self._holding = True
@@ -2885,14 +3043,22 @@ class SilenceGate(FrameProcessor):
         self._turn_metrics = {}
 
     def _note_metrics(self, frame: MetricsFrame) -> None:
-        """Keep this completion's LLM timing and token counts.
+        """Keep this turn's timing and token counts.
 
         Pipecat measures them and pushes them downstream as frames, which
         nothing read: the latency columns on `agent_turn` were always empty.
         The LLM's frames arrive between its response start and end, so the
         reset at start is what keeps one turn's numbers off the next.
+
+        The STT's arrive BEFORE any of that, since transcription is what
+        produces the turn in the first place — so its measurement is held
+        outside `_turn_metrics` and attached to whatever turn follows it.
         """
         for data in frame.data:
+            if self._stt_name and data.processor == self._stt_name:
+                if isinstance(data, TTFBMetricsData):
+                    self._asr_ms = int(data.value * 1000)
+                continue
             if self._llm_name and data.processor != self._llm_name:
                 continue
             if isinstance(data, TTFBMetricsData):
@@ -2902,6 +3068,17 @@ class SilenceGate(FrameProcessor):
                 self._turn_metrics["completionTokens"] = data.value.completion_tokens
             if data.model:
                 self._turn_metrics["requestedModel"] = data.model
+
+    def _measured(self) -> dict:
+        """This turn's numbers, as they stand at the moment it is written."""
+        measured = dict(self._turn_metrics)
+        if self._asr_ms is not None:
+            measured["asrMs"] = self._asr_ms
+        if self._resolved_model is not None:
+            resolved = self._resolved_model()
+            if resolved:
+                measured["resolvedModel"] = resolved
+        return measured
 
     def _for_speech(self, chunk: str) -> str:
         """Strip draft blocks out of streaming text, tag-safe across frames.
@@ -2955,6 +3132,10 @@ class SilenceGate(FrameProcessor):
         """
         if self._first_spoke_ms is None:
             self._first_spoke_ms = int(time.time() * 1000)
+            # A fresh account of the speaker for THIS turn. Anything the last
+            # turn's row was still waiting on is now its own business — it
+            # holds its own reference and times out on its own.
+            self._playback = Playback()
         if self._summary is not None:
             self._summary.note_agent(text)
         if self._title is not None:
@@ -2998,6 +3179,21 @@ class SilenceGate(FrameProcessor):
                 self._cue = self._recorder.cue()
         elif isinstance(frame, MetricsFrame):
             self._note_metrics(frame)
+        elif isinstance(frame, (BotStartedSpeakingFrame, BotStoppedSpeakingFrame)):
+            # The output transport pushes these BOTH ways when audio actually
+            # starts and stops, which is why the measured end needs no
+            # processor of its own downstream of the TTS. See `Playback`.
+            if self._playback is not None:
+                if isinstance(frame, BotStartedSpeakingFrame):
+                    self._playback.started(_now_ms())
+                else:
+                    self._playback.stopped(_now_ms())
+        elif isinstance(frame, (EndFrame, CancelFrame)):
+            # The drive is going down. Release the row that is waiting on the
+            # speaker rather than letting its task die with the estimate
+            # unwritten: a lost turn is what blinds the echo filter.
+            if self._playback is not None:
+                self._playback.abandon()
         elif isinstance(frame, FunctionCallsStartedFrame):
             self._calling_tools = True
             logger.info(f"[turn] calling {', '.join(c.function_name for c in frame.function_calls)}")
@@ -3040,8 +3236,12 @@ class SilenceGate(FrameProcessor):
                         started_ms=self._first_spoke_ms,
                         barged_in=True,
                         cue=self._cue,
-                        metrics=self._turn_metrics,
+                        metrics=self._measured(),
                     )
+                # Its end is the interruption, measured; nothing waits on the
+                # speaker, and nothing may later claim this turn stopped later.
+                if self._playback is not None:
+                    self._playback.abandon()
             elif self._in_response and self._recorder is not None:
                 # Talked over before a word came out — or while a decline was
                 # still being held. Nothing reached the speaker, so no turn;
@@ -3096,7 +3296,8 @@ class SilenceGate(FrameProcessor):
                     self._text,
                     started_ms=self._first_spoke_ms,
                     cue=self._cue,
-                    metrics=self._turn_metrics,
+                    metrics=self._measured(),
+                    playback=self._playback,
                 )
             elif self._recorder is not None and self._in_response and not self._calling_tools:
                 if self._answers is not None and self._answers.retrying:
@@ -3113,7 +3314,17 @@ class SilenceGate(FrameProcessor):
                     # DID say it, and a next turn that cannot see it would
                     # answer as if the driver had been met with silence again.
                     await self.push_frame(TTSSpeakFrame(spoken), direction)
-                    self._recorder.record(spoken, spoken, started_ms=_now_ms(), cue=self._cue)
+                    # Spoken by the same TTS as any other turn, so its end is
+                    # measurable the same way.
+                    self._playback = Playback()
+                    self._recorder.record(
+                        spoken,
+                        spoken,
+                        started_ms=_now_ms(),
+                        cue=self._cue,
+                        metrics=self._measured(),
+                        playback=self._playback,
+                    )
                     spoke = True
                 elif (
                     self._answers is not None
@@ -3380,7 +3591,18 @@ def build_pipeline(
             # visible in the context as a turn that happened, while never
             # reaching the speaker.
             SilenceGate(
-                summary, recorder, drafts, offers, llm_name=llm.name, title=title, answers=answers
+                summary,
+                recorder,
+                drafts,
+                offers,
+                llm_name=llm.name,
+                title=title,
+                answers=answers,
+                stt_name=stt.name,
+                # Not `MODEL_CONVERSE`: Pipecat keeps what the proxy actually
+                # answered with off `chunk.model`, and an alias or a fallback
+                # makes the two differ. Read per turn, at the end of it.
+                resolved_model=llm.get_full_model_name,
             ),
             keepalive,
             tts,

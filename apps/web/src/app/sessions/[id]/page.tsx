@@ -72,6 +72,7 @@ export default async function SessionPage({
       seq: agentTurn.seq,
       startOffsetMs: agentTurn.startOffsetMs,
       endOffsetMs: agentTurn.endOffsetMs,
+      endOffsetMeasured: agentTurn.endOffsetMeasured,
       text: agentTurn.text,
       generatedText: agentTurn.generatedText,
       bargedIn: agentTurn.bargedIn,

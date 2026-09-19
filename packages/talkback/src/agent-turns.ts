@@ -30,6 +30,8 @@ export interface AgentTurnRecord {
   seq: number;
   startOffsetMs: number;
   endOffsetMs: number;
+  /** Whether `endOffsetMs` came from the transport or from `len(text) / 14`. */
+  endOffsetMeasured?: boolean;
   kind?: "reply" | "proactive_prompt" | "confirmation_request" | "backchannel";
   /** What the user actually heard. Empty when a turn was cut off before playback. */
   text: string;
@@ -67,6 +69,7 @@ export async function recordAgentTurn(record: AgentTurnRecord): Promise<string |
         seq: record.seq,
         startOffsetMs: record.startOffsetMs,
         endOffsetMs: record.endOffsetMs,
+        endOffsetMeasured: record.endOffsetMeasured ?? false,
         kind: record.kind ?? "reply",
         text: record.text,
         generatedText: record.generatedText,

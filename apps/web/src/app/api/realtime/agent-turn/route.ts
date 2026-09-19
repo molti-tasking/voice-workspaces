@@ -48,6 +48,10 @@ const Body = z.object({
   seq: z.number().int().min(0),
   startOffsetMs: z.number().int().min(0),
   endOffsetMs: z.number().int().min(0),
+  // Whether the container measured the end from the transport's own
+  // `BotStoppedSpeakingFrame` or fell back to `len(text) / 14`. Absent from an
+  // older container, which only ever estimated — which is what the default says.
+  endOffsetMeasured: z.boolean().optional(),
   text: z.string(),
   generatedText: z.string(),
   respondingToText: z.string().optional(),

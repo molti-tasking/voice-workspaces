@@ -37,6 +37,7 @@ import pytest  # noqa: E402
 
 import bot  # noqa: E402  — needs the environment above
 from pipecat.frames.frames import (  # noqa: E402
+    EndFrame,
     FunctionCallsStartedFrame,
     InterruptionFrame,
     LLMFullResponseEndFrame,
@@ -90,7 +91,17 @@ class FakeRecorder:
     def cue(self):
         return self.current
 
-    def record(self, spoken, generated, *, started_ms=None, barged_in=False, cue=None, metrics=None):
+    def record(
+        self,
+        spoken,
+        generated,
+        *,
+        started_ms=None,
+        barged_in=False,
+        cue=None,
+        metrics=None,
+        playback=None,
+    ):
         self.calls.append(
             {
                 "spoken": spoken,
@@ -99,6 +110,7 @@ class FakeRecorder:
                 "barged_in": barged_in,
                 "cue": cue,
                 "metrics": metrics,
+                "playback": playback,
             }
         )
 
@@ -849,6 +861,174 @@ def test_a_declined_turn_leaves_the_question_standing():
 
     posted_by(act, recorder)
     assert recorder.awaiting_question_answer
+
+
+def test_a_turn_waits_for_the_speaker_and_records_a_measured_end():
+    """`end_offset_ms` was `len(text) / 14` and nothing else.
+
+    On the first formative pilot that overstated the agent's measured speech by
+    about 8%, and `/sessions/[id]` showed every duration with a `~` because it
+    could not honestly do otherwise. The output transport knows: it pushes
+    `BotStoppedSpeakingFrame` both ways when the audio actually stops.
+    """
+    started = int(time.time() * 1000)
+    playback = bot.Playback()
+
+    def act(recorder):
+        recorder.record("Ten words of speech here.", "…", started_ms=started, playback=playback)
+        # As the transport reports it, after the completion has already ended.
+        playback.started(started + 180)
+        playback.stopped(started + 2_400)
+
+    payload = only(posted_by(act), "agent-turn")
+    assert payload["endOffsetMeasured"] is True
+    assert payload["endOffsetMs"] == (started + 2_400) - 1_000
+    assert payload["speakTtfbMs"] == 180
+
+
+def test_a_turn_whose_speaker_never_reports_keeps_the_estimate_and_says_so(monkeypatch):
+    # The fallback is the row that would have been written anyway — and the
+    # column is what stops an analysis reading it as a stopwatch.
+    monkeypatch.setattr(bot.TurnRecorder, "PLAYBACK_WAIT_MIN_SECS", 0.05)
+    monkeypatch.setattr(bot.TurnRecorder, "PLAYBACK_WAIT_MAX_SECS", 0.05)
+
+    def act(recorder):
+        recorder.record("Fourteen characters a second.", "…", playback=bot.Playback())
+
+    payload = only(posted_by(act), "agent-turn")
+    assert payload["endOffsetMeasured"] is False
+    assert "speakTtfbMs" not in payload
+
+
+def test_a_stop_with_no_start_of_its_own_is_not_this_turn_s_end(monkeypatch):
+    # The keep-alive speaks while the answer is still generating. One
+    # continuous speaking run over both would otherwise end the answer's turn
+    # at the filler's last word.
+    monkeypatch.setattr(bot.TurnRecorder, "PLAYBACK_WAIT_MIN_SECS", 0.05)
+    monkeypatch.setattr(bot.TurnRecorder, "PLAYBACK_WAIT_MAX_SECS", 0.05)
+    playback = bot.Playback()
+
+    def act(recorder):
+        recorder.record("Something spoken.", "…", playback=playback)
+        playback.stopped(int(time.time() * 1000))  # no start of its own
+
+    payload = only(posted_by(act), "agent-turn")
+    assert payload["endOffsetMeasured"] is False
+
+
+def test_a_barged_in_turn_measures_its_end_at_the_interruption_and_waits_for_nothing():
+    started = int(time.time() * 1000) - 500
+    playback = bot.Playback()
+
+    def act(recorder):
+        recorder.record("I'll che", "I'll check that.", started_ms=started, barged_in=True, playback=playback)
+
+    payload = only(posted_by(act), "agent-turn")
+    assert payload["bargedIn"] is True
+    # The interruption is the one moment the container knows for certain that
+    # playback stopped, so this end is measured and nothing waits for it.
+    assert payload["endOffsetMeasured"] is True
+    assert playback.stopped_ms is None
+    assert payload["truncatedAtMs"] >= 0
+
+
+def test_a_turn_carries_the_model_the_proxy_answered_with_and_the_asr_time():
+    def act(recorder):
+        recorder.record(
+            "Something.",
+            "Something.",
+            metrics={
+                "ttftMs": 310,
+                "requestedModel": "fast-conversation",
+                "resolvedModel": "anthropic/claude-sonnet-5-20260514",
+                "asrMs": 660,
+            },
+        )
+
+    payload = only(posted_by(act), "agent-turn")
+    assert payload["requestedModel"] == "fast-conversation"
+    assert payload["resolvedModel"] == "anthropic/claude-sonnet-5-20260514"
+    assert payload["asrMs"] == 660
+
+
+def test_the_gate_reads_the_asr_time_and_the_resolved_model():
+    recorder = FakeRecorder()
+    gate = bot.SilenceGate(
+        recorder=recorder,
+        llm_name="llm",
+        stt_name="stt",
+        resolved_model=lambda: "anthropic/claude-sonnet-5-20260514",
+    )
+
+    async def run():
+        gate.push_frame = _swallow
+        # The STT measures BEFORE the completion starts — which is why it
+        # cannot live in `_turn_metrics`, emptied on every response start.
+        await gate.process_frame(
+            MetricsFrame(data=[TTFBMetricsData(processor="stt", value=0.66, model="whisper")]),
+            FrameDirection.DOWNSTREAM,
+        )
+        for frame in reply("Altenholz is open until six."):
+            await gate.process_frame(frame, FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    metrics = recorder.calls[0]["metrics"]
+    assert metrics["asrMs"] == 660
+    assert metrics["resolvedModel"] == "anthropic/claude-sonnet-5-20260514"
+    # The STT's model name is not the conversation's.
+    assert metrics.get("requestedModel") is None
+
+
+def test_the_gate_hands_the_speaker_s_own_account_to_the_recorder():
+    recorder = FakeRecorder()
+    gate = bot.SilenceGate(recorder=recorder)
+
+    async def run():
+        gate.push_frame = _swallow
+        await gate.process_frame(LLMFullResponseStartFrame(), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(LLMTextFrame(text="Open until six."), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(bot.BotStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM)
+        # AFTER the completion ended, which is the whole reason the row waits.
+        await gate.process_frame(bot.BotStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    playback = recorder.calls[0]["playback"]
+    assert playback is not None
+    assert playback.started_ms is not None
+    assert playback.stopped_ms is not None
+
+
+def test_the_drive_ending_releases_a_row_still_waiting_on_the_speaker():
+    # A wait that outlived the pipeline would cost the echo filter a row, which
+    # is a far worse failure than an estimated duration.
+    recorder = FakeRecorder()
+    gate = bot.SilenceGate(recorder=recorder)
+
+    async def run():
+        gate.push_frame = _swallow
+        await gate.process_frame(LLMFullResponseStartFrame(), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(LLMTextFrame(text="Open until six."), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM)
+        playback = recorder.calls[0]["playback"]
+        await gate.process_frame(EndFrame(), FrameDirection.DOWNSTREAM)
+        # Released, and with nothing measured — so the estimate stands.
+        await asyncio.wait_for(playback.wait(1.0), 1.0)
+        assert playback.stopped_ms is None
+
+    asyncio.run(run())
+
+
+def test_an_announcement_carries_the_one_timing_it_has():
+    # Null on all three announcements of the first pilot, which is why that
+    # session's median latency read as the second round trip only.
+    def act(recorder):
+        recorder.note_user("wann hat der Baumarkt auf")
+        recorder.record_announcement("Ich schaue kurz nach.")
+
+    payload = only(posted_by(act), "agent-turn")
+    assert payload["totalLatencyMs"] >= 0
+    assert payload["endOffsetMeasured"] is False
 
 
 def test_a_refused_write_teaches_the_container_the_drive_is_over(monkeypatch):

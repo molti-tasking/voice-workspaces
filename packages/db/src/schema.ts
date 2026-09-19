@@ -574,6 +574,26 @@ export const agentTurn = pgTable(
     startOffsetMs: integer("start_offset_ms").notNull(),
     /** When speaking actually stopped: truncated by barge-in, or a natural end. */
     endOffsetMs: integer("end_offset_ms").notNull(),
+    /**
+     * Whether `endOffsetMs` was MEASURED or estimated.
+     *
+     * It was always an estimate — `len(text) / 14`, about fourteen characters a
+     * second — because the container never learned when playback ended. On the
+     * first formative pilot that overstated the agent's measured speech by
+     * about 8%, and every duration on `/sessions/[id]` carried a `~` because
+     * nothing could honestly say otherwise.
+     *
+     * Now the container waits for the output transport's own
+     * `BotStoppedSpeakingFrame` before writing the row, and a barge-in has been
+     * measured at the interruption all along. This column is what keeps the two
+     * kinds apart, because a fallback still happens: a turn whose audio ran
+     * together with a keep-alive's has no matched start and stop of its own,
+     * and the estimate stands. An analysis that mixes them without filtering on
+     * this is measuring the fallback as if it were a stopwatch.
+     *
+     * False for every row written before this existed, which is what they were.
+     */
+    endOffsetMeasured: boolean("end_offset_measured").notNull().default(false),
     kind: agentTurnKindEnum("kind").notNull().default("reply"),
     /**
      * The live ASR of the user turn this answers.

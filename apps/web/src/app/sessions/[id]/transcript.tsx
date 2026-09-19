@@ -26,6 +26,8 @@ export interface AgentTurnRow {
   seq: number;
   startOffsetMs: number;
   endOffsetMs: number;
+  /** Whether `endOffsetMs` is the transport's own stop or `len(text) / 14`. */
+  endOffsetMeasured: boolean;
   /** What the driver actually heard. Empty when a turn was cut off before playback. */
   text: string;
   /** What the model produced. Differs from `text` only when interrupted. */
@@ -286,10 +288,17 @@ function Meta({ turn, spokeMs }: { turn: AgentTurnRow; spokeMs: number }) {
     turn.asrMs !== null && `heard in ${turn.asrMs}ms`,
     turn.ttftMs !== null && `first word ${turn.ttftMs}ms`,
     turn.speakTtfbMs !== null && `audio ${turn.speakTtfbMs}ms`,
-    // `endOffsetMs` is the container's guess from character count — it never
-    // learns when playback ended — except on an interrupted turn, where the
-    // interruption is the measured end and `heard` below carries it.
-    spokeMs > 0 && !turn.bargedIn && `spoke ~${(spokeMs / 1000).toFixed(1)}s`,
+    // The `~` is not decoration. `endOffsetMs` used to be the container's guess
+    // from character count, because it never learned when playback ended; it
+    // now waits for the transport's own stop frame, and falls back to that
+    // guess when a turn's audio ran together with a keep-alive's and there was
+    // no matched start and stop to read. `endOffsetMeasured` is which, and the
+    // tilde says so on screen rather than in a comment nobody reading the page
+    // can see. An interrupted turn is measured at the interruption and carries
+    // `heard` below instead.
+    spokeMs > 0 &&
+      !turn.bargedIn &&
+      `spoke ${turn.endOffsetMeasured ? "" : "~"}${(spokeMs / 1000).toFixed(1)}s`,
     turn.truncatedAtMs !== null && `heard ${(turn.truncatedAtMs / 1000).toFixed(1)}s`,
     // What the agent DID before it spoke. The spoken line claims a change; this
     // is the record of whether a tool was called for it, and whether it failed.
