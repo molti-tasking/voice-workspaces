@@ -8,7 +8,6 @@ import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import {
   BOARD_EDITING,
   BOARD_TOOLS,
-  SUMMARY_PROMPT,
   TALKBACK_CONFIG_VERSION,
   TITLE_PROMPT,
   WEB_SEARCH_TOOL,
@@ -17,6 +16,7 @@ import {
   composeSystemPrompt,
   foldSummary,
   loadDriveSoFarText,
+  summaryPromptFor,
   webSearchSection,
 } from "@voicemural/talkback";
 
@@ -122,7 +122,10 @@ export async function POST(req: Request) {
   return NextResponse.json(
     {
       systemPrompt: composed.prompt,
-      summaryPrompt: SUMMARY_PROMPT,
+      // In the drive's own language. A German drive was getting an English
+      // running summary, which sits closest to the driver's words in every
+      // turn's context — see `summaryPromptFor`.
+      summaryPrompt: summaryPromptFor(asSttLanguage(row.sttLanguage)),
       // The live topic title, folded in the container next to the summary and
       // pushed to the browser as an RTVI server message. Sent here for the same
       // reason as the summary instruction: one copy of the text, in TypeScript.

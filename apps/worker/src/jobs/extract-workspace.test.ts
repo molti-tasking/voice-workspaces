@@ -76,7 +76,10 @@ const describeIfDb = (await isDatabaseReachable()) ? describe : describe.skip;
 
 type Kind = "content" | "directive" | "unclassified";
 
-async function seedTranscript(lines: (string | { text: string; kind: Kind })[]) {
+async function seedTranscript(
+  lines: (string | { text: string; kind: Kind })[],
+  opts: { sttLanguage?: string } = {},
+) {
   const db = getDb();
   await db.delete(user).where(eq(user.id, USER_ID));
   await db
@@ -88,6 +91,7 @@ async function seedTranscript(lines: (string | { text: string; kind: Kind })[]) 
     userId: USER_ID,
     startedAt: new Date("2026-08-01T08:00:00Z"),
     endedAt: new Date("2026-08-01T08:30:00Z"),
+    sttLanguage: opts.sttLanguage ?? null,
   });
 
   const [chunk] = await db
@@ -159,6 +163,38 @@ describeIfDb("extractWorkspace", () => {
     const state = foldWorkspace(await loadOps(USER_ID));
     expect(state.topics).toHaveLength(1);
     expect(state.topics[0]?.title).toBe("Research stay");
+  });
+
+  it("tells the model to write the workspace in the drive's own language", async () => {
+    /* The first formative pilot was a German drive — `stt_language = de` — whose
+     * blocks came out half in English: extraction `88c62dad` wrote "Clean
+     * apartment (vacuum and dust)." and "Buy flowers for daughter." while three
+     * other extractions on the same drive wrote German. Nothing had ever told
+     * the model which language to write in, so it guessed per batch and the
+     * participant's own board was half in a language she does not speak. */
+    await seedTranscript(LINES, { sttLanguage: "de" });
+    await extractWorkspace(USER_ID);
+
+    expect(sentOnCall()).toContain("Deutsch");
+  });
+
+  it("says nothing about language on a drive that was auto-detected", async () => {
+    // Instructing on a guess would be worse than not instructing.
+    await extractWorkspace(USER_ID);
+    expect(sentOnCall()).not.toMatch(/was recorded in/);
+  });
+
+  it("does not serve a German drive from a cache entry made without the instruction", async () => {
+    // The language is part of the cache key precisely so this cannot happen:
+    // otherwise the fix would be invisible on exactly the corpus that needs it.
+    await extractWorkspace(USER_ID);
+    expect(chatMock).toHaveBeenCalledTimes(1);
+
+    await resetCursor(USER_ID);
+    await clearOps(USER_ID);
+    await seedTranscript(LINES, { sttLanguage: "de" });
+    await extractWorkspace(USER_ID);
+    expect(chatMock).toHaveBeenCalledTimes(2);
   });
 
   it("records tokens and the RESOLVED model, not the requested one", async () => {

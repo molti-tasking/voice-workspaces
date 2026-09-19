@@ -166,6 +166,10 @@ export async function loadPendingSegments(
       occurredAt,
       createdAt: utterance.createdAt,
       captureSessionId: utterance.captureSessionId,
+      // The drive's transcription language, carried onto every segment so a
+      // batch can tell whether it is all one language. See
+      // `segmentsLanguage`; a batch is not bounded by a session.
+      language: captureSession.sttLanguage,
       resolvedCapabilityId: directive.capabilityId,
     })
     .from(utterance)
@@ -191,6 +195,7 @@ export async function loadPendingSegments(
     occurredAt: new Date(r.occurredAt),
     kind: r.kindOverride ?? r.kind,
     recordedAt: r.createdAt,
+    language: r.language,
     handledElsewhere: r.kindOverride === "directive" || r.resolvedCapabilityId !== null,
   }));
 }
@@ -208,6 +213,10 @@ export async function loadAllSegments(
       kind: utterance.kind,
       kindOverride: utterance.kindOverride,
       occurredAt,
+      // Carried here too, and not only on the live path: a rebuild that left it
+      // out would hash differently from the extraction it is rebuilding and pay
+      // for every call again — and produce a different workspace while doing it.
+      language: captureSession.sttLanguage,
     })
     .from(utterance)
     .innerJoin(
@@ -222,6 +231,7 @@ export async function loadAllSegments(
     text: r.text,
     occurredAt: new Date(r.occurredAt),
     kind: r.kindOverride ?? r.kind,
+    language: r.language,
   }));
 }
 
