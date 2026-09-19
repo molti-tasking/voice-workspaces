@@ -37,6 +37,8 @@
     "study:export": "pnpm --filter @voicemural/worker study export",
     "study:participant": "pnpm --filter @voicemural/worker study participant",
     "study:condition": "pnpm --filter @voicemural/worker study condition",
+    "study:metrics": "pnpm --filter @voicemural/worker study metrics",
+    "study:review": "pnpm --filter @voicemural/worker study review",
     "lint:fix": "turbo run lint -- --fix",
     "deadcode": "knip"
   },

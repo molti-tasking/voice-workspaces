@@ -34,6 +34,9 @@ import {
   directive,
   invocation,
   macroProposal,
+  studyEvent,
+  studyItemReview,
+  studyResponse,
   user,
   utterance,
   workspaceOp,
@@ -41,7 +44,13 @@ import {
 import { loadOps } from "@voicemural/db/workspace";
 import { KEPT_AFTER_SESSIONS, foldBoard, judge } from "@voicemural/workspace";
 
-export const EXPORT_VERSION = 1;
+/**
+ * 2 adds the relief measures and the instrumentation Pilot 01 lacked:
+ * `study_response`, `study_item_review` and `study_event` records; the
+ * debrief window and setting source on a session; `endMeasured` on a turn;
+ * `cueId` and `authoritative` on a decision.
+ */
+export const EXPORT_VERSION = 2;
 
 export type ExportRecord = { type: string } & Record<string, unknown>;
 
@@ -108,9 +117,12 @@ export async function exportParticipant(
       endedAt: captureSession.endedAt,
       endedBy: captureSession.endedBy,
       setting: captureSession.setting,
+      settingSource: captureSession.settingSource,
       voiceId: captureSession.voiceId,
       sttLanguage: captureSession.sttLanguage,
       studyCondition: captureSession.studyCondition,
+      debriefStartedOffsetMs: captureSession.debriefStartedOffsetMs,
+      debriefEndedOffsetMs: captureSession.debriefEndedOffsetMs,
     })
     .from(captureSession)
     .where(eq(captureSession.userId, userId))
@@ -127,10 +139,19 @@ export async function exportParticipant(
       durationMs: s.endedAt ? s.endedAt.getTime() - s.startedAt.getTime() : null,
       endedBy: s.endedBy,
       setting: s.setting,
+      // Whether that setting was observed or guessed. A drive run stationary
+      // under the `driving` profile is not comparable with one run in a car,
+      // and until this column existed the two were indistinguishable.
+      settingSource: s.settingSource,
       voiceId: s.voiceId,
       sttLanguage: s.sttLanguage,
       // Null for drives recorded before conditions existed — not "defaults".
       studyCondition: s.studyCondition,
+      // The window after Stop where the microphone stayed open for the three
+      // debrief questions. Null start means no debrief was recorded — which is
+      // every drive before the window existed, and every one the sweep closed.
+      debriefStartedOffsetMs: s.debriefStartedOffsetMs,
+      debriefEndedOffsetMs: s.debriefEndedOffsetMs,
     });
   }
 
@@ -182,6 +203,10 @@ export async function exportParticipant(
         kind: agentTurn.kind,
         startOffsetMs: agentTurn.startOffsetMs,
         endOffsetMs: agentTurn.endOffsetMs,
+        // Whether that end was measured at the speaker or estimated from the
+        // text at 14 characters a second. False on every row written before
+        // the container could tell the difference.
+        endMeasured: agentTurn.endMeasured,
         bargedIn: agentTurn.bargedIn,
         truncatedAtMs: agentTurn.truncatedAtMs,
         asrMs: agentTurn.asrMs,
@@ -225,6 +250,11 @@ export async function exportParticipant(
         configVersion: agentDecision.configVersion,
         latencyMs: agentDecision.latencyMs,
         subjectKey: agentDecision.subjectKey,
+        // The moment this decides, and whether this row is the one to count
+        // for it. Analyses filter on `authoritative`; the other rows are the
+        // double dispatch, which is a finding rather than noise.
+        cueId: agentDecision.cueId,
+        authoritative: agentDecision.authoritative,
         agentTurnId: agentDecision.agentTurnId,
       })
       .from(agentDecision)
@@ -303,6 +333,59 @@ export async function exportParticipant(
         status: invocationStatus(i, i.sessionId ? ended.get(i.sessionId) === true : true),
       });
     }
+  }
+
+  /* What they told us, and what became of what they kept --------------------- */
+  //
+  // Content by design, all three, and the only records here that are: a rating
+  // is a number the participant chose to give, a day-7 verdict is one of three
+  // words they said out loud, and an open is the fact that they looked. None
+  // of them can carry a phrase, so none of them needs the `includeText` gate.
+
+  const responses = await db
+    .select({
+      sessionId: studyResponse.captureSessionId,
+      phase: studyResponse.phase,
+      item: studyResponse.item,
+      value: studyResponse.value,
+      scaleMax: studyResponse.scaleMax,
+      respondedAt: studyResponse.respondedAt,
+    })
+    .from(studyResponse)
+    .where(eq(studyResponse.userId, userId))
+    .orderBy(asc(studyResponse.respondedAt));
+
+  for (const r of responses) {
+    out.push({ type: "study_response", ...r, respondedAt: iso(r.respondedAt) });
+  }
+
+  const reviews = await db
+    .select({
+      cardId: studyItemReview.cardId,
+      sessionId: studyItemReview.captureSessionId,
+      outcome: studyItemReview.outcome,
+      reviewedAt: studyItemReview.reviewedAt,
+    })
+    .from(studyItemReview)
+    .where(eq(studyItemReview.userId, userId))
+    .orderBy(asc(studyItemReview.reviewedAt));
+
+  for (const r of reviews) {
+    out.push({ type: "study_item_review", ...r, reviewedAt: iso(r.reviewedAt) });
+  }
+
+  const opens = await db
+    .select({
+      kind: studyEvent.kind,
+      cardId: studyEvent.cardId,
+      occurredAt: studyEvent.occurredAt,
+    })
+    .from(studyEvent)
+    .where(eq(studyEvent.userId, userId))
+    .orderBy(asc(studyEvent.occurredAt));
+
+  for (const e of opens) {
+    out.push({ type: "study_event", ...e, occurredAt: iso(e.occurredAt) });
   }
 
   /* The repertoire ----------------------------------------------------------- */

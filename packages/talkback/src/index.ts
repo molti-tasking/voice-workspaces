@@ -125,4 +125,4 @@ export {
   searchTranscripts,
   type Passage,
 } from "./retrieval";
-export { keptIndices, withoutEcho } from "./echo";
+export { containment, isEcho, keptIndices, withoutEcho } from "./echo";
