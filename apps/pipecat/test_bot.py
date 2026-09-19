@@ -1553,3 +1553,81 @@ def test_recall_keeps_talking_when_the_route_is_down():
     (message,) = recall._context.get_messages()
     assert "So far in this drive:" in message["content"]
 
+
+
+# ---------------------------------------------------------------------------
+# The relay credential
+# ---------------------------------------------------------------------------
+#
+# A drive on 18 Sep 2026 from a mobile connection recorded four utterances and
+# heard nothing back: STUN cannot reach a carrier's symmetric NAT, so no
+# candidate pair formed and the bot spoke its opening line into a transport with
+# no path. TURN is the fix, and its credential has to match coturn's scheme AND
+# the browser's implementation exactly — a mismatch fails as a 401 inside
+# coturn, which reproduces the original silence rather than announcing itself.
+
+
+def test_turn_credential_matches_coturn_s_rest_api_scheme(monkeypatch):
+    import base64
+    import hashlib
+    import hmac
+
+    monkeypatch.setattr(bot, "TURN_SECRET", "test-turn-secret")
+    monkeypatch.setattr(bot, "TURN_TTL_SECONDS", 600)
+
+    username, credential = bot.turn_credentials(now=1_700_000_000)
+
+    expiry, label = username.split(":")
+    assert int(expiry) == 1_700_000_000 + 600
+    # Random, not the participant: the username is logged by coturn for every
+    # allocation and travels in the SDP.
+    assert len(label) == 12
+
+    assert credential == base64.b64encode(
+        hmac.new(b"test-turn-secret", username.encode(), hashlib.sha1).digest()
+    ).decode()
+
+
+def test_turn_credential_is_byte_identical_to_the_typescript_one(monkeypatch):
+    """Pinned against packages/shared/src/turn-credentials.test.ts.
+
+    The browser and this container authenticate to the same coturn. If these
+    two ever diverge, one side gathers no relay candidate and only that side
+    goes silent — on the phone, which is the side nobody is watching logs on.
+    """
+    monkeypatch.setattr(bot, "TURN_SECRET", "test-turn-secret")
+
+    import base64
+    import hashlib
+    import hmac
+
+    username = "1700000600:abc123abc123"
+    digest = hmac.new(b"test-turn-secret", username.encode(), hashlib.sha1).digest()
+    assert base64.b64encode(digest).decode() == "5Qfoe1CnumigkM7w3CQMdes7I3M="
+
+
+def test_ice_servers_offers_stun_alongside_the_relay(monkeypatch):
+    # Not instead of. A direct path costs no relay bandwidth and is lower
+    # latency; TURN is what ICE falls back TO.
+    monkeypatch.setattr(bot, "STUN_SERVERS", ["stun:stun.example.org:3478"])
+    monkeypatch.setattr(bot, "TURN_URLS", ["turn:turn.example.org:3478"])
+    monkeypatch.setattr(bot, "TURN_SECRET", "test-turn-secret")
+
+    stun, turn = bot.ice_servers()
+
+    assert stun.urls == "stun:stun.example.org:3478"
+    assert stun.username is None
+    assert turn.urls == "turn:turn.example.org:3478"
+    assert turn.username and turn.credential
+
+
+def test_ice_servers_refuses_to_offer_a_relay_it_cannot_authenticate(monkeypatch):
+    # Half-configured is the likelier deployment mistake, and it is invisible
+    # from a desk: an uncredentialed TURN entry gathers nothing while looking
+    # configured, and the next mobile drive is silent again.
+    monkeypatch.setattr(bot, "STUN_SERVERS", ["stun:stun.example.org:3478"])
+    monkeypatch.setattr(bot, "TURN_URLS", ["turn:turn.example.org:3478"])
+    monkeypatch.setattr(bot, "TURN_SECRET", "")
+
+    (only,) = bot.ice_servers()
+    assert only.urls == "stun:stun.example.org:3478"

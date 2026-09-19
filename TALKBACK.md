@@ -466,6 +466,30 @@ connects perfectly and then never hears a word. It is needed in two places:
 only transcribes on VAD frames), and `LLMUserAggregatorParams(vad_analyzer=...)`
 for turn completion. Separate analyzer instances — they keep independent state.
 
+**STUN gets you as far as a desk, and no further.** Talk-back ran for months on
+STUN alone because every test was a laptop on Wi-Fi, where hole-punching works.
+The first drive on mobile data — 18 Sep 2026, Telekom — recorded four utterances
+and heard nothing back. Carrier-grade NAT is typically symmetric, so the mapping
+the phone learns from STUN is not the mapping the container sends to; no
+candidate pair forms and ICE sits in `checking` until `Timeout establishing the
+connection to the remote peer` about a minute later.
+
+Three things make that hard to read. Nothing in the log names NAT. The pipeline
+runs *perfectly* — the model composes an opening line, ElevenLabs synthesises it,
+and it is spoken into a transport with nowhere to send it. And capture is
+unaffected, because chunks upload over HTTPS on a different path entirely, so the
+transcript fills on screen and the drive looks recorded and merely mute. The tell
+is in the bot's own LLM context: no user message in it at all, only the silence
+prompts.
+
+The fix is the `coturn` service in `docker-compose.prod.yml`, and it is a relay
+or nothing — no STUN configuration reaches a symmetric NAT, because the problem
+is not discovery. `[ice] answer candidates:` in the container log now says which
+path was actually offered; `relay=` in that line is the thing to look for, and a
+`turn:` URL in `ICE_SERVERS` is NOT it (that variable is STUN only — a relay
+needs a credential, which aiortc reads off the server object and not out of the
+URL).
+
 **`PATCH /offer` is not optional.** The JS client trickles ICE candidates there.
 Without the route they get a 405, the peer connection never leaves `connecting`,
 and 40 seconds later it closes with "Timeout establishing the connection to the
@@ -683,6 +707,63 @@ drives and offline runs then sit in one project under one rubric and one
 **Not built, deliberately:** a Langfuse *dataset* of the cases with dataset
 runs. It is the natural next step once the case set stabilises, but today the
 cases change with every drive and a file in the repo is the right home.
+
+## Deploying the relay (coturn)
+
+Nothing here is automatic. The `coturn` service ships in
+`docker-compose.prod.yml`, but it starts with an empty secret and the app only
+offers a relay once both halves are set — so a deploy that skips this looks
+exactly like the deploy before it, right down to working from a desk.
+
+**In Coolify, on this resource's environment variables:**
+
+```
+TURN_SECRET=<openssl rand -hex 32>
+TURN_URLS=turn:voice.example.com:3478,turn:voice.example.com:3478?transport=tcp
+```
+
+`TURN_URLS` uses the same hostname Traefik already serves, because its DNS
+already points at this host — coturn answers on 3478 beside Traefik's 443, not
+through it. `TURN_REALM`, `TURN_TTL_SECONDS`, `TURN_MIN_PORT` and
+`TURN_MAX_PORT` have working defaults.
+
+**On the host firewall, and in the cloud provider's firewall if there is one:**
+
+```
+3478/udp   3478/tcp   49160-49179/udp
+```
+
+The relay range is the one place a partial configuration bites quietly: coturn
+will accept the allocation, hand out a port nothing can reach, and the call
+fails the same way it failed without TURN at all.
+
+**A rebuild is not needed.** This was the point of moving ICE to
+`/api/realtime/ice`: the browser fetches its configuration per connection rather
+than reading a `NEXT_PUBLIC_` value inlined at build time, so TURN can be
+repointed with a restart. `NEXT_PUBLIC_ICE_SERVERS` is only the fallback for when
+that route cannot be reached.
+
+**Confirming it works**, in descending order of how much it tells you:
+
+1. `[ice] answer candidates:` in the pipecat log should list `relay=` alongside
+   `host=` and `srflx=`. If TURN is configured and no relay appears, the line
+   below it says so explicitly — that is a rejected credential or blocked UDP,
+   not a browser problem.
+2. `[talkback:pipecat] ICE: n server(s), relay available` in the phone's console.
+3. A drive from mobile data with Wi-Fi switched off. This is the only test that
+   would have caught the original fault, and it is worth doing on the carrier
+   the study's participants actually use.
+
+**What passes through it.** Only the calls that could not find a direct path —
+the candidate pair still prefers a direct one, so a drive on home Wi-Fi is
+unaffected. It runs on this host, so relayed audio reaches no third party, which
+is the same line `STT_PROVIDER` and `LANGFUSE_HOST` are drawn on.
+
+**What it is not.** coturn is a packet forwarder running inside your network, so
+the `--denied-peer-ip` flags in the compose file are load-bearing: without them
+an authenticated client can ask the relay to send to the database, the internal
+Docker networks, or the cloud metadata endpoint. Do not drop them when adding a
+peer range.
 
 ## Testing locally
 
