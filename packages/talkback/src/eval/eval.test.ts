@@ -1,9 +1,10 @@
+import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { describe, expect, it } from "vitest";
 import { OUTPUT_CONTRACT, SYSTEM_PROMPT } from "../prompt";
 import { CASES, findCases } from "./cases";
 import { checkReply } from "./checks";
 import { parseJudgement, renderTurnForJudge } from "./judge";
-import { ingestionEvents, newTraceId } from "./langfuse";
+import { flushLangfuse, langfuseConfig, startLangfuse, traceTurn } from "./langfuse";
 import { buildTurnMessages, composeContextBlock } from "./messages";
 
 const silentCase = CASES.find((c) => c.id === "mid-sentence")!;
@@ -208,36 +209,110 @@ describe("the judge's output", () => {
 });
 
 describe("langfuse", () => {
-  it("makes trace ids of 32 lowercase hex characters", () => {
-    expect(newTraceId()).toMatch(/^[0-9a-f]{32}$/);
+  it("prefers LANGFUSE_BASE_URL and falls back to the v3 LANGFUSE_HOST", () => {
+    const keys = { LANGFUSE_PUBLIC_KEY: "pk", LANGFUSE_SECRET_KEY: "sk" };
+    expect(langfuseConfig({ ...keys } as NodeJS.ProcessEnv)?.baseUrl).toBe(
+      "https://cloud.langfuse.com",
+    );
+    expect(
+      langfuseConfig({ ...keys, LANGFUSE_HOST: "https://lf.example/" } as NodeJS.ProcessEnv)
+        ?.baseUrl,
+    ).toBe("https://lf.example");
+    expect(
+      langfuseConfig({
+        ...keys,
+        LANGFUSE_HOST: "https://old.example",
+        LANGFUSE_BASE_URL: "https://new.example",
+      } as NodeJS.ProcessEnv)?.baseUrl,
+    ).toBe("https://new.example");
+    expect(langfuseConfig({ LANGFUSE_PUBLIC_KEY: "pk" } as NodeJS.ProcessEnv)).toBeNull();
   });
 
-  it("builds one trace, its generations and its scores as an ingestion batch", () => {
-    const startedAt = new Date("2026-09-08T10:00:00Z");
-    const events = ingestionEvents(
+  it("exports the turn as a root observation with generations under it", async () => {
+    const exporter = new InMemorySpanExporter();
+    const langfuse = startLangfuse(
       {
-        id: "t".repeat(32),
-        name: "eval · stuck",
-        sessionId: "run-1",
-        tags: ["talkback-eval"],
-        version: "talkback-4",
-        input: [{ role: "user", content: "x" }],
-        output: "<silence>",
-        metadata: { case: "stuck" },
-        generations: [
-          { name: "talkback.eval.turn", model: "m", input: [], output: "<silence>", startedAt, latencyMs: 1500, usage: { input: 10, output: 2 } },
-        ],
-        scores: [
-          { name: "checks_pass", value: 1 },
-          { name: "judge_verdict", value: "pass", comment: "fine" },
-        ],
+        baseUrl: "https://lf.example",
+        publicKey: "pk",
+        secretKey: "sk",
+        environment: "eval-test",
       },
-      startedAt,
+      { exporter },
     );
-    expect(events.map((e) => e.type)).toEqual(["trace-create", "generation-create", "score-create", "score-create"]);
-    expect(events[0]!.body).toMatchObject({ id: "t".repeat(32), sessionId: "run-1", version: "talkback-4" });
-    expect(events[1]!.body).toMatchObject({ traceId: "t".repeat(32), endTime: "2026-09-08T10:00:01.500Z", usage: { input: 10, output: 2 } });
-    expect(events[2]!.body).toMatchObject({ name: "checks_pass", value: 1, dataType: "NUMERIC" });
-    expect(events[3]!.body).toMatchObject({ name: "judge_verdict", value: "pass", dataType: "CATEGORICAL" });
+
+    const startedAt = new Date("2026-09-08T10:00:00Z");
+    const traceId = traceTurn(langfuse, {
+      name: "eval · stuck",
+      sessionId: "run-1",
+      tags: ["talkback-eval"],
+      version: "talkback-4",
+      input: [{ role: "user", content: "x" }],
+      output: "<silence>",
+      metadata: { case: "stuck" },
+      generations: [
+        {
+          name: "talkback.eval.turn",
+          model: "m",
+          input: [],
+          output: "<silence>",
+          startedAt,
+          latencyMs: 1500,
+          usage: { input: 10, output: 2 },
+        },
+      ],
+      scores: [
+        { name: "checks_pass", value: 1 },
+        { name: "judge_verdict", value: "pass", comment: "fine" },
+      ],
+      startedAt,
+    });
+    expect(traceId).toMatch(/^[0-9a-f]{32}$/);
+
+    await langfuse.processor.forceFlush();
+    const spans = exporter.getFinishedSpans();
+    const root = spans.find((s) => s.name === "eval · stuck")!;
+    const generation = spans.find((s) => s.name === "talkback.eval.turn")!;
+    expect(root).toBeDefined();
+    expect(generation).toBeDefined();
+
+    // One trace, the generation beneath the root.
+    expect(generation.spanContext().traceId).toBe(traceId);
+    expect(generation.parentSpanContext?.spanId).toBe(root.spanContext().spanId);
+
+    // Overall input/output on the ROOT OBSERVATION, never as trace input/output.
+    expect(root.attributes["langfuse.observation.input"]).toContain('"role":"user"');
+    expect(root.attributes["langfuse.observation.output"]).toBe("<silence>");
+    expect(root.attributes["langfuse.trace.input"]).toBeUndefined();
+    expect(root.attributes["langfuse.trace.output"]).toBeUndefined();
+    expect(root.attributes["langfuse.trace.name"]).toBe("eval · stuck");
+
+    // The correlating attributes reach the cost-bearing generation too, which
+    // is what makes session cost and a filter on `version` add up.
+    for (const span of [root, generation]) {
+      expect(span.attributes["session.id"]).toBe("run-1");
+      expect(span.attributes["langfuse.version"]).toBe("talkback-4");
+      expect(span.attributes["langfuse.environment"]).toBe("eval-test");
+      expect(span.attributes["langfuse.trace.tags"]).toEqual(["talkback-eval"]);
+    }
+
+    expect(generation.attributes["langfuse.observation.type"]).toBe("generation");
+    expect(generation.attributes["langfuse.observation.model.name"]).toBe("m");
+    expect(generation.attributes["langfuse.observation.usage_details"]).toBe(
+      '{"input":10,"output":2}',
+    );
+
+    // Reconstructed with the timings the turn actually had, not export time.
+    expect(hrTimeMs(generation.startTime)).toBe(startedAt.getTime());
+    expect(hrTimeMs(generation.endTime)).toBe(startedAt.getTime() + 1500);
+
+    await flushLangfuse(langfuse).catch(() => {
+      // The score queue posts to https://lf.example, which does not exist here.
+      // The span export is what this test is about and has already been read.
+    });
   });
 });
+
+/** OpenTelemetry timestamps are [seconds, nanoseconds]. */
+function hrTimeMs([seconds, nanos]: [number, number]): number {
+  return seconds * 1000 + Math.round(nanos / 1e6);
+}

@@ -28,6 +28,7 @@ for _name, _value in (
     ("LITELLM_BASE_URL", "http://litellm.test"),
     ("LITELLM_API_KEY", "test"),
     ("ELEVENLABS_VOICE_ID", "test-voice"),
+    ("MODEL_CONVERSE", "test-model"),
 ):
     os.environ.setdefault(_name, _value)
 
@@ -439,3 +440,52 @@ def test_silence_gate_reports_what_a_turn_became():
 
     asyncio.run(run())
     assert notes == [False, True]
+
+
+# --------------------------------------------------------------------------
+# What a drive tells Langfuse about itself.
+# --------------------------------------------------------------------------
+
+
+def test_drive_spans_carry_the_langfuse_v4_correlating_attributes():
+    """The keys are the contract with the project, and a wrong one fails silently.
+
+    `session.id` is the v4 spelling — it is what makes a session's cost the sum
+    of the generations under it, because it rides on EVERY span rather than on
+    the trace alone. `langfuse.session.id` is the v3 spelling, kept beside it
+    for a self-hosted server that has not been upgraded yet.
+    """
+    attributes = bot.drive_span_attributes(
+        {"setting": "desk", "configVersion": "talkback-4"},
+        "capture-session-1",
+    )
+
+    assert attributes["session.id"] == "capture-session-1"
+    assert attributes["langfuse.session.id"] == "capture-session-1"
+    assert attributes["langfuse.trace.name"] == "drive · desk"
+    assert attributes["langfuse.trace.tags"] == ["desk", "full"]
+    # Same key and same value the eval harness sets, so one filter shows both.
+    assert attributes["langfuse.version"] == "talkback-4"
+    # Deprecated in v4: overall input/output belong on the root observation.
+    assert "langfuse.trace.input" not in attributes
+    assert "langfuse.trace.output" not in attributes
+
+
+def test_a_degraded_drive_says_so_and_a_missing_version_does_not_vanish():
+    attributes = bot.drive_span_attributes({"degraded": True}, None)
+
+    assert attributes["voicemural.degraded"] is True
+    assert attributes["langfuse.trace.tags"] == ["unknown", "degraded"]
+    assert attributes["langfuse.version"] == "fallback"
+    # Empty string rather than absent: OTel drops a null and the field would
+    # silently disappear from every span of an unticketed drive.
+    assert attributes["session.id"] == ""
+
+
+def test_the_environment_attribute_is_set_only_when_configured(monkeypatch):
+    """An empty environment is not the same as `default`, and Langfuse rejects it."""
+    monkeypatch.setattr(bot, "LANGFUSE_ENVIRONMENT", "")
+    assert "langfuse.environment" not in bot.drive_span_attributes({}, None)
+
+    monkeypatch.setattr(bot, "LANGFUSE_ENVIRONMENT", "staging")
+    assert bot.drive_span_attributes({}, None)["langfuse.environment"] == "staging"

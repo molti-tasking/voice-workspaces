@@ -496,10 +496,21 @@ turns up a behaviour worth keeping or losing, put the actual words in
 **3. Langfuse, over live turns.** With `LANGFUSE_PUBLIC_KEY` and
 `LANGFUSE_SECRET_KEY` set, `bot.py` exports Pipecat's OpenTelemetry spans to
 Langfuse (`setup_langfuse_tracing`): one trace per drive, named by setting,
-with `langfuse.session.id` = the capture session and the prompt version in the
-tags, and the LLM span of every turn carrying the serialised messages — the
+with `session.id` = the capture session, `langfuse.version` = the prompt
+version, and the LLM span of every turn carrying the serialised messages — the
 composed prompt, the context block, what was said — and the completion. That
-is exactly what a judge needs to see.
+is exactly what a judge needs to see. The attributes are built in one place,
+`drive_span_attributes`, and tested there.
+
+The host is `LANGFUSE_BASE_URL`, with the older `LANGFUSE_HOST` still accepted.
+`LANGFUSE_TRACING_ENVIRONMENT` maps onto Langfuse's environment separation and
+is unset by default — set it for both the container and the harness, or not at
+all, because a drive and an eval run in different environments cannot be
+compared. `session.id` is the current spelling of the session key and rides on
+every span, so a session's cost is the sum of the generations under it;
+`langfuse.session.id`, the older spelling, is sent alongside it for a
+self-hosted server that has not been upgraded yet and can be dropped once
+every target host is on v4.
 
 Separately, every LiteLLM request from the container carries `metadata`
 (`session_id`, `tags` with the `configVersion` and `setting:<s>`, `version`),
@@ -507,12 +518,15 @@ so the proxy's own request log attributes spend per drive and per prompt
 version, and any callback the proxy is configured with sees the same keys.
 
 *Is an LLM-as-judge in Langfuse reasonable?* Yes, with a clear view of what it
-can and cannot see. Set up a managed evaluator on the container's LLM
-generations (filter by tag `talkback-4` or by trace name) with `JUDGE_PROMPT`
+can and cannot see. Set up an evaluator on the container's LLM
+generations (filter by tag `talkback-4`, by `langfuse.version`, or by trace
+name) with `JUDGE_PROMPT`
 from `judge.ts` as the template — one copy of the rubric, pasted — mapping
 `{{input}}` to the generation's messages and `{{output}}` to its completion.
 The judge can then score grounding against exactly what the model saw, and it
-sees `<silence>` as a decision. Compare score distributions across versions as
+sees `<silence>` as a decision. Note that an observation evaluator reads one
+observation and cannot reach its siblings or children, so every variable it
+needs has to be on the observation it is pointed at. Compare score distributions across versions as
 the prompt moves; that is the "improve over time" loop, and it needs no
 instrumentation beyond what is here.
 
@@ -526,11 +540,22 @@ adds no new flow, but the ethics form should name it, and self-hosting is how
 the line is avoided.
 
 The harness closes the loop from the other side. With the same keys set, each
-evaluated turn is posted through Langfuse's ingestion API as a trace in one
-session (the run id) tagged `talkback-eval` and the label, with the reply
-generation, the judge's generation, the check result and the four scores. Live
-drives and offline runs then sit in one project under one rubric and one
-`version` field. Without the keys nothing is posted and the run says so once.
+evaluated turn is exported through the Langfuse SDK (`@langfuse/tracing` with
+`@langfuse/otel`) as a trace in one session (the run id) tagged `talkback-eval`
+and the label: a root observation carrying the turn's input and the reply, the
+reply generation and the judge's generation beneath it, and the check result
+and the four scores against that root observation. Live drives and offline runs
+then sit in one project under one rubric and one `version` field. Without the
+keys nothing is exported and the run says so once.
+
+That used to be one hand-built POST per turn to `/api/public/ingestion`. Two
+things changed with it. Overall input and output now live on the **root
+observation** — Langfuse's trace-level `input`/`output` are deprecated, so an
+evaluator should be pointed at the root observation rather than at the trace.
+And the session, tags and version are propagated into every child span rather
+than set on the trace alone, which is what makes a session's cost add up.
+Delivery is now batched: `flushLangfuse` at the end of a run is what gets the
+tail of it out, where the old POST-per-turn needed no such step.
 
 **Not built, deliberately:** a Langfuse *dataset* of the cases with dataset
 runs. It is the natural next step once the case set stabilises, but today the

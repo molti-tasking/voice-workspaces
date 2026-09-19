@@ -32,11 +32,15 @@
     "STT_LANGUAGE",
     "STT_DIARIZE",
     "PROACTIVE_OFFERS",
-    // Only the eval harness reads these, to post judge scores. The traces
-    // themselves reach Langfuse via the LiteLLM proxy without them.
+    // Only the eval harness reads these, to export its evaluated turns. A
+    // drive's own traces come from the talk-back container's OpenTelemetry
+    // exporter, which reads its environment from Compose rather than turbo.
+    // BASE_URL is the v4 spelling and HOST the v3 one; both are accepted.
+    "LANGFUSE_BASE_URL",
     "LANGFUSE_HOST",
     "LANGFUSE_PUBLIC_KEY",
     "LANGFUSE_SECRET_KEY",
+    "LANGFUSE_TRACING_ENVIRONMENT",
     "ELEVENLABS_API_KEY",
     "ELEVENLABS_VOICE_ID",
     "ELEVENLABS_MODEL_ID",

@@ -156,7 +156,18 @@ SUMMARISE_MODEL = os.getenv("MODEL_SUMMARISE") or os.environ["MODEL_CONVERSE"]
 # packages installed.
 LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "")
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "")
-LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com").rstrip("/")
+# LANGFUSE_BASE_URL is what the v4+ SDKs read; LANGFUSE_HOST is the v3 spelling,
+# still accepted by the Python SDK and still what this repo's compose files set,
+# so it stays as the fallback rather than a breaking rename.
+LANGFUSE_BASE_URL = (
+    os.getenv("LANGFUSE_BASE_URL")
+    or os.getenv("LANGFUSE_HOST")
+    or "https://cloud.langfuse.com"
+).rstrip("/")
+# Langfuse v4's first-class environment separation. Unset means the project's
+# `default` environment, which is where a drive belongs unless somebody has
+# deliberately split staging out — so no default is invented here.
+LANGFUSE_ENVIRONMENT = os.getenv("LANGFUSE_TRACING_ENVIRONMENT", "")
 
 TRACING_ENABLED = False
 
@@ -190,16 +201,86 @@ def setup_langfuse_tracing() -> bool:
         setup_tracing(
             service_name=os.getenv("LANGFUSE_SERVICE_NAME", "voicemural-talkback"),
             exporter=OTLPSpanExporter(
-                endpoint=f"{LANGFUSE_HOST}/api/public/otel/v1/traces",
+                endpoint=f"{LANGFUSE_BASE_URL}/api/public/otel/v1/traces",
                 headers={"Authorization": f"Basic {auth}"},
             ),
         )
         TRACING_ENABLED = True
-        logger.info(f"[tracing] exporting to Langfuse at {LANGFUSE_HOST}")
+        logger.info(
+            f"[tracing] exporting to Langfuse at {LANGFUSE_BASE_URL}"
+            + (f" (environment {LANGFUSE_ENVIRONMENT})" if LANGFUSE_ENVIRONMENT else "")
+        )
     except Exception as exc:  # noqa: BLE001 — see the docstring
         logger.warning(f"[tracing] disabled, could not reach OpenTelemetry: {exc}")
 
     return TRACING_ENABLED
+
+
+def drive_span_attributes(session: dict, capture_session_id: str | None) -> dict:
+    """Every span of one drive carries these.
+
+    Split out of `build_pipeline` so it can be read — and tested — without
+    standing up a transport, an STT and a TTS service first. The keys are the
+    contract between this container and the Langfuse project; getting one of
+    them wrong does not fail a drive, it just quietly makes the drive
+    unfindable months later, which is exactly the failure a test is for.
+    """
+    return {
+        # Which arm of the study this drive ran under, on every span. The
+        # setting decides the prompt's stanza and the reply length, so a
+        # trace that does not carry it cannot be compared with another.
+        "voicemural.setting": session.get("setting") or "unknown",
+        # A degraded drive ran on FALLBACK_SYSTEM_PROMPT and knows nothing
+        # about the person. Its replies are thin BY DESIGN, and without this
+        # they look like a model regression months later.
+        "voicemural.degraded": bool(session.get("degraded")),
+        # THE LANGFUSE-SPECIFIC KEYS, and they are what make a trace
+        # findable rather than merely present. Spelled as Langfuse v4 spells
+        # them — see `LangfuseOtelSpanAttributes` in the SDKs, which is the
+        # one list both the Python and the JS SDK emit against.
+        #
+        # Pipecat's own spans name themselves `llm`/`stt`/`tts` and leave the
+        # TRACE unnamed, so without this every drive lists as a blank row —
+        # 97 observations of real content behind nothing you can search for.
+        # `conversation_id`, which `build_pipeline` passes to PipelineWorker,
+        # groups spans into one trace; it does NOT populate Langfuse's session,
+        # which reads the attribute below.
+        "langfuse.trace.name": f"drive · {session.get('setting') or 'unknown'}",
+        # The ledger's own key, so a trace opens straight onto the drive it
+        # came from — the same id in `capture_session`, `utterance` and
+        # `agent_turn`. Empty string rather than None: OTel drops an
+        # attribute with a null value and the field would silently vanish.
+        #
+        # `session.id` is the v4 spelling and it is on EVERY span, not just
+        # the root, which is what makes a session's cost the sum of the
+        # generations that incurred it.
+        "session.id": capture_session_id or "",
+        # The v3 spelling of the same thing. Langfuse still accepts it
+        # (`TRACE_COMPAT_SESSION_ID` in the SDKs) and a self-hosted server
+        # that has not been upgraded to v4 yet reads only this one. Drop it
+        # once every target host is on v4.
+        "langfuse.session.id": capture_session_id or "",
+        # Tags render as filter chips, which is how you find the degraded
+        # drives without reading them.
+        "langfuse.trace.tags": [
+            session.get("setting") or "unknown",
+            "degraded" if session.get("degraded") else "full",
+        ],
+        # The prompt version this drive ran under. It already rides in the
+        # LiteLLM metadata, which only helps if the proxy happens to run a
+        # Langfuse callback; as a span attribute it is on the drive's own
+        # spans unconditionally, and it is the same key and the same value
+        # the eval harness sets (`version` in eval/langfuse.ts) — which is
+        # what lets one filter show drives and eval runs side by side.
+        "langfuse.version": str(session.get("configVersion") or "fallback"),
+        # Langfuse v4's environment separation. Only set when configured:
+        # an empty value is not the same as "default" and would be rejected.
+        **(
+            {"langfuse.environment": LANGFUSE_ENVIRONMENT}
+            if LANGFUSE_ENVIRONMENT
+            else {}
+        ),
+    }
 
 
 # The base prompt, used ONLY when /api/realtime/session cannot be reached.
@@ -1833,36 +1914,7 @@ def build_pipeline(
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
         enable_tracing=TRACING_ENABLED,
         conversation_id=capture_session_id,
-        additional_span_attributes={
-            # Which arm of the study this drive ran under, on every span. The
-            # setting decides the prompt's stanza and the reply length, so a
-            # trace that does not carry it cannot be compared with another.
-            "voicemural.setting": session.get("setting") or "unknown",
-            # A degraded drive ran on FALLBACK_SYSTEM_PROMPT and knows nothing
-            # about the person. Its replies are thin BY DESIGN, and without this
-            # they look like a model regression months later.
-            "voicemural.degraded": bool(session.get("degraded")),
-            # THE THREE LANGFUSE-SPECIFIC KEYS, and they are what make a trace
-            # findable rather than merely present.
-            #
-            # Pipecat's own spans name themselves `llm`/`stt`/`tts` and leave the
-            # TRACE unnamed, so without this every drive lists as a blank row —
-            # 97 observations of real content behind nothing you can search for.
-            # `conversation_id` above groups spans into one trace; it does NOT
-            # populate Langfuse's session, which reads this attribute instead.
-            "langfuse.trace.name": f"drive · {session.get('setting') or 'unknown'}",
-            # The ledger's own key, so a trace opens straight onto the drive it
-            # came from — the same id in `capture_session`, `utterance` and
-            # `agent_turn`. Empty string rather than None: OTel drops an
-            # attribute with a null value and the field would silently vanish.
-            "langfuse.session.id": capture_session_id or "",
-            # Tags render as filter chips, which is how you find the degraded
-            # drives without reading them.
-            "langfuse.trace.tags": [
-                session.get("setting") or "unknown",
-                "degraded" if session.get("degraded") else "full",
-            ],
-        },
+        additional_span_attributes=drive_span_attributes(session, capture_session_id),
     )
 
 
