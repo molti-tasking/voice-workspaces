@@ -261,6 +261,29 @@ body {
   scale: var(--vm-mic-level, 0);
 }
 
+/* The recording badge's dot (components/recording-badge.tsx).
+
+   A STATIC red dot is a decoration; a blinking one is a state. Peripheral
+   vision is nearly blind to colour and very good at movement, which is the
+   whole reason this pulses rather than simply being red — the person it is for
+   has their eyes somewhere else. Slower and shallower than the record button's
+   halo, because two things beating in time would read as one thing. */
+@keyframes vm-rec-blink {
+  0%,
+  45% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  70%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.82);
+  }
+}
+.vm-rec-dot {
+  animation: vm-rec-blink 1.6s ease-in-out infinite alternate;
+}
+
 /* The settings sheet, rising out of the dock it belongs to. */
 @keyframes vm-sheet-up {
   from {
@@ -275,8 +298,14 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .vm-recording,
+  .vm-rec-dot,
   .vm-rise {
     animation: none !important;
+  }
+  /* Full strength, not half: the alternative to a pulse is a solid signal,
+     never a faded one. */
+  .vm-rec-dot {
+    opacity: 1;
   }
   /* Without the halo the active state still has to be distinguishable at a
      glance, so it keeps the static ring the animation was pulsing. */
