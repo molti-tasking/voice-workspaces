@@ -1,5 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+// ONE COPY of the three questions. The information sheet promises these exact
+// ones, and `/record` asks them the moment a drive ends; a participant who
+// read one set here and heard another in the car would have consented to
+// something that did not happen.
+import { DEBRIEF_QUESTIONS } from "@/lib/study/debrief";
 
 /**
  * The page participants read before day one, and re-read on their phone when
@@ -47,11 +52,6 @@ const STUDY = {
   compensation: "«amount, paid on completion»",
 };
 
-const QUESTIONS = [
-  "What did you want it to do that it couldn't?",
-  "What did it do that you didn't ask for?",
-  "What would you make into a thing, if that were easy?",
-];
 
 const PHRASES: [string, string][] = [
   [
@@ -134,7 +134,7 @@ export default function StudyPage() {
             The three questions
           </p>
           <ol className="space-y-2.5">
-            {QUESTIONS.map((q, i) => (
+            {DEBRIEF_QUESTIONS.map((q, i) => (
               <li key={q} className="flex gap-3 leading-relaxed">
                 <span className="shrink-0 font-mono text-sm text-white/30">
                   {i + 1}

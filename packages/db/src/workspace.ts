@@ -28,15 +28,82 @@ import {
   isNull,
   or,
   sql,
+  type Executor,
 } from "./index";
+
+/* ---------------------------------------------------------------------------
+ * Serialising a board edit
+ * ------------------------------------------------------------------------- */
+
+/**
+ * A namespace for this repository's advisory locks, so a key here can never
+ * collide with one some other part of the system decides to take. Arbitrary
+ * and permanent; only its uniqueness matters.
+ */
+const BOARD_LOCK_NAMESPACE = 0x7b0a_11d5 | 0;
+
+/** A 32-bit key from a user id. FNV-1a: tiny, stable, and no dependency. */
+function lockKey(userId: string): number {
+  let hash = 0x811c_9dc5;
+  for (let i = 0; i < userId.length; i += 1) {
+    hash ^= userId.charCodeAt(i);
+    hash = Math.imul(hash, 0x0100_0193);
+  }
+  // Signed 32-bit, which is what `pg_advisory_xact_lock(int4, int4)` takes.
+  return hash | 0;
+}
+
+/**
+ * Run a board edit with nobody else editing this person's board.
+ *
+ * WHAT IT CLOSES, observed on the first formative pilot (19 Sep 2026):
+ * `workspace_op` seq 191 and 193 are two `create_topic` operations, both
+ * titled "Montag", written 3ms apart by two concurrent `add_task` tool calls.
+ * Each planned its edit against a snapshot of the log that did not yet contain
+ * the other's new topic, so each decided the topic did not exist and made it.
+ * The extraction pipeline noticed and issued a `merge_topics` at seq 197, so
+ * the system healed itself — but a board that briefly shows the same topic
+ * twice is a board the participant may act on, and the self-heal is not
+ * guaranteed to arrive before they do.
+ *
+ * Load, plan and apply have to be ONE critical section, because the bug is in
+ * the gap between them: the read is stale by the time the write happens. A
+ * uniqueness constraint would not do it — a topic has no natural key, "Montag"
+ * and "montag" are the same topic to a person, and the planner's matching is
+ * the definition of sameness.
+ *
+ * An advisory lock rather than row locks, because there is no row to lock: the
+ * op log is append-only and the thing being protected is a decision taken
+ * against its fold. Transaction-scoped, so it is released by the commit or the
+ * rollback and no failure path can strand it.
+ *
+ * PER USER, not global. Two participants editing at once is not a conflict,
+ * and the container serves every drive on the deployment.
+ *
+ * Everything inside runs on the transaction, which is why `loadOps` and
+ * `appendUserOp` take an executor: work that reached for `getDb()` would take
+ * another connection from the pool and land outside the lock's transaction,
+ * leaving the critical section guarded and its writes unguarded.
+ */
+export async function withBoardLock<T>(
+  userId: string,
+  run: (db: Executor) => Promise<T>,
+): Promise<T> {
+  return getDb().transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(${BOARD_LOCK_NAMESPACE}, ${lockKey(userId)})`,
+    );
+    return run(tx);
+  });
+}
 
 /* ---------------------------------------------------------------------------
  * Reading the log
  * ------------------------------------------------------------------------- */
 
 /** Every op for a user, in `seq` order — the input to `foldWorkspace`. */
-export async function loadOps(userId: string): Promise<StoredOp[]> {
-  const rows = await getDb()
+export async function loadOps(userId: string, db: Executor = getDb()): Promise<StoredOp[]> {
+  const rows = await db
     .select({
       id: workspaceOp.id,
       seq: workspaceOp.seq,
@@ -99,6 +166,10 @@ export async function loadPendingSegments(
       occurredAt,
       createdAt: utterance.createdAt,
       captureSessionId: utterance.captureSessionId,
+      // The drive's transcription language, carried onto every segment so a
+      // batch can tell whether it is all one language. See
+      // `segmentsLanguage`; a batch is not bounded by a session.
+      language: captureSession.sttLanguage,
       resolvedCapabilityId: directive.capabilityId,
     })
     .from(utterance)
@@ -124,6 +195,7 @@ export async function loadPendingSegments(
     occurredAt: new Date(r.occurredAt),
     kind: r.kindOverride ?? r.kind,
     recordedAt: r.createdAt,
+    language: r.language,
     handledElsewhere: r.kindOverride === "directive" || r.resolvedCapabilityId !== null,
   }));
 }
@@ -141,6 +213,10 @@ export async function loadAllSegments(
       kind: utterance.kind,
       kindOverride: utterance.kindOverride,
       occurredAt,
+      // Carried here too, and not only on the live path: a rebuild that left it
+      // out would hash differently from the extraction it is rebuilding and pay
+      // for every call again — and produce a different workspace while doing it.
+      language: captureSession.sttLanguage,
     })
     .from(utterance)
     .innerJoin(
@@ -155,6 +231,7 @@ export async function loadAllSegments(
     text: r.text,
     occurredAt: new Date(r.occurredAt),
     kind: r.kindOverride ?? r.kind,
+    language: r.language,
   }));
 }
 
@@ -391,10 +468,17 @@ export async function appendUserOp(input: {
    * count as a chance to have undone it.
    */
   captureSessionId?: string;
+  /**
+   * The transaction to write inside, when the caller holds one. A board edit
+   * runs under an advisory lock (see `withBoardLock`) and every write in it
+   * belongs to that transaction, or the lock would guard a critical section
+   * whose writes were landing on other connections outside it.
+   */
+  db?: Executor;
 }): Promise<"inserted" | "duplicate"> {
   const { type, ...payload } = input.op;
 
-  const inserted = await getDb()
+  const inserted = await (input.db ?? getDb())
     .insert(workspaceOp)
     .values({
       id: input.id,

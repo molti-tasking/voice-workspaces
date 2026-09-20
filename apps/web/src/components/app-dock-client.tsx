@@ -9,7 +9,7 @@ import {
   SquareKanban,
   type LucideIcon,
 } from "lucide-react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { formatOffset } from "@voicemural/shared";
 import { SETTING_PROFILES } from "@voicemural/talkback/setting";
@@ -69,7 +69,23 @@ const TIMELINE: Tab = { href: "/timeline", label: "Timeline", Icon: ListTree };
  */
 export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
   const pathname = usePathname();
-  const { isRecording, isBusy, recorder, startRecording, stopRecording } = useCapture();
+  const router = useRouter();
+  const {
+    isRecording,
+    isDebriefing,
+    isBusy,
+    recorder,
+    settingUnknown,
+    startRecording,
+    stopRecording,
+    finishDebrief,
+  } = useCapture();
+
+  /* THE MICROPHONE IS OPEN IN BOTH STATES, and the dock has to treat them the
+   * same or it offers Record on top of a live recording — a second drive
+   * started while the first is still capturing. So the control is "active"
+   * through the debrief too; what an armed press does is the only difference. */
+  const capturing = isRecording || isDebriefing;
 
   const [sheetOpen, setSheetOpen] = useState(false);
   const [armedAt, setArmedAt] = useState<number | null>(null);
@@ -79,7 +95,7 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
   // running, so a drive that ends by any other route — the big button on
   // `/record`, a failed chunk, the tab being closed and reopened — disarms the
   // dock without needing an effect to notice.
-  const armed = isRecording && armedAt !== null;
+  const armed = capturing && armedAt !== null;
 
   // `/record` is the full-screen recorder: its own 224px button is the
   // transport, and a second one in the dock would be two controls for one
@@ -132,14 +148,21 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
 
           {!onRecorder && (
             <RecordControl
-              isRecording={isRecording}
+              isRecording={capturing}
               isBusy={isBusy}
               armed={armed}
               elapsedMs={recorder.elapsedMs}
               sheetOpen={sheetOpen}
               onToggleSheet={() => setSheetOpen((v) => !v)}
               onPress={() => {
-                if (!isRecording) {
+                if (!capturing) {
+                  // Nothing has said where they are, and a drive must not
+                  // start under a guess: send them to the recorder, where the
+                  // picker is. See `settingUnknown`.
+                  if (settingUnknown) {
+                    router.push("/record");
+                    return;
+                  }
                   startRecording();
                   return;
                 }
@@ -148,7 +171,12 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
                   return;
                 }
                 setArmedAt(null);
-                stopRecording();
+                // Stop opens the debrief; a second press closes it. The three
+                // questions are on `/record`, which is where the participant
+                // has just come from — this is the escape hatch for somebody
+                // who wandered off mid-debrief, not the way it is meant to end.
+                if (isDebriefing) finishDebrief();
+                else stopRecording();
               }}
             />
           )}

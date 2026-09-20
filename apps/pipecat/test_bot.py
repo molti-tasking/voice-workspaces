@@ -17,7 +17,7 @@ only place this service's toolchain exists (see the Dockerfile):
     docker exec -w /tmp/pipecat-tests voice-workspace-pipecat-1 python -m pytest -q
 
 `bot.py` reads its environment at import, so inside the container the
-service's own variables serve. Anywhere else, the three below are enough.
+service's own variables serve. Anywhere else, the four below are enough.
 """
 
 import asyncio
@@ -29,6 +29,7 @@ for _name, _value in (
     ("LITELLM_BASE_URL", "http://litellm.test"),
     ("LITELLM_API_KEY", "test"),
     ("ELEVENLABS_VOICE_ID", "test-voice"),
+    ("MODEL_CONVERSE", "test-model"),
 ):
     os.environ.setdefault(_name, _value)
 
@@ -36,6 +37,8 @@ import pytest  # noqa: E402
 
 import bot  # noqa: E402  — needs the environment above
 from pipecat.frames.frames import (  # noqa: E402
+    EndFrame,
+    FunctionCallsStartedFrame,
     InterruptionFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
@@ -81,11 +84,28 @@ class FakeRecorder:
         self.calls = []
         self.declines = []
         self.current = cue or bot.Cue("user_turn", None, 1_000)
+        # Whether the driver's next words answer a question the agent asked.
+        # False here, as it is on a fresh recorder; the answer-guard tests set it.
+        self.awaiting_question_answer = False
+        # Moments the guard had to force. Measurement only — see
+        # `TurnRecorder.note_forced_answer` — and the one trace the refused
+        # completion leaves, since it writes no decision of its own.
+        self.forced = 0
 
     def cue(self):
         return self.current
 
-    def record(self, spoken, generated, *, started_ms=None, barged_in=False, cue=None, metrics=None):
+    def record(
+        self,
+        spoken,
+        generated,
+        *,
+        started_ms=None,
+        barged_in=False,
+        cue=None,
+        metrics=None,
+        playback=None,
+    ):
         self.calls.append(
             {
                 "spoken": spoken,
@@ -94,11 +114,15 @@ class FakeRecorder:
                 "barged_in": barged_in,
                 "cue": cue,
                 "metrics": metrics,
+                "playback": playback,
             }
         )
 
     def decline(self, *, interrupted=False, cue=None):
         self.declines.append({"interrupted": interrupted, "cue": cue})
+
+    def note_forced_answer(self):
+        self.forced += 1
 
 
 def drive(frames, recorder=None, llm_name=None):
@@ -315,6 +339,223 @@ def test_strip_speaker_tags():
     assert bot.strip_speaker_tags("No tag here.") == "No tag here."
 
 
+# --- AnswerGuard: a question the agent asked is never answered with silence ---
+#
+# The most expensive failure the first formative pilot found (19 Sep 2026). The
+# agent asked whether it should look up the opening times, the participant said
+# "Ja.", and the model answered `<silence>` — faithfully recorded as
+# `user_turn -> declined`. She waited forty seconds, asked "Und dann?", got
+# nothing again, and stopped the recording. Nothing failed; the default simply
+# won over an obligation nothing had stated.
+
+
+class FakeAnswers:
+    """Stands in for `AnswerGuard`, whose re-run needs a live pipeline."""
+
+    def __init__(self, retrying=False, acknowledgement="Sorry, I lost that. Say it again."):
+        self.retrying = retrying
+        self.acknowledgement = acknowledgement
+        self.retries = 0
+        self.settlements = 0
+
+    def request_retry(self):
+        self.retries += 1
+        self.retrying = True
+
+    def settled(self):
+        self.settlements += 1
+        self.retrying = False
+
+
+class FakeOffers:
+    """Records what `SilenceGate` tells the proactive engine each turn became."""
+
+    def __init__(self):
+        self.told = []
+
+    def note_agent_turn(self, spoke):
+        self.told.append(spoke)
+
+
+def drive_answers(frames, recorder, answers, offers=None):
+    """Push frames through a gate that has an answer guard; return what was said.
+
+    Collects `TTSSpeakFrame` as well as `LLMTextFrame`, because the fixed
+    acknowledgement is spoken directly rather than generated.
+    """
+    spoken = []
+
+    async def run():
+        gate = bot.SilenceGate(recorder=recorder, offers=offers, answers=answers)
+
+        async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+            if isinstance(frame, (LLMTextFrame, bot.TTSSpeakFrame)):
+                spoken.append(frame.text)
+
+        gate.push_frame = capture
+        for frame in frames:
+            await gate.process_frame(frame, FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    return spoken
+
+
+def asking_recorder():
+    recorder = FakeRecorder()
+    recorder.awaiting_question_answer = True
+    return recorder
+
+
+def test_the_phrases_match_the_typescript_they_mirror():
+    """Pinned on BOTH sides, because neither can import the other.
+
+    The text below is what `packages/talkback/src/prompt.ts` exports as
+    ANSWER_RETRY_NUDGE, ANSWER_ACKNOWLEDGEMENTS and SEARCH_WAIT_PHRASES, and
+    `prompt.test.ts` pins the same strings there. A change to one side without
+    the other fails here with the other side's text in the diff.
+    """
+    assert bot.ANSWER_RETRY_NUDGE == (
+        "(They have just answered the question YOU asked them. <silence> is not "
+        "available on this turn: act on their answer and say in one short sentence "
+        "what you are doing. If you cannot tell what they meant, ask one short "
+        "question instead — but say something.)"
+    )
+    assert bot.ANSWER_ACKNOWLEDGEMENTS == {
+        "en": "Sorry, I lost that. Say it again.",
+        "de": "Entschuldige, das ist mir entgangen. Sag es noch mal.",
+    }
+    assert bot.SEARCH_WAIT_PHRASES == {
+        "en": ("Still looking that up.", "Bear with me, I am still searching."),
+        "de": ("Ich suche noch.", "Hab ein bisschen Geduld, ich suche noch."),
+    }
+
+
+def test_the_fixed_phrases_follow_the_drive_s_language():
+    assert bot.phrase_language({"sttLanguage": "de"}) == "de"
+    # Auto-detect, an older web app, and a language with no phrases all fall
+    # back to English — which is what the participant would have heard anyway.
+    assert bot.phrase_language({"sttLanguage": None}) == "en"
+    assert bot.phrase_language({}) == "en"
+    assert bot.phrase_language({"sttLanguage": "fr"}) == "en"
+
+
+def test_the_keep_alive_runs_out_rather_than_nagging():
+    assert bot.search_wait_phrase("de", 0) == bot.SEARCH_WAIT_PHRASES["de"][0]
+    assert bot.search_wait_phrase("de", 1) == bot.SEARCH_WAIT_PHRASES["de"][1]
+    assert bot.search_wait_phrase("de", 2) is None
+    assert bot.search_wait_phrase(None, 0) == bot.SEARCH_WAIT_PHRASES["en"][0]
+
+
+def test_ends_in_question():
+    assert bot._ends_in_question("Soll ich die genauen Zeiten suchen?")
+    assert bot._ends_in_question('  "Shall I look that up?"  ')
+    assert bot._ends_in_question("Which one — the first or the second?*")
+    assert not bot._ends_in_question("I'll look that up.")
+    assert not bot._ends_in_question("Is that right? Probably not.")
+    assert not bot._ends_in_question("")
+
+
+def test_a_declined_answer_to_our_own_question_is_refused_rather_than_recorded():
+    recorder, answers, offers = asking_recorder(), FakeAnswers(), FakeOffers()
+
+    assert drive_answers(reply("<silence>"), recorder, answers, offers) == []
+
+    # No turn, because nothing was spoken — and no decision either: the driver's
+    # words were ONE moment to speak, and the re-run decides what it became.
+    assert recorder.calls == []
+    assert recorder.declines == []
+    assert answers.retries == 1
+    # The engine is not told the turn declined, or it would back off and arm an
+    # offer over the top of the re-run that is still to come.
+    assert offers.told == []
+
+
+def test_the_re_run_speaking_settles_the_moment_and_writes_one_turn():
+    recorder, answers, offers = asking_recorder(), FakeAnswers(), FakeOffers()
+
+    frames = [*reply("<silence>"), *reply("Looking up the hours for the Kiel one now.")]
+    assert drive_answers(frames, recorder, answers, offers) == [
+        "Looking up the hours for the Kiel one now."
+    ]
+
+    assert len(recorder.calls) == 1
+    assert recorder.declines == []
+    assert answers.retries == 1
+    assert answers.settlements == 1
+    assert offers.told == [True]
+
+
+def test_a_second_decline_speaks_the_fixed_acknowledgement_and_records_it():
+    recorder, answers, offers = asking_recorder(), FakeAnswers(), FakeOffers()
+
+    frames = [*reply("<silence>"), *reply("<silence>")]
+    assert drive_answers(frames, recorder, answers, offers) == [answers.acknowledgement]
+
+    # Spoken, therefore recorded: the echo filter reads `agent_turn` and nothing
+    # else, so a sentence that reaches the speaker and not the table comes back
+    # as the participant's own words.
+    assert [call["spoken"] for call in recorder.calls] == [answers.acknowledgement]
+    assert recorder.declines == []
+    # One re-run, never two: the guard answers a second decline with words.
+    assert answers.retries == 1
+    assert offers.told == [True]
+
+
+def test_the_acknowledgement_does_not_itself_ask_a_question():
+    # A question here would re-arm the guard on their reply and could ping-pong.
+    for language in ("en", "de"):
+        assert not bot._ends_in_question(bot.answer_acknowledgement(language))
+
+
+def test_a_decline_with_no_question_outstanding_is_still_a_decline():
+    recorder, answers, offers = FakeRecorder(), FakeAnswers(), FakeOffers()
+    recorder.awaiting_question_answer = False
+
+    assert drive_answers(reply("<silence>"), recorder, answers, offers) == []
+
+    assert len(recorder.declines) == 1
+    assert answers.retries == 0
+    assert offers.told == [False]
+
+
+def test_an_offer_declined_while_a_question_stands_is_still_a_decline():
+    # The guard is about the driver ANSWERING. A moment the engine made is not
+    # an answer to anything, so declining it is the design working.
+    recorder, answers = asking_recorder(), FakeAnswers()
+    recorder.current = bot.Cue("silence_offer", None, 2_000)
+
+    assert drive_answers(reply("<silence>"), recorder, answers) == []
+
+    assert len(recorder.declines) == 1
+    assert answers.retries == 0
+
+
+def test_a_tool_calling_completion_is_not_refused_either():
+    # Its silence is not a decline: the answer is the completion Pipecat runs
+    # once the tool's result is in.
+    recorder, answers = asking_recorder(), FakeAnswers()
+    frames = [
+        LLMFullResponseStartFrame(),
+        FunctionCallsStartedFrame(function_calls=[]),
+        LLMFullResponseEndFrame(),
+    ]
+
+    assert drive_answers(frames, recorder, answers) == []
+
+    assert recorder.declines == []
+    assert answers.retries == 0
+
+
+def test_a_gate_with_no_answer_guard_behaves_exactly_as_before():
+    # Every existing construction of the gate passes no guard, the tests
+    # included, and must keep declining as it always did.
+    recorder = asking_recorder()
+
+    assert drive(reply("<silence>"), recorder=recorder) == []
+
+    assert len(recorder.declines) == 1
+
+
 # --- Drafts: what is kept rather than heard -----------------------------------
 #
 # `extract_drafts` is the Python half of `extractDrafts`
@@ -482,12 +723,77 @@ def test_a_spoken_reply_writes_the_turn_first_then_a_decision_pointing_at_it():
         "ticket": "ticket",
         "seq": 0,
         "offsetMs": decision["offsetMs"],
+        # The moment their words made, and the first completion run over it.
+        "opportunitySeq": 1,
+        "attempt": 0,
         "trigger": "user_turn",
         "outcome": "spoke",
         "configVersion": "talkback-test",
         "latencyMs": decision["latencyMs"],
         "agentTurnId": TURN_ID,
     }
+
+
+def test_several_completions_over_one_moment_share_its_number():
+    """The pilot's duplicate rows, made countable.
+
+    Pipecat runs inference more than once inside a user turn: the first sees a
+    half-finished sentence and declines in ~400ms, the second sees the whole
+    thing and speaks. Sixteen of forty-eight rows shared an `offset_ms` with
+    another, and counted by row the decline rate was 69% where counted by
+    moment it was 53% — with nothing in the table saying which the log
+    supported.
+    """
+
+    def act(recorder):
+        recorder.note_user("so the thing about the intro is")
+        recorder.decline()  # the half-finished sentence
+        recorder.record("Start with the asymmetry.", "…")  # the same words, finished
+
+    decisions = [payload for route, payload in posted_by(act) if route == "decision"]
+    assert [d["opportunitySeq"] for d in decisions] == [1, 1]
+    assert [d["attempt"] for d in decisions] == [0, 1]
+    # The authoritative outcome of a moment is its LAST attempt.
+    assert [d["outcome"] for d in decisions] == ["declined", "spoke"]
+
+
+def test_a_new_moment_gets_a_new_number():
+    def act(recorder):
+        recorder.note_user("first thing")
+        recorder.decline()
+        recorder.note_user("second thing")
+        recorder.decline()
+        recorder.note_offer("silence_offer")
+        recorder.decline()
+
+    decisions = [payload for route, payload in posted_by(act) if route == "decision"]
+    assert [d["opportunitySeq"] for d in decisions] == [1, 2, 3]
+    assert [d["attempt"] for d in decisions] == [0, 0, 0]
+
+
+def test_a_pending_ask_relabels_a_moment_without_starting_a_new_one():
+    # The ask did not make the moment, their words did — which is why the clock
+    # and the number both carry over.
+    def act(recorder):
+        recorder.note_user("yes go ahead")
+        recorder.note_pending("inv-1")
+        recorder.record("Sending it now.", "…")
+
+    (decision,) = [payload for route, payload in posted_by(act) if route == "decision"]
+    assert decision["trigger"] == "confirmation"
+    assert decision["opportunitySeq"] == 1
+
+
+def test_a_refused_decline_does_not_spend_an_attempt():
+    # `AnswerGuard` writes no decision for the completion it refuses, so the
+    # re-run is still attempt 0 of that moment — which is why `attempt` is
+    # counted here rather than derived from `seq`.
+    def act(recorder):
+        recorder.note_user("Ja.")
+        recorder.record("Der in Altenholz hat bis achtzehn Uhr offen.", "…")
+
+    (decision,) = [payload for route, payload in posted_by(act) if route == "decision"]
+    assert decision["attempt"] == 0
 
 
 def test_a_declined_user_turn_writes_a_decision_and_no_turn():
@@ -581,6 +887,270 @@ def test_a_later_turn_moves_on_from_an_unanswered_ask():
 
     posted_by(act, recorder)
     assert recorder.take_awaiting_answer() is None
+
+
+def test_a_spoken_question_arms_the_answer_guard_and_the_next_turn_clears_it():
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+    assert not recorder.awaiting_question_answer
+
+    def ask(r):
+        r.note_user("Wo ist der nächste Baumarkt?")
+        r.record("Soll ich die genauen Zeiten für einen davon suchen?", "…")
+
+    posted_by(ask, recorder)
+    assert recorder.awaiting_question_answer
+
+    def answer(r):
+        r.note_user("Ja.")
+        r.record("Der in Altenholz hat bis achtzehn Uhr offen.", "…")
+
+    posted_by(answer, recorder)
+    assert not recorder.awaiting_question_answer
+
+
+def test_only_what_was_spoken_counts_as_the_question():
+    # A question the driver never heard is not one they can be answering. On an
+    # interrupted turn `spoken` is what had been released; `generatedText` may
+    # carry a question that was cut off before its first word.
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+
+    def act(r):
+        r.record("I'll", "I'll check. Shall I book it?", barged_in=True)
+
+    posted_by(act, recorder)
+    assert not recorder.awaiting_question_answer
+
+
+def test_a_declined_turn_leaves_the_question_standing():
+    # The obligation is cleared by the next turn that REACHES THE SPEAKER, so a
+    # silence in between cannot quietly discharge it.
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+
+    def act(r):
+        r.record("Which of the two?", "Which of the two?")
+        r.note_user("Ja.")
+        r.decline()
+
+    posted_by(act, recorder)
+    assert recorder.awaiting_question_answer
+
+
+def test_a_turn_waits_for_the_speaker_and_records_a_measured_end():
+    """`end_offset_ms` was `len(text) / 14` and nothing else.
+
+    On the first formative pilot that overstated the agent's measured speech by
+    about 8%, and `/sessions/[id]` showed every duration with a `~` because it
+    could not honestly do otherwise. The output transport knows: it pushes
+    `BotStoppedSpeakingFrame` both ways when the audio actually stops.
+    """
+    started = int(time.time() * 1000)
+    playback = bot.Playback()
+
+    def act(recorder):
+        recorder.record("Ten words of speech here.", "…", started_ms=started, playback=playback)
+        # As the transport reports it, after the completion has already ended.
+        playback.started(started + 180)
+        playback.stopped(started + 2_400)
+
+    payload = only(posted_by(act), "agent-turn")
+    assert payload["endOffsetMeasured"] is True
+    assert payload["endOffsetMs"] == (started + 2_400) - 1_000
+    assert payload["speakTtfbMs"] == 180
+
+
+def test_a_turn_whose_speaker_never_reports_keeps_the_estimate_and_says_so(monkeypatch):
+    # The fallback is the row that would have been written anyway — and the
+    # column is what stops an analysis reading it as a stopwatch.
+    monkeypatch.setattr(bot.TurnRecorder, "PLAYBACK_WAIT_MIN_SECS", 0.05)
+    monkeypatch.setattr(bot.TurnRecorder, "PLAYBACK_WAIT_MAX_SECS", 0.05)
+
+    def act(recorder):
+        recorder.record("Fourteen characters a second.", "…", playback=bot.Playback())
+
+    payload = only(posted_by(act), "agent-turn")
+    assert payload["endOffsetMeasured"] is False
+    assert "speakTtfbMs" not in payload
+
+
+def test_a_stop_with_no_start_of_its_own_is_not_this_turn_s_end(monkeypatch):
+    # The keep-alive speaks while the answer is still generating. One
+    # continuous speaking run over both would otherwise end the answer's turn
+    # at the filler's last word.
+    monkeypatch.setattr(bot.TurnRecorder, "PLAYBACK_WAIT_MIN_SECS", 0.05)
+    monkeypatch.setattr(bot.TurnRecorder, "PLAYBACK_WAIT_MAX_SECS", 0.05)
+    playback = bot.Playback()
+
+    def act(recorder):
+        recorder.record("Something spoken.", "…", playback=playback)
+        playback.stopped(int(time.time() * 1000))  # no start of its own
+
+    payload = only(posted_by(act), "agent-turn")
+    assert payload["endOffsetMeasured"] is False
+
+
+def test_a_barged_in_turn_measures_its_end_at_the_interruption_and_waits_for_nothing():
+    started = int(time.time() * 1000) - 500
+    playback = bot.Playback()
+
+    def act(recorder):
+        recorder.record("I'll che", "I'll check that.", started_ms=started, barged_in=True, playback=playback)
+
+    payload = only(posted_by(act), "agent-turn")
+    assert payload["bargedIn"] is True
+    # The interruption is the one moment the container knows for certain that
+    # playback stopped, so this end is measured and nothing waits for it.
+    assert payload["endOffsetMeasured"] is True
+    assert playback.stopped_ms is None
+    assert payload["truncatedAtMs"] >= 0
+
+
+def test_a_turn_carries_the_model_the_proxy_answered_with_and_the_asr_time():
+    def act(recorder):
+        recorder.record(
+            "Something.",
+            "Something.",
+            metrics={
+                "ttftMs": 310,
+                "requestedModel": "fast-conversation",
+                "resolvedModel": "anthropic/claude-sonnet-5-20260514",
+                "asrMs": 660,
+            },
+        )
+
+    payload = only(posted_by(act), "agent-turn")
+    assert payload["requestedModel"] == "fast-conversation"
+    assert payload["resolvedModel"] == "anthropic/claude-sonnet-5-20260514"
+    assert payload["asrMs"] == 660
+
+
+def test_the_gate_reads_the_asr_time_and_the_resolved_model():
+    recorder = FakeRecorder()
+    gate = bot.SilenceGate(
+        recorder=recorder,
+        llm_name="llm",
+        stt_name="stt",
+        resolved_model=lambda: "anthropic/claude-sonnet-5-20260514",
+    )
+
+    async def run():
+        gate.push_frame = _swallow
+        # The STT measures BEFORE the completion starts — which is why it
+        # cannot live in `_turn_metrics`, emptied on every response start.
+        await gate.process_frame(
+            MetricsFrame(data=[TTFBMetricsData(processor="stt", value=0.66, model="whisper")]),
+            FrameDirection.DOWNSTREAM,
+        )
+        for frame in reply("Altenholz is open until six."):
+            await gate.process_frame(frame, FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    metrics = recorder.calls[0]["metrics"]
+    assert metrics["asrMs"] == 660
+    assert metrics["resolvedModel"] == "anthropic/claude-sonnet-5-20260514"
+    # The STT's model name is not the conversation's.
+    assert metrics.get("requestedModel") is None
+
+
+def test_the_gate_hands_the_speaker_s_own_account_to_the_recorder():
+    recorder = FakeRecorder()
+    gate = bot.SilenceGate(recorder=recorder)
+
+    async def run():
+        gate.push_frame = _swallow
+        await gate.process_frame(LLMFullResponseStartFrame(), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(LLMTextFrame(text="Open until six."), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(bot.BotStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM)
+        # AFTER the completion ended, which is the whole reason the row waits.
+        await gate.process_frame(bot.BotStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    playback = recorder.calls[0]["playback"]
+    assert playback is not None
+    assert playback.started_ms is not None
+    assert playback.stopped_ms is not None
+
+
+def test_the_drive_ending_releases_a_row_still_waiting_on_the_speaker():
+    # A wait that outlived the pipeline would cost the echo filter a row, which
+    # is a far worse failure than an estimated duration.
+    recorder = FakeRecorder()
+    gate = bot.SilenceGate(recorder=recorder)
+
+    async def run():
+        gate.push_frame = _swallow
+        await gate.process_frame(LLMFullResponseStartFrame(), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(LLMTextFrame(text="Open until six."), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM)
+        playback = recorder.calls[0]["playback"]
+        await gate.process_frame(EndFrame(), FrameDirection.DOWNSTREAM)
+        # Released, and with nothing measured — so the estimate stands.
+        await asyncio.wait_for(playback.wait(1.0), 1.0)
+        assert playback.stopped_ms is None
+
+    asyncio.run(run())
+
+
+def test_an_announcement_carries_the_one_timing_it_has():
+    # Null on all three announcements of the first pilot, which is why that
+    # session's median latency read as the second round trip only.
+    def act(recorder):
+        recorder.note_user("wann hat der Baumarkt auf")
+        recorder.record_announcement("Ich schaue kurz nach.")
+
+    payload = only(posted_by(act), "agent-turn")
+    assert payload["totalLatencyMs"] >= 0
+    assert payload["endOffsetMeasured"] is False
+
+
+def test_a_refused_write_teaches_the_container_the_drive_is_over(monkeypatch):
+    """One 409, and nothing is attempted again.
+
+    The container has no other way to learn it. Stop on /record ends the
+    capture session over HTTPS while the peer connection is still up, so
+    everything below is the container talking into a drive the database
+    already calls finished.
+    """
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+    attempts = []
+
+    def urlopen(req, timeout=None):
+        attempts.append(req.full_url)
+        raise urllib.error.HTTPError(req.full_url, 409, "Conflict", {}, None)
+
+    monkeypatch.setattr(bot.urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(urllib.error.HTTPError):
+        recorder._post("agent-turn", {"ticket": "ticket"})
+
+    assert recorder.session_ended is True
+    assert len(attempts) == 1
+
+    # And from here nothing is even attempted: no turn, no announcement, no
+    # decision. A row for an ended session skews every count taken from it.
+    posted = posted_by(
+        lambda r: (
+            r.record("Anything at all.", "Anything at all."),
+            r.record_announcement("Let me look that up."),
+            r.decline(),
+        ),
+        recorder,
+    )
+    assert posted == []
+
+
+def test_a_403_is_not_taken_as_the_drive_having_ended(monkeypatch):
+    # Different fact, different response: a forbidden write is this request
+    # being wrong, and the next turn may be perfectly fine.
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+
+    def urlopen(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", {}, None)
+
+    monkeypatch.setattr(bot.urllib.request, "urlopen", urlopen)
+    with pytest.raises(urllib.error.HTTPError):
+        recorder._post("agent-turn", {"ticket": "ticket"})
+    assert recorder.session_ended is False
 
 
 def test_a_pending_ask_does_not_relabel_an_offer():
@@ -770,7 +1340,7 @@ class FakeContext:
         self.messages.append(message)
 
 
-def offers_with(monkeypatch, session=None, recall=None):
+def offers_with(monkeypatch, session=None, recall=None, recorder=None):
     """A fresh engine with the timer disarmed into a log of arm/cancel calls.
 
     `asyncio.sleep` is a no-op for the engine's lifetime so `_fire` can be
@@ -785,7 +1355,7 @@ def offers_with(monkeypatch, session=None, recall=None):
     monkeypatch.setattr(bot.asyncio, "sleep", now)
 
     log = []
-    engine = bot.Offers(FakeContext(), recall or FakeRecall(), session or {})
+    engine = bot.Offers(FakeContext(), recall or FakeRecall(), session or {}, recorder)
 
     def create_task(coro, name=None):
         coro.close()
@@ -846,6 +1416,32 @@ def test_a_spoken_agent_turn_blocks_until_the_driver_replies(monkeypatch):
     asyncio.run(run2())
     assert engine._awaiting_user is False
     assert engine._log[-1] == "arm"
+
+
+def test_the_engine_refuses_a_moment_once_the_drive_has_ended(monkeypatch):
+    """The pilot's stray turn (19 Sep 2026).
+
+    `agent_turn` seq 14 starts at offset 396984ms — 52 seconds after this
+    session's `ended_at`. Stop on /record ends the capture session over HTTPS;
+    the peer connection follows only when ICE gives up, and in that gap the
+    silence timer fired and offered to look up the opening hours she had
+    already agreed to 99 seconds earlier. Checked where the turn is TAKEN, not
+    only where it is written: the turn was spoken aloud.
+    """
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+    engine = offers_with(monkeypatch, recorder=recorder)
+
+    async def run():
+        await engine._fire(engine._delay, opening=False)
+        assert engine._context.messages != []  # a live drive still offers
+
+        recorder._session_ended = True
+        engine._context.messages.clear()
+        engine._awaiting_user = False
+        await engine._fire(engine._delay, opening=False)
+        assert engine._context.messages == []  # …and a stopped one does not
+
+    asyncio.run(run())
 
 
 def test_a_declined_offer_backs_off_and_speech_resets_the_backoff(monkeypatch):
@@ -1361,6 +1957,129 @@ def run_search(search, arguments, *, cancel_after=None):
     return [f.text for f in llm.pushed if isinstance(f, bot.TTSSpeakFrame)], results
 
 
+# --- KeepAlive: a word while a turn that announced itself runs long ---------
+#
+# The pilot's numbers: turns that called a tool took a median of 8416ms against
+# 1349 for turns that did not, while the tool itself never took more than 766.
+# The gap is the model composing the answer AFTER the result is back, and the
+# car is silent through it. The participant asked for this herself.
+
+
+def keepalive_with(monkeypatch, recorder=None, language="en"):
+    """A keep-alive whose clock runs in milliseconds and whose speech is a list."""
+    monkeypatch.setattr(bot.KeepAlive, "AFTER_SECS", 0.05)
+    keepalive = bot.KeepAlive(language, recorder)
+    monkeypatch.setattr(keepalive, "create_task", lambda coro, name=None: asyncio.create_task(coro))
+    keepalive.pushed = []
+
+    async def push(frame, direction=None):
+        keepalive.pushed.append(frame)
+
+    keepalive.push_frame = push
+    return keepalive
+
+
+def spoken_by(keepalive):
+    return [f.text for f in keepalive.pushed if isinstance(f, bot.TTSSpeakFrame)]
+
+
+class RecordingRecorder:
+    def __init__(self):
+        self.announcements = []
+
+    def record_announcement(self, spoken, kind="reply"):
+        self.announcements.append((spoken, kind))
+
+
+def test_a_long_turn_gets_a_word_and_then_another_and_then_silence(monkeypatch):
+    recorder = RecordingRecorder()
+
+    async def run():
+        keepalive = keepalive_with(monkeypatch, recorder)
+        keepalive.begin()
+        await asyncio.sleep(0.4)  # far past the number of phrases there are
+        return keepalive
+
+    keepalive = asyncio.run(run())
+
+    # Two, in order, and then it falls silent rather than nagging.
+    assert spoken_by(keepalive) == list(bot.SEARCH_WAIT_PHRASES["en"])
+    # SPOKEN, THEREFORE RECORDED. `withoutEcho` reads `agent_turn` and nothing
+    # else; a filler that is not there comes back as the participant's words.
+    assert recorder.announcements == [(p, "backchannel") for p in bot.SEARCH_WAIT_PHRASES["en"]]
+
+
+def test_the_agent_speaking_ends_the_wait(monkeypatch):
+    async def run():
+        keepalive = keepalive_with(monkeypatch)
+        keepalive.begin()
+        # `SilenceGate` sits directly upstream, so its first released word
+        # passes through here. That is the wait being over.
+        await keepalive.process_frame(
+            LLMTextFrame(text="The Kiel one is open until six."), FrameDirection.DOWNSTREAM
+        )
+        await asyncio.sleep(0.2)
+        return keepalive
+
+    keepalive = asyncio.run(run())
+    assert spoken_by(keepalive) == []
+
+
+def test_the_driver_talking_over_it_ends_the_wait(monkeypatch):
+    async def run():
+        keepalive = keepalive_with(monkeypatch)
+        keepalive.begin()
+        await keepalive.process_frame(InterruptionFrame(), FrameDirection.DOWNSTREAM)
+        await asyncio.sleep(0.2)
+        return keepalive
+
+    keepalive = asyncio.run(run())
+    assert spoken_by(keepalive) == []
+
+
+def test_the_end_of_the_tool_calling_completion_does_not_end_the_wait(monkeypatch):
+    # THE POINT OF THE WHOLE THING. On a tool-calling turn the first completion
+    # ends before the tool has even answered; stopping there would fall silent
+    # exactly when the long part begins.
+    async def run():
+        keepalive = keepalive_with(monkeypatch)
+        keepalive.begin()
+        await keepalive.process_frame(LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM)
+        await asyncio.sleep(0.08)  # one interval, not two
+        return keepalive
+
+    keepalive = asyncio.run(run())
+    assert spoken_by(keepalive) == [bot.SEARCH_WAIT_PHRASES["en"][0]]
+
+
+def test_the_keep_alive_speaks_the_drive_s_language(monkeypatch):
+    async def run():
+        keepalive = keepalive_with(monkeypatch, language="de")
+        keepalive.begin()
+        await asyncio.sleep(0.08)  # one interval
+        return keepalive
+
+    keepalive = asyncio.run(run())
+    assert spoken_by(keepalive) == [bot.SEARCH_WAIT_PHRASES["de"][0]]
+
+
+def test_an_announced_search_starts_the_clock(monkeypatch):
+    # Armed by the announcement, NOT by the request going out: what the driver
+    # waits through is the turn, and the tool is the short part of it.
+    class Armed:
+        def __init__(self):
+            self.begun = 0
+
+        def begin(self):
+            self.begun += 1
+
+    keepalive = Armed()
+    search = bot.WebSearch("ticket", None, None, keepalive)
+    search._post = lambda payload: {"ok": True}
+    run_search(search, {"query": "q", "announcement": "Looking."})
+    assert keepalive.begun == 1
+
+
 class RecordingSound:
     def __init__(self):
         self.events = []
@@ -1631,3 +2350,51 @@ def test_ice_servers_refuses_to_offer_a_relay_it_cannot_authenticate(monkeypatch
 
     (only,) = bot.ice_servers()
     assert only.urls == "stun:stun.example.org:3478"
+
+# --------------------------------------------------------------------------
+# What a drive tells Langfuse about itself.
+# --------------------------------------------------------------------------
+
+
+def test_drive_spans_carry_the_langfuse_v4_correlating_attributes():
+    """The keys are the contract with the project, and a wrong one fails silently.
+
+    `session.id` is the v4 spelling — it is what makes a session's cost the sum
+    of the generations under it, because it rides on EVERY span rather than on
+    the trace alone. `langfuse.session.id` is the v3 spelling, kept beside it
+    for a self-hosted server that has not been upgraded yet.
+    """
+    attributes = bot.drive_span_attributes(
+        {"setting": "desk", "configVersion": "talkback-4"},
+        "capture-session-1",
+    )
+
+    assert attributes["session.id"] == "capture-session-1"
+    assert attributes["langfuse.session.id"] == "capture-session-1"
+    assert attributes["langfuse.trace.name"] == "drive · desk"
+    assert attributes["langfuse.trace.tags"] == ["desk", "full"]
+    # Same key and same value the eval harness sets, so one filter shows both.
+    assert attributes["langfuse.version"] == "talkback-4"
+    # Deprecated in v4: overall input/output belong on the root observation.
+    assert "langfuse.trace.input" not in attributes
+    assert "langfuse.trace.output" not in attributes
+
+
+def test_a_degraded_drive_says_so_and_a_missing_version_does_not_vanish():
+    attributes = bot.drive_span_attributes({"degraded": True}, None)
+
+    assert attributes["voicemural.degraded"] is True
+    assert attributes["langfuse.trace.tags"] == ["unknown", "degraded"]
+    assert attributes["langfuse.version"] == "fallback"
+    # Empty string rather than absent: OTel drops a null and the field would
+    # silently disappear from every span of an unticketed drive.
+    assert attributes["session.id"] == ""
+
+
+def test_the_environment_attribute_is_set_only_when_configured(monkeypatch):
+    """An empty environment is not the same as `default`, and Langfuse rejects it."""
+    monkeypatch.setattr(bot, "LANGFUSE_ENVIRONMENT", "")
+    assert "langfuse.environment" not in bot.drive_span_attributes({}, None)
+
+    monkeypatch.setattr(bot, "LANGFUSE_ENVIRONMENT", "staging")
+    assert bot.drive_span_attributes({}, None)["langfuse.environment"] == "staging"

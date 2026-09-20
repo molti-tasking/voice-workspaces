@@ -99,6 +99,34 @@
       "when": 1789686190661,
       "tag": "0013_welcome_use_cases",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789823005898,
+      "tag": "0014_turn_end_measured",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1789823262140,
+      "tag": "0015_decision_opportunities",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1789823498960,
+      "tag": "0016_debrief_window",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1789946421182,
+      "tag": "0017_study_measures",
+      "breakpoints": true
     }
   ]
 }

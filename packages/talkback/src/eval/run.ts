@@ -17,7 +17,7 @@
  * prompt, read the two reports side by side, and only then edit `prompt.ts`.
  *
  * With the LANGFUSE_* keys set — the same ones `bot.py` exports live drives
- * with — every evaluated turn is posted to Langfuse as a trace in one session
+ * with — every evaluated turn is exported to Langfuse as a trace in one session
  * (the run id), tagged `talkback-eval` and the label, carrying the reply, the
  * judge's call and their scores, so drives and eval runs sit in one project
  * under one rubric. Nothing here needs Langfuse to work.
@@ -39,10 +39,12 @@ import { findCases, type EvalCase } from "./cases";
 import { checkReply, type CheckResult } from "./checks";
 import { JUDGE_AXES, judgeTurn, type Judgement } from "./judge";
 import {
-  ingestTrace,
+  flushLangfuse,
   langfuseConfig,
-  newTraceId,
+  startLangfuse,
+  traceTurn,
   type GenerationRecord,
+  type Langfuse,
   type ScoreRecord,
 } from "./langfuse";
 import { buildTurnMessages } from "./messages";
@@ -147,6 +149,9 @@ interface TurnReport {
   id: string;
   run: number;
   setting: Setting;
+  /** When the turn began, so the exported root observation covers the work. */
+  startedAt: Date;
+  /** The OpenTelemetry trace it was exported under, or "" if it was not. */
   traceId: string;
   reply: string;
   toolCalls: { name: string; arguments: Record<string, unknown> }[];
@@ -187,7 +192,6 @@ async function runTurn(
     nudge,
   });
 
-  const traceId = newTraceId();
   const tags = ["talkback-eval", args.label, `case:${kase.id}`, `setting:${setting}`];
   // LiteLLM keeps `metadata` on its own request log, so spend per prompt
   // version is attributable there too. Langfuse is written to directly below.
@@ -202,6 +206,7 @@ async function runTurn(
   // The conversation model, exactly as the container calls it: no
   // temperature, thinking off is the container's concern (it disables it for
   // latency, which does not change what is said), the same message shape.
+  // This is also where the turn begins, so the root observation covers it.
   const startedAt = new Date();
   const result = await chat(messages, {
     role: "converse",
@@ -250,7 +255,9 @@ async function runTurn(
     id: kase.id,
     run,
     setting,
-    traceId,
+    startedAt,
+    // Assigned by OpenTelemetry when the turn is exported, below.
+    traceId: "",
     reply: result.content,
     toolCalls: result.toolCalls ?? [],
     check,
@@ -294,11 +301,17 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const cases = findCases(args.only);
   const runId = `eval-${args.label}-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-  const langfuse = langfuseConfig();
+  const config = langfuseConfig();
+  const langfuse: Langfuse | null = config ? startLangfuse(config) : null;
 
   console.log(`talk-back prompt eval  label=${args.label}  cases=${cases.length}  runs=${args.runs}  judge=${args.judge}`);
   console.log(`model: ${process.env.MODEL_CONVERSE ?? "(MODEL_CONVERSE unset)"}  judge: ${process.env.MODEL_REASONING ?? "(MODEL_REASONING unset)"}`);
-  console.log(`langfuse session: ${runId}${langfuse ? "  → " + langfuse.host : "  (LANGFUSE_* unset: nothing posted)"}`);
+  console.log(
+    `langfuse session: ${runId}` +
+      (config
+        ? `  → ${config.baseUrl}${config.environment ? ` (env ${config.environment})` : ""}`
+        : "  (LANGFUSE_* unset: nothing exported)"),
+  );
   console.log("");
 
   const reports: TurnReport[] = [];
@@ -317,6 +330,7 @@ async function main(): Promise<void> {
           id: kase.id,
           run,
           setting: args.setting ?? kase.setting,
+          startedAt: new Date(),
           traceId: "",
           reply: "",
           toolCalls: [],
@@ -354,8 +368,7 @@ async function main(): Promise<void> {
             : []),
         ];
         try {
-          await ingestTrace(langfuse, {
-            id: report.traceId,
+          report.traceId = traceTurn(langfuse, {
             // The same naming the container uses for a drive, so both sort together.
             name: `eval · ${kase.id}`,
             sessionId: runId,
@@ -366,6 +379,7 @@ async function main(): Promise<void> {
             metadata: { case: kase.id, run, about: kase.about, setting: report.setting },
             generations: report.generations,
             scores,
+            startedAt: report.startedAt,
           });
           tracesPosted++;
         } catch (err) {
@@ -373,6 +387,19 @@ async function main(): Promise<void> {
           if (tracesFailed === 1) console.log(`      · langfuse: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
+    }
+  }
+
+  // Spans are batched and scores are queued, so the run is not over until both
+  // are out. The POST-per-turn this replaced needed no such step; getting it
+  // wrong loses the tail of a run silently, which is why a failure here is
+  // counted against the traces rather than swallowed.
+  let flushError: string | null = null;
+  if (langfuse) {
+    try {
+      await flushLangfuse(langfuse);
+    } catch (err) {
+      flushError = err instanceof Error ? err.message : String(err);
     }
   }
 
@@ -387,7 +414,13 @@ async function main(): Promise<void> {
     const verdicts = judged.filter((r) => r.judgement!.verdict === "pass").length;
     console.log(`judge:  ${verdicts}/${judged.length} pass  ${summary}`);
   }
-  if (langfuse) console.log(`langfuse: ${tracesPosted} traces posted${tracesFailed ? `, ${tracesFailed} failed` : ""}`);
+  if (langfuse) {
+    console.log(
+      `langfuse: ${tracesPosted} traces exported` +
+        (tracesFailed ? `, ${tracesFailed} failed` : "") +
+        (flushError ? `, flush failed (${flushError})` : ""),
+    );
+  }
 
   if (args.out) {
     writeFileSync(

@@ -59,8 +59,25 @@ import {
  * next VERSION of it rather than a new row. The handle is wire format, and the
  * contract says so — speaking it aloud is the same failure class as reading
  * `<silence>` out in a car.
+ *
+ * talkback-13 answers the first formative pilot (19 Sep 2026). The agent asked
+ * "Soll ich die genauen Zeiten für einen davon suchen?", the participant said
+ * "Ja.", and the model replied `<silence>`. Forty seconds later she asked "Und
+ * dann?"; that was declined too, and she stopped the recording and asked out
+ * loud whether the app had died. WHEN TO SPEAK said only that a question put
+ * to the agent is always answered — the converse, that an answer to the
+ * agent's OWN question is always acted on, was missing, and nothing tracked
+ * that the last spoken turn had asked something. The rule is below, and
+ * `SilenceGate` no longer trusts the decline in that position: it re-runs the
+ * completion once with `ANSWER_RETRY_NUDGE` and, failing that, speaks
+ * `ANSWER_ACKNOWLEDGEMENTS`.
+ *
+ * It also names the phrases the container speaks with no completion behind
+ * them: that acknowledgement, and the keep-alive said while a search the agent
+ * has already announced is still running (`SEARCH_WAIT_PHRASES`). Both reach
+ * the speaker, so both are written to `agent_turn` like any other turn.
  */
-export const TALKBACK_CONFIG_VERSION = "talkback-12";
+export const TALKBACK_CONFIG_VERSION = "talkback-13";
 
 /**
  * The default register: brief, and present.
@@ -100,6 +117,7 @@ You are NOT an assistant in the usual sense. Most of what you hear is someone wo
 
 WHEN TO SPEAK
 - A question put to you is ALWAYS answered, including hard or open ones like "what do you think?". Take the most likely reading and answer it. Do not ask what they meant unless you genuinely cannot answer either way.
+- And the other way round: if YOUR last turn asked them something, their next words are its answer, so act on it. A bare "yes", "no", "the second one", "go on" is a complete answer — do the thing you offered rather than asking again. Never reply <silence> to an answer you asked for; they are waiting on you, and with no screen they cannot tell waiting from broken.
 - Speak when you are addressed, even loosely. "Right?", "does that make sense?", "what was the other one?" are addressed to you.
 - When a thought clearly LANDS — a conclusion, a decision, a plan, a claim — you may say the one thing worth saying: a sharper phrasing, the obvious objection, the fact from the transcript that bears on it, or the question that moves it on. One sentence, then stop.
 - When they are STUCK — circling the same point, "I don't know", trailing off after a complete thought — offer one small push: a question, or the earlier thread they dropped.
@@ -184,6 +202,92 @@ export const SILENCE_NUDGE = `(An unprompted moment: they have been quiet for {s
 /** Substitute the placeholders the way `Offers` does in the container. */
 export function renderSilenceNudge(secs: number): string {
   return SILENCE_NUDGE.replace("{secs}", String(secs)).replace("{silence}", SILENCE_TOKEN);
+}
+
+/* ---------------------------------------------------------------------------
+ * When the model declines an answer it asked for
+ * ------------------------------------------------------------------------- */
+
+/**
+ * What `SilenceGate` injects before re-running a completion that declined an
+ * answer to the agent's own question.
+ *
+ * A second chance rather than a hard override, because the model is the only
+ * thing that knows what the question was and what the answer commits it to.
+ * The sentinel is taken off the table for this one completion — which is the
+ * whole point: on the pilot drive the decline was not a judgement call, it was
+ * the default winning over an obligation the prompt never stated.
+ *
+ * MIRRORED IN `bot.py` as `ANSWER_RETRY_NUDGE`, like the engine's nudges.
+ */
+export const ANSWER_RETRY_NUDGE = `(They have just answered the question YOU asked them. ${SILENCE_TOKEN} is not available on this turn: act on their answer and say in one short sentence what you are doing. If you cannot tell what they meant, ask one short question instead — but say something.)`;
+
+/**
+ * The last resort, spoken when even the re-run declines.
+ *
+ * A fixed sentence rather than nothing, because the failure this closes is not
+ * a bad answer, it is a person waiting in a car on a commitment they already
+ * made with no way to tell waiting from broken. It admits what happened and
+ * hands the turn back, and it deliberately does NOT end in a question mark:
+ * a question here would re-arm the same guard on their reply and could
+ * ping-pong.
+ *
+ * Per language, because the drive's language is a property of the recording
+ * (`capture_session.stt_language`) and an English sentence in the middle of a
+ * German drive is its own small failure. Falls back to English for a drive on
+ * auto-detect, which is what the participant would have got anyway.
+ *
+ * MIRRORED IN `bot.py` as `ANSWER_ACKNOWLEDGEMENTS`.
+ */
+export const ANSWER_ACKNOWLEDGEMENTS: Readonly<Record<string, string>> = {
+  en: "Sorry, I lost that. Say it again.",
+  de: "Entschuldige, das ist mir entgangen. Sag es noch mal.",
+};
+
+/**
+ * What the agent says while a tool it has already announced is still running.
+ *
+ * The first pilot's turns that called a tool took a median of 8.4 seconds
+ * against 1.3 for turns that did not, while the tool itself never took more
+ * than 0.77 — the gap is the model composing the answer once the result is
+ * back, and the car is silent through it. The participant asked for exactly
+ * this, unprompted, in her debrief: a placeholder before a lookup, and a
+ * periodic one during a long one. The first half already exists
+ * (`WebSearch.record_announcement`); this is the second.
+ *
+ * In order, one per keep-alive, and the list is the limit: after the last one
+ * the agent falls silent rather than nagging.
+ *
+ * EVERY PHRASE CARRIES AT LEAST THREE MEANINGFUL WORDS, which is not a style
+ * note. These are spoken aloud, so the microphone hears them and Whisper puts
+ * them in `utterance`; `isEcho` refuses to judge a line under `MIN_WORDS`
+ * because containment means nothing over two tokens, so a shorter filler could
+ * not be filtered out and would come back as the participant's own words.
+ * "Still looking." is two after `NOISE` is dropped, which is why it is not the
+ * phrase. `echo.test.ts` holds the line.
+ *
+ * MIRRORED IN `bot.py` as `SEARCH_WAIT_PHRASES`.
+ */
+export const SEARCH_WAIT_PHRASES: Readonly<Record<string, readonly string[]>> = {
+  en: ["Still looking that up.", "Bear with me, I am still searching."],
+  de: ["Ich suche noch.", "Hab ein bisschen Geduld, ich suche noch."],
+};
+
+/** The language the container speaks its fixed phrases in. Null is auto-detect. */
+export const FALLBACK_PHRASE_LANGUAGE = "en";
+
+function phrasesFor<T>(table: Readonly<Record<string, T>>, language: string | null | undefined): T {
+  return (language && table[language]) || table[FALLBACK_PHRASE_LANGUAGE]!;
+}
+
+export function answerAcknowledgement(language: string | null | undefined): string {
+  return phrasesFor(ANSWER_ACKNOWLEDGEMENTS, language);
+}
+
+/** The nth keep-alive, or null once the list is exhausted. */
+export function searchWaitPhrase(language: string | null | undefined, index: number): string | null {
+  const phrases = phrasesFor(SEARCH_WAIT_PHRASES, language);
+  return phrases[index] ?? null;
 }
 
 /**

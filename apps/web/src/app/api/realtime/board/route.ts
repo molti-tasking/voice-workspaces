@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { captureSession, eq, getDb } from "@voicemural/db";
 import { boardEnabledAt } from "@voicemural/db/board";
-import { loadOps } from "@voicemural/db/workspace";
+import { loadOps, withBoardLock } from "@voicemural/db/workspace";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import { boardEditFromToolCall } from "@voicemural/talkback";
 import { planBoardEdit, type PlannedCard } from "@voicemural/workspace";
@@ -78,38 +78,60 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: `${call.error}. Nothing was changed.` }, noStore);
   }
 
-  const ops = await loadOps(payload.userId);
-  const plan = planBoardEdit(ops, call.edit, {
-    via: "agent",
-    opId: parsed.data.opId,
-    target: call.target,
+  /* LOAD, PLAN AND APPLY AS ONE CRITICAL SECTION.
+   *
+   * The container issues tool calls concurrently, and each plan was being made
+   * against a snapshot of the op log taken before the other's write. On the
+   * first formative pilot that produced `workspace_op` seq 191 and 193: two
+   * `create_topic` operations, both titled "Montag", 3ms apart, from two
+   * `add_task` calls that each decided the topic did not exist yet. Extraction
+   * noticed and merged them at seq 197, so the system healed — but a board that
+   * briefly shows the same topic twice is a board the participant may act on,
+   * and nothing promises the merge arrives before they do.
+   *
+   * The whole decision has to be inside the lock, not just the write: the bug
+   * is the read going stale between them. See `withBoardLock`. */
+  const outcome = await withBoardLock(payload.userId, async (db) => {
+    const ops = await loadOps(payload.userId, db);
+    const plan = planBoardEdit(ops, call.edit, {
+      via: "agent",
+      opId: parsed.data.opId,
+      target: call.target,
+    });
+
+    switch (plan.status) {
+      case "not_found":
+      case "ambiguous":
+      case "not_a_task":
+      case "invalid":
+        return { ok: false as const, error: `${plan.reason}. Nothing was changed.` };
+      case "unchanged":
+        return {
+          ok: true as const,
+          changed: false,
+          note: "It was already like that; nothing changed.",
+          ...said(plan.card),
+        };
+      case "exists":
+        return {
+          ok: true as const,
+          changed: false,
+          note: "That task is already on the board; nothing was added.",
+          ...said(plan.card),
+        };
+    }
+
+    await applyBoardEdit({
+      userId: payload.userId,
+      ops,
+      plan,
+      by: "agent",
+      captureSessionId: payload.captureSessionId,
+      db,
+    });
+
+    return { ok: true as const, changed: true, ...said(plan.card) };
   });
 
-  switch (plan.status) {
-    case "not_found":
-    case "ambiguous":
-    case "not_a_task":
-    case "invalid":
-      return NextResponse.json({ ok: false, error: `${plan.reason}. Nothing was changed.` }, noStore);
-    case "unchanged":
-      return NextResponse.json(
-        { ok: true, changed: false, note: "It was already like that; nothing changed.", ...said(plan.card) },
-        noStore,
-      );
-    case "exists":
-      return NextResponse.json(
-        { ok: true, changed: false, note: "That task is already on the board; nothing was added.", ...said(plan.card) },
-        noStore,
-      );
-  }
-
-  await applyBoardEdit({
-    userId: payload.userId,
-    ops,
-    plan,
-    by: "agent",
-    captureSessionId: payload.captureSessionId,
-  });
-
-  return NextResponse.json({ ok: true, changed: true, ...said(plan.card) }, noStore);
+  return NextResponse.json(outcome, noStore);
 }

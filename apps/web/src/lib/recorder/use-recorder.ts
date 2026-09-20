@@ -2,9 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CaptureSetting } from "@voicemural/shared";
+import type { CaptureSetting, SettingSource } from "@voicemural/shared";
 import { capture } from "@/lib/analytics/client";
+import { DEBRIEF_MAX_MS } from "@/lib/study/debrief";
 import type { UseCaseId } from "@/lib/use-cases";
+import { earcon } from "./earcon";
 import {
   clearOpenSession,
   deleteRegistration,
@@ -44,7 +46,21 @@ export function pickMimeType(): string | null {
   return null;
 }
 
-export type RecorderStatus = "idle" | "requesting" | "recording" | "stopping";
+/**
+ * `debriefing` is still RECORDING.
+ *
+ * Tapping Stop no longer tears the microphone down. It closes the drive and
+ * opens the post-drive debrief: the three questions from `/study`, answered
+ * aloud, with the same chunk loop running underneath. The seam is marked on
+ * the session rather than made of silence, because everything said in it is
+ * the one thing researchers may read (see `capture_session.debriefStartedOffsetMs`).
+ *
+ * It exists because the first formative pilot threw the best material away.
+ * `ended_at` was 08:51:08; the accent observation, the request for a filler
+ * phrase while a search runs, and "ist jetzt die App ausgegangen?" all came
+ * after it, and survive only because somebody happened to be filming.
+ */
+export type RecorderStatus = "idle" | "requesting" | "recording" | "debriefing" | "stopping";
 
 export interface RecorderState {
   status: RecorderStatus;
@@ -66,6 +82,14 @@ export interface RecorderState {
   lastSessionId: string | null;
   /** Recorded length of that session, for the confirmation line. */
   lastSessionMs: number;
+  /**
+   * When the debrief window opened, in ms into the recording, or null.
+   *
+   * The screen counts down from here. Held rather than derived from a
+   * wall-clock timestamp so it is on the same clock as the chunks, which is the
+   * clock the stored offset has to be on.
+   */
+  debriefStartedMs: number | null;
 }
 
 /**
@@ -149,9 +173,15 @@ export function useRecorder() {
     currentSessionId: null,
     lastSessionId: null,
     lastSessionMs: 0,
+    debriefStartedMs: null,
   });
 
   const runningRef = useRef(false);
+  /* True from Stop until Done. The chunk loop does not look at it — capture
+   * carries on exactly as before — but `stop()` does, so a second tap on the
+   * big button cannot restart the debrief it is already in. */
+  const debriefingRef = useRef(false);
+  const debriefTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const stopChunkRef = useRef<(() => void) | null>(null);
@@ -257,6 +287,16 @@ export function useRecorder() {
           // on "recording" until a page reload. The anticipated cause of this
           // error is iOS suspending capture on screen lock — the one
           // interruption a drive is most likely to hit.
+          //
+          // The debrief is torn down here too. It can be open when this fires —
+          // capture continues across Stop — and a flag left set would make the
+          // NEXT drive's Stop a no-op, which is the same wedged UI one drive
+          // later and far harder to connect to its cause.
+          debriefingRef.current = false;
+          if (debriefTimerRef.current) {
+            clearTimeout(debriefTimerRef.current);
+            debriefTimerRef.current = null;
+          }
           publishStream(null);
           streamRef.current?.getTracks().forEach((t) => t.stop());
           streamRef.current = null;
@@ -272,6 +312,7 @@ export function useRecorder() {
           metaRef.current = null;
           patch({
             status: "idle",
+            debriefStartedMs: null,
             currentSessionId: null,
             lastSessionId: meta.captureSessionId,
             lastSessionMs: meta.elapsedMs,
@@ -328,10 +369,11 @@ export function useRecorder() {
    */
   const start = useCallback(async (
     setting?: CaptureSetting,
-    source?: "device" | "motion" | "default" | "chosen",
+    source?: SettingSource,
     voiceId?: string,
     sttLanguage?: string | null,
     useCase?: UseCaseId,
+    conditionOverride?: Record<string, boolean>,
   ) => {
     if (runningRef.current) return;
 
@@ -407,6 +449,11 @@ export function useRecorder() {
       id: meta.captureSessionId,
       startedAt: new Date(meta.startedAt).toISOString(),
       deviceInfo: { userAgent: navigator.userAgent, mimeType },
+      // How that setting was arrived at: observed, remembered, or corrected.
+      // Stored on the drive, not only reported to analytics — a profile that
+      // was guessed and one that was observed are different facts, and Pilot
+      // 01's `driving` was a guess nobody could see in the data.
+      settingSource: source,
       setting,
       voiceId,
       // Null is normal (auto-detect); undefined on the wire keeps zod happy.
@@ -416,6 +463,13 @@ export function useRecorder() {
       // in a dead zone still registers under the right one when the uploader
       // replays it.
       useCase,
+      // A per-drive override of the study condition, for the cold-start test.
+      // Honoured only for pilot accounts; the route says so when it drops one.
+      // Undefined rather than {} so an ordinary drive sends nothing at all.
+      conditionOverride:
+        conditionOverride && Object.keys(conditionOverride).length > 0
+          ? conditionOverride
+          : undefined,
     };
     await saveRegistration(registration);
 
@@ -441,15 +495,38 @@ export function useRecorder() {
       currentSessionId: meta.captureSessionId,
       lastSessionId: null,
     });
+    /* SAY SO, OUT LOUD. Everything that confirmed a drive had started was
+     * visual — the button's colour, the level meter inside it, the timer —
+     * and the person this is built for has just put the phone in a cradle and
+     * looked back at the road. Two rising notes, here rather than in the
+     * component, because this is the line where recording actually begins and
+     * a confirmation that fires anywhere else confirms something else. A tick
+     * before `runLoop` opens the first chunk, so the tone is not in the
+     * recording it announces. */
+    earcon("started");
     await acquireWakeLock();
     void runLoop(stream, meta);
   }, [acquireWakeLock, patch, runLoop]);
 
-  const stop = useCallback(async () => {
+  /**
+   * Close the drive and end the recording. The second half of `stop`.
+   *
+   * Split out because Stop no longer does this: it opens the debrief, and this
+   * runs when the participant taps Done or the window runs out. `finishedAt`
+   * is where the debrief ended on the chunk clock, which is what bounds the
+   * readable window; null when there was no debrief at all (a teardown from
+   * the error path, say), and the window then runs to the end of the recording.
+   */
+  const finish = useCallback(async (debriefEndedOffsetMs: number | null) => {
     if (!runningRef.current) return;
 
     patch({ status: "stopping" });
     runningRef.current = false;
+    debriefingRef.current = false;
+    if (debriefTimerRef.current) {
+      clearTimeout(debriefTimerRef.current);
+      debriefTimerRef.current = null;
+    }
 
     // End the in-flight chunk so its audio is kept rather than discarded.
     stopChunkRef.current?.();
@@ -476,6 +553,13 @@ export function useRecorder() {
       try {
         await fetch(`/api/capture-sessions/${meta.captureSessionId}/end`, {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // Where the debrief ended, so the readable window is bounded. A
+          // failed call leaves it null, which reads as running to the end of
+          // the recording — smaller-than-the-truth is the safe direction.
+          body: JSON.stringify(
+            debriefEndedOffsetMs === null ? {} : { debriefEndedOffsetMs },
+          ),
         });
       } catch {
         // Best-effort. The worker's sweep closes sessions that go quiet, so a
@@ -493,6 +577,7 @@ export function useRecorder() {
       currentSessionId: null,
       lastSessionId: meta?.captureSessionId ?? null,
       lastSessionMs: meta?.elapsedMs ?? 0,
+      debriefStartedMs: null,
     });
     kickUploader();
 
@@ -501,6 +586,77 @@ export function useRecorder() {
     // fetched before this recording existed — and the drive looks lost.
     router.refresh();
   }, [patch, releaseWakeLock, router]);
+
+  /**
+   * Stop the drive — and keep recording, for the debrief.
+   *
+   * THE MICROPHONE STAYS OPEN, which is the whole point. The three questions
+   * on `/study` are asked here, answered aloud, and the answers are the one
+   * part of a drive researchers may read. The first formative pilot discarded
+   * exactly this material: the recording ended, and everything the participant
+   * said about the system afterwards exists only on somebody's camera.
+   *
+   * The chunk loop, the wake lock and the uploader are untouched — a debrief is
+   * ordinary capture with a marker on it. What DOES stop is talk-back, because
+   * `isRecording` in the capture provider is false from here: these answers are
+   * for the study, and an agent replying to them would be talking over the
+   * one channel it is not part of.
+   */
+  const stop = useCallback(async () => {
+    if (!runningRef.current || debriefingRef.current) return;
+
+    const meta = metaRef.current;
+    if (!meta) {
+      // Nothing to debrief about. Close it the way the old Stop did.
+      await finish(null);
+      return;
+    }
+
+    debriefingRef.current = true;
+    const startedAtMs = meta.elapsedMs;
+    patch({ status: "debriefing", debriefStartedMs: startedAtMs });
+    // The same two notes inverted: the drive is over and the debrief has
+    // begun. The microphone is still open, which is exactly the state a person
+    // cannot see, so it is the state that most needs a sound of its own.
+    earcon("stopped");
+
+    // Marked before anything else can go wrong with the connection: a debrief
+    // whose start never reached the server is a debrief nothing may read.
+    try {
+      await fetch(`/api/capture-sessions/${meta.captureSessionId}/debrief`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ startedOffsetMs: startedAtMs }),
+      });
+    } catch {
+      // Best-effort, like /end. The window simply stays unmarked, and nothing
+      // in it is readable — which is the safe direction to fail in.
+    }
+
+    capture("debrief_started", {
+      capture_session_id: meta.captureSessionId,
+      recording_duration_ms: startedAtMs,
+    });
+
+    // The ceiling, not the target. Done ends it sooner, and a phone put down
+    // ends it here rather than recording somebody's evening.
+    debriefTimerRef.current = setTimeout(() => {
+      debriefTimerRef.current = null;
+      void finish(metaRef.current?.elapsedMs ?? null);
+    }, DEBRIEF_MAX_MS);
+  }, [finish, patch]);
+
+  /** Done with the three questions: close the window and end the recording. */
+  const finishDebrief = useCallback(async () => {
+    if (!debriefingRef.current) return;
+    await finish(metaRef.current?.elapsedMs ?? null);
+  }, [finish]);
+
+  useEffect(() => {
+    return () => {
+      if (debriefTimerRef.current) clearTimeout(debriefTimerRef.current);
+    };
+  }, []);
 
   /** Discard a recovered session's marker. Queued chunks still upload. */
   const dismissResumable = useCallback(async () => {
@@ -518,5 +674,5 @@ export function useRecorder() {
     kickUploader();
   }, [patch, state.resumable]);
 
-  return { ...state, start, stop, dismissResumable, chunkMs: CHUNK_MS };
+  return { ...state, start, stop, finishDebrief, dismissResumable, chunkMs: CHUNK_MS };
 }

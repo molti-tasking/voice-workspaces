@@ -66,6 +66,8 @@ services:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-}
+      - LANGFUSE_TRACING_ENVIRONMENT=${LANGFUSE_TRACING_ENVIRONMENT:-}
     ports:
       - "7860:7860"
     # Peer-to-peer WebRTC needs the host's network path for ICE to work without

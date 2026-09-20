@@ -134,6 +134,16 @@ Chunks are written to IndexedDB **first** and deleted only once the server
 acknowledges them. A commute goes through tunnels; without the local queue,
 losing signal loses the recording.
 
+**Stop does not end the recording — it opens the debrief.** The three questions
+from `/study` go on screen and the same chunk loop keeps running underneath, up
+to ninety seconds or until Done, marked on the session by
+`debrief_started_offset_ms` / `debrief_ended_offset_ms`. That interval is the
+one part of a drive researchers may read (`/study` promises nobody reads the
+rest), so the boundary is a property of an interval rather than of a session.
+Talk-back stops at Stop; capture does not. See `PILOT_01.md` for why this
+exists: the first pilot's most useful material came after `ended_at` and
+survives only on somebody's camera.
+
 **Audio is transient.** A chunk survives only until its transcript is committed,
 then the file is deleted and `storage_key` is nulled. The transcript is the
 record; the audio is scaffolding. It cannot be dropped at upload time, because
@@ -287,9 +297,19 @@ defaults:
 | `pnpm study:condition --user <id> --set '{"agendaOffers":true}'` | the condition for that person's NEXT drives; each drive freezes its own copy (`--clear` resets to today's behaviour) |
 | `pnpm study:condition --user <id>` | print the template and the last ten drives' conditions |
 | `pnpm study:export` | one JSONL file per participant into `storage/study-export/` — counts, timings, ids and enums, no transcript, agent or workspace text |
+| `pnpm study:metrics [--user <id>] [--print]` | the four measure groups — system behaviour, steerability, thinking, relief — per drive and per participant, into `storage/study-metrics/` |
+| `pnpm study:review --user <id>` | the cards awaiting a day-7 verdict, oldest first |
+| `pnpm study:review --user <id> --card <id> --outcome done\|open\|lost` | record one verdict |
 
 `--include-text` on the export is refused unless `--user` is listed in
 `STUDY_PILOT_USER_IDS`: it exists for the researcher's own pilot account only.
+
+`study:metrics` reads transcript text to classify corrections and repeat
+requests, and returns counts only — the classification happens inside the
+privacy boundary and no text reaches the file. `--re-prompt-ms` sets how long
+the agent's silence must last before the participant's next words count as a
+re-prompt (default 5000); `--tz` sets the zone whose calendar days the revisit
+measures count in, overriding `STUDY_TIME_ZONE` for that run.
 
 ---
 

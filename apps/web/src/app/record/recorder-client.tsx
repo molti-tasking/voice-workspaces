@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatOffset } from "@voicemural/shared";
 // The `/setting` subpath, NOT the package index: the index re-exports
 // retrieval.ts, which imports @voicemural/db, and that drags the Postgres
@@ -9,14 +9,18 @@ import { formatOffset } from "@voicemural/shared";
 import { SETTING_PROFILES } from "@voicemural/talkback/setting";
 import { TALKBACK_ENABLED, useCapture } from "@/components/capture-provider";
 import {
+  ConditionToggles,
   LanguagePicker,
   SettingPicker,
   VoicePicker,
 } from "@/components/capture-settings";
 import { MicLevel } from "@/components/mic-level";
+import { RecordingBadge } from "@/components/recording-badge";
 import { useCues } from "@/lib/display/use-cues";
+import { DEBRIEF_MAX_MS, DEBRIEF_QUESTIONS } from "@/lib/study/debrief";
 import { CuePanel } from "./cue-panel";
 import { DraftPanel } from "./draft-panel";
+import { PostDriveItems, PreDriveItem, recordStudyResponse } from "./study-items";
 import { TopicTitle } from "./topic-title";
 
 /**
@@ -33,14 +37,39 @@ export function RecorderClient() {
     recorder: rec,
     talkback: talk,
     isRecording,
+    isDebriefing,
     isBusy,
     setting,
     source,
+    settingUnknown,
     startRecording,
     stopRecording,
+    finishDebrief,
   } = useCapture();
 
+  // Open by default when nothing has told us where they are. The fallback is
+  // `driving` — 25-word replies, no screen — and Pilot 01 ran a stationary
+  // first-time user under exactly that because the question was never put.
   const [showPicker, setShowPicker] = useState(false);
+  const pickerOpen = showPicker || settingUnknown;
+
+  /* The pre item's answer, held until a drive exists to attach it to.
+   *
+   * A rating is about a session and the session id is generated at the moment
+   * of starting, so the answer cannot be posted when it is given. Answering is
+   * never a precondition for recording: a participant who taps record straight
+   * away simply has no pre value, which is a missing cell rather than a lost
+   * drive. */
+  const pendingPre = useRef<Record<string, number>>({});
+  useEffect(() => {
+    const sessionId = rec.currentSessionId;
+    if (!sessionId) return;
+    const held = pendingPre.current;
+    pendingPre.current = {};
+    for (const [item, value] of Object.entries(held)) {
+      recordStudyResponse(sessionId, "pre", item, value);
+    }
+  }, [rec.currentSessionId]);
   const profile = SETTING_PROFILES[setting];
   const hearing = talk.status === "speaking";
 
@@ -60,7 +89,17 @@ export function RecorderClient() {
     // recorder, so the dock is on this screen too — with its own record button
     // suppressed, because the 224px one below is the transport here.
     <main className="no-touch-fuss flex min-h-dvh flex-col items-center justify-between p-6 pb-40">
-      <header className="flex w-full max-w-md items-center justify-end text-sm text-white/50">
+      <header className="flex w-full max-w-md items-center justify-between gap-3 text-sm text-white/50">
+        {/* PRESENT OR ABSENT, never a shade of something. Everything else that
+            said "recording" was a modifier of a control that is always there —
+            a colour, a meter inside the button, a timer that starts counting —
+            and a first-time participant has nothing to compare it against.
+            See `RecordingBadge`. */}
+        {isRecording || isDebriefing ? (
+          <RecordingBadge elapsedMs={rec.elapsedMs} debriefing={isDebriefing} />
+        ) : (
+          <span />
+        )}
         <StatusPills
           pending={rec.pendingUploads}
           uploading={rec.uploading}
@@ -83,11 +122,24 @@ export function RecorderClient() {
         <button
           type="button"
           onClick={() => {
+            if (isDebriefing) {
+              // Done with the three questions. The same enormous target, so a
+              // participant who has already put the phone in a pocket has one
+              // gesture to learn rather than two.
+              finishDebrief();
+              return;
+            }
             if (isRecording) {
               // One tap, no confirmation: this target is 224px and is meant to
               // be hit without looking. The dock's 64px button arms first —
               // see `STOP_ARM_MS` there.
               stopRecording();
+              return;
+            }
+            // Nothing has said where they are, so ask rather than start under
+            // a guess. See `settingUnknown`.
+            if (settingUnknown) {
+              setShowPicker(true);
               return;
             }
             startRecording();
@@ -96,25 +148,41 @@ export function RecorderClient() {
           className={[
             "relative cursor-pointer flex size-56 items-center justify-center rounded-full text-2xl font-medium",
             "transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
-            isRecording
-              ? hearing
-                ? "bg-accent text-white shadow-[0_0_0_18px_var(--color-accent-soft)]"
-                : "bg-accent text-white shadow-[0_0_0_12px_var(--color-accent-soft)]"
-              : "bg-ink-soft text-white ring-1 ring-line",
+            isDebriefing
+              ? // Still recording, and it must not look like it is not — but not
+                // the drive's own colour either, because the channel has
+                // changed and the participant was told it would.
+                "bg-amber-500/90 text-white shadow-[0_0_0_12px_rgba(245,158,11,0.18)]"
+              : isRecording
+                ? hearing
+                  ? "bg-accent text-white shadow-[0_0_0_18px_var(--color-accent-soft)]"
+                  : "bg-accent text-white shadow-[0_0_0_12px_var(--color-accent-soft)]"
+                : "bg-ink-soft text-white ring-1 ring-line",
           ].join(" ")}
         >
-          {isRecording && <MicLevel />}
+          {(isRecording || isDebriefing) && <MicLevel />}
           <span className="relative">
-            {isBusy ? "…" : isRecording ? "Stop" : "Record"}
+            {isBusy ? "…" : isDebriefing ? "Done" : isRecording ? "Stop" : "Record"}
           </span>
         </button>
 
         <p className="h-5 text-center text-sm text-white/40">
-          {isRecording ? (
+          {isBusy ? (
+            // A tap that opens a microphone takes about a second, and until
+            // now that second showed an ellipsis on a disabled button — which
+            // reads as "it did not hear me" and invites a second tap.
+            <span className="text-white/60">
+              {rec.status === "requesting" ? "Opening the microphone…" : "Saving…"}
+            </span>
+          ) : isDebriefing ? (
+            "Still recording. Answer out loud, then tap Done."
+          ) : isRecording ? (
             profile.hint
+          ) : settingUnknown ? (
+            <span className="text-amber-200/80">Where are you? Pick one to start.</span>
           ) : (
             <>
-              {source === "chosen" ? "" : "Looks like: "}
+              {source === "chosen" || source === "remembered" ? "" : "Looks like: "}
               <span className="text-white/70">{profile.label}</span>
               {" · "}
               <button
@@ -128,11 +196,33 @@ export function RecorderClient() {
           )}
         </p>
 
-        {!isRecording && showPicker && <SettingPicker />}
+        {isDebriefing && (
+          <DebriefPanel
+            startedMs={rec.debriefStartedMs}
+            elapsedMs={rec.elapsedMs}
+            captureSessionId={rec.currentSessionId}
+          />
+        )}
 
-        {!isRecording && <VoicePicker />}
+        {!isRecording && !isDebriefing && pickerOpen && <SettingPicker />}
 
-        {!isRecording && <LanguagePicker />}
+        {!isRecording && !isDebriefing && <VoicePicker />}
+
+        {!isRecording && !isDebriefing && <LanguagePicker />}
+
+        {/* Pilot builds only, and pilot accounts only. See `ConditionToggles`. */}
+        {!isRecording && !isDebriefing && <ConditionToggles />}
+
+        {/* Before the drive, and only when one can start: the item is about
+            what they are carrying now, and asking it under a settings sheet
+            they are still working through would be asking it too early. */}
+        {!isRecording && !isDebriefing && !settingUnknown && (
+          <PreDriveItem
+            onAnswer={(item, value) => {
+              pendingPre.current[item] = value;
+            }}
+          />
+        )}
 
         {TALKBACK_ENABLED && isRecording && <TopicTitle title={talk.title} />}
 
@@ -144,7 +234,7 @@ export function RecorderClient() {
       </div>
 
       <footer className="w-full max-w-md space-y-3 text-sm">
-        {rec.lastSessionId && !isRecording && (
+        {rec.lastSessionId && !isRecording && !isDebriefing && (
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
             <p className="mb-1 font-medium text-emerald-100">
               Saved {formatOffset(rec.lastSessionMs)}
@@ -183,7 +273,7 @@ export function RecorderClient() {
           </Notice>
         )}
 
-        {rec.resumable && !isRecording && (
+        {rec.resumable && !isRecording && !isDebriefing && (
           <Notice tone="warn" title="Unfinished session found">
             <div className="space-y-2">
               <p>
@@ -206,6 +296,65 @@ export function RecorderClient() {
         )}
       </footer>
     </main>
+  );
+}
+
+/**
+ * The three questions, asked while the microphone is still open.
+ *
+ * WHY THIS EXISTS AT ALL. The first formative pilot (19 Sep 2026) recorded
+ * 5m44s and then stopped, and the most useful thing the participant said came
+ * afterwards: that the agent mangled a place name, that she wanted it to say
+ * "warte kurz, ich suche" before a lookup, and — watching it sit silent — "ist
+ * jetzt die App ausgegangen?". None of it is in the ledger. It exists because
+ * somebody happened to be filming.
+ *
+ * READ DELIBERATELY, unlike everything else on this screen. The cue panel is
+ * glanceable because a driver cannot read; this appears only once the drive is
+ * over and the phone is in a hand. The questions are still spoken aloud rather
+ * than typed, and "nothing today" is a complete answer to all three.
+ */
+function DebriefPanel({
+  startedMs,
+  elapsedMs,
+  captureSessionId,
+}: {
+  startedMs: number | null;
+  elapsedMs: number;
+  captureSessionId: string | null;
+}) {
+  // From the chunk clock, not a wall clock: it is the same clock the stored
+  // offsets are on, and it advances a chunk at a time, which is exactly the
+  // granularity worth showing.
+  const usedMs = startedMs === null ? 0 : Math.max(0, elapsedMs - startedMs);
+  const leftSecs = Math.max(0, Math.ceil((DEBRIEF_MAX_MS - usedMs) / 1000));
+
+  return (
+    <section className="w-full max-w-md rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+      <header className="mb-3 flex items-baseline justify-between gap-3">
+        <h2 className="text-sm font-medium text-amber-100">Before you go</h2>
+        <span className="font-mono text-xs tabular-nums text-amber-200/60">
+          {leftSecs}s
+        </span>
+      </header>
+      <ol className="space-y-2.5 text-sm leading-relaxed text-white/80">
+        {DEBRIEF_QUESTIONS.map((question, i) => (
+          <li key={question} className="flex gap-3">
+            <span className="shrink-0 font-mono text-xs text-white/30">{i + 1}</span>
+            {question}
+          </li>
+        ))}
+      </ol>
+      <p className="mt-3 text-xs text-white/40">
+        Say them out loud. These answers are the part of a drive the research
+        team reads — nothing else is. &ldquo;Nothing today&rdquo; is a fine
+        answer.
+      </p>
+      {/* Under the spoken questions, not over them: those are what the window
+          is for, and a row of number buttons above them would make the drive
+          end with a form. */}
+      <PostDriveItems captureSessionId={captureSessionId} />
+    </section>
   );
 }
 

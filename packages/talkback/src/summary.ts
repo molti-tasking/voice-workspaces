@@ -1,5 +1,6 @@
 import { chat } from "@voicemural/llm";
 import { log } from "@voicemural/telemetry";
+import { sttLanguageProfile } from "./language";
 
 /**
  * The rolling summary of the current drive.
@@ -31,6 +32,31 @@ Prioritise decisions, unresolved questions, concrete next steps, and the thread 
 This is automatic transcription of unrehearsed speech, so it contains mistakes, false starts and half-finished sentences. Do not repair them into claims they did not make, and never state as fact something that reads like a transcription artefact.
 
 Return only a short Markdown bulleted list. Every bullet must begin with "- ". Use at most 6 bullets and 90 words total. Keep each bullet to one concise sentence. Use brief labels such as "Decision:", "Question:", or "Next:" when useful. Include no heading, introduction, conclusion, or standalone paragraph.`;
+
+/**
+ * The same instruction, told which language the drive is in.
+ *
+ * WHY. On the first formative pilot (19 Sep 2026) the drive was German —
+ * `stt_language = de` — and the running summary handed to the model was
+ * English. The summary is the freshest thing in the turn context, sitting
+ * closest to the driver's words, so a summary in the wrong language is
+ * pressure on every reply to leave the conversation's own language. The same
+ * drive's extracted blocks came out half English, which the extraction prompt
+ * now fixes separately (PROMPT_VERSION "6").
+ *
+ * The ENDONYM, from the recorder's own catalogue: "write in Deutsch" is
+ * clearer to a model than "write in German", and it is the word the person
+ * chose. Null — auto-detect, or a code the catalogue no longer offers — leaves
+ * the prompt exactly as it was, which is what those drives ran under.
+ *
+ * Composed here rather than in the route for the same reason the prompt lives
+ * here at all: one copy of the text.
+ */
+export function summaryPromptFor(language: string | null | undefined): string {
+  const profile = sttLanguageProfile(language);
+  if (!profile) return SUMMARY_PROMPT;
+  return `${SUMMARY_PROMPT}\n\nThis drive is being spoken in ${profile.label}. Write the summary in ${profile.label} — it is their own words you are condensing.`;
+}
 
 /**
  * Fold new speech into an existing summary.

@@ -220,6 +220,8 @@ services:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-}
+      - LANGFUSE_TRACING_ENVIRONMENT=${LANGFUSE_TRACING_ENVIRONMENT:-}
       # Live transcription. Default keeps audio at AU; deepgram/assemblyai do
       # not — see .env.example. Speaker labels need one of the hosted providers.
       - STT_PROVIDER=${STT_PROVIDER:-litellm}

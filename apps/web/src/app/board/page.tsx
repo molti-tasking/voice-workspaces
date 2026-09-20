@@ -6,6 +6,7 @@ import { foldBoard } from "@voicemural/workspace";
 import { AppDock } from "@/components/app-dock";
 import { Link } from "@/components/nav-link";
 import { NavMenu } from "@/components/nav-menu";
+import { StudyOpen } from "@/components/study-open";
 import { ViewEvent } from "@/lib/analytics/view-event";
 import { parseInstant } from "@/lib/instant";
 import { currentUser } from "@/lib/session";
@@ -68,6 +69,10 @@ export default async function BoardPage({
 
   return (
     <div className="mx-auto max-w-6xl px-6 pt-10 pb-40">
+      {/* The study's own record that the board was opened. PostHog below is
+          product analytics and lives outside the export; this is one row in
+          `study_event`, which the day-7 measures read. See `StudyOpen`. */}
+      <StudyOpen kind="board_open" />
       <ViewEvent
         event="board_viewed"
         properties={{

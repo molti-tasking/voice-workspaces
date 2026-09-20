@@ -74,6 +74,18 @@ export interface EvalCase {
      * `checkReply` then ignores drafts entirely, as it did before.
      */
     draft?: { revises: RegExp | null } | null;
+    /**
+     * This turn is the driver ANSWERING a question the agent itself asked on
+     * the turn before, so `<silence>` is never a valid reply to it — whatever
+     * `turn` above says, and whether the answer is a whole sentence or a bare
+     * "Ja.". `checkReply` fails any silence here, and `eval.test.ts` insists
+     * the history really does end on an agent question.
+     *
+     * Stated rather than inferred, because ending on an agent question is not
+     * sufficient: `pending-asked-once` ends on one too, and there the driver
+     * carried on with a different sentence entirely and silence is right.
+     */
+    answering?: true;
   };
 }
 
@@ -559,6 +571,79 @@ export const CASES: EvalCase[] = [
       draft: null,
       mustMention: ["william|reading list|email"],
       mustNotMention: ["3f9a2c", "b7e40d"],
+    },
+  },
+
+  /* An answer the agent ASKED FOR (talkback-13). All four come off the first
+   * formative pilot, 19 Sep 2026: the agent asked whether to look up the
+   * opening times, was told "Ja.", and replied `<silence>`. Forty seconds
+   * later she asked "Und dann?", got nothing again, stopped the recording and
+   * asked out loud whether the app had died. The deterministic half is
+   * `expect.answering`; the judge still has an opinion about whether the reply
+   * is any good. */
+  {
+    id: "answer-bare-yes",
+    about: "A bare 'Ja.' to the agent's own question is a complete answer, and is acted on.",
+    setting: "driving",
+    history: [
+      { role: "user", content: "Wo kann ich hier in der Nähe Blumen kaufen?" },
+      {
+        role: "assistant",
+        content: "In Altenholz und in Kiel-Wik gibt es welche. Soll ich die genauen Zeiten für einen davon suchen?",
+      },
+    ],
+    said: "Ja.",
+    expect: {
+      turn: "speak",
+      answering: true,
+      // The failure is silence, not a particular sentence — so nothing is
+      // demanded of the wording beyond not stalling on it.
+      mustNotMention: ["which one would you|was meinst du|welche meinst du"],
+    },
+  },
+  {
+    id: "answer-and-then",
+    about: "'Und dann?' after an unanswered turn is the driver asking where things got to, not noise.",
+    setting: "driving",
+    history: [
+      {
+        role: "assistant",
+        content: "Soll ich die genauen Zeiten für einen davon suchen?",
+      },
+      { role: "user", content: "Ja." },
+    ],
+    said: "Und dann?",
+    expect: { turn: "speak" },
+  },
+  {
+    id: "answer-picks-one-of-two",
+    about: "A fragment that only makes sense as an answer — 'der erste' — is read as one.",
+    setting: "driving",
+    history: [
+      { role: "user", content: "Was soll ich als Nächstes machen?" },
+      {
+        role: "assistant",
+        content: "Der Asymmetrie-Abschnitt oder die Mail an William — welchen von beiden?",
+      },
+    ],
+    said: "Den ersten.",
+    expect: { turn: "speak", answering: true },
+  },
+  {
+    id: "answer-declining-the-offer",
+    about: "'No' is an answer too: it is acknowledged in a few words, not treated as nothing said.",
+    setting: "driving",
+    history: [
+      { role: "user", content: "I still need to book the flights." },
+      { role: "assistant", content: "Want me to look up what is flying on the Friday?" },
+    ],
+    said: "No, leave it.",
+    expect: {
+      turn: "speak",
+      answering: true,
+      // Dropping it is the whole answer. Pressing on with the lookup, or
+      // asking again, is the failure this case names.
+      mustNotMention: ["searching|looking up|shall i still|are you sure"],
     },
   },
 ];

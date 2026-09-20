@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { agentDecisionOutcomeEnum, agentDecisionTriggerEnum, captureSession, eq, getDb } from "@voicemural/db";
+import { agentDecisionOutcomeEnum, agentDecisionTriggerEnum } from "@voicemural/db";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import { recordAgentDecision } from "@voicemural/talkback";
+import { resolveLiveSession } from "@/lib/talkback/live-session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,19 +22,28 @@ export const dynamic = "force-dynamic";
  * posted here can cross the study's privacy boundary however it is exported.
  * `subjectKey` is an id (an invocation, a proposal, a topic), never a phrase.
  *
- * Ticket-authorised, ownership re-resolved, exactly as `/agent-turn` is.
+ * Ticket-authorised, ownership re-resolved and refused once the drive has
+ * ended, exactly as `/agent-turn` is.
  */
 
 const Body = z.object({
   ticket: z.string().min(1),
   seq: z.number().int().min(0),
   offsetMs: z.number().int().min(0),
+  // The moment this completion belongs to, and which completion it was within
+  // it. Absent from an older container, whose rows have to be deduplicated on
+  // `offsetMs` the way the pilot's did.
+  opportunitySeq: z.number().int().min(0).optional(),
+  attempt: z.number().int().min(0).max(64).optional(),
   trigger: z.enum(agentDecisionTriggerEnum.enumValues),
   outcome: z.enum(agentDecisionOutcomeEnum.enumValues),
   configVersion: z.string().max(64).optional(),
   latencyMs: z.number().int().min(0).optional(),
   // An id, so bounded like one. Anything longer is not a key.
   subjectKey: z.string().min(1).max(128).optional(),
+  // Whether the answer guard had to force this moment. Measurement only; the
+  // container decides nothing by it. See `agent_decision.forced_answer`.
+  forcedAnswer: z.boolean().optional(),
   agentTurnId: z.uuid().optional(),
 });
 
@@ -52,14 +62,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "bad_ticket" }, { status: 401 });
   }
 
-  const rows = await getDb()
-    .select({ userId: captureSession.userId })
-    .from(captureSession)
-    .where(eq(captureSession.id, payload.captureSessionId))
-    .limit(1);
-
-  if (rows[0]?.userId !== payload.userId) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  // Ownership AND still-running, together: a row for a session that has ended
+  // corrupts every count and duration taken from it. See `resolveLiveSession`.
+  const session = await resolveLiveSession("decision", payload.captureSessionId, payload.userId);
+  if (!session.live) {
+    return NextResponse.json({ error: session.error }, { status: session.status });
   }
 
   await recordAgentDecision({

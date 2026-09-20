@@ -48,6 +48,16 @@ export interface TranscriptSegment {
    * CLASSIFY_WAIT_MS in apps/worker/src/jobs/extract-workspace.ts.
    */
   handledElsewhere?: boolean;
+  /**
+   * The transcription language the drive this came from was recorded in, from
+   * `capture_session.stt_language`. Null — or absent — is auto-detect.
+   *
+   * ON THE SEGMENT rather than passed beside the batch, because a batch can
+   * span drives: the cursor walks the whole corpus and does not stop at a
+   * session boundary. `segmentsLanguage` is what turns a batch of these into
+   * the one language it is safe to instruct in, or none.
+   */
+  language?: string | null;
 }
 
 /* ---------------------------------------------------------------------------

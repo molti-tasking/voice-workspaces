@@ -26,8 +26,25 @@ import {
  * hit a cache entry made under a pipeline that let directions through, and a
  * rebuild would mix the two. Nothing re-extracts on a bump by itself; only
  * `pnpm workspace:rebuild --force` pays for fresh calls.
+ *
+ * "6" changes both, and both come off the first formative pilot (19 Sep 2026),
+ * a German drive with `stt_language = de`:
+ *
+ * - THE LANGUAGE. Extraction `88c62dad` wrote its blocks in English ("Clean
+ *   apartment (vacuum and dust).", "Buy flowers for daughter.") while
+ *   `11fb5db9`, `b85abea9` and `73f0796b` wrote German. Nothing had ever told
+ *   the model which language to write in, so it guessed per batch, and a
+ *   participant's own board came out half in a language she did not speak. The
+ *   drive's language now reaches the prompt and the hash (see
+ *   `segmentsLanguage`), which is an INPUT change as well as a text one.
+ *
+ * - THE GENDER. `workspace_op` seq 200 reads "Fitnessstudio schafft ER in den
+ *   nächsten Tagen wieder nicht." The participant is not a man. The extractor
+ *   inferred a gender from nothing and wrote it into her own notes, where she
+ *   reads it. The prompt now forbids a subject pronoun for the speaker, which
+ *   the block style wanted anyway.
  */
-export const PROMPT_VERSION = "5";
+export const PROMPT_VERSION = "6";
 
 /** Fixed seed sent with every request, so a forced re-run is as stable as the backend allows. */
 export const EXTRACTION_SEED = 7;
@@ -178,6 +195,18 @@ narration of where the thought came from.
          than just bullshitting around."
   good: "Wants to solve a real problem with real people."
 
+NEVER GIVE THE SPEAKER A GENDER. You do not know it and nothing in the
+transcript tells you. Write about them with no subject pronoun at all — the
+clause style above already drops it — and never "he", "she", "him" or "her" for
+the person speaking. Other people they NAME keep whatever the speech says about
+them.
+
+  bad:  "He won't manage the gym again in the next few days."
+  good: "Won't manage the gym again in the next few days."
+
+  bad:  "She wants to build software as part of her PhD."
+  good: "Wants to build software as part of the PhD."
+
 # Output
 Reply with JSON only. No prose, no code fences.
 
@@ -204,6 +233,56 @@ ${TOPIC_ICONS.join(", ")}
 
 "sources" lists the utterance ids a block came from — always at least one. This
 is how the workspace traces back to what was actually said.`;
+
+/* ---------------------------------------------------------------------------
+ * The language the workspace is written in
+ * ------------------------------------------------------------------------- */
+
+/**
+ * What to call each transcription language, to the model.
+ *
+ * ENDONYMS, the same ones the recorder's picker shows: "write in Deutsch" is a
+ * clearer instruction to a model than "write in German", and it is the word the
+ * person themselves chose.
+ *
+ * The codes come from `STT_LANGUAGES` in `packages/talkback/src/language.ts`,
+ * which is the catalogue. Copied rather than imported, because this package
+ * depends on nothing but `@voicemural/shared` and talkback already depends on
+ * THIS one — importing back would be a cycle. Two strings, and a code missing
+ * here simply means no instruction, which is what every drive had before.
+ */
+const LANGUAGE_NAMES: Readonly<Record<string, string>> = {
+  en: "English",
+  de: "Deutsch",
+};
+
+/**
+ * The one language every segment in a batch was recorded in, or null.
+ *
+ * Null means "do not instruct": either the drive was on auto-detect, or the
+ * batch spans drives that disagree. A batch CAN span drives — the cursor walks
+ * the whole corpus — and telling the model to write German about an English
+ * conversation would be a worse failure than the one this fixes.
+ *
+ * Pure, and derived from the segments rather than passed alongside them, so the
+ * prompt and the cache key cannot disagree about which language was used.
+ */
+export function segmentsLanguage(segments: readonly TranscriptSegment[]): string | null {
+  const first = segments[0]?.language ?? null;
+  if (!first || !LANGUAGE_NAMES[first]) return null;
+  return segments.every((s) => (s.language ?? null) === first) ? first : null;
+}
+
+/** The line that tells the model which language to write the workspace in. */
+export function languageInstruction(language: string | null): string | null {
+  const name = language ? LANGUAGE_NAMES[language] : undefined;
+  if (!name) return null;
+  return (
+    `This drive was recorded in ${name}. Write every block — text, labels and ` +
+    `topic titles — in ${name}, whatever language these instructions are in. ` +
+    `It is the person's own workspace and they read it.`
+  );
+}
 
 /** Cap the state passed back in, so the prompt stays bounded as the corpus grows. */
 const MAX_TOPICS_IN_PROMPT = 40;
@@ -266,11 +345,16 @@ export function buildExtractionPrompt(
   state: WorkspaceState,
   segments: readonly TranscriptSegment[],
 ): ChatMessage[] {
+  // In the USER message, not the system prompt: it is a property of this batch
+  // rather than of the extractor, and the system prompt is fingerprinted by
+  // `extract.test.ts` precisely so a per-session value cannot drift into it.
+  const language = languageInstruction(segmentsLanguage(segments));
   return [
     { role: "system", content: SYSTEM_PROMPT },
     {
       role: "user",
       content: [
+        ...(language ? [language, ""] : []),
         "# Current workspace",
         renderState(state),
         "",
@@ -319,6 +403,11 @@ export function computeInputHash(params: {
       String(params.temperature),
       params.stateDigest,
       segmentPart,
+      // The language the prompt will instruct in. Part of the key because it
+      // changes what the model is asked for: without it, a batch extracted
+      // before the instruction existed would be served from cache with its
+      // English blocks intact, and a rebuild would mix the two.
+      segmentsLanguage(params.segments) ?? "",
     ].join(""),
   );
 }

@@ -40,17 +40,22 @@ export {
   type DraftContext,
   type DraftForContext,
 } from "./draft-context";
-export { SUMMARY_PROMPT, foldSummary } from "./summary";
+export { SUMMARY_PROMPT, foldSummary, summaryPromptFor } from "./summary";
 export { TITLE_PROMPT } from "./title";
 export {
+  ANSWER_ACKNOWLEDGEMENTS,
+  ANSWER_RETRY_NUDGE,
   BOARD_EDITING,
   OUTPUT_CONTRACT,
+  SEARCH_WAIT_PHRASES,
   SILENCE_TOKEN,
   SYSTEM_PROMPT,
   TALKBACK_CONFIG_VERSION,
+  answerAcknowledgement,
   cleanReply,
   composeSystemPrompt,
   isSilence,
+  searchWaitPhrase,
   type ComposeInputs,
   type ComposedPrompt,
 } from "./prompt";
@@ -113,4 +118,4 @@ export {
   searchTranscripts,
   type Passage,
 } from "./retrieval";
-export { keptIndices, withoutEcho } from "./echo";
+export { containment, isEcho, keptIndices, withoutEcho } from "./echo";

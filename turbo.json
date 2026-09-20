@@ -34,16 +34,26 @@
     "STT_LANGUAGE",
     "STT_DIARIZE",
     "PROACTIVE_OFFERS",
-    // Only the eval harness reads these, to post judge scores. The traces
-    // themselves reach Langfuse via the LiteLLM proxy without them.
+    // Only the eval harness reads these, to export its evaluated turns. A
+    // drive's own traces come from the talk-back container's OpenTelemetry
+    // exporter, which reads its environment from Compose rather than turbo.
+    // BASE_URL is the v4 spelling and HOST the v3 one; both are accepted.
+    "LANGFUSE_BASE_URL",
     "LANGFUSE_HOST",
     "LANGFUSE_PUBLIC_KEY",
     "LANGFUSE_SECRET_KEY",
+    "LANGFUSE_TRACING_ENVIRONMENT",
     "ELEVENLABS_API_KEY",
     "ELEVENLABS_VOICE_ID",
     "ELEVENLABS_MODEL_ID",
     "TALKBACK_ENABLED",
     "NEXT_PUBLIC_TALKBACK_ENABLED",
+    // The study's own switches. The last is inlined at build time, so it
+    // has to invalidate the build cache when it changes — a pilot bundle and
+    // a participant bundle are different artefacts.
+    "STUDY_PILOT_USER_IDS",
+    "STUDY_TIME_ZONE",
+    "NEXT_PUBLIC_STUDY_TOGGLES",
     "STORAGE_DIR",
     // Runtime knobs read by the worker and web. Listed with the rest so the
     // same .env that Compose interpolates from stays the single source.

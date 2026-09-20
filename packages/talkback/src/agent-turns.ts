@@ -30,6 +30,8 @@ export interface AgentTurnRecord {
   seq: number;
   startOffsetMs: number;
   endOffsetMs: number;
+  /** Whether `endOffsetMs` came from the transport or from `len(text) / 14`. */
+  endOffsetMeasured?: boolean;
   kind?: "reply" | "proactive_prompt" | "confirmation_request" | "backchannel";
   /** What the user actually heard. Empty when a turn was cut off before playback. */
   text: string;
@@ -67,6 +69,7 @@ export async function recordAgentTurn(record: AgentTurnRecord): Promise<string |
         seq: record.seq,
         startOffsetMs: record.startOffsetMs,
         endOffsetMs: record.endOffsetMs,
+        endOffsetMeasured: record.endOffsetMeasured ?? false,
         kind: record.kind ?? "reply",
         text: record.text,
         generatedText: record.generatedText,
@@ -112,11 +115,22 @@ export interface AgentDecisionRecord {
   userId: string;
   seq: number;
   offsetMs: number;
+  /**
+   * The moment this decision belongs to. Several completions can share one —
+   * Pipecat runs inference more than once inside a user turn — and this is what
+   * makes the log countable by moment rather than by row. See the counting rule
+   * on `agentDecision` in the schema.
+   */
+  opportunitySeq?: number;
+  /** Which completion this was within that moment, from 0. The last one wins. */
+  attempt?: number;
   trigger: AgentDecisionTrigger;
   outcome: AgentDecisionOutcome;
   configVersion?: string;
   latencyMs?: number;
   subjectKey?: string;
+  /** Whether `AnswerGuard` had to force this moment. See the column. */
+  forcedAnswer?: boolean;
   agentTurnId?: string;
 }
 
@@ -134,11 +148,14 @@ export async function recordAgentDecision(record: AgentDecisionRecord): Promise<
       captureSessionId: record.captureSessionId,
       seq: record.seq,
       offsetMs: record.offsetMs,
+      opportunitySeq: record.opportunitySeq,
+      attempt: record.attempt ?? 0,
       trigger: record.trigger,
       outcome: record.outcome,
       configVersion: record.configVersion,
       latencyMs: record.latencyMs,
       subjectKey: record.subjectKey,
+      forcedAnswer: record.forcedAnswer ?? false,
       agentTurnId: record.agentTurnId,
     });
   } catch (err) {

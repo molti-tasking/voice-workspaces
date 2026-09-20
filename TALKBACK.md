@@ -191,6 +191,39 @@ spoken aloud. See "Drafts" below for the mechanism, and
 `draft-revise-when-asked` / `draft-new-when-different` /
 `draft-seen-not-rewritten` in `cases.ts` for what it is held to.
 
+### talkback-13: the agent finishes what it starts, and says so while it works
+
+Two things from the first formative pilot (19 Sep 2026), both in
+`PILOT_01.md`.
+
+**An answer the agent asked for is never met with silence.** It asked *"Soll
+ich die genauen Zeiten für einen davon suchen?"*, the participant said *"Ja."*,
+and the model returned `<silence>` — recorded faithfully as
+`user_turn -> declined`. Forty seconds later she asked *"Und dann?"*, got
+nothing again, stopped the recording and asked out loud whether the app had
+died. WHEN TO SPEAK said only that a question put to the agent is always
+answered; the converse was missing, and nothing tracked that the last spoken
+turn had asked something. Three layers now: the rule in WHEN TO SPEAK,
+`TurnRecorder.awaiting_question_answer` (measured on what was SPOKEN, not on
+`generatedText` — a question cut off before its first word is not one they can
+be answering), and `AnswerGuard`, which refuses the decline, re-runs the
+completion once with `ANSWER_RETRY_NUDGE`, and speaks a fixed sentence in the
+drive's own language if that declines too. The refused completion writes no
+turn and no decision of its own: their words were one moment, and the re-run is
+what it became. It does leave one mark — `agent_decision.forced_answer` on that
+moment — because the study's target for "answers the agent refused" is ZERO,
+and a rescue that erased its own trace would make the target unfalsifiable: a
+drive where the model declined every answer and was overruled every time would
+read exactly like a drive where it never declined at all.
+
+**A turn that has announced itself says something while it runs.** Turns that
+called a tool took a median of 8416ms against 1349 for turns that did not,
+while the tool itself never exceeded 766 — the gap is the model composing the
+answer after the result is already back. `KeepAlive` is armed by a tool
+announcing itself and disarmed by the agent actually speaking, NOT by the tool
+returning, which would fall silent at the moment the silence starts. Two
+phrases and then quiet; the list is the limit.
+
 ### Which voice
 
 Three ElevenLabs voices are offered on the recorder, from the catalogue in
@@ -496,6 +529,32 @@ and 40 seconds later it closes with "Timeout establishing the connection to the
 remote peer" — which reads like a network fault. `candidate_from_sdp` wants the
 value *without* the `candidate:` prefix.
 
+**Pipecat runs inference MORE THAN ONCE inside one user turn, and the decision
+log has to say so.** `_on_user_turn_inference_triggered` pushes the aggregation
+it has so far and starts a completion; `_maybe_emit_user_turn_stopped` pushes
+again at the end of the turn — its own comment says "so multiple inferences in
+the same turn don't lose earlier segments". The first sees a half-finished
+sentence, which the prompt correctly answers with `<silence>` in about 400ms;
+the second sees the whole thing and speaks. Both are real completions and both
+become `agent_decision` rows, and on the first formative pilot sixteen of
+forty-eight rows shared an `offset_ms` with another. Counted by row the decline
+rate was 69%; counted by moment, 53%. `opportunity_seq` and `attempt` are what
+make the log countable — see the counting rule on `agent_decision` in the
+schema. The second dispatch is NOT suppressed: how a turn ends is the paper's
+independent variable, and `user_turn_stop_timeout` is one of the dials on it.
+
+**A sentence the container speaks with no completion behind it still has to be
+recorded — and still has to be long enough to filter.** The search
+announcement, the keep-alive while a long turn runs (`KeepAlive`), and the
+acknowledgement when a refused decline re-runs and declines again
+(`AnswerGuard`) are all spoken aloud, so the microphone hears them and Whisper
+puts them in `utterance`. `withoutEcho` tells them from the driver's words by
+comparing against `agent_turn` — but `isEcho` refuses to judge a line under
+`MIN_WORDS`, because containment over two tokens means nothing. So "Still
+looking." would be unfilterable however faithfully it was recorded, and the
+phrase is "Still looking that up." instead. `echo.test.ts` holds that floor for
+every fixed phrase the container speaks.
+
 **`agent_turn` is the echo filter's only input.** The agent's voice reaches the
 microphone through the speaker and is transcribed like any other sound;
 `withoutEcho` tells those lines from yours by comparing against what the agent is
@@ -516,8 +575,11 @@ badge on `/sessions/[id]` could never light; "<sil" was an interrupted
 `truncatedAtMs`, drops a held partial sentinel instead of speaking it, holds a
 reply that opens with `[` until the bracket closes, and strips `[Speaker N]`
 from speech (`strip_speaker_tags`; the tag stays in `generatedText`). The
-"spoke Xs" on an uninterrupted turn is still `len(text) / 14` — the container
-never learns when playback ended — and the page shows it as `~`. The narrated
+"spoke Xs" on an uninterrupted turn used to be `len(text) / 14`, because the
+container never learned when playback ended; it is measured now from the output
+transport's own `BotStoppedSpeakingFrame` — pushed BOTH ways, so the gate sees
+it from upstream — and `agent_turn.end_offset_measured` says which it was. The
+page shows the `~` only where it is earned. The narrated
 rule itself is a prompt failure; `two-people-narrated-rule` in `cases.ts` and
 the `narrated decision` check in `checks.ts` hold the line there.
 
@@ -668,10 +730,21 @@ turns up a behaviour worth keeping or losing, put the actual words in
 **3. Langfuse, over live turns.** With `LANGFUSE_PUBLIC_KEY` and
 `LANGFUSE_SECRET_KEY` set, `bot.py` exports Pipecat's OpenTelemetry spans to
 Langfuse (`setup_langfuse_tracing`): one trace per drive, named by setting,
-with `langfuse.session.id` = the capture session and the prompt version in the
-tags, and the LLM span of every turn carrying the serialised messages — the
+with `session.id` = the capture session, `langfuse.version` = the prompt
+version, and the LLM span of every turn carrying the serialised messages — the
 composed prompt, the context block, what was said — and the completion. That
-is exactly what a judge needs to see.
+is exactly what a judge needs to see. The attributes are built in one place,
+`drive_span_attributes`, and tested there.
+
+The host is `LANGFUSE_BASE_URL`, with the older `LANGFUSE_HOST` still accepted.
+`LANGFUSE_TRACING_ENVIRONMENT` maps onto Langfuse's environment separation and
+is unset by default — set it for both the container and the harness, or not at
+all, because a drive and an eval run in different environments cannot be
+compared. `session.id` is the current spelling of the session key and rides on
+every span, so a session's cost is the sum of the generations under it;
+`langfuse.session.id`, the older spelling, is sent alongside it for a
+self-hosted server that has not been upgraded yet and can be dropped once
+every target host is on v4.
 
 Separately, every LiteLLM request from the container carries `metadata`
 (`session_id`, `tags` with the `configVersion` and `setting:<s>`, `version`),
@@ -679,12 +752,15 @@ so the proxy's own request log attributes spend per drive and per prompt
 version, and any callback the proxy is configured with sees the same keys.
 
 *Is an LLM-as-judge in Langfuse reasonable?* Yes, with a clear view of what it
-can and cannot see. Set up a managed evaluator on the container's LLM
-generations (filter by tag `talkback-4` or by trace name) with `JUDGE_PROMPT`
+can and cannot see. Set up an evaluator on the container's LLM
+generations (filter by tag `talkback-4`, by `langfuse.version`, or by trace
+name) with `JUDGE_PROMPT`
 from `judge.ts` as the template — one copy of the rubric, pasted — mapping
 `{{input}}` to the generation's messages and `{{output}}` to its completion.
 The judge can then score grounding against exactly what the model saw, and it
-sees `<silence>` as a decision. Compare score distributions across versions as
+sees `<silence>` as a decision. Note that an observation evaluator reads one
+observation and cannot reach its siblings or children, so every variable it
+needs has to be on the observation it is pointed at. Compare score distributions across versions as
 the prompt moves; that is the "improve over time" loop, and it needs no
 instrumentation beyond what is here.
 
@@ -698,11 +774,22 @@ adds no new flow, but the ethics form should name it, and self-hosting is how
 the line is avoided.
 
 The harness closes the loop from the other side. With the same keys set, each
-evaluated turn is posted through Langfuse's ingestion API as a trace in one
-session (the run id) tagged `talkback-eval` and the label, with the reply
-generation, the judge's generation, the check result and the four scores. Live
-drives and offline runs then sit in one project under one rubric and one
-`version` field. Without the keys nothing is posted and the run says so once.
+evaluated turn is exported through the Langfuse SDK (`@langfuse/tracing` with
+`@langfuse/otel`) as a trace in one session (the run id) tagged `talkback-eval`
+and the label: a root observation carrying the turn's input and the reply, the
+reply generation and the judge's generation beneath it, and the check result
+and the four scores against that root observation. Live drives and offline runs
+then sit in one project under one rubric and one `version` field. Without the
+keys nothing is exported and the run says so once.
+
+That used to be one hand-built POST per turn to `/api/public/ingestion`. Two
+things changed with it. Overall input and output now live on the **root
+observation** — Langfuse's trace-level `input`/`output` are deprecated, so an
+evaluator should be pointed at the root observation rather than at the trace.
+And the session, tags and version are propagated into every child span rather
+than set on the trace alone, which is what makes a session's cost add up.
+Delivery is now batched: `flushLangfuse` at the end of a run is what gets the
+tail of it out, where the old POST-per-turn needed no such step.
 
 **Not built, deliberately:** a Langfuse *dataset* of the cases with dataset
 runs. It is the natural next step once the case set stabilises, but today the
@@ -824,6 +911,16 @@ must keep showing new content and new directions, and a reload mid-session must
 bring them back. Everything it renders comes from `workspace_op` and `directive`
 over `/api/record/cues`; if it ever stops when Pipecat does, something has been
 wired to the conversation that should not have been.
+
+**So is the debrief, which is the closest anything comes to coupling them.**
+Stop no longer tears the microphone down: it closes the drive and opens the
+post-drive debrief, and the chunk loop, the wake lock and the uploader carry on
+through it (see `capture_session.debrief_started_offset_ms`). Talk-back is the
+one thing that ends there — `isRecording` goes false, the peer connection
+closes, and the container learns the drive is over from the web app's 409 on
+its next write. Check both halves: the timer keeps counting and chunks keep
+uploading after Stop, and no `agent_turn` or `agent_decision` row appears for
+the session after `ended_at`.
 
 ---
 

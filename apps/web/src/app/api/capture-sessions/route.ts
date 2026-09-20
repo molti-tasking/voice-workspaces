@@ -29,7 +29,7 @@ export async function POST(req: Request) {
   }
 
   const db = getDb();
-  const { id, startedAt, deviceInfo, setting, useCase } = parsed.data;
+  const { id, startedAt, deviceInfo, setting, settingSource, useCase } = parsed.data;
   // Narrowed to the catalogue, never rejected: a stale browser offering a voice
   // that has since been retired must still be able to register its recording.
   // Unknown becomes null, which the container reads as "use the fallback".
@@ -84,6 +84,42 @@ export async function POST(req: Request) {
     });
   }
 
+  /* A per-drive override of the condition, for PILOT ACCOUNTS ONLY.
+   *
+   * The cold-start test the next pilot needs is the same person, two drives an
+   * hour apart, agenda offers on in one and off in the other — which the
+   * per-participant template cannot express without a database write between
+   * them. So the recorder may name a flag, and this merges it over the
+   * template.
+   *
+   * Gated on `STUDY_PILOT_USER_IDS`, the same list that gates reading a pilot
+   * account's own transcripts, and for the same reason: a participant whose
+   * arm could be flipped from the browser is a participant whose phase cannot
+   * be analysed. A dropped override is logged rather than silently ignored,
+   * because a researcher who believes they toggled something and did not is
+   * how a phase gets run twice under one arm. */
+  const pilots = (process.env.STUDY_PILOT_USER_IDS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const override = parsed.data.conditionOverride;
+  let condition = resolved.condition;
+  if (override && Object.keys(override).length > 0) {
+    if (pilots.includes(userId)) {
+      condition = { ...condition, ...override };
+      console.warn("this drive runs under a per-session condition override", {
+        userId,
+        captureSessionId: id,
+        override,
+      });
+    } else {
+      console.warn("ignoring a per-session condition override from a non-pilot account", {
+        userId,
+        captureSessionId: id,
+      });
+    }
+  }
+
   // Conflict-safe rather than check-then-insert: two concurrent creates of
   // the same id (a client retry racing its own timed-out request) would else
   // both pass the `existing` check above and the loser would surface a unique
@@ -98,13 +134,18 @@ export async function POST(req: Request) {
       startedAt,
       deviceInfo,
       setting,
+      // Where that setting came from: observed, remembered, or corrected by
+      // hand. Reported to analytics since settings existed and stored nowhere,
+      // which is how Pilot 01 came to be run stationary under the `driving`
+      // profile without that being visible in the data.
+      settingSource,
       voiceId,
       sttLanguage,
       // Which worked example on `/welcome` sent them here, or null for a drive
       // begun any other way. Set on the fresh insert only, like `setting` and
       // the condition above: a resumed drive keeps the intent it started with.
       useCase,
-      studyCondition: resolved.condition,
+      studyCondition: condition,
     })
     .onConflictDoNothing({ target: captureSession.id })
     .returning({ id: captureSession.id });
@@ -144,6 +185,7 @@ export async function POST(req: Request) {
       capture_session_id: id,
       resumed: false,
       setting: setting ?? null,
+      setting_source: settingSource ?? null,
       voice_id: voiceId,
       stt_language: sttLanguage,
       // Which example was picked — and, by its absence, how many drives people

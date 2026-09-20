@@ -7,7 +7,9 @@ import {
   computeInputHash,
   deterministicId,
   extractJsonObject,
+  languageInstruction,
   parseExtractionResponse,
+  segmentsLanguage,
   stateDigest,
 } from "./extract";
 import { foldWorkspace } from "./fold";
@@ -64,6 +66,65 @@ describe("buildExtractionPrompt", () => {
     const user = buildExtractionPrompt(foldWorkspace([]), segments)[1]!.content;
     expect(user).toContain("empty");
   });
+
+  it("tells the model which language to write the workspace in", () => {
+    // The first formative pilot was a German drive whose blocks came out half
+    // in English ("Buy flowers for daughter."), because nothing had ever said.
+    const german = segments.map((s) => ({ ...s, language: "de" }));
+    const user = buildExtractionPrompt(foldWorkspace([]), german)[1]!.content;
+
+    expect(user).toContain("Deutsch");
+    // First, before the workspace and the speech: it governs everything after.
+    expect(user.indexOf("Deutsch")).toBeLessThan(user.indexOf("# Current workspace"));
+  });
+
+  it("says nothing about language when there is nothing to say", () => {
+    // Auto-detect. Instructing on a guess would be worse than not instructing.
+    const user = buildExtractionPrompt(foldWorkspace([]), segments)[1]!.content;
+    expect(user).not.toMatch(/was recorded in/);
+  });
+});
+
+describe("the language a batch was recorded in", () => {
+  const de = segments.map((s) => ({ ...s, language: "de" }));
+
+  it("is the one every segment agrees on", () => {
+    expect(segmentsLanguage(de)).toBe("de");
+  });
+
+  it("is nothing when a batch spans drives that disagree", () => {
+    // A batch CAN span drives: the cursor walks the corpus and does not stop at
+    // a session boundary. Telling the model to write German about an English
+    // conversation would be a worse failure than the one this fixes.
+    expect(segmentsLanguage([de[0]!, { ...segments[1]!, language: "en" }])).toBeNull();
+  });
+
+  it("is nothing on auto-detect, or a code the catalogue does not offer", () => {
+    expect(segmentsLanguage(segments)).toBeNull();
+    expect(segmentsLanguage(segments.map((s) => ({ ...s, language: null })))).toBeNull();
+    expect(segmentsLanguage(segments.map((s) => ({ ...s, language: "kl" })))).toBeNull();
+  });
+
+  it("names the language the way the person chose it", () => {
+    // Endonyms, as on the recorder's picker: "write in Deutsch" is clearer to a
+    // model than "write in German", and it is the word they saw.
+    expect(languageInstruction("de")).toContain("Deutsch");
+    expect(languageInstruction("en")).toContain("English");
+    expect(languageInstruction(null)).toBeNull();
+  });
+});
+
+describe("the no-gender rule", () => {
+  it("forbids a subject pronoun for the speaker, and only for the speaker", () => {
+    // `workspace_op` seq 200 on the pilot: "Fitnessstudio schafft ER in den
+    // nächsten Tagen wieder nicht." The participant is not a man; the extractor
+    // inferred a gender from nothing and wrote it into her own notes.
+    expect(SYSTEM_PROMPT).toMatch(/NEVER GIVE THE SPEAKER A GENDER/);
+    expect(SYSTEM_PROMPT).toMatch(/no subject pronoun at all/);
+    // People they NAME keep whatever the speech says about them — the rule is
+    // about the one person the transcript cannot tell us anything about.
+    expect(SYSTEM_PROMPT).toMatch(/Other people they NAME/);
+  });
 });
 
 describe("caching keys", () => {
@@ -90,6 +151,10 @@ describe("caching keys", () => {
     ["model", { model: "other" }],
     ["temperature", { temperature: 0.7 }],
     ["state digest", { stateDigest: "different" }],
+    // Not decoration: without this, a batch extracted before the instruction
+    // existed would be served from the cache with its English blocks intact,
+    // and a rebuild would mix the two.
+    ["language", { segments: segments.map((s) => ({ ...s, language: "de" })) }],
   ])("changes when the %s changes", (_label, override) => {
     const base = {
       promptVersion: PROMPT_VERSION,
@@ -531,8 +596,8 @@ describe("PROMPT_VERSION discipline", () => {
     const fingerprint = createHash("sha256").update(SYSTEM_PROMPT).digest("hex").slice(0, 16);
 
     expect({ PROMPT_VERSION, fingerprint }).toEqual({
-      PROMPT_VERSION: "5",
-      fingerprint: "a2f0afc4d6d5fddf",
+      PROMPT_VERSION: "6",
+      fingerprint: "b4848012c93356d1",
     });
   });
 });

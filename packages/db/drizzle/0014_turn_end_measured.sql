@@ -1,0 +1,1 @@
+ALTER TABLE "agent_turn" ADD COLUMN "end_offset_measured" boolean DEFAULT false NOT NULL;

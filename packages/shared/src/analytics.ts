@@ -16,6 +16,7 @@
  *
  * Naming: `object_verb_past`, snake_case, properties snake_case too.
  */
+import type { SettingSource } from "./contracts";
 import type { TaskStateName } from "./tasks";
 
 /**
@@ -44,10 +45,14 @@ export interface AnalyticsEventMap {
     setting?: string | null;
     /**
      * How the setting was arrived at: read off the device class, inferred from
-     * motion, the default because nothing could be read, or corrected by hand.
-     * The share of `chosen` is how often the detector is wrong enough to fix.
+     * motion, remembered from the last correction, or corrected by hand. The
+     * share of `chosen` is how often the detector is wrong enough to fix.
+     *
+     * `default` — nothing could be read — no longer reaches a started drive:
+     * the recorder asks rather than starting under a guess, which is what
+     * Pilot 01 did. Kept in the union for the events already recorded under it.
      */
-    setting_source?: "device" | "motion" | "default" | "chosen" | null;
+    setting_source?: SettingSource | null;
     /** The ElevenLabs voice chosen for talk-back. Null when none was chosen. */
     voice_id?: string | null;
     /**
@@ -62,6 +67,18 @@ export interface AnalyticsEventMap {
     recording_duration_ms: number;
     chunks_recorded: number;
     chunks_pending: number;
+  };
+  /**
+   * The post-drive debrief opened: Stop was tapped and the recording carried on.
+   *
+   * Counts and timings only, like everything here — the answers themselves are
+   * transcript, and transcript never reaches an analytics event. What this
+   * measures is whether the window is reached at all, and how long a drive was
+   * before it.
+   */
+  debrief_started: {
+    capture_session_id: string;
+    recording_duration_ms: number;
   };
   mic_permission_denied: { error_name: string };
   wake_lock_denied: Record<string, never>;
@@ -96,6 +113,15 @@ export interface AnalyticsEventMap {
     resumed: boolean;
     /** Null for a resumed session, whose setting was fixed when it opened. */
     setting?: string | null;
+    /**
+     * How that setting was arrived at — observed, remembered, or corrected.
+     *
+     * Also stored on the drive now (`capture_session.setting_source`), because
+     * a guess and an observation are different facts and only one of them was
+     * ever visible here. Pilot 01 was run stationary under the `driving`
+     * profile and nothing in the ledger said the profile had been guessed.
+     */
+    setting_source?: SettingSource | null;
     /** The voice stored on the session, narrowed to the catalogue; null if none. */
     voice_id?: string | null;
     /** The transcription language stored on the session; null = auto-detect. */

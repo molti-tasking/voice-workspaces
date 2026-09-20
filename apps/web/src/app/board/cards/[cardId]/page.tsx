@@ -7,6 +7,7 @@ import { topicIcon } from "@/app/workspace/icons";
 import { AppDock } from "@/components/app-dock";
 import { Link } from "@/components/nav-link";
 import { NavMenu } from "@/components/nav-menu";
+import { StudyOpen } from "@/components/study-open";
 import { ViewEvent } from "@/lib/analytics/view-event";
 import { parseInstant } from "@/lib/instant";
 import { currentUser } from "@/lib/session";
@@ -79,6 +80,9 @@ export default async function CardBriefPage({
 
   return (
     <div className="mx-auto max-w-2xl px-6 pt-10 pb-40">
+      {/* Opening a card IS the revisit the offloading measures are about: an
+          item somebody comes back to and never edits leaves no other trace. */}
+      <StudyOpen kind="card_open" cardId={card.cardId} />
       <ViewEvent
         event="board_card_viewed"
         properties={{

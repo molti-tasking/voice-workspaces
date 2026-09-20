@@ -234,6 +234,31 @@ export const captureSession = pgTable(
      */
     endedBy: text("ended_by").$type<"client" | "idle_sweep">(),
     /**
+     * The post-drive debrief window, in ms into the recording.
+     *
+     * THE PRIVACY BOUNDARY RUNS THROUGH THESE TWO COLUMNS. `/study` promises
+     * that nobody on the research team listens to a drive or reads its
+     * transcript; what researchers see is counts and timings. The debrief is
+     * the exception the participant is told about — three questions they answer
+     * aloud, knowing the answers are read. So the content channel is not a
+     * property of a session, it is a property of an INTERVAL inside one, and
+     * an export that cannot name the interval cannot honour the promise.
+     *
+     * Recorded rather than inferred from the clock, because "after Stop" is not
+     * a time anyone can reconstruct: the recording continues across it, and the
+     * ledger has no seam.
+     *
+     * `debriefStartedOffsetMs` set with `debriefEndedOffsetMs` still null means
+     * a debrief that was never closed — the participant walked away and the
+     * idle sweep ended the session. Everything after the start is then the
+     * debrief, which is the reading that keeps the promise: it can only ever
+     * make the readable window smaller than the truth, never larger.
+     *
+     * Null on every recording made before the debrief existed, which had none.
+     */
+    debriefStartedOffsetMs: integer("debrief_started_offset_ms"),
+    debriefEndedOffsetMs: integer("debrief_ended_offset_ms"),
+    /**
      * When `capture_session_completed` was sent to PostHog.
      *
      * Exactly-once is enforced here rather than relying on PostHog's event
@@ -248,6 +273,20 @@ export const captureSession = pgTable(
      * unchanged rather than retroactively reinterpreted.
      */
     setting: captureSettingEnum("setting"),
+    /**
+     * WHERE THAT SETTING CAME FROM: the device class, the accelerometer, a
+     * remembered choice, or the person correcting it before they started.
+     *
+     * Reported to PostHog since settings existed and stored nowhere, which is
+     * why Pilot 01 could be run stationary under the `driving` profile without
+     * that being visible in the data. `default` no longer reaches this column
+     * from the recorder — a drive with no evidence now asks — but old rows and
+     * any other client may still carry it, so it is text rather than an enum
+     * and readers treat an unknown value as "not stated".
+     */
+    settingSource: text("setting_source").$type<
+      "device" | "motion" | "remembered" | "chosen" | "default"
+    >(),
     /**
      * The worked example this drive was started from, or NULL for a drive
      * begun any other way — which is every drive before `/welcome` existed,
@@ -574,6 +613,26 @@ export const agentTurn = pgTable(
     startOffsetMs: integer("start_offset_ms").notNull(),
     /** When speaking actually stopped: truncated by barge-in, or a natural end. */
     endOffsetMs: integer("end_offset_ms").notNull(),
+    /**
+     * Whether `endOffsetMs` was MEASURED or estimated.
+     *
+     * It was always an estimate — `len(text) / 14`, about fourteen characters a
+     * second — because the container never learned when playback ended. On the
+     * first formative pilot that overstated the agent's measured speech by
+     * about 8%, and every duration on `/sessions/[id]` carried a `~` because
+     * nothing could honestly say otherwise.
+     *
+     * Now the container waits for the output transport's own
+     * `BotStoppedSpeakingFrame` before writing the row, and a barge-in has been
+     * measured at the interruption all along. This column is what keeps the two
+     * kinds apart, because a fallback still happens: a turn whose audio ran
+     * together with a keep-alive's has no matched start and stop of its own,
+     * and the estimate stands. An analysis that mixes them without filtering on
+     * this is measuring the fallback as if it were a stopwatch.
+     *
+     * False for every row written before this existed, which is what they were.
+     */
+    endOffsetMeasured: boolean("end_offset_measured").notNull().default(false),
     kind: agentTurnKindEnum("kind").notNull().default("reply"),
     /**
      * The live ASR of the user turn this answers.
@@ -699,8 +758,45 @@ export const agentDecisionOutcomeEnum = pgEnum("agent_decision_outcome", [
  * never repeated" is a rule that can only be kept against a stored record of
  * the decline. Before this table all of it was a log line.
  *
- * One row per completion the gate saw end, spoken or not. A spoken or
- * interrupted row points at its `agent_turn` when that write succeeded first.
+ * ONE ROW PER COMPLETION, NOT PER MOMENT — and the difference is the counting
+ * rule this table has to state, because it is a measurement instrument.
+ *
+ * Pipecat's user aggregator may run inference MORE THAN ONCE inside one user
+ * turn: `_on_user_turn_inference_triggered` pushes the aggregation it has so
+ * far and starts a completion, and `_maybe_emit_user_turn_stopped` pushes
+ * again at the end of the turn ("so multiple inferences in the same turn don't
+ * lose earlier segments"). The first sees a half-finished sentence, which the
+ * prompt correctly tells the model to answer with `<silence>`; the second sees
+ * the whole thing and speaks. Both are real completions, both are decisions,
+ * and both belong here — but they are ONE moment the agent was given.
+ *
+ * On the first formative pilot (19 Sep 2026) that made sixteen of forty-eight
+ * rows share an `offset_ms` with another, and in five of those pairs the first
+ * declined in about 400ms and the second spoke. Counted by row the decline rate
+ * was 69%; counted by moment it was 53%, and nothing in the table said which
+ * number the log supported.
+ *
+ * SO COUNT MOMENTS WITH `opportunity_seq`, NOT ROWS. Every row carries the
+ * moment it belongs to and its `attempt` within it:
+ *
+ *   -- how often the agent was given a moment
+ *   select count(distinct opportunity_seq) ...
+ *   -- what it did with each, one row per moment
+ *   select distinct on (opportunity_seq) * ... order by opportunity_seq, attempt desc
+ *
+ * The AUTHORITATIVE outcome of a moment is its LAST attempt: the completion
+ * that spoke is what the driver experienced, and an earlier decline on a
+ * sentence that was not finished yet is a step on the way to it, not a separate
+ * silence they sat through.
+ *
+ * Deliberately not fixed by suppressing the second dispatch. How a turn ends is
+ * the paper's independent variable, and `user_turn_stop_timeout` is one of the
+ * dials on it (TALKBACK.md → Latency); a container that quietly ran one
+ * inference where Pipecat runs two would be a different system from the one
+ * being measured.
+ *
+ * A spoken or interrupted row points at its `agent_turn` when that write
+ * succeeded first.
  */
 export const agentDecision = pgTable(
   "agent_decision",
@@ -720,6 +816,25 @@ export const agentDecision = pgTable(
      * firing — as ms into the drive, on the `utterance` clock.
      */
     offsetMs: integer("offset_ms").notNull(),
+    /**
+     * The MOMENT this decision belongs to, monotonic per connection.
+     *
+     * Rows sharing it came from one cue — the same words, or the same firing of
+     * the offer timer — and are the several completions Pipecat ran over it.
+     * This is what makes the log countable without collapsing duplicates by
+     * hand; see the counting rule above. Null on rows written before it
+     * existed, which have to be deduplicated on `offset_ms` as before.
+     */
+    opportunitySeq: integer("opportunity_seq"),
+    /**
+     * Which completion this was within that moment, from 0.
+     *
+     * The last one is the authoritative outcome. Kept rather than derived from
+     * `seq` because a decision is not always written for every completion — a
+     * decline the container refuses and re-runs (see `AnswerGuard` in bot.py)
+     * writes none at all, so gaps in `seq` are not gaps in attempts.
+     */
+    attempt: integer("attempt").notNull().default(0),
     trigger: agentDecisionTriggerEnum("trigger").notNull(),
     outcome: agentDecisionOutcomeEnum("outcome").notNull(),
     /** `TALKBACK_CONFIG_VERSION` of the prompt the container was running. */
@@ -736,11 +851,32 @@ export const agentDecision = pgTable(
      * against, which is why it is indexed.
      */
     subjectKey: text("subject_key"),
+    /**
+     * Whether `AnswerGuard` had to force this moment.
+     *
+     * The guard refuses to let a completion decline an answer the agent itself
+     * asked for, and writes NO decision for the refusal — their words were one
+     * moment to speak, and the re-run is what that moment became. Which is
+     * right, and leaves the guard invisible: a re-run that speaks looks exactly
+     * like a first completion that spoke.
+     *
+     * This is the mark on the moment that says it needed forcing. The study's
+     * unanswered-answer count is the share of moments carrying it, and its
+     * target is zero — a number that could never be anything else would
+     * measure nothing. See `note_forced_answer` in bot.py.
+     */
+    forcedAnswer: boolean("forced_answer").notNull().default(false),
     agentTurnId: uuid("agent_turn_id").references(() => agentTurn.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("agent_decision_session_offset_idx").on(t.captureSessionId, t.offsetMs),
+    // How the export reads a drive: one moment at a time, attempts in order.
+    index("agent_decision_session_opportunity_idx").on(
+      t.captureSessionId,
+      t.opportunitySeq,
+      t.attempt,
+    ),
     // The context route counts asks per pending invocation on the turn path.
     index("agent_decision_session_subject_idx")
       .on(t.captureSessionId, t.subjectKey)
@@ -1369,5 +1505,140 @@ export const memoryEntry = pgTable(
     uniqueIndex("memory_entry_user_kind_ref_idx").on(t.userId, t.kind, t.refId),
     index("memory_entry_user_kind_model_idx").on(t.userId, t.kind, t.model),
     index("memory_entry_session_idx").on(t.captureSessionId),
+  ],
+);
+/* ---------------------------------------------------------------------------
+ * Study measures
+ *
+ * The three tables the relief measures need, and the reason they are tables
+ * rather than PostHog events: the analysis has to join them to a drive and to
+ * a board card, and it has to be reproducible from one export months later.
+ *
+ * ALL THREE ARE COUNTS. A rating is an integer on a stated scale, an outcome
+ * is one of three words this file names, an event is a kind and a timestamp.
+ * Nothing here holds anything a participant said or wrote, so the whole of it
+ * crosses the privacy boundary (`apps/worker/src/study/export.ts`) unchanged.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * When a rating was taken, relative to the drive it is about.
+ *
+ * `pre` and `post` bracket one session — the same item asked twice is what
+ * makes a change in mental load readable at all. `day7` is the review at the
+ * end of the week, which is about the week rather than about a session, and
+ * so carries no `captureSessionId`.
+ */
+export const studyResponsePhaseEnum = pgEnum("study_response_phase", ["pre", "post", "day7"]);
+
+/**
+ * A single rating, one row per item per asking.
+ *
+ * `item` is a short stable key (`mental_load`, `liveness_perceived`,
+ * `can_correct`) rather than the question's text, so rewording a question does
+ * not fork the series — the wording lives in
+ * `packages/shared/src/study-items.ts`, versioned with the prompt.
+ *
+ * `value` is the point on the scale. `scaleMax` is stored beside it rather
+ * than assumed, because a 1–7 item read as 1–5 two months later is a silent
+ * error no constraint would catch.
+ */
+export const studyResponse = pgTable(
+  "study_response",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** The drive this brackets. Null for `day7`, which is about the week. */
+    captureSessionId: uuid("capture_session_id").references(() => captureSession.id, {
+      onDelete: "cascade",
+    }),
+    phase: studyResponsePhaseEnum("phase").notNull(),
+    item: text("item").notNull(),
+    value: integer("value").notNull(),
+    scaleMax: integer("scale_max").notNull().default(7),
+    respondedAt: timestamp("responded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One answer per item per phase per drive: a re-tap corrects the answer
+    // rather than adding a second one, which is what makes a pre/post pair
+    // countable without deduplication in the analysis.
+    uniqueIndex("study_response_session_phase_item_idx").on(
+      t.userId,
+      t.captureSessionId,
+      t.phase,
+      t.item,
+    ),
+    // And the same rule for an answer that belongs to no drive — the day-7
+    // review is about the week. A SECOND index, because Postgres treats two
+    // nulls in a unique index as distinct, so the one above does not
+    // constrain these rows at all: without this, two taps arriving together
+    // both insert and the week has two answers to one question.
+    uniqueIndex("study_response_phase_item_idx")
+      .on(t.userId, t.phase, t.item)
+      .where(sql`${t.captureSessionId} is null`),
+    index("study_response_user_at_idx").on(t.userId, t.respondedAt),
+  ],
+);
+
+/**
+ * What became of one board item at the day-7 review: done, still open, or lost.
+ *
+ * `lost` is the primary failure measure for offloading, and it is defined
+ * behaviourally, not by feeling: never revisited and not acted on. A system
+ * that writes many items to the board and never brings them back produces a
+ * high lost rate however good its latency looks.
+ */
+export const studyItemOutcomeEnum = pgEnum("study_item_outcome", ["done", "open", "lost"]);
+
+export const studyItemReview = pgTable(
+  "study_item_review",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** The card's stable identity: the root of its revision chain. */
+    cardId: text("card_id").notNull(),
+    /** The drive the review itself was recorded in, when it had one. */
+    captureSessionId: uuid("capture_session_id").references(() => captureSession.id, {
+      onDelete: "set null",
+    }),
+    outcome: studyItemOutcomeEnum("outcome").notNull(),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One verdict per card per review round. A correction replaces it.
+    uniqueIndex("study_item_review_user_card_idx").on(t.userId, t.cardId),
+    index("study_item_review_user_at_idx").on(t.userId, t.reviewedAt),
+  ],
+);
+
+/**
+ * Everything days 2–6 are allowed to record: that something was opened.
+ *
+ * Dictations and edits are already in `workspace_op`, so this table exists for
+ * the one thing that leaves no other trace — the participant opening the board
+ * or a card to look at it. That is the behaviour "revisit" is about, and
+ * without it a card someone re-read every morning and never edited is
+ * indistinguishable from one nobody ever saw again.
+ */
+export const studyEventKindEnum = pgEnum("study_event_kind", ["board_open", "card_open"]);
+
+export const studyEvent = pgTable(
+  "study_event",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    kind: studyEventKindEnum("kind").notNull(),
+    /** The card, for `card_open`. Null for `board_open`. */
+    cardId: text("card_id"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("study_event_user_at_idx").on(t.userId, t.occurredAt),
+    index("study_event_user_card_idx").on(t.userId, t.cardId).where(sql`${t.cardId} is not null`),
   ],
 );
