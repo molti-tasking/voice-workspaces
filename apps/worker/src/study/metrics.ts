@@ -99,7 +99,18 @@ export interface MetricsOptions {
 
 const DEFAULT_RE_PROMPT_MS = 5_000;
 const DEFAULT_CORRECTION_WINDOW_MS = 15_000;
-const DEFAULT_TIME_ZONE = process.env.STUDY_TIME_ZONE || "UTC";
+/**
+ * READ AT CALL TIME, not at module load.
+ *
+ * The CLI loads `.env` with dotenv at the top of its own module, and ESM
+ * evaluates every import before any of that runs — so a constant initialised
+ * here would have been computed before `STUDY_TIME_ZONE` existed, and the
+ * setting would have been silently ignored on every run. `STUDY_PILOT_USER_IDS`
+ * avoids the same trap by being read inside its function; so does this.
+ */
+function defaultTimeZone(): string {
+  return process.env.STUDY_TIME_ZONE || "UTC";
+}
 
 /**
  * How long a gap between two of the person's utterances may be before it ends
@@ -693,7 +704,7 @@ export async function participantMetrics(
     options: {
       rePromptAfterMs,
       correctionWindowMs,
-      timeZone: options.timeZone ?? DEFAULT_TIME_ZONE,
+      timeZone: options.timeZone ?? defaultTimeZone(),
     },
     sessions: perSession,
     tier1,
@@ -704,7 +715,7 @@ export async function participantMetrics(
       turns: tier1.turns + tier1.fillers,
       utterances: tier2.userUtterances,
     }),
-    tier3: await participantTier3(userId, now, options.timeZone ?? DEFAULT_TIME_ZONE),
+    tier3: await participantTier3(userId, now, options.timeZone ?? defaultTimeZone()),
   };
 }
 

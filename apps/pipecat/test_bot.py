@@ -1938,7 +1938,6 @@ def test_a_board_call_says_something_before_it_waits():
     """8.4 seconds of silence is indistinguishable from a dropped connection."""
     from pipecat.frames.frames import TTSSpeakFrame
 
-    bot.Liveness._last_spoke_ms = 0.0
     recorder = FakeRecorder()
     tools = bot.BoardTools("ticket", recorder, bot.FALLBACK_FILLERS)
     tools._post = lambda payload: {"ok": True, "changed": True}
@@ -1958,12 +1957,13 @@ def test_a_second_tool_call_in_one_completion_does_not_say_it_again():
     """Two board edits are one moment to the person, not two."""
     from pipecat.frames.frames import TTSSpeakFrame
 
-    bot.Liveness._last_spoke_ms = 0.0
     recorder = FakeRecorder()
     tools = bot.BoardTools("ticket", recorder, bot.FALLBACK_FILLERS)
     tools._post = lambda payload: {"ok": True, "changed": True}
     llm = FakeLLM()
 
+    # One completion, two calls: the recorder's cue does not change between
+    # them, which is what makes them one moment.
     run_tool(tools, "move_task", {"card": "1225b3", "column": "dropped"}, llm)
     run_tool(tools, "move_task", {"card": "4471aa", "column": "next"}, llm)
 
@@ -1971,11 +1971,45 @@ def test_a_second_tool_call_in_one_completion_does_not_say_it_again():
     assert spoken == [bot.FALLBACK_FILLERS["working"]]
 
 
+def test_a_tool_call_on_a_new_turn_says_it_again():
+    """A new moment earns its own placeholder, however recent the last one."""
+    from pipecat.frames.frames import TTSSpeakFrame
+
+    recorder = FakeRecorder()
+    tools = bot.BoardTools("ticket", recorder, bot.FALLBACK_FILLERS)
+    tools._post = lambda payload: {"ok": True, "changed": True}
+    llm = FakeLLM()
+
+    run_tool(tools, "move_task", {"card": "1225b3", "column": "dropped"}, llm)
+    # They said something else: a new cue, and therefore a new moment.
+    recorder.current = bot.Cue("user_turn", None, 9_000)
+    run_tool(tools, "move_task", {"card": "4471aa", "column": "next"}, llm)
+
+    spoken = [f.text for f in llm.pushed if isinstance(f, TTSSpeakFrame)]
+    assert spoken == [bot.FALLBACK_FILLERS["working"]] * 2
+
+
+def test_one_drive_s_filler_never_silences_another_s():
+    """One container serves up to MAX_CONNECTIONS drives at once."""
+    from pipecat.frames.frames import TTSSpeakFrame
+
+    # Two drives whose cues happen to be equal objects would still be two
+    # `BoardTools`, because the state lives on the drive's own instance.
+    llm = FakeLLM()
+    for _ in range(2):
+        recorder = FakeRecorder()
+        tools = bot.BoardTools("ticket", recorder, bot.FALLBACK_FILLERS)
+        tools._post = lambda payload: {"ok": True, "changed": True}
+        run_tool(tools, "move_task", {"card": "1225b3", "column": "dropped"}, llm)
+
+    spoken = [f.text for f in llm.pushed if isinstance(f, TTSSpeakFrame)]
+    assert spoken == [bot.FALLBACK_FILLERS["working"]] * 2
+
+
 def test_a_search_always_speaks_its_own_announcement():
     """Two searches are two different sentences, and both are worth hearing."""
     from pipecat.frames.frames import TTSSpeakFrame
 
-    bot.Liveness._last_spoke_ms = 0.0
     search = bot.WebSearch("ticket", None, FakeRecorder(), bot.FALLBACK_FILLERS)
     search._post = lambda payload: {"ok": True, "results": []}
     llm = FakeLLM()
@@ -1995,11 +2029,10 @@ def test_a_slow_call_is_reassured_and_a_fast_one_is_not(monkeypatch):
     llm = FakeLLM()
 
     async def run(delay):
-        # The repeat guard is about two calls in one completion; each of these
-        # runs is a separate moment.
-        bot.Liveness._last_spoke_ms = 0.0
         live = bot.Liveness(llm, recorder, bot.FALLBACK_FILLERS)
-        await live.begin(None)
+        # The caller decides what the opening phrase is, or that there is
+        # none; `Liveness` speaks what it is given and then reassures.
+        await live.begin(bot.FALLBACK_FILLERS["working"])
         await asyncio.sleep(delay)
         await live.end()
 
@@ -2309,11 +2342,15 @@ def test_the_context_block_stops_demanding_an_answer_once_one_was_given():
             FrameDirection.DOWNSTREAM,
         )
         assert bot.ANSWER_PENDING in recall._message["content"]
-        # The next turn has nothing to say and must say nothing.
+        assert recall._message in context.get_messages()
+        # The next turn has nothing to say and must say nothing — and the
+        # block is DROPPED rather than blanked, because an empty system
+        # message is a 400 behind some providers, not a neutral one.
         await recall.process_frame(
             TranscriptionFrame(text="Anyway.", user_id="u", timestamp="t"),
             FrameDirection.DOWNSTREAM,
         )
-        assert recall._message["content"] == ""
+        assert recall._message is None
+        assert all(m.get("content") for m in context.get_messages())
 
     asyncio.run(run())

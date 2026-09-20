@@ -1404,19 +1404,30 @@ class Recall(FrameProcessor):
             # context in place without touching list membership — which
             # matters because LLMContextAggregatorPair holds that same list.
             #
-            # AN EXISTING BLOCK IS ALWAYS REPLACED, even by nothing. Leaving
-            # the last one in place when this turn composed none used to be a
-            # harmless saving — the block is rebuilt from live state every
-            # turn, so "nothing to compose" means there is no background. It
-            # stopped being harmless with ANSWER_PENDING in it: on a thin
-            # drive that line would survive into every later turn, telling the
-            # model that `<silence>` is unavailable long after the question it
-            # belonged to was answered.
-            if self._message is not None:
-                self._message["content"] = content or ""
-            elif content:
-                self._message = {"role": "system", "content": content}
-                self._context.add_message(self._message)
+            # AN EXISTING BLOCK NEVER SURVIVES A TURN THAT COMPOSED NOTHING.
+            # Leaving the last one in place used to be a harmless saving — the
+            # block is rebuilt from live state every turn, so "nothing to
+            # compose" means there is no background. It stopped being harmless
+            # with ANSWER_PENDING in it: on a thin drive that line would
+            # survive into every later turn, telling the model that
+            # `<silence>` is unavailable long after the question it belonged
+            # to was answered.
+            #
+            # DROPPED, not blanked. An empty system message is not a neutral
+            # one: several providers behind the proxy reject an empty text
+            # block with a 400, and a 400 here is the failure this file warns
+            # about twice already — the agent hears you and silently never
+            # replies. `_reflow` below rebuilds the message list and leaves
+            # out a block that is None, so clearing the reference is what
+            # removes it from the context.
+            if content:
+                if self._message is None:
+                    self._message = {"role": "system", "content": content}
+                    self._context.add_message(self._message)
+                else:
+                    self._message["content"] = content
+            else:
+                self._message = None
 
             self._reflow()
 
@@ -1863,14 +1874,6 @@ class Liveness:
     recall as the driver's own words.
     """
 
-    # When the last filler reached the speaker, across every Liveness in this
-    # process. A completion that calls two board tools runs two of these back
-    # to back, and hearing "One moment." twice in a second is worse than
-    # hearing it once: the placeholder is there to say the system is alive,
-    # and saying it again immediately says nothing new.
-    _last_spoke_ms: float = 0.0
-    REPEAT_GUARD_SECS = 4.0
-
     def __init__(self, llm, recorder: "TurnRecorder | None", fillers: dict):
         self._llm = llm
         self._recorder = recorder
@@ -1878,14 +1881,16 @@ class Liveness:
         self._task: asyncio.Task | None = None
 
     async def begin(self, opening: str | None) -> None:
-        # A phrase the model wrote for THIS call always goes out — it says
-        # what is being looked up, and two of those are two different
-        # sentences. A generic placeholder is suppressed if one was just
-        # spoken.
+        """Speak the opening phrase, if there is one, and start reassuring.
+
+        `opening` is None when the caller has decided this call needs no
+        placeholder of its own — a second board edit in the same moment, where
+        the first one already said it. Whether that is the case is the
+        CALLER's to know: `BoardTools` holds the drive's state, and this
+        object exists for the length of one tool call.
+        """
         if opening is not None:
             await self._speak(opening)
-        elif time.monotonic() - Liveness._last_spoke_ms > self.REPEAT_GUARD_SECS:
-            await self._speak(self._fillers["working"])
         self._task = asyncio.create_task(self._reassure())
 
     async def end(self) -> None:
@@ -1904,7 +1909,6 @@ class Liveness:
             raise
 
     async def _speak(self, text: str) -> None:
-        Liveness._last_spoke_ms = time.monotonic()
         await self._llm.push_frame(TTSSpeakFrame(text, append_to_context=False))
         if self._recorder is not None:
             self._recorder.record_announcement(text)
@@ -2567,6 +2571,19 @@ class BoardTools:
         self._ticket = ticket
         self._recorder = recorder
         self._fillers = fillers or dict(FALLBACK_FILLERS)
+        # The MOMENT this drive last spoke a board placeholder for. A
+        # completion that calls two board tools runs two handlers back to
+        # back, and hearing "One moment." twice in a second is worse than
+        # hearing it once — the placeholder says the system is alive, and
+        # saying it again immediately says nothing new.
+        #
+        # Keyed on the cue rather than on a clock, and held HERE rather than on
+        # `Liveness`, for two reasons a wall-clock class attribute got wrong:
+        # one container serves up to MAX_CONNECTIONS drives, so shared state
+        # would let one participant's filler silence another's; and a genuinely
+        # new user turn four seconds later is a new moment that deserves its
+        # own placeholder, however recently the last one was spoken.
+        self._spoke_for_cue: str | None = None
 
     @staticmethod
     def schemas(tools: list[dict]) -> ToolsSchema | None:
@@ -2601,8 +2618,16 @@ class BoardTools:
         # not after it. A board edit is usually quick, but "usually" is the
         # word that made Pilot 01's tool-backed turns indistinguishable from a
         # dropped connection. See `Liveness`.
+        #
+        # "One moment", not "I'm looking that up": a board edit is a WRITE, and
+        # narrating it as a lookup is a false statement about what is
+        # happening. Said once per moment — see `_spoke_for_cue`.
+        cue_id = self._recorder.cue().cue_id if self._recorder is not None else None
+        opening = None if cue_id is not None and cue_id == self._spoke_for_cue else self._fillers["working"]
+        if opening is not None:
+            self._spoke_for_cue = cue_id
         live = Liveness(params.llm, self._recorder, self._fillers)
-        await live.begin(None)
+        await live.begin(opening)
         try:
             result = await asyncio.to_thread(self._post, payload)
             if not result.get("ok"):

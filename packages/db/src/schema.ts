@@ -1521,6 +1521,14 @@ export const studyResponse = pgTable(
       t.phase,
       t.item,
     ),
+    // And the same rule for an answer that belongs to no drive — the day-7
+    // review is about the week. A SECOND index, because Postgres treats two
+    // nulls in a unique index as distinct, so the one above does not
+    // constrain these rows at all: without this, two taps arriving together
+    // both insert and the week has two answers to one question.
+    uniqueIndex("study_response_phase_item_idx")
+      .on(t.userId, t.phase, t.item)
+      .where(sql`${t.captureSessionId} is null`),
     index("study_response_user_at_idx").on(t.userId, t.respondedAt),
   ],
 );

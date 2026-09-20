@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "study_response_phase_item_idx" ON "study_response" USING btree ("user_id","phase","item") WHERE "study_response"."capture_session_id" is null;
