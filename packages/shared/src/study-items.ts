@@ -3,16 +3,27 @@ import { z } from "zod";
 /**
  * The single-item measures the study asks around a drive.
  *
- * WHY SINGLE ITEMS, and why these three. The thing being measured is whether
- * the system RELIEVES the person, not whether they got more done. Pilot 01
+ * FIVE ITEMS, and the count is a design decision rather than an oversight.
+ * One before a drive and four after it is about twenty seconds of tapping,
+ * which is what a person will do every day for a week. A validated multi-item
+ * scale per construct would be better psychometrics and worse data, because by
+ * day three it would not be filled in.
+ *
+ * WHY SINGLE ITEMS, AND WHY THESE. The thing being measured is whether the
+ * system RELIEVES the person, not whether they got more done. Pilot 01
  * measured only the system — latency, turn counts, decline rate — and every
  * one of those numbers was healthy on a drive where the participant was left
  * waiting in silence, could not tell working from broken, and could not get an
  * answer to their own answer. None of that is visible without asking them.
  *
- * A single item per construct, asked twice a minute apart, is what a person
- * will actually answer in a car. A validated multi-item scale is better
- * psychometrics and worse data, because it will not be filled in.
+ * AND RELIEF OF WHAT. The last two items exist because "relief" on its own is
+ * not a goal worth having: a system that did the thinking would score
+ * beautifully on mental load. What should come off the person is what they are
+ * HOLDING — the tracking, the remembering, the re-deriving. What must not come
+ * off them is the thinking, which is the thing they opened the app to do. See
+ * EVALUATION_PLAN §10; `thinking_moved` and `did_my_thinking` are those two
+ * halves asked separately, because a single "was it helpful" cannot tell them
+ * apart.
  *
  * THE WORDING LIVES HERE, and the KEY is what is stored. `study_response.item`
  * holds `mental_load`, never the sentence, so rewording a question next month
@@ -20,6 +31,10 @@ import { z } from "zod";
  * and the participant sheet cannot drift apart. Bump `STUDY_ITEMS_VERSION`
  * when a wording change is big enough that the two halves should not be
  * pooled.
+ *
+ * THE VERSION TRACKS WORDING, NOT MEMBERSHIP. Adding an item leaves it alone:
+ * the series already running are unaffected, and the new one simply starts
+ * later. Only rewording an existing question forks anything.
  *
  * Pure: no I/O and no db import, because the recorder is a client component.
  */
@@ -41,6 +56,16 @@ export interface StudyItem {
   anchors: [low: string, high: string];
   /** When it is asked. `mental_load` is the only one asked twice. */
   phases: readonly StudyResponsePhase[];
+  /**
+   * WHICH END IS THE GOOD END.
+   *
+   * Two of these items are reverse-scored — more load and more of the thinking
+   * taken over are both failures — and mixing directions without saying so is
+   * the classic way a scale gets averaged into nonsense. Stated per item, in
+   * the same file as the wording, so the analysis reads it from the data
+   * rather than remembering it.
+   */
+  higherIsBetter: boolean;
 }
 
 /**
@@ -56,6 +81,7 @@ export const MENTAL_LOAD: StudyItem = {
   question: "How much are you currently holding in your head?",
   anchors: ["Almost nothing", "More than I can keep track of"],
   phases: ["pre", "post"],
+  higherIsBetter: false,
 };
 
 /**
@@ -71,6 +97,7 @@ export const LIVENESS_PERCEIVED: StudyItem = {
   question: "Could you tell whether the system was still working?",
   anchors: ["Never could tell", "Always obvious"],
   phases: ["post"],
+  higherIsBetter: true,
 };
 
 /**
@@ -86,12 +113,61 @@ export const CAN_CORRECT: StudyItem = {
   question: "Could you correct the system when it was wrong?",
   anchors: ["Not at all", "Whenever I needed to"],
   phases: ["post"],
+  higherIsBetter: true,
+};
+
+/**
+ * Whether talking it through moved the thinking on.
+ *
+ * THE MEASURE THE FIRST VERSION OF THIS STUDY WAS MISSING. Everything else
+ * here asks whether the system worked and whether it took load off; none of it
+ * asks whether the thing the person came to do — think a problem through out
+ * loud — actually happened. Thinking aloud is not narration of a finished
+ * thought, it is where a difficult thought gets formed (see EVALUATION_PLAN
+ * §10), and a system that captures beautifully while the thinking goes nowhere
+ * has failed at the only job that matters.
+ *
+ * Deliberately "further than on your own", not "did you have good ideas": the
+ * comparison the participant can actually make is against the drive they would
+ * otherwise have spent thinking in silence.
+ */
+export const THINKING_MOVED: StudyItem = {
+  key: "thinking_moved",
+  question: "Did talking it through move your thinking on?",
+  anchors: ["No further than alone", "Much further"],
+  phases: ["post"],
+  higherIsBetter: true,
+};
+
+/**
+ * Whether it did thinking the person wanted to do themselves.
+ *
+ * REVERSE-SCORED, and the counterweight to every other measure here. Offloading
+ * what you are HOLDING is the point. Offloading the thinking itself is the
+ * failure the wider literature on cognitive offloading keeps finding: people
+ * produce better artefacts with an assistant, learn less from them, and
+ * self-correct less often. A system optimised only for relief would score well
+ * on mental load by doing the work — and that is the outcome this item exists
+ * to catch.
+ *
+ * Asked as a behaviour ("did it do"), not as a judgement ("was it too
+ * intrusive"), because people are reliably poor at rating intrusiveness and
+ * quite good at saying whether something was taken off them.
+ */
+export const DID_MY_THINKING: StudyItem = {
+  key: "did_my_thinking",
+  question: "Did it do thinking you wanted to do yourself?",
+  anchors: ["Never", "Often"],
+  phases: ["post"],
+  higherIsBetter: false,
 };
 
 export const STUDY_ITEMS: readonly StudyItem[] = [
   MENTAL_LOAD,
   LIVENESS_PERCEIVED,
   CAN_CORRECT,
+  THINKING_MOVED,
+  DID_MY_THINKING,
 ];
 
 /** The items asked at one phase, in the order they should be shown. */

@@ -10,7 +10,7 @@
  * "not" would be under a looser rule.
  */
 import { describe, expect, it } from "vitest";
-import { isCorrection, isRepeatRequest, normalise } from "./steerability";
+import { isCorrection, isRepeatRequest, isSelfRepair, normalise } from "./steerability";
 
 describe("normalise", () => {
   it("strips punctuation and keeps umlauts", () => {
@@ -102,5 +102,41 @@ describe("isCorrection", () => {
   it("says nothing about silence", () => {
     expect(isCorrection("")).toBe(false);
     expect(isRepeatRequest("   ")).toBe(false);
+  });
+});
+
+describe("isSelfRepair", () => {
+  it("hears somebody revising their own half-formed thought", () => {
+    for (const said of [
+      "Wir machen das am Dienstag, beziehungsweise eher am Mittwoch.",
+      "Das geht in die Einleitung, also eher in den Methodenteil.",
+      "Der Vergleich trägt nicht — nein, warte, doch, aber nur für die erste Hälfte.",
+      "We put it in the intro, or rather the method section.",
+      "It's about throughput — no wait, it's about whether it comes back.",
+      "Scratch that, the deadline is the real constraint.",
+    ]) {
+      expect(isSelfRepair(said), said).toBe(true);
+    }
+  });
+
+  it("leaves a settled thought alone", () => {
+    for (const said of [
+      "Die Einleitung ist fertig und der Rest kommt nächste Woche.",
+      "Ich schreibe das am Dienstag.",
+      "The deadline is in November and the draft is done.",
+      "I need to book the flights before Friday.",
+    ]) {
+      expect(isSelfRepair(said), said).toBe(false);
+    }
+  });
+
+  it("shares phrases with a correction, and lets the turn structure decide", () => {
+    // "Ich meine" and "I mean" can address either the agent's proposal or
+    // one's own sentence. Both classifiers say yes; `metrics.ts` separates
+    // them by whether an agent turn came first, because the addressee is a
+    // fact about the conversation rather than about the words.
+    const shared = "Ich meine den anderen Abschnitt.";
+    expect(isSelfRepair(shared)).toBe(true);
+    expect(isCorrection(shared)).toBe(true);
   });
 });

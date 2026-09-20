@@ -30,13 +30,20 @@ between participants or study phases:
 Work in tier order. **Tier 0 and Tier 1 must be done before the first participant starts.**
 Tier 2 holds the behaviours the study varies. Tier 3 holds the measures.
 
-> **Pilot 01 changed what this plan measures.** See §9. The short version: the
-> system ran without a single error and failed the participant anyway, because
-> everything this plan measured was a property of the system rather than of the
-> person using it. The measures now run in three tiers — system behaviour,
-> steerability, relief — and the guiding principle is **optimise for relief,
-> not throughput**. A system that writes many items to the board and never
-> brings them back has failed.
+> **Pilot 01 changed what this plan measures.** See §9 for the failures and
+> §10 for the reframing. The short version: the system ran without a single
+> error and failed the participant anyway, because everything this plan
+> measured was a property of the system rather than of the person using it.
+>
+> The measures now run in four groups — system behaviour, steerability,
+> thinking, relief — under one principle:
+>
+> > **Relieve what they are HOLDING. Never relieve them of the THINKING.**
+>
+> Throughput is not the goal, and neither is relief on its own: a system that
+> did the thinking would score beautifully on mental load. A system that writes
+> many items to the board and never brings them back has failed; so has one
+> that leaves the person with nothing left to think about.
 
 ---
 
@@ -625,6 +632,12 @@ direction); whether they could tell it was working; whether they could correct i
 by *day*; and the day-7 verdict per item — done / still open / **lost**. `lostRate` is the
 primary failure measure for offloading.
 
+**The `thinking` group — whether they were still doing the thinking.** Added after the second
+piece of Pilot 01 feedback and argued for in §10: intrusions (agent speech that began while they
+were still talking), self-repairs, and how long they get to speak without the agent taking a
+turn. It is reported beside the tiers rather than inside one, because it is the group that keeps
+the other three honest.
+
 ### 9.3 The study flow the system now supports
 
 - **Day 1.** Pre item on the recorder → drive → Stop opens the debrief (microphone still open,
@@ -644,3 +657,146 @@ primary failure measure for offloading.
   `directive` row and does not appear in the denominator.
 - The pooled medians in a participant's summary are null on purpose: a median of medians is not
   a median, and the per-session values are the ones to read.
+
+---
+
+## 10. Thinking aloud is the task, not the input method
+
+Feedback after Pilot 01, in one line: *consider talking aloud as a way of thinking and
+processing for knowledge work.* It is the sharpest thing anyone has said about this system,
+because it says the measures in §9 are still measuring the wrong thing — better than before, but
+still about the machine.
+
+The whole design already rests on the claim: Notes.md says silence is thinking rather than a turn
+boundary, and the prompt says never to interrupt a thought that is still being formed. What was
+missing is that **nothing measured whether the thinking happened**, and one of our own measures
+was pointed the wrong way.
+
+### 10.1 What the literature says, and what each thing means here
+
+**Verbalising a thought does not change it; being asked to explain it does.**
+Ericsson and Simon's protocol analysis separates levels of verbalisation: saying what is already
+in working memory (Levels 1–2) leaves the cognition alone, while being asked to explain or
+justify (Level 3) alters it, and alters task performance and completion times with it.
+
+> *Consequence.* Every prompted turn this system takes is a Level 3 intervention. It is not a
+> neutral observation of somebody's thinking — it is a manipulation of it. That is not an
+> argument for silence; it is an argument for **counting the interventions** and for never
+> treating "the agent said something useful" as free. `thinking.intrusions` is the version of
+> this that can be measured mechanically: agent speech that began while the person was still
+> talking, which is a Level 3 intervention delivered mid-formation.
+
+**Eliciting explanation can also be exactly what helps.**
+Chi et al. found that students prompted to explain each line to themselves understood far more,
+and that the high explainers were the ones who built a correct model. The mechanism is
+integration and self-correction: explaining surfaces conflicts you would otherwise not notice.
+
+> *Consequence.* The same intervention the first finding warns about is the one that produces
+> the benefit. The interesting question for this study is therefore not "does it interrupt" but
+> **when does a question move the thinking on and when does it derail it** — which is exactly
+> what `thinking_moved` (asked) and `thinking.intrusions` / `selfRepairs` (observed) are for,
+> read together rather than separately.
+
+**Speech externalises fragmented, non-linear thought, and dictation is linear.**
+The recent CHI work on speech as a canvas ("Orality") names the tension directly: verbalised
+thinking is half-formed utterances and spontaneous sparks, and the sequential stream of dictation
+fights the non-linear structure of the thought.
+
+> *Consequence.* This is an argument FOR the workspace and the board and AGAINST the transcript
+> as an artefact — which is the architecture we already have, and it is worth saying that out
+> loud, because it means the board is not a to-do list that happens to be voice-driven. It is
+> the non-linear structure the speech could not carry. It is also why `medianUtteranceWords` and
+> the run lengths are worth watching: a person whose utterances get shorter every day has
+> stopped externalising and started dictating.
+
+**Offloading the thinking is a documented failure mode, not a hypothetical one.**
+Fan et al. found learners with a generative assistant produced better essays, showed no
+knowledge gain, and self-corrected less — they call it metacognitive laziness. Lee et al., in a
+survey of 319 knowledge workers, found confidence in the assistant associated with *less*
+critical thinking, and the work shifting from doing to supervising.
+
+> *Consequence, and it is the big one.* **"Optimise for relief, not throughput" is not
+> sufficient as a guiding principle.** A system that did the thinking would score beautifully on
+> mental load. The principle has to be stated as:
+>
+> > **Relieve what they are HOLDING. Never relieve them of the THINKING.**
+>
+> Those are different loads — tracking, remembering and re-deriving on one side; forming,
+> checking and correcting on the other — and §9's measures could not tell them apart.
+> `did_my_thinking` is reverse-scored precisely to catch a drive that scored well by taking the
+> work.
+
+### 10.2 What changed because of this
+
+- **Two new post-drive items.** `thinking_moved` ("Did talking it through move your thinking
+  on?") and `did_my_thinking` ("Did it do thinking you wanted to do yourself?", reverse-scored).
+  `StudyItem.higherIsBetter` now states each item's direction in the data, because two
+  reverse-scored items in a five-item set is how a scale gets averaged into nonsense.
+- **A fourth measure group, `thinking`,** computed from the ledger beside Tiers 1–3:
+  - `intrusions` / `intrusionRate` — agent speech that began while they were still talking. The
+    system's own central rule, measured for the first time. It should be at or near zero.
+  - `selfRepairs` / `selfRepairRate` — them revising their own half-formed sentence
+    ("beziehungsweise…", "no, wait"). The audible form of thinking in progress. It shares its
+    vocabulary with the correction measure, and the two are told apart by whether an agent turn
+    came first: the addressee is a fact about the turn structure, not about the words.
+  - `runs`, `medianRunMs`, `longestRunMs`, `medianUtteranceWords` — how long they speak without
+    the agent taking a turn. Thinking aloud comes in long stretches; issuing commands does not.
+- **None of these is good or bad alone**, and they are deliberately not summed into a score. A
+  low self-repair rate where `thinking_moved` is high is somebody who arrived with the thought
+  already formed. The same number where `did_my_thinking` is also high is the failure.
+
+### 10.3 What follows, and is not built
+
+- **A prompt change is warranted and has not been made.** The base prompt tells the model not to
+  interrupt a thought in formation; it does not tell it to avoid asking somebody to *justify* a
+  thought they are still forming, which is the specific Level 3 intervention the first finding
+  is about. This repo's definition of done requires a version bump and
+  `pnpm talkback:eval --strict --runs 3` for any prompt change, which needs a live model, so it
+  is proposed rather than applied. The wording to add, after the "WHEN TO SPEAK" bullets:
+  *"While a thought is still being formed, do not ask them to explain or justify it. Ask after
+  it has landed, or not at all."*
+- **Intrusions are measured against ASR boundaries**, which are approximate. Read the rate, not
+  the individual incidents.
+- **The condition that would settle it is not in the design.** Whether an offered question moves
+  thinking on or derails it is a within-participant comparison — offers on for one drive and off
+  for the next — which `proactiveOffers` can already express and the cold-start toggles can
+  already flip per drive (§9.3). Nobody has decided to run it.
+
+**Sources.**
+[Ericsson & Simon, *Protocol Analysis*](https://www.ida.liu.se/~nilda08/Anders_Ericsson/Ericsson_protocol.pdf) ·
+[Think-aloud protocols, overview](https://benjamins.com/online/hop/articles/thi1) ·
+[Chi et al. (1994), *Eliciting self-explanations improves understanding*](https://onlinelibrary.wiley.com/doi/10.1207/s15516709cog1803_3) ·
+[*Orality: A Semantic Canvas for Externalizing and Clarifying Thoughts with Speech*, CHI 2026](https://dl.acm.org/doi/10.1145/3772318.3791713) ·
+[Fan et al. (2025), *Beware of metacognitive laziness*, BJET](https://bera-journals.onlinelibrary.wiley.com/doi/10.1111/bjet.13544) ·
+[Lee et al. (2025), *The Impact of Generative AI on Critical Thinking*, CHI](https://dl.acm.org/doi/full/10.1145/3706598.3713778)
+
+---
+
+## 11. Saying that it is recording
+
+The second piece of feedback after Pilot 01: **make it more salient that recording has started.**
+
+Everything that said "recording" was a *modifier of a control that is always there* — the record
+button changed colour, a level meter appeared inside it, a timer began to count. Each of those
+reads as "on" only against a memory of what "off" looked like a second ago, which a first-time
+participant does not have. And all of it was visual, for a system whose premise is that the
+person's eyes are on something else.
+
+- **Two rising notes when recording starts**, two falling notes when Stop opens the debrief, and
+  one soft note when talk-back is actually connected and listening
+  (`apps/web/src/lib/recorder/earcon.ts`). Local WebAudio, so they work with the conversation
+  switched off, the network down and the container dead — which is when they matter most. The
+  third one is the important one conceptually: *"it is recording"* and *"it can hear me"* are
+  different facts arriving seconds apart, and only the failure of the second was ever shown.
+- **A haptic** alongside the transport pair, where the device has one.
+- **A badge that is present or absent**, never a shade of something: a pulsing red dot, the word,
+  and the elapsed time, with `role="status"` so it is announced. The dot pulses because
+  peripheral vision is nearly blind to colour and very good at movement.
+- **The gap is narrated.** Opening a microphone takes about a second, and that second used to
+  show an ellipsis on a disabled button — which reads as "it did not hear me" and invites a
+  second tap.
+
+No new study item for this. If people cannot tell it is recording they say so in the debrief,
+and they leave a behavioural trace — a drive stopped and restarted within seconds — which is
+cheaper and more honest than another rating. Worth watching in the next pilot's
+`endedBy`/duration pairs.

@@ -28,6 +28,10 @@
  * corrections are possible and cheap, and a measure biased towards finding
  * fewer of them cannot manufacture that claim.
  *
+ * `isSelfRepair` is the third, and it is about the person rather than the
+ * system: somebody revising their own half-formed sentence is somebody doing
+ * the thinking out loud. See its note.
+ *
  * Pure and dependency-free, so both are testable against fixtures rather than
  * against a database.
  */
@@ -128,4 +132,56 @@ export function isCorrection(text: string): boolean {
   if (!said) return false;
   if (REJECTION_OPENERS.some((pattern) => pattern.test(said))) return true;
   return REJECTION_PHRASES.some((pattern) => pattern.test(said));
+}
+
+/**
+ * Somebody correcting THEMSELVES, mid-thought.
+ *
+ * "No, wait — the other way round." "Beziehungsweise, eigentlich eher…" This
+ * is the audible form of a thought being revised while it is being formed, and
+ * it is the single best evidence in the transcript that the person is still
+ * doing the thinking rather than dictating a conclusion they had already
+ * reached. The self-explanation literature calls the same thing
+ * error-correction, and it is the mechanism that makes explaining to yourself
+ * work at all.
+ *
+ * WHY IT MATTERS HERE. The failure this study is exposed to is a system that
+ * captures beautifully while the thinking quietly moves into it — better
+ * artefacts, less self-correction, nothing learned. A self-repair rate that
+ * falls over a week, while everything else improves, is what that looks like
+ * from the outside.
+ *
+ * MID-UTTERANCE ON PURPOSE, which is the opposite of `isCorrection`. A repair
+ * of your own sentence happens inside it, after the thing being repaired; a
+ * rejection of what the agent said opens the reply. The two share a couple of
+ * phrases, and `metrics.ts` separates them by whether an agent turn came
+ * first — the addressee is a fact about the turn structure, not about the
+ * words.
+ */
+const SELF_REPAIR_PATTERNS: readonly RegExp[] = [
+  // German. `beziehungsweise` and `also eher` are almost purely repair
+  // markers; `beziehungsweise` has no innocent reading at all.
+  /\bbeziehungsweise\b/,
+  /\bbzw\b/,
+  /\b(also|oder|nein) (eher|besser|vielmehr)\b/,
+  /\bquatsch\b/,
+  /\bmoment (mal)?\b.{0,20}\b(nein|nicht|doch)\b/,
+  /\bich meine\b/,
+  /\bkorrektur\b/,
+  /\bnein (warte|halt|doch)\b/,
+  // English
+  /\bno wait\b/,
+  /\bwait no\b/,
+  /\bor rather\b/,
+  /\bi mean\b/,
+  /\bscratch that\b/,
+  /\blet me rephrase\b/,
+  /\bactually,? no\b/,
+  /\bwhat i mean is\b/,
+];
+
+export function isSelfRepair(text: string): boolean {
+  const said = normalise(text);
+  if (!said) return false;
+  return SELF_REPAIR_PATTERNS.some((pattern) => pattern.test(said));
 }

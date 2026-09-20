@@ -61,7 +61,7 @@ import {
 import { loadOps } from "@voicemural/db/workspace";
 import { isEcho } from "@voicemural/talkback";
 import { KEPT_AFTER_SESSIONS, foldBoard, judge } from "@voicemural/workspace";
-import { isCorrection, isRepeatRequest } from "./steerability";
+import { isCorrection, isRepeatRequest, isSelfRepair, normalise } from "./steerability";
 
 export const METRICS_VERSION = 1;
 
@@ -101,6 +101,17 @@ const DEFAULT_RE_PROMPT_MS = 5_000;
 const DEFAULT_CORRECTION_WINDOW_MS = 15_000;
 const DEFAULT_TIME_ZONE = process.env.STUDY_TIME_ZONE || "UTC";
 
+/**
+ * How long a gap between two of the person's utterances may be before it ends
+ * a RUN of thinking aloud.
+ *
+ * Two seconds. Long enough to cover the pause between clauses that the VAD
+ * cuts an utterance on — those are one thought, and the whole prompt is built
+ * on not treating them as a turn boundary — and short enough that a genuine
+ * stop does not get glued to whatever they said next.
+ */
+const RUN_GAP_MS = 2_000;
+
 /* --- small helpers ---------------------------------------------------------- */
 
 /** The median of the values present. Null for an empty set, never zero. */
@@ -111,6 +122,12 @@ export function median(values: readonly number[]): number | null {
   return sorted.length % 2 === 1
     ? sorted[middle]!
     : Math.round((sorted[middle - 1]! + sorted[middle]!) / 2);
+}
+
+/** Words in an utterance, on the same normalisation the classifiers use. */
+function wordCount(text: string): number {
+  const said = normalise(text);
+  return said ? said.split(" ").length : 0;
 }
 
 /**
@@ -186,6 +203,57 @@ export interface Tier2 {
   unansweredAnswers: number;
 }
 
+/**
+ * Whether the person was still THINKING, and whether they were let.
+ *
+ * The fourth group, and the one the other three cannot see. Tier 1 asks
+ * whether the system worked, Tier 2 whether it could be steered, Tier 3
+ * whether it relieved them — and a system that did the thinking for somebody
+ * would score well on all three. What should come off the person is what they
+ * are HOLDING; what must not come off them is the thinking, which is the thing
+ * they opened the app to do. See EVALUATION_PLAN §10.
+ *
+ * Three observables, all from the ledger and all counts:
+ *
+ * - INTRUSIONS. Agent speech that began while the person was still talking.
+ *   The prompt's central rule is "never interrupt a thought that is still
+ *   being formed" and until now nothing measured it. It matters more than
+ *   politeness: the verbalization literature's one robust finding is that
+ *   vocalizing a thought as it forms leaves the thought alone, while being
+ *   asked to explain or justify it mid-formation changes it. An intrusion is
+ *   the system reaching into the thinking it is supposed to be supporting.
+ *
+ * - SELF-REPAIRS. The person revising their own half-formed sentence:
+ *   "beziehungsweise…", "no, wait". The audible form of a thought being
+ *   worked on, and the mechanism the self-explanation literature credits for
+ *   why explaining to yourself works at all.
+ *
+ * - RUNS. How long they speak for without the agent taking a turn. Thinking
+ *   aloud comes in long stretches; issuing commands does not. A week in which
+ *   the runs get steadily shorter is a week in which the person has become an
+ *   operator of the thing rather than a thinker using it.
+ *
+ * NONE OF THESE IS GOOD OR BAD ON ITS OWN, and that is why they are reported
+ * next to the Tier 3 items rather than folded into a score. A low self-repair
+ * rate on a drive where `thinking_moved` is high is somebody who arrived with
+ * the thought already formed. The same number where `did_my_thinking` is also
+ * high is the failure this group exists to catch.
+ */
+export interface Thinking {
+  /** Agent speech that started while the person was mid-utterance. */
+  intrusions: number;
+  intrusionRate: number | null;
+  /** Utterances in which they revised their own thought. */
+  selfRepairs: number;
+  selfRepairRate: number | null;
+  /** Median words in one of their utterances. */
+  medianUtteranceWords: number | null;
+  /** Unbroken stretches of their own speech, with the agent not taking a turn. */
+  runs: number;
+  medianRunMs: number | null;
+  longestRunMs: number | null;
+}
+
 export interface Tier3Session {
   mentalLoadPre: number | null;
   mentalLoadPost: number | null;
@@ -208,6 +276,7 @@ export interface SessionMetrics {
   studyCondition: unknown;
   tier1: Tier1;
   tier2: Tier2;
+  thinking: Thinking;
   tier3: Tier3Session;
 }
 
@@ -241,9 +310,10 @@ export interface ParticipantMetrics {
   participantId: string | null;
   options: { rePromptAfterMs: number; correctionWindowMs: number; timeZone: string };
   sessions: SessionMetrics[];
-  /** Tier 1 and 2 pooled across the participant's drives. */
+  /** Tier 1, 2 and the thinking group, pooled across the participant's drives. */
   tier1: Tier1;
   tier2: Tier2;
+  thinking: Thinking;
   tier3: Tier3Participant;
 }
 
@@ -504,6 +574,73 @@ export async function participantMetrics(
         ).length,
       };
 
+      /* --- Thinking --------------------------------------------------------- */
+
+      /* INTRUSIONS: agent audio that began while they were still talking.
+       *
+       * Every spoken turn counts, fillers included — a placeholder spoken over
+       * somebody mid-sentence is an interruption whatever it says. Strictly
+       * inside the utterance, so a turn that begins exactly as they stop is
+       * the system taking its turn rather than taking theirs.
+       *
+       * Utterance boundaries come from the chunk pipeline and turn offsets
+       * from the container. Both are on the drive's clock, so they compare —
+       * but the ASR's idea of where a sentence ended is approximate, so read
+       * this as a rate that should be near zero rather than as a count of
+       * individual incidents. */
+      const intrusions = sessionTurns.filter((t) =>
+        theirs.some(
+          (u) => t.startOffsetMs > u.startOffsetMs && t.startOffsetMs < u.endOffsetMs,
+        ),
+      ).length;
+
+      /* SELF-REPAIRS: them revising their own thought rather than the agent's
+       * proposal. The same few phrases can do both jobs, so the addressee is
+       * decided by the turn structure — a repair is the one with no agent turn
+       * in front of it. */
+      const selfRepairs = theirs.filter((u) => {
+        if (!isSelfRepair(u.text)) return false;
+        const answeringAgent = sessionTurns.some(
+          (t) =>
+            t.kind !== "filler" &&
+            t.endOffsetMs <= u.startOffsetMs &&
+            u.startOffsetMs - t.endOffsetMs <= correctionWindowMs,
+        );
+        return !answeringAgent;
+      }).length;
+
+      /* RUNS: unbroken stretches of their own speech.
+       *
+       * Two of their utterances belong to the same run when the gap between
+       * them is short AND the agent did not take a turn in it. The second
+       * condition is what makes this a measure of thinking aloud rather than
+       * of talkativeness: a run ends when the conversation becomes a
+       * conversation. */
+      const runs: { startMs: number; endMs: number }[] = [];
+      for (const u of theirs) {
+        const current = runs[runs.length - 1];
+        const gap = current ? u.startOffsetMs - current.endMs : Infinity;
+        const interrupted =
+          current !== undefined &&
+          sessionTurns.some(
+            (t) => t.startOffsetMs >= current.endMs && t.startOffsetMs <= u.startOffsetMs,
+          );
+        if (current && gap <= RUN_GAP_MS && !interrupted) current.endMs = u.endOffsetMs;
+        else runs.push({ startMs: u.startOffsetMs, endMs: u.endOffsetMs });
+      }
+      const runLengths = runs.map((r) => Math.max(0, r.endMs - r.startMs));
+
+      const thinking: Thinking = {
+        intrusions,
+        intrusionRate: share(intrusions, sessionTurns.length),
+        selfRepairs,
+        selfRepairRate: share(selfRepairs, theirs.length),
+        medianUtteranceWords: median(theirs.map((u) => wordCount(u.text))),
+        runs: runs.length,
+        medianRunMs: median(runLengths),
+        longestRunMs: runLengths.length > 0 ? Math.max(...runLengths) : null,
+      };
+
       /* --- Tier 3, the session's half ------------------------------------- */
 
       const answer = (phase: string, item: string): number | null =>
@@ -526,6 +663,7 @@ export async function participantMetrics(
         studyCondition: session.studyCondition,
         tier1,
         tier2,
+        thinking,
         tier3: {
           mentalLoadPre,
           mentalLoadPost,
@@ -544,6 +682,9 @@ export async function participantMetrics(
     }
   }
 
+  const tier1 = poolTier1(perSession.map((s) => s.tier1));
+  const tier2 = poolTier2(perSession.map((s) => s.tier2));
+
   return {
     metricsVersion: METRICS_VERSION,
     computedAt: now.toISOString(),
@@ -555,8 +696,14 @@ export async function participantMetrics(
       timeZone: options.timeZone ?? DEFAULT_TIME_ZONE,
     },
     sessions: perSession,
-    tier1: poolTier1(perSession.map((s) => s.tier1)),
-    tier2: poolTier2(perSession.map((s) => s.tier2)),
+    tier1,
+    tier2,
+    thinking: poolThinking(perSession.map((s) => s.thinking), {
+      // Every turn that reached the speaker, fillers included, because an
+      // intrusion is an intrusion whatever it said.
+      turns: tier1.turns + tier1.fillers,
+      utterances: tier2.userUtterances,
+    }),
     tier3: await participantTier3(userId, now, options.timeZone ?? DEFAULT_TIME_ZONE),
   };
 }
@@ -626,6 +773,40 @@ function poolTier2(rows: readonly Tier2[]): Tier2 {
     intentsRealised,
     intentThroughput: share(intentsRealised, intents),
     unansweredAnswers: sum((r) => r.unansweredAnswers),
+  };
+}
+
+/**
+ * Pooled from the group's own counts and the denominators the other two
+ * groups already hold — every spoken turn, and every utterance of theirs.
+ *
+ * Taken rather than reconstructed from the per-session rates: a drive with no
+ * intrusions has a rate of zero and no recoverable denominator, so dividing
+ * back out would silently drop exactly the drives that went well.
+ */
+function poolThinking(
+  rows: readonly Thinking[],
+  denominators: { turns: number; utterances: number },
+): Thinking {
+  const sum = (pick: (r: Thinking) => number) => rows.reduce((n, r) => n + pick(r), 0);
+  const intrusions = sum((r) => r.intrusions);
+  const selfRepairs = sum((r) => r.selfRepairs);
+  const { turns, utterances } = denominators;
+  return {
+    intrusions,
+    intrusionRate: share(intrusions, turns),
+    selfRepairs,
+    selfRepairRate: share(selfRepairs, utterances),
+    // Medians of medians are not medians; the per-session values are the ones
+    // to read. Same rule as the latency medians above.
+    medianUtteranceWords: null,
+    runs: sum((r) => r.runs),
+    medianRunMs: null,
+    longestRunMs: rows.reduce<number | null>(
+      (longest, r) =>
+        r.longestRunMs === null ? longest : Math.max(longest ?? 0, r.longestRunMs),
+      null,
+    ),
   };
 }
 

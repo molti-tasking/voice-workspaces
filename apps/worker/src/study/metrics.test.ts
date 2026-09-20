@@ -105,6 +105,18 @@ async function seed() {
     said("00000000-0000-4000-8000-00000000f605", 60_000, 62_000, "wie bitte"),
     said("00000000-0000-4000-8000-00000000f606", 75_000, 76_000, "Ja."),
     said("00000000-0000-4000-8000-00000000f607", 90_000, 93_000, "Nein, das andere."),
+    // A LONG RUN of thinking aloud, with a repair in the middle of it: three
+    // utterances less than RUN_GAP_MS apart, no agent turn between them, and
+    // far enough from the last one that the repair is plainly addressed to
+    // their own sentence rather than to anything the agent said.
+    said("00000000-0000-4000-8000-00000000f609", 200_000, 206_000, "also der vergleich traegt"),
+    said(
+      "00000000-0000-4000-8000-00000000f610",
+      207_000,
+      214_000,
+      "beziehungsweise eher nur fuer die erste haelfte des korpus",
+    ),
+    said("00000000-0000-4000-8000-00000000f611", 215_000, 220_000, "das muss ich pruefen"),
     said("00000000-0000-4000-8000-00000000f608", 950_000, 960_000, `${SECRET} the debrief answer`),
   ]);
 
@@ -164,6 +176,31 @@ async function seed() {
       generatedText: `${SECRET} shall I drop it?`,
       totalLatencyMs: 1_400,
       error: "tts stalled",
+    },
+    // SPOKEN OVER THEM: this turn begins at 91s, while they are still talking
+    // (90–93s). The prompt's central rule is that this never happens, and
+    // until the thinking group existed nothing counted it.
+    {
+      captureSessionId: SESSION,
+      seq: 6,
+      startOffsetMs: 91_000,
+      endOffsetMs: 92_000,
+      kind: "reply",
+      text: `${SECRET} the second half then`,
+      generatedText: `${SECRET} the second half then`,
+      totalLatencyMs: 900,
+    },
+    // And an answer at 95s, so the long silence before the run at 200s is the
+    // person choosing to think rather than the system having gone quiet.
+    {
+      captureSessionId: SESSION,
+      seq: 7,
+      startOffsetMs: 95_000,
+      endOffsetMs: 97_000,
+      kind: "reply",
+      text: `${SECRET} that one then`,
+      generatedText: `${SECRET} that one then`,
+      totalLatencyMs: 1_000,
     },
     {
       captureSessionId: SESSION,
@@ -290,13 +327,14 @@ describeIfDb("participantMetrics", () => {
   it("splits response latency by whether a tool ran", () => {
     const [session] = metrics.sessions;
     expect(session?.tier1.latencyMsMedianWithTool).toBe(8_400);
-    // 1100, 1200, 1300, 1400 — the four turns that answered without a lookup.
-    expect(session?.tier1.latencyMsMedianWithoutTool).toBe(1_250);
+    // 900, 1000, 1100, 1200, 1300, 1400 — every turn that answered without a
+    // lookup, against the one that needed one.
+    expect(session?.tier1.latencyMsMedianWithoutTool).toBe(1_150);
   });
 
   it("keeps fillers out of the reply count", () => {
     const [session] = metrics.sessions;
-    expect(session?.tier1.turns).toBe(5);
+    expect(session?.tier1.turns).toBe(7);
     expect(session?.tier1.fillers).toBe(1);
   });
 
@@ -312,13 +350,13 @@ describeIfDb("participantMetrics", () => {
   it("reports the error rate over every turn that reached the speaker", () => {
     const [session] = metrics.sessions;
     expect(session?.tier1.errors).toBe(1);
-    expect(session?.tier1.errorRate).toBeCloseTo(1 / 6);
+    expect(session?.tier1.errorRate).toBeCloseTo(1 / 8);
   });
 
   it("leaves the debrief out of the conversation", () => {
     const [session] = metrics.sessions;
-    // Seven utterances before the window, one inside it.
-    expect(session?.tier2.userUtterances).toBe(7);
+    // Ten utterances before the window, one inside it.
+    expect(session?.tier2.userUtterances).toBe(10);
     expect(session?.tier3.debriefMs).toBe(120_000);
   });
 
@@ -348,6 +386,46 @@ describeIfDb("participantMetrics", () => {
     expect(session?.tier2.intents).toBe(2);
     expect(session?.tier2.intentsRealised).toBe(1);
     expect(session?.tier2.intentThroughput).toBe(0.5);
+  });
+
+  it("counts agent speech that landed while they were still talking", () => {
+    // The system's own central rule — never interrupt a thought still being
+    // formed — as a number, for the first time. It should be at or near zero;
+    // this fixture has exactly one so the measure is proved able to see it.
+    const [session] = metrics.sessions;
+    expect(session?.thinking.intrusions).toBe(1);
+    expect(session?.thinking.intrusionRate).toBeCloseTo(1 / 8);
+  });
+
+  it("hears them revising their own thought, not the agent's proposal", () => {
+    const [session] = metrics.sessions;
+    expect(session?.thinking.selfRepairs).toBe(1);
+    expect(session?.thinking.selfRepairRate).toBeCloseTo(1 / 10);
+    // "Nein, das andere." is the same lexical family and is NOT a self-repair:
+    // an agent turn came first, so it is addressed to the agent. The addressee
+    // is a fact about the turn structure, not about the words.
+    expect(session?.tier2.corrections.spoken).toBe(1);
+  });
+
+  it("measures how long they get to think without the agent taking a turn", () => {
+    const [session] = metrics.sessions;
+    // Three utterances a second apart with nothing in between are ONE run of
+    // thinking aloud, not three turns.
+    expect(session?.thinking.longestRunMs).toBe(20_000);
+    expect(session?.thinking.runs).toBe(8);
+    expect(session?.thinking.medianRunMs).toBe(3_000);
+    expect(session?.thinking.medianUtteranceWords).toBe(5);
+  });
+
+  it("pools the thinking group on counts, not on per-drive rates", () => {
+    expect(metrics.thinking.intrusions).toBe(1);
+    expect(metrics.thinking.intrusionRate).toBeCloseTo(1 / 8);
+    expect(metrics.thinking.selfRepairs).toBe(1);
+    // A drive with no intrusions still contributes its turns to the
+    // denominator, which is why the denominators are passed in rather than
+    // divided back out of the rates.
+    expect(metrics.thinking.selfRepairRate).toBeCloseTo(1 / 10);
+    expect(metrics.thinking.medianUtteranceWords).toBeNull();
   });
 
   it("reads the pre/post pair, and the direction that means relief", () => {
