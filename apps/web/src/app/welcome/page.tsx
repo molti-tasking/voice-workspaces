@@ -46,14 +46,34 @@ export const metadata: Metadata = {
 };
 
 /**
- * The welcome video, once it exists.
+ * The welcome video.
  *
- * Set `src` to a file in `public/` (or an absolute URL) and the player appears;
- * leave it null and the page renders without it rather than with a broken
- * frame. `poster` is worth setting — a video element with no poster is a black
- * rectangle at the top of the page until it is played.
+ * `intro-video.mp4` is a web encode of `intro-video.mov`, the master the phone
+ * handed over: HEVC in a QuickTime container, 68 MB for 32 seconds. The master
+ * is kept beside it in Git LFS, and is deliberately not what this points at.
+ * Safari is the only browser that reliably decodes HEVC, so serving the .mov
+ * would have handed most of the invite list a black rectangle — which is the
+ * exact failure this page was written to prevent, arriving one element sooner.
+ *
+ * After replacing the master, regenerate both derived files:
+ *
+ *   ffmpeg -i intro-video.mov -vf "scale=720:-2,fps=30" \
+ *     -c:v libx264 -profile:v high -pix_fmt yuv420p -crf 26 -preset slow \
+ *     -c:a aac -b:a 128k -movflags +faststart intro-video.mp4
+ *   ffmpeg -ss 0.2 -i intro-video.mp4 -frames:v 1 -q:v 4 intro-poster.jpg
+ *
+ * `-movflags +faststart` is not optional: it moves the index to the front of
+ * the file so playback can start before 5 MB has arrived, which on the mobile
+ * connection this audience is on is the difference between a video and a wait.
+ *
+ * `captions` stays unset. The picture already carries burned-in subtitles, and
+ * a track invented here rather than transcribed from the audio would be a
+ * caption that lies — worse for the person relying on it than none at all.
  */
-const VIDEO: { src: string; poster?: string; captions?: string } | null = null;
+const VIDEO: { src: string; poster?: string; captions?: string } | null = {
+  src: "/welcome/intro-video.mp4",
+  poster: "/welcome/intro-poster.jpg",
+};
 
 export default async function WelcomePage() {
   const user = await currentUser();
@@ -70,12 +90,23 @@ export default async function WelcomePage() {
         </p>
       </header>
 
+      {/*
+        Shot in portrait on a phone, so it is capped rather than run to the
+        column width: at `w-full` a 720x1212 frame is over 1100px tall and
+        pushes every word on the page below the fold. `playsInline` keeps iOS
+        from yanking it into its own fullscreen player, and the intrinsic
+        dimensions reserve the box before the metadata lands so the text below
+        does not jump.
+      */}
       {VIDEO && (
         <video
-          className="mb-8 w-full rounded-xl border border-[var(--color-line)]"
+          className="mx-auto mb-8 w-full max-w-[300px] rounded-xl border border-[var(--color-line)]"
           src={VIDEO.src}
           poster={VIDEO.poster}
+          width={720}
+          height={1212}
           controls
+          playsInline
           preload="metadata"
         >
           {VIDEO.captions && (
