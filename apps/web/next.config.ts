@@ -79,14 +79,92 @@ const config: NextConfig = {
 const posthogPersonalApiKey = process.env.POSTHOG_API_KEY?.trim();
 const posthogProjectId = process.env.POSTHOG_PROJECT_ID?.trim();
 
-export default posthogPersonalApiKey && posthogProjectId
-  ? withPostHogConfig(config, {
-      personalApiKey: posthogPersonalApiKey,
-      projectId: posthogProjectId,
-      host: process.env.POSTHOG_HOST,
-      sourcemaps: {
-        enabled: true,
-        deleteAfterUpload: true,
+/**
+ * An off switch that does not require surrendering the credentials.
+ *
+ * Unsetting the two variables above also disables the upload, but they are the
+ * pair the rest of PostHog reads, so turning off one debugging convenience
+ * would mean turning off the reporting it belongs to. This leaves them in
+ * place and skips only the part that costs the build minutes of IO.
+ */
+const sourcemapsDisabled =
+  process.env.POSTHOG_SOURCEMAPS?.trim().toLowerCase() === "false";
+
+/**
+ * Stop a failed source-map upload from failing the build.
+ *
+ * `withPostHogConfig` installs a `runAfterProductionCompile` hook that injects
+ * chunk ids across the build output and then uploads it — on this app, 310 map
+ * files and about 48 MB. Next treats a throw from that hook as a failed build,
+ * so the upload holds a veto over every deploy.
+ *
+ * It used that veto on 20 Sep. `next build` had already printed `✓ Compiled
+ * successfully`; then the build host's OOM killer fired mid-upload (`Out of
+ * memory: Killed process ... (python)`, with no swap configured and ~2.8 GiB
+ * free) and the deploy died with `Failed to run runAfterProductionCompile`.
+ * The compiled application was fine and was thrown away regardless. A network
+ * blip to PostHog produces the same outcome, which is easy to reproduce by
+ * pointing `POSTHOG_HOST` at a closed port.
+ *
+ * Source maps only make a stack trace more legible after the fact. They are
+ * not worth a production deploy, so a failure here is now a warning and the
+ * build ships the artefact it already has.
+ */
+function surviveSourcemapFailure(wrapped: NextConfig): NextConfig {
+  const tolerate = (resolved: NextConfig): NextConfig => {
+    // The hook hangs off `compiler`, not the config root — see
+    // `withCompilerConfig` in @posthog/nextjs-config.
+    const upload = resolved.compiler?.runAfterProductionCompile;
+    if (typeof upload !== "function") return resolved;
+
+    return {
+      ...resolved,
+      compiler: {
+        ...resolved.compiler,
+        runAfterProductionCompile: async (metadata) => {
+          try {
+            await upload(metadata);
+          } catch (error) {
+            // Deliberately swallowed: see above. The build continues, and
+            // stack traces for this release stay unminified in PostHog.
+            console.warn(
+              "[posthog] source-map upload failed; shipping the build without it.",
+              error,
+            );
+          }
+        },
       },
-    })
+    };
+  };
+
+  // `withPostHogConfig` is TYPED as returning a NextConfig but actually returns
+  // Next's other accepted shape, a `(phase, { defaultConfig })` function that
+  // resolves the config later. Reading `.compiler` off it therefore finds
+  // nothing, which is a silent no-op rather than a type error — so branch on
+  // what is really there instead of on what the signature claims.
+  if (typeof wrapped === "function") {
+    const resolve = wrapped as unknown as (
+      phase: string,
+      context: { defaultConfig: NextConfig },
+    ) => NextConfig | Promise<NextConfig>;
+
+    return (async (phase: string, context: { defaultConfig: NextConfig }) =>
+      tolerate(await resolve(phase, context))) as unknown as NextConfig;
+  }
+
+  return tolerate(wrapped);
+}
+
+export default posthogPersonalApiKey && posthogProjectId && !sourcemapsDisabled
+  ? surviveSourcemapFailure(
+      withPostHogConfig(config, {
+        personalApiKey: posthogPersonalApiKey,
+        projectId: posthogProjectId,
+        host: process.env.POSTHOG_HOST,
+        sourcemaps: {
+          enabled: true,
+          deleteAfterUpload: true,
+        },
+      }),
+    )
   : config;
