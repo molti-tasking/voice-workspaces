@@ -7,6 +7,7 @@ import {
 } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import { useEffect, useState } from "react";
+import { earcon } from "@/lib/recorder/earcon";
 import { subscribeStream } from "@/lib/recorder/mic-bus";
 import { OFF, type TalkbackOptions, type TalkbackState } from "./types";
 
@@ -268,6 +269,17 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
         await next.connect();
         if (disposed) return;
         patch({ status: "listening" });
+        /* ONE SOFT NOTE: it can hear you now.
+         *
+         * "It is recording" and "it can hear me" are different facts, and the
+         * second one arrives several seconds after the first — a handshake, a
+         * ticket, a relay credential, ICE. Until now the only evidence either
+         * way was a pill that appears when the connection has FAILED, which
+         * asks somebody driving to notice the absence of a warning.
+         *
+         * Once per connection, and quieter than the transport pair, because
+         * this is the good news rather than the state change. */
+        earcon("ready");
 
         const after = micTrack.getSettings();
         const changed = (

@@ -15,6 +15,7 @@ import {
   VoicePicker,
 } from "@/components/capture-settings";
 import { MicLevel } from "@/components/mic-level";
+import { RecordingBadge } from "@/components/recording-badge";
 import { useCues } from "@/lib/display/use-cues";
 import { DEBRIEF_MAX_MS, DEBRIEF_QUESTIONS } from "@/lib/study/debrief";
 import { CuePanel } from "./cue-panel";
@@ -88,7 +89,17 @@ export function RecorderClient() {
     // recorder, so the dock is on this screen too — with its own record button
     // suppressed, because the 224px one below is the transport here.
     <main className="no-touch-fuss flex min-h-dvh flex-col items-center justify-between p-6 pb-40">
-      <header className="flex w-full max-w-md items-center justify-end text-sm text-white/50">
+      <header className="flex w-full max-w-md items-center justify-between gap-3 text-sm text-white/50">
+        {/* PRESENT OR ABSENT, never a shade of something. Everything else that
+            said "recording" was a modifier of a control that is always there —
+            a colour, a meter inside the button, a timer that starts counting —
+            and a first-time participant has nothing to compare it against.
+            See `RecordingBadge`. */}
+        {isRecording || isDebriefing ? (
+          <RecordingBadge elapsedMs={rec.elapsedMs} debriefing={isDebriefing} />
+        ) : (
+          <span />
+        )}
         <StatusPills
           pending={rec.pendingUploads}
           uploading={rec.uploading}
@@ -156,7 +167,14 @@ export function RecorderClient() {
         </button>
 
         <p className="h-5 text-center text-sm text-white/40">
-          {isDebriefing ? (
+          {isBusy ? (
+            // A tap that opens a microphone takes about a second, and until
+            // now that second showed an ellipsis on a disabled button — which
+            // reads as "it did not hear me" and invites a second tap.
+            <span className="text-white/60">
+              {rec.status === "requesting" ? "Opening the microphone…" : "Saving…"}
+            </span>
+          ) : isDebriefing ? (
             "Still recording. Answer out loud, then tap Done."
           ) : isRecording ? (
             profile.hint

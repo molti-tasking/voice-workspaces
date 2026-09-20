@@ -6,6 +6,7 @@ import type { CaptureSetting, SettingSource } from "@voicemural/shared";
 import { capture } from "@/lib/analytics/client";
 import { DEBRIEF_MAX_MS } from "@/lib/study/debrief";
 import type { UseCaseId } from "@/lib/use-cases";
+import { earcon } from "./earcon";
 import {
   clearOpenSession,
   deleteRegistration,
@@ -494,6 +495,15 @@ export function useRecorder() {
       currentSessionId: meta.captureSessionId,
       lastSessionId: null,
     });
+    /* SAY SO, OUT LOUD. Everything that confirmed a drive had started was
+     * visual — the button's colour, the level meter inside it, the timer —
+     * and the person this is built for has just put the phone in a cradle and
+     * looked back at the road. Two rising notes, here rather than in the
+     * component, because this is the line where recording actually begins and
+     * a confirmation that fires anywhere else confirms something else. A tick
+     * before `runLoop` opens the first chunk, so the tone is not in the
+     * recording it announces. */
+    earcon("started");
     await acquireWakeLock();
     void runLoop(stream, meta);
   }, [acquireWakeLock, patch, runLoop]);
@@ -605,6 +615,10 @@ export function useRecorder() {
     debriefingRef.current = true;
     const startedAtMs = meta.elapsedMs;
     patch({ status: "debriefing", debriefStartedMs: startedAtMs });
+    // The same two notes inverted: the drive is over and the debrief has
+    // begun. The microphone is still open, which is exactly the state a person
+    // cannot see, so it is the state that most needs a sound of its own.
+    earcon("stopped");
 
     // Marked before anything else can go wrong with the connection: a debrief
     // whose start never reached the server is a debrief nothing may read.

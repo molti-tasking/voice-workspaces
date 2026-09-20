@@ -782,7 +782,7 @@ critical thinking, and the work shifting from doing to supervising.
 - **The condition that would settle it is not in the design.** Whether an offered question moves
   thinking on or derails it is a within-participant comparison — offers on for one drive and off
   for the next — which `proactiveOffers` can already express and the per-drive toggles can
-  already flip (§11). Nobody has decided to run it. `PILOT_01.md` §3 asks for the same shape
+  already flip (§11.2). Nobody has decided to run it. `PILOT_01.md` §3 asks for the same shape
   of experiment on `agendaOffers` for a different reason, and they are the same afternoon.
 
 **Sources.**
@@ -795,7 +795,38 @@ critical thinking, and the work shifting from doing to supervising.
 
 ---
 
-## 11. Flipping an arm between two drives
+## 11. Two things the pilot needs from the interface
+
+### 11.1 Saying that it is recording
+
+The second piece of feedback after Pilot 01: **make it more salient that recording has started.**
+
+Everything that said "recording" was a *modifier of a control that is always there* — the record
+button changed colour, a level meter appeared inside it, a timer began to count. Each of those
+reads as "on" only against a memory of what "off" looked like a second ago, which a first-time
+participant does not have. And all of it was visual, for a system whose premise is that the
+person's eyes are on something else.
+
+- **Two rising notes when recording starts**, two falling notes when Stop opens the debrief, and
+  one soft note when talk-back is actually connected and listening
+  (`apps/web/src/lib/recorder/earcon.ts`). Local WebAudio, so they work with the conversation
+  switched off, the network down and the container dead — which is when they matter most. The
+  third one is the important one conceptually: *"it is recording"* and *"it can hear me"* are
+  different facts arriving seconds apart, and only the failure of the second was ever shown.
+- **A haptic** alongside the transport pair, where the device has one.
+- **A badge that is present or absent**, never a shade of something: a pulsing red dot, the word,
+  and the elapsed time, with `role="status"` so it is announced. The dot pulses because
+  peripheral vision is nearly blind to colour and very good at movement.
+- **The gap is narrated.** Opening a microphone takes about a second, and that second used to
+  show an ellipsis on a disabled button — which reads as "it did not hear me" and invites a
+  second tap.
+
+No new study item for this. If people cannot tell it is recording they say so in the debrief,
+and they leave a behavioural trace — a drive stopped and restarted within seconds — which is
+cheaper and more honest than another rating. Worth watching in the next pilot's
+`endedBy`/duration pairs.
+
+### 11.2 Flipping an arm between two drives
 
 `PILOT_01.md` §3 asks for the cheapest possible experiment: the same person, the same task,
 `agendaOffers` on in one drive and off in the next. A study condition is otherwise a property of
