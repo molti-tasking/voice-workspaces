@@ -209,8 +209,12 @@ turn had asked something. Three layers now: the rule in WHEN TO SPEAK,
 be answering), and `AnswerGuard`, which refuses the decline, re-runs the
 completion once with `ANSWER_RETRY_NUDGE`, and speaks a fixed sentence in the
 drive's own language if that declines too. The refused completion writes no
-turn and no decision: their words were one moment, and the re-run is what it
-became.
+turn and no decision of its own: their words were one moment, and the re-run is
+what it became. It does leave one mark — `agent_decision.forced_answer` on that
+moment — because the study's target for "answers the agent refused" is ZERO,
+and a rescue that erased its own trace would make the target unfalsifiable: a
+drive where the model declined every answer and was overruled every time would
+read exactly like a drive where it never declined at all.
 
 **A turn that has announced itself says something while it runs.** Turns that
 called a tool took a median of 8416ms against 1349 for turns that did not,

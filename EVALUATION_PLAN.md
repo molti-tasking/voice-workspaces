@@ -30,6 +30,23 @@ between participants or study phases:
 Work in tier order. **Tier 0 and Tier 1 must be done before the first participant starts.**
 Tier 2 holds the behaviours the study varies. Tier 3 holds the measures.
 
+> **Pilot 01 changed what this plan measures.** `PILOT_01.md` is the session
+> itself — what happened, what shipped, and what is still only an argument. §9
+> below is what it did to the measures, and §10 is the reframing that followed.
+> The short version: the system ran without a single error and failed the
+> participant anyway, because everything this plan measured was a property of
+> the system rather than of the person using it.
+>
+> The measures now run in four groups — system behaviour, steerability,
+> thinking, relief — under one principle:
+>
+> > **Relieve what they are HOLDING. Never relieve them of the THINKING.**
+>
+> Throughput is not the goal, and neither is relief on its own: a system that
+> did the thinking would score beautifully on mental load. A system that writes
+> many items to the board and never brings them back has failed; so has one
+> that leaves the person with nothing left to think about.
+
 ---
 
 ## 2. Orientation
@@ -570,3 +587,228 @@ unless §5.2 decides otherwise.
    - a spoken offer writes `agent_turn.kind='proactive_prompt'`;
    - a spoken "yes" settles a pending invocation;
    - `study:export` contains no transcript text.
+
+---
+
+## 9. What Pilot 01 did to the measures
+
+The session itself is written up in `PILOT_01.md`: one formative drive on 19 September 2026,
+`capture_session 8e14deb1`, a first-time German-speaking user, **no errors anywhere in it**, and
+a participant left waiting in silence three separate times. That file carries the numbers, the
+nine fixes and the two findings that are arguments rather than evidence. This section is only
+about what it changed here — the measures, the instrumentation they need, and the study flow.
+
+The finding that matters for this plan: every measure in §6 was a property of the system —
+latency, turn counts, decline rate, error rate — and **all of them were healthy**. Nothing in
+§6 could have reported that drive as a failure. So the measures were split into four groups,
+and two of them are about the person.
+
+### 9.1 What each failure left behind, as instrumentation
+
+The fixes are `PILOT_01.md` §1. What they left in the ledger is the part this plan depends on,
+because a measure is only as good as the column it counts.
+
+| The failure | What it now writes | Which measure needs it |
+|---|---|---|
+| Answered "Ja." to the agent's own question, got 40.4 s of dead air | `AnswerGuard` re-runs the refused turn; the refusal itself writes no decision, so the moment is stamped `agent_decision.forced_answer` instead (see `TurnRecorder.note_forced_answer`) | `steerability.unansweredAnswers`, **target 0** — without the stamp a rescued decline is invisible and the target reads as met |
+| A turn spoken 52.6 s after Stop, into a closed drive | `resolveLiveSession` rejects it; `TurnRecorder.session_ended` seals the recorder | Every rate in Tier 1, whose denominator was counting turns that nobody heard |
+| 8.4 s median on tool-backed turns against 1.3 s, in silence | `KeepAlive` speaks from `SEARCH_WAIT_PHRASES` and records each as `agent_turn.kind = 'backchannel'` | `thinking.intrusions` and the silence rate both have to *exclude* these: they are this container's words, not the model's |
+| `resolved_model`, `asr_ms`, `speak_ttfb_ms` null on all 15 turns; the end of speech guessed at `len(text) / 14` | `Playback` measures it, and `agent_turn.end_offset_measured` says which ends are real | `tier1.latency`, and every gap measure in `thinking` — a guessed end makes a re-prompt gap fiction |
+| 16 of 48 decision rows shared an `offset_ms` with another | `agent_decision.opportunity_seq` and `attempt`; the authoritative outcome of a moment is its **last** attempt | Every rate over decisions, whose denominator was roughly doubled |
+| The debrief was never recorded — Stop ended the session | The debrief window on `/record`, `capture_session.debrief_started_offset_ms` / `debrief_ended_offset_ms` | `study_response` phase `post`, and the three spoken answers existing at all |
+| Run stationary under the `driving` profile, and nothing recorded that the profile was a guess | The recorder asks rather than starting under a guess; the correction is remembered per browser; `capture_session.setting_source` stores how the answer was reached (`device` / `motion` / `remembered` / `chosen` / `default`) | Any comparison across drives — a 53% decline rate from a sofa under the driving profile is not the same number as one from a car |
+
+Two of these are worth stating as rules rather than rows, because they are easy to get wrong
+in any new query:
+
+- **Count moments, not rows.** `select distinct on (opportunity_seq) … order by
+  opportunity_seq, attempt desc` — the last attempt is what the participant experienced.
+- **Except for `forcedAnswer`, which counts the refusals themselves.** When `AnswerGuard`
+  rescues a decline, the completion that finally speaks becomes the moment's last attempt.
+  Deduplicating would report zero for a drive where the model declined every answer and was
+  overruled every single time — which is the drive this measure exists to catch.
+
+### 9.2 The measures, in four groups
+
+`pnpm study:metrics [--user <id>] [--re-prompt-ms 5000] [--tz <zone>] [--print]` computes all of
+them, per session and per participant, and writes one JSON file each. It reads transcript text
+*inside* the privacy boundary to classify two of the steerability measures and returns counts
+only; `metrics.test.ts` seeds a sentinel string into every text column and fails if it surfaces.
+
+**Tier 1 — system behaviour** (unchanged, and no longer the point). Response latency split by
+whether a tool ran; silent opportunities as a share of deduplicated moments; error rate.
+
+**Tier 2 — steerability: could the person aim it?** Re-prompt rate (their words after *n*
+seconds of agent silence, *n* configurable, default 5 s); repeat-request rate; correction rate
+(spoken rejections, declined invocations and `judge()`'s reversed/corrected transitions,
+reported apart and pooled); intent throughput (directions that reached the board); and
+**unanswered answers, whose target is 0**.
+
+**Tier 3 — relief: did it take the holding off them?** Mental load before and after the same
+drive (a negative delta is the good direction); whether they could tell it was working; whether
+they could correct it; revisit rate by *calendar day* in `STUDY_TIME_ZONE`; and the day-7
+verdict per item — done / still open / **lost**. `lostRate` is the primary failure measure for
+offloading: an item the participant put on the board, never came back to, and no longer counts
+as theirs is the exact shape of a system that wrote a lot and returned nothing.
+
+**The `thinking` group — were they still the one doing the thinking?** Argued for in §10 and
+reported beside the tiers rather than inside one, because it is the group that keeps the other
+three honest: intrusions (agent speech that began while they were still talking), self-repairs,
+and how long they speak without the agent taking a turn.
+
+### 9.3 The study flow the system now supports
+
+- **Day 1.** Pre item on the recorder → drive → Stop opens the debrief (microphone still open,
+  the three questions `/study` promises, two post items under them) → done ends the session.
+- **Days 2–6.** Ordinary use. Counts only: `study_event` records board and card opens;
+  dictations and edits come from `workspace_op`, which already had them.
+- **Day 7.** `pnpm study:review --user <id>` lists the cards awaiting a verdict, oldest first;
+  `--card <id> --outcome done|open|lost` records one. `/api/study/review` takes the same
+  verdicts, so a spoken review session can write them later without this changing.
+
+### 9.4 What is still open
+
+- The day-7 review is a CLI and an API route, not a voice session. Reading each item back aloud
+  and taking the answer by voice is the natural next step and is not built.
+- `intentThroughput` counts classifier-detected directions only. An intent expressed straight
+  to the agent, which the agent then carried out with a board tool, has no `directive` row and
+  does not appear in the denominator.
+- The pooled medians in a participant's summary are null on purpose: a median of medians is not
+  a median, and the per-session values are the ones to read.
+- `PILOT_01.md` §2 leaves one question for the database — whether "Alkenholz" was ASR or the
+  extractor. Until it is run, proper-noun fidelity is not a measure, it is an anecdote.
+
+---
+
+## 10. Thinking aloud is the task, not the input method
+
+Feedback after Pilot 01, in one line: *consider talking aloud as a way of thinking and
+processing for knowledge work.* It is the sharpest thing anyone has said about this system,
+because it says the measures in §9 are still measuring the wrong thing — better than before, but
+still about the machine.
+
+The whole design already rests on the claim: `Notes.md` says silence is thinking rather than a
+turn boundary, and the prompt says never to interrupt a thought that is still being formed. What
+was missing is that **nothing measured whether the thinking happened**, and one of our own
+measures was pointed the wrong way.
+
+### 10.1 What the literature says, and what each thing means here
+
+**Verbalising a thought does not change it; being asked to explain it does.**
+Ericsson and Simon's protocol analysis separates levels of verbalisation: saying what is already
+in working memory (Levels 1–2) leaves the cognition alone, while being asked to explain or
+justify (Level 3) alters it, and alters task performance and completion times with it.
+
+> *Consequence.* Every prompted turn this system takes is a Level 3 intervention. It is not a
+> neutral observation of somebody's thinking — it is a manipulation of it. That is not an
+> argument for silence; it is an argument for **counting the interventions** and for never
+> treating "the agent said something useful" as free. `thinking.intrusions` is the version of
+> this that can be measured mechanically: agent speech that began while the person was still
+> talking, which is a Level 3 intervention delivered mid-formation.
+
+**Eliciting explanation can also be exactly what helps.**
+Chi et al. found that students prompted to explain each line to themselves understood far more,
+and that the high explainers were the ones who built a correct model. The mechanism is
+integration and self-correction: explaining surfaces conflicts you would otherwise not notice.
+
+> *Consequence.* The same intervention the first finding warns about is the one that produces
+> the benefit. The interesting question for this study is therefore not "does it interrupt" but
+> **when does a question move the thinking on and when does it derail it** — which is exactly
+> what `thinking_moved` (asked) and `thinking.intrusions` / `selfRepairs` (observed) are for,
+> read together rather than separately.
+
+**Speech externalises fragmented, non-linear thought, and dictation is linear.**
+The recent CHI work on speech as a canvas ("Orality") names the tension directly: verbalised
+thinking is half-formed utterances and spontaneous sparks, and the sequential stream of dictation
+fights the non-linear structure of the thought.
+
+> *Consequence.* This is an argument FOR the workspace and the board and AGAINST the transcript
+> as an artefact — which is the architecture we already have, and it is worth saying out loud,
+> because it means the board is not a to-do list that happens to be voice-driven. It is the
+> non-linear structure the speech could not carry. It is also why `medianUtteranceWords` and the
+> run lengths are worth watching: a person whose utterances get shorter every day has stopped
+> externalising and started dictating.
+
+**Offloading the thinking is a documented failure mode, not a hypothetical one.**
+Fan et al. found learners with a generative assistant produced better essays, showed no
+knowledge gain, and self-corrected less — they call it metacognitive laziness. Lee et al., in a
+survey of 319 knowledge workers, found confidence in the assistant associated with *less*
+critical thinking, and the work shifting from doing to supervising.
+
+> *Consequence, and it is the big one.* **"Optimise for relief, not throughput" is not
+> sufficient as a guiding principle.** A system that did the thinking would score beautifully on
+> mental load. The principle has to be stated as:
+>
+> > **Relieve what they are HOLDING. Never relieve them of the THINKING.**
+>
+> Those are different loads — tracking, remembering and re-deriving on one side; forming,
+> checking and correcting on the other — and §9's measures could not tell them apart.
+> `did_my_thinking` is reverse-scored precisely to catch a drive that scored well by taking the
+> work.
+
+### 10.2 What changed because of this
+
+- **Two new post-drive items.** `thinking_moved` ("Did talking it through move your thinking
+  on?") and `did_my_thinking` ("Did it do thinking you wanted to do yourself?", reverse-scored).
+  `StudyItem.higherIsBetter` now states each item's direction in the data, because two
+  reverse-scored items in a five-item set is how a scale gets averaged into nonsense.
+- **A fourth measure group, `thinking`,** computed from the ledger beside Tiers 1–3:
+  - `intrusions` / `intrusionRate` — agent speech that began while they were still talking. The
+    system's own central rule, measured for the first time. It should be at or near zero.
+    `backchannel` turns are excluded: a keep-alive phrase is this container's words, not a turn
+    the model chose to take.
+  - `selfRepairs` / `selfRepairRate` — them revising their own half-formed sentence
+    ("beziehungsweise…", "no, wait"). The audible form of thinking in progress. It shares its
+    vocabulary with the correction measure, and the two are told apart by whether an agent turn
+    came first: the addressee is a fact about the turn structure, not about the words.
+  - `runs`, `medianRunMs`, `longestRunMs`, `medianUtteranceWords` — how long they speak without
+    the agent taking a turn. Thinking aloud comes in long stretches; issuing commands does not.
+- **None of these is good or bad alone**, and they are deliberately not summed into a score. A
+  low self-repair rate where `thinking_moved` is high is somebody who arrived with the thought
+  already formed. The same number where `did_my_thinking` is also high is the failure.
+
+### 10.3 What follows, and is not built
+
+- **A prompt change is warranted and has not been made.** The base prompt tells the model not to
+  interrupt a thought in formation; it does not tell it to avoid asking somebody to *justify* a
+  thought they are still forming, which is the specific Level 3 intervention the first finding
+  is about. This repo's definition of done requires a version bump and
+  `pnpm talkback:eval --strict --runs 3` for any prompt change, which needs a live model, so it
+  is proposed rather than applied. The wording to add, after the "WHEN TO SPEAK" bullets:
+  *"While a thought is still being formed, do not ask them to explain or justify it. Ask after
+  it has landed, or not at all."*
+- **Intrusions are measured against ASR boundaries**, which are approximate. Read the rate, not
+  the individual incidents.
+- **The condition that would settle it is not in the design.** Whether an offered question moves
+  thinking on or derails it is a within-participant comparison — offers on for one drive and off
+  for the next — which `proactiveOffers` can already express and the per-drive toggles can
+  already flip (§11). Nobody has decided to run it. `PILOT_01.md` §3 asks for the same shape
+  of experiment on `agendaOffers` for a different reason, and they are the same afternoon.
+
+**Sources.**
+[Ericsson & Simon, *Protocol Analysis*](https://www.ida.liu.se/~nilda08/Anders_Ericsson/Ericsson_protocol.pdf) ·
+[Think-aloud protocols, overview](https://benjamins.com/online/hop/articles/thi1) ·
+[Chi et al. (1994), *Eliciting self-explanations improves understanding*](https://onlinelibrary.wiley.com/doi/10.1207/s15516709cog1803_3) ·
+[*Orality: A Semantic Canvas for Externalizing and Clarifying Thoughts with Speech*, CHI 2026](https://dl.acm.org/doi/10.1145/3772318.3791713) ·
+[Fan et al. (2025), *Beware of metacognitive laziness*, BJET](https://bera-journals.onlinelibrary.wiley.com/doi/10.1111/bjet.13544) ·
+[Lee et al. (2025), *The Impact of Generative AI on Critical Thinking*, CHI](https://dl.acm.org/doi/full/10.1145/3706598.3713778)
+
+---
+
+## 11. Flipping an arm between two drives
+
+`PILOT_01.md` §3 asks for the cheapest possible experiment: the same person, the same task,
+`agendaOffers` on in one drive and off in the next. A study condition is otherwise a property of
+the *participant*, copied onto each drive when it opens, so running that meant a database write
+with the researcher sitting in a car.
+
+`NEXT_PUBLIC_STUDY_TOGGLES=true` puts the toggleable flags on the recorder, and the override
+travels with the drive that starts. Two switches guard it, because a participant who can flip
+their own arm is a participant whose phase cannot be analysed:
+
+- the flag is inlined at **build** time, so a participant bundle simply does not contain the
+  controls;
+- `STUDY_PILOT_USER_IDS` is checked on the **server**, where a browser cannot edit it.
+
+`capture_session.study_condition` records what the drive actually ran under either way, so an
+override is never a gap in the record — it is a different value in it.

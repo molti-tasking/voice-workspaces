@@ -129,6 +129,8 @@ export interface AgentDecisionRecord {
   configVersion?: string;
   latencyMs?: number;
   subjectKey?: string;
+  /** Whether `AnswerGuard` had to force this moment. See the column. */
+  forcedAnswer?: boolean;
   agentTurnId?: string;
 }
 
@@ -153,6 +155,7 @@ export async function recordAgentDecision(record: AgentDecisionRecord): Promise<
       configVersion: record.configVersion,
       latencyMs: record.latencyMs,
       subjectKey: record.subjectKey,
+      forcedAnswer: record.forcedAnswer ?? false,
       agentTurnId: record.agentTurnId,
     });
   } catch (err) {

@@ -274,6 +274,20 @@ export const captureSession = pgTable(
      */
     setting: captureSettingEnum("setting"),
     /**
+     * WHERE THAT SETTING CAME FROM: the device class, the accelerometer, a
+     * remembered choice, or the person correcting it before they started.
+     *
+     * Reported to PostHog since settings existed and stored nowhere, which is
+     * why Pilot 01 could be run stationary under the `driving` profile without
+     * that being visible in the data. `default` no longer reaches this column
+     * from the recorder — a drive with no evidence now asks — but old rows and
+     * any other client may still carry it, so it is text rather than an enum
+     * and readers treat an unknown value as "not stated".
+     */
+    settingSource: text("setting_source").$type<
+      "device" | "motion" | "remembered" | "chosen" | "default"
+    >(),
+    /**
      * The worked example this drive was started from, or NULL for a drive
      * begun any other way — which is every drive before `/welcome` existed,
      * and every drive of the longitudinal deployment.
@@ -837,6 +851,21 @@ export const agentDecision = pgTable(
      * against, which is why it is indexed.
      */
     subjectKey: text("subject_key"),
+    /**
+     * Whether `AnswerGuard` had to force this moment.
+     *
+     * The guard refuses to let a completion decline an answer the agent itself
+     * asked for, and writes NO decision for the refusal — their words were one
+     * moment to speak, and the re-run is what that moment became. Which is
+     * right, and leaves the guard invisible: a re-run that speaks looks exactly
+     * like a first completion that spoke.
+     *
+     * This is the mark on the moment that says it needed forcing. The study's
+     * unanswered-answer count is the share of moments carrying it, and its
+     * target is zero — a number that could never be anything else would
+     * measure nothing. See `note_forced_answer` in bot.py.
+     */
+    forcedAnswer: boolean("forced_answer").notNull().default(false),
     agentTurnId: uuid("agent_turn_id").references(() => agentTurn.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -1476,5 +1505,140 @@ export const memoryEntry = pgTable(
     uniqueIndex("memory_entry_user_kind_ref_idx").on(t.userId, t.kind, t.refId),
     index("memory_entry_user_kind_model_idx").on(t.userId, t.kind, t.model),
     index("memory_entry_session_idx").on(t.captureSessionId),
+  ],
+);
+/* ---------------------------------------------------------------------------
+ * Study measures
+ *
+ * The three tables the relief measures need, and the reason they are tables
+ * rather than PostHog events: the analysis has to join them to a drive and to
+ * a board card, and it has to be reproducible from one export months later.
+ *
+ * ALL THREE ARE COUNTS. A rating is an integer on a stated scale, an outcome
+ * is one of three words this file names, an event is a kind and a timestamp.
+ * Nothing here holds anything a participant said or wrote, so the whole of it
+ * crosses the privacy boundary (`apps/worker/src/study/export.ts`) unchanged.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * When a rating was taken, relative to the drive it is about.
+ *
+ * `pre` and `post` bracket one session — the same item asked twice is what
+ * makes a change in mental load readable at all. `day7` is the review at the
+ * end of the week, which is about the week rather than about a session, and
+ * so carries no `captureSessionId`.
+ */
+export const studyResponsePhaseEnum = pgEnum("study_response_phase", ["pre", "post", "day7"]);
+
+/**
+ * A single rating, one row per item per asking.
+ *
+ * `item` is a short stable key (`mental_load`, `liveness_perceived`,
+ * `can_correct`) rather than the question's text, so rewording a question does
+ * not fork the series — the wording lives in
+ * `packages/shared/src/study-items.ts`, versioned with the prompt.
+ *
+ * `value` is the point on the scale. `scaleMax` is stored beside it rather
+ * than assumed, because a 1–7 item read as 1–5 two months later is a silent
+ * error no constraint would catch.
+ */
+export const studyResponse = pgTable(
+  "study_response",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** The drive this brackets. Null for `day7`, which is about the week. */
+    captureSessionId: uuid("capture_session_id").references(() => captureSession.id, {
+      onDelete: "cascade",
+    }),
+    phase: studyResponsePhaseEnum("phase").notNull(),
+    item: text("item").notNull(),
+    value: integer("value").notNull(),
+    scaleMax: integer("scale_max").notNull().default(7),
+    respondedAt: timestamp("responded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One answer per item per phase per drive: a re-tap corrects the answer
+    // rather than adding a second one, which is what makes a pre/post pair
+    // countable without deduplication in the analysis.
+    uniqueIndex("study_response_session_phase_item_idx").on(
+      t.userId,
+      t.captureSessionId,
+      t.phase,
+      t.item,
+    ),
+    // And the same rule for an answer that belongs to no drive — the day-7
+    // review is about the week. A SECOND index, because Postgres treats two
+    // nulls in a unique index as distinct, so the one above does not
+    // constrain these rows at all: without this, two taps arriving together
+    // both insert and the week has two answers to one question.
+    uniqueIndex("study_response_phase_item_idx")
+      .on(t.userId, t.phase, t.item)
+      .where(sql`${t.captureSessionId} is null`),
+    index("study_response_user_at_idx").on(t.userId, t.respondedAt),
+  ],
+);
+
+/**
+ * What became of one board item at the day-7 review: done, still open, or lost.
+ *
+ * `lost` is the primary failure measure for offloading, and it is defined
+ * behaviourally, not by feeling: never revisited and not acted on. A system
+ * that writes many items to the board and never brings them back produces a
+ * high lost rate however good its latency looks.
+ */
+export const studyItemOutcomeEnum = pgEnum("study_item_outcome", ["done", "open", "lost"]);
+
+export const studyItemReview = pgTable(
+  "study_item_review",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** The card's stable identity: the root of its revision chain. */
+    cardId: text("card_id").notNull(),
+    /** The drive the review itself was recorded in, when it had one. */
+    captureSessionId: uuid("capture_session_id").references(() => captureSession.id, {
+      onDelete: "set null",
+    }),
+    outcome: studyItemOutcomeEnum("outcome").notNull(),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One verdict per card per review round. A correction replaces it.
+    uniqueIndex("study_item_review_user_card_idx").on(t.userId, t.cardId),
+    index("study_item_review_user_at_idx").on(t.userId, t.reviewedAt),
+  ],
+);
+
+/**
+ * Everything days 2–6 are allowed to record: that something was opened.
+ *
+ * Dictations and edits are already in `workspace_op`, so this table exists for
+ * the one thing that leaves no other trace — the participant opening the board
+ * or a card to look at it. That is the behaviour "revisit" is about, and
+ * without it a card someone re-read every morning and never edited is
+ * indistinguishable from one nobody ever saw again.
+ */
+export const studyEventKindEnum = pgEnum("study_event_kind", ["board_open", "card_open"]);
+
+export const studyEvent = pgTable(
+  "study_event",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    kind: studyEventKindEnum("kind").notNull(),
+    /** The card, for `card_open`. Null for `board_open`. */
+    cardId: text("card_id"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("study_event_user_at_idx").on(t.userId, t.occurredAt),
+    index("study_event_user_card_idx").on(t.userId, t.cardId).where(sql`${t.cardId} is not null`),
   ],
 );

@@ -41,6 +41,9 @@ const Body = z.object({
   latencyMs: z.number().int().min(0).optional(),
   // An id, so bounded like one. Anything longer is not a key.
   subjectKey: z.string().min(1).max(128).optional(),
+  // Whether the answer guard had to force this moment. Measurement only; the
+  // container decides nothing by it. See `agent_decision.forced_answer`.
+  forcedAnswer: z.boolean().optional(),
   agentTurnId: z.uuid().optional(),
 });
 

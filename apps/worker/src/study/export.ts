@@ -34,6 +34,9 @@ import {
   directive,
   invocation,
   macroProposal,
+  studyEvent,
+  studyItemReview,
+  studyResponse,
   user,
   utterance,
   workspaceOp,
@@ -41,7 +44,12 @@ import {
 import { loadOps } from "@voicemural/db/workspace";
 import { KEPT_AFTER_SESSIONS, foldBoard, judge } from "@voicemural/workspace";
 
-export const EXPORT_VERSION = 1;
+/**
+ * 2 adds the relief measures: `study_response`, `study_item_review` and
+ * `study_event` records, the setting's source on a session, and the mark that
+ * says the answer guard had to force a moment.
+ */
+export const EXPORT_VERSION = 2;
 
 export type ExportRecord = { type: string } & Record<string, unknown>;
 
@@ -108,6 +116,7 @@ export async function exportParticipant(
       endedAt: captureSession.endedAt,
       endedBy: captureSession.endedBy,
       setting: captureSession.setting,
+      settingSource: captureSession.settingSource,
       voiceId: captureSession.voiceId,
       sttLanguage: captureSession.sttLanguage,
       studyCondition: captureSession.studyCondition,
@@ -129,6 +138,10 @@ export async function exportParticipant(
       durationMs: s.endedAt ? s.endedAt.getTime() - s.startedAt.getTime() : null,
       endedBy: s.endedBy,
       setting: s.setting,
+      // Whether that setting was observed or guessed. A drive run stationary
+      // under the `driving` profile is not comparable with one run in a car,
+      // and until this column existed the two were indistinguishable.
+      settingSource: s.settingSource,
       voiceId: s.voiceId,
       sttLanguage: s.sttLanguage,
       // Null for drives recorded before conditions existed — not "defaults".
@@ -253,6 +266,11 @@ export async function exportParticipant(
         configVersion: agentDecision.configVersion,
         latencyMs: agentDecision.latencyMs,
         subjectKey: agentDecision.subjectKey,
+        // Whether `AnswerGuard` had to force this moment. The refused
+        // completion writes no row, so this is the only trace of it — and the
+        // unanswered-answer count, whose target is zero, is the share of
+        // moments carrying it.
+        forcedAnswer: agentDecision.forcedAnswer,
         agentTurnId: agentDecision.agentTurnId,
       })
       .from(agentDecision)
@@ -337,6 +355,59 @@ export async function exportParticipant(
         status: invocationStatus(i, i.sessionId ? ended.get(i.sessionId) === true : true),
       });
     }
+  }
+
+  /* What they told us, and what became of what they kept --------------------- */
+  //
+  // Content by design, all three, and the only records here that are: a rating
+  // is a number the participant chose to give, a day-7 verdict is one of three
+  // words they said out loud, and an open is the fact that they looked. None
+  // of them can carry a phrase, so none of them needs the `includeText` gate.
+
+  const responses = await db
+    .select({
+      sessionId: studyResponse.captureSessionId,
+      phase: studyResponse.phase,
+      item: studyResponse.item,
+      value: studyResponse.value,
+      scaleMax: studyResponse.scaleMax,
+      respondedAt: studyResponse.respondedAt,
+    })
+    .from(studyResponse)
+    .where(eq(studyResponse.userId, userId))
+    .orderBy(asc(studyResponse.respondedAt));
+
+  for (const r of responses) {
+    out.push({ type: "study_response", ...r, respondedAt: iso(r.respondedAt) });
+  }
+
+  const reviews = await db
+    .select({
+      cardId: studyItemReview.cardId,
+      sessionId: studyItemReview.captureSessionId,
+      outcome: studyItemReview.outcome,
+      reviewedAt: studyItemReview.reviewedAt,
+    })
+    .from(studyItemReview)
+    .where(eq(studyItemReview.userId, userId))
+    .orderBy(asc(studyItemReview.reviewedAt));
+
+  for (const r of reviews) {
+    out.push({ type: "study_item_review", ...r, reviewedAt: iso(r.reviewedAt) });
+  }
+
+  const opens = await db
+    .select({
+      kind: studyEvent.kind,
+      cardId: studyEvent.cardId,
+      occurredAt: studyEvent.occurredAt,
+    })
+    .from(studyEvent)
+    .where(eq(studyEvent.userId, userId))
+    .orderBy(asc(studyEvent.occurredAt));
+
+  for (const e of opens) {
+    out.push({ type: "study_event", ...e, occurredAt: iso(e.occurredAt) });
   }
 
   /* The repertoire ----------------------------------------------------------- */

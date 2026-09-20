@@ -87,6 +87,10 @@ class FakeRecorder:
         # Whether the driver's next words answer a question the agent asked.
         # False here, as it is on a fresh recorder; the answer-guard tests set it.
         self.awaiting_question_answer = False
+        # Moments the guard had to force. Measurement only — see
+        # `TurnRecorder.note_forced_answer` — and the one trace the refused
+        # completion leaves, since it writes no decision of its own.
+        self.forced = 0
 
     def cue(self):
         return self.current
@@ -116,6 +120,9 @@ class FakeRecorder:
 
     def decline(self, *, interrupted=False, cue=None):
         self.declines.append({"interrupted": interrupted, "cue": cue})
+
+    def note_forced_answer(self):
+        self.forced += 1
 
 
 def drive(frames, recorder=None, llm_name=None):

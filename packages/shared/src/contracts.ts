@@ -68,6 +68,25 @@ export const CaptureUseCase = z.enum(["think_aloud", "draft", "recall"]);
 export type CaptureUseCase = z.infer<typeof CaptureUseCase>;
 
 /**
+ * How the setting a drive ran under was arrived at.
+ *
+ * Stored on the drive (`capture_session.setting_source`) rather than only
+ * reported to analytics, because Pilot 01 was run stationary under the
+ * `driving` profile — 25-word replies, no screen — and nothing in the data
+ * said the profile had been guessed rather than observed.
+ *
+ * - `device`: a fine pointer with hover and no touch. A laptop is a desk.
+ * - `motion`: the accelerometer said so over the last few seconds.
+ * - `remembered`: the last correction this browser made, reused.
+ * - `chosen`: the person picked it before starting.
+ * - `default`: nothing said anything and the fallback stood. The recorder no
+ *   longer starts a drive this way — it asks — so this is old rows and other
+ *   clients.
+ */
+export const SettingSource = z.enum(["device", "motion", "remembered", "chosen", "default"]);
+export type SettingSource = z.infer<typeof SettingSource>;
+
+/**
  * The behaviours the field study varies, for one drive.
  *
  * Researcher-set on `user.study_condition`, copied RESOLVED onto
@@ -144,6 +163,8 @@ export const CaptureSessionCreate = z.object({
     .refine((d) => d.getTime() < Date.now() + 24 * 60 * 60 * 1000, "startedAt is in the future"),
   /** Optional: recordings made before the question existed have none. */
   setting: CaptureSetting.optional(),
+  /** Where `setting` came from. See `SettingSource`. */
+  settingSource: SettingSource.optional(),
   /**
    * The voice the system speaks with, as an ElevenLabs voice id.
    *
@@ -169,6 +190,21 @@ export const CaptureSessionCreate = z.object({
   sttLanguage: z.string().min(2).max(35).optional(),
   /** Which worked example on `/welcome` started this drive. See `CaptureUseCase`. */
   useCase: CaptureUseCase.optional(),
+  /**
+   * A per-drive override of the participant's study condition.
+   *
+   * Sparse: only the flags named are changed, the rest come from
+   * `user.study_condition` as always. It exists for the cold-start test the
+   * next pilot needs — the same person, two drives an hour apart, agenda
+   * offers on in one and off in the other — which the per-participant template
+   * cannot express without a database write between them.
+   *
+   * HONOURED ONLY FOR PILOT ACCOUNTS (`STUDY_PILOT_USER_IDS`), and the route
+   * says so in the log when it drops one. A participant whose arm could be
+   * flipped from the browser is a participant whose phase cannot be analysed,
+   * and a client is not a trustworthy place to decide a study condition.
+   */
+  conditionOverride: StudyCondition.partial().optional(),
   deviceInfo: z
     .object({
       userAgent: z.string().max(512).optional(),

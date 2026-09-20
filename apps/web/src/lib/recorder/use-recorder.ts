@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CaptureSetting } from "@voicemural/shared";
+import type { CaptureSetting, SettingSource } from "@voicemural/shared";
 import { capture } from "@/lib/analytics/client";
 import { DEBRIEF_MAX_MS } from "@/lib/study/debrief";
 import type { UseCaseId } from "@/lib/use-cases";
@@ -368,10 +368,11 @@ export function useRecorder() {
    */
   const start = useCallback(async (
     setting?: CaptureSetting,
-    source?: "device" | "motion" | "default" | "chosen",
+    source?: SettingSource,
     voiceId?: string,
     sttLanguage?: string | null,
     useCase?: UseCaseId,
+    conditionOverride?: Record<string, boolean>,
   ) => {
     if (runningRef.current) return;
 
@@ -447,6 +448,11 @@ export function useRecorder() {
       id: meta.captureSessionId,
       startedAt: new Date(meta.startedAt).toISOString(),
       deviceInfo: { userAgent: navigator.userAgent, mimeType },
+      // How that setting was arrived at: observed, remembered, or corrected.
+      // Stored on the drive, not only reported to analytics — a profile that
+      // was guessed and one that was observed are different facts, and Pilot
+      // 01's `driving` was a guess nobody could see in the data.
+      settingSource: source,
       setting,
       voiceId,
       // Null is normal (auto-detect); undefined on the wire keeps zod happy.
@@ -456,6 +462,13 @@ export function useRecorder() {
       // in a dead zone still registers under the right one when the uploader
       // replays it.
       useCase,
+      // A per-drive override of the study condition, for the cold-start test.
+      // Honoured only for pilot accounts; the route says so when it drops one.
+      // Undefined rather than {} so an ordinary drive sends nothing at all.
+      conditionOverride:
+        conditionOverride && Object.keys(conditionOverride).length > 0
+          ? conditionOverride
+          : undefined,
     };
     await saveRegistration(registration);
 

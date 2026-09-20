@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatOffset } from "@voicemural/shared";
 // The `/setting` subpath, NOT the package index: the index re-exports
 // retrieval.ts, which imports @voicemural/db, and that drags the Postgres
@@ -9,6 +9,7 @@ import { formatOffset } from "@voicemural/shared";
 import { SETTING_PROFILES } from "@voicemural/talkback/setting";
 import { TALKBACK_ENABLED, useCapture } from "@/components/capture-provider";
 import {
+  ConditionToggles,
   LanguagePicker,
   SettingPicker,
   VoicePicker,
@@ -18,6 +19,7 @@ import { useCues } from "@/lib/display/use-cues";
 import { DEBRIEF_MAX_MS, DEBRIEF_QUESTIONS } from "@/lib/study/debrief";
 import { CuePanel } from "./cue-panel";
 import { DraftPanel } from "./draft-panel";
+import { PostDriveItems, PreDriveItem, recordStudyResponse } from "./study-items";
 import { TopicTitle } from "./topic-title";
 
 /**
@@ -38,12 +40,35 @@ export function RecorderClient() {
     isBusy,
     setting,
     source,
+    settingUnknown,
     startRecording,
     stopRecording,
     finishDebrief,
   } = useCapture();
 
+  // Open by default when nothing has told us where they are. The fallback is
+  // `driving` — 25-word replies, no screen — and Pilot 01 ran a stationary
+  // first-time user under exactly that because the question was never put.
   const [showPicker, setShowPicker] = useState(false);
+  const pickerOpen = showPicker || settingUnknown;
+
+  /* The pre item's answer, held until a drive exists to attach it to.
+   *
+   * A rating is about a session and the session id is generated at the moment
+   * of starting, so the answer cannot be posted when it is given. Answering is
+   * never a precondition for recording: a participant who taps record straight
+   * away simply has no pre value, which is a missing cell rather than a lost
+   * drive. */
+  const pendingPre = useRef<Record<string, number>>({});
+  useEffect(() => {
+    const sessionId = rec.currentSessionId;
+    if (!sessionId) return;
+    const held = pendingPre.current;
+    pendingPre.current = {};
+    for (const [item, value] of Object.entries(held)) {
+      recordStudyResponse(sessionId, "pre", item, value);
+    }
+  }, [rec.currentSessionId]);
   const profile = SETTING_PROFILES[setting];
   const hearing = talk.status === "speaking";
 
@@ -100,6 +125,12 @@ export function RecorderClient() {
               stopRecording();
               return;
             }
+            // Nothing has said where they are, so ask rather than start under
+            // a guess. See `settingUnknown`.
+            if (settingUnknown) {
+              setShowPicker(true);
+              return;
+            }
             startRecording();
           }}
           disabled={isBusy}
@@ -129,9 +160,11 @@ export function RecorderClient() {
             "Still recording. Answer out loud, then tap Done."
           ) : isRecording ? (
             profile.hint
+          ) : settingUnknown ? (
+            <span className="text-amber-200/80">Where are you? Pick one to start.</span>
           ) : (
             <>
-              {source === "chosen" ? "" : "Looks like: "}
+              {source === "chosen" || source === "remembered" ? "" : "Looks like: "}
               <span className="text-white/70">{profile.label}</span>
               {" · "}
               <button
@@ -145,13 +178,33 @@ export function RecorderClient() {
           )}
         </p>
 
-        {isDebriefing && <DebriefPanel startedMs={rec.debriefStartedMs} elapsedMs={rec.elapsedMs} />}
+        {isDebriefing && (
+          <DebriefPanel
+            startedMs={rec.debriefStartedMs}
+            elapsedMs={rec.elapsedMs}
+            captureSessionId={rec.currentSessionId}
+          />
+        )}
 
-        {!isRecording && !isDebriefing && showPicker && <SettingPicker />}
+        {!isRecording && !isDebriefing && pickerOpen && <SettingPicker />}
 
         {!isRecording && !isDebriefing && <VoicePicker />}
 
         {!isRecording && !isDebriefing && <LanguagePicker />}
+
+        {/* Pilot builds only, and pilot accounts only. See `ConditionToggles`. */}
+        {!isRecording && !isDebriefing && <ConditionToggles />}
+
+        {/* Before the drive, and only when one can start: the item is about
+            what they are carrying now, and asking it under a settings sheet
+            they are still working through would be asking it too early. */}
+        {!isRecording && !isDebriefing && !settingUnknown && (
+          <PreDriveItem
+            onAnswer={(item, value) => {
+              pendingPre.current[item] = value;
+            }}
+          />
+        )}
 
         {TALKBACK_ENABLED && isRecording && <TopicTitle title={talk.title} />}
 
@@ -246,9 +299,11 @@ export function RecorderClient() {
 function DebriefPanel({
   startedMs,
   elapsedMs,
+  captureSessionId,
 }: {
   startedMs: number | null;
   elapsedMs: number;
+  captureSessionId: string | null;
 }) {
   // From the chunk clock, not a wall clock: it is the same clock the stored
   // offsets are on, and it advances a chunk at a time, which is exactly the
@@ -277,6 +332,10 @@ function DebriefPanel({
         team reads — nothing else is. &ldquo;Nothing today&rdquo; is a fine
         answer.
       </p>
+      {/* Under the spoken questions, not over them: those are what the window
+          is for, and a row of number buttons above them would make the drive
+          end with a form. */}
+      <PostDriveItems captureSessionId={captureSessionId} />
     </section>
   );
 }

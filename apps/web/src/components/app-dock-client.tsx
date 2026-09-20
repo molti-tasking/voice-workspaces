@@ -9,7 +9,7 @@ import {
   SquareKanban,
   type LucideIcon,
 } from "lucide-react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { formatOffset } from "@voicemural/shared";
 import { SETTING_PROFILES } from "@voicemural/talkback/setting";
@@ -69,8 +69,17 @@ const TIMELINE: Tab = { href: "/timeline", label: "Timeline", Icon: ListTree };
  */
 export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
   const pathname = usePathname();
-  const { isRecording, isDebriefing, isBusy, recorder, startRecording, stopRecording, finishDebrief } =
-    useCapture();
+  const router = useRouter();
+  const {
+    isRecording,
+    isDebriefing,
+    isBusy,
+    recorder,
+    settingUnknown,
+    startRecording,
+    stopRecording,
+    finishDebrief,
+  } = useCapture();
 
   /* THE MICROPHONE IS OPEN IN BOTH STATES, and the dock has to treat them the
    * same or it offers Record on top of a live recording — a second drive
@@ -147,6 +156,13 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
               onToggleSheet={() => setSheetOpen((v) => !v)}
               onPress={() => {
                 if (!capturing) {
+                  // Nothing has said where they are, and a drive must not
+                  // start under a guess: send them to the recorder, where the
+                  // picker is. See `settingUnknown`.
+                  if (settingUnknown) {
+                    router.push("/record");
+                    return;
+                  }
                   startRecording();
                   return;
                 }

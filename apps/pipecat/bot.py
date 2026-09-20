@@ -2102,6 +2102,8 @@ class TurnRecorder:
         # about a parked invocation: this covers a question the model asked in
         # free text, which is most of them, and is what `AnswerGuard` keys on.
         self._asked_question = False
+        # The moment `AnswerGuard` had to force, if any. See `note_forced_answer`.
+        self._forced_opportunity: int | None = None
         # Board tools called since the last recorded turn, for `toolCalls` on
         # the turn that reports them.
         self._tool_calls: list[dict] = []
@@ -2164,6 +2166,23 @@ class TurnRecorder:
         """The invocation an answer now would settle, handed over once."""
         invocation_id, self._awaiting_answer = self._awaiting_answer, None
         return invocation_id
+
+    def note_forced_answer(self) -> None:
+        """This moment's first completion declined an answer the agent asked for.
+
+        MEASUREMENT ONLY. It changes nothing about what is spoken or when:
+        `AnswerGuard` still refuses the decline, the re-run still decides what
+        the moment became, and there is still exactly one decision for it. What
+        this adds is a mark ON that decision saying the moment needed forcing.
+
+        Without it the guard is invisible in the ledger by construction — the
+        refused completion writes nothing, and a re-run that speaks looks
+        exactly like a first completion that spoke. The study's
+        unanswered-answer count has a target of ZERO, and a number that can
+        never be anything else measures nothing. This is what makes it
+        countable, and it is why `agent_decision.forced_answer` exists.
+        """
+        self._forced_opportunity = self._cue.opportunity
 
     @property
     def awaiting_question_answer(self) -> bool:
@@ -2402,6 +2421,12 @@ class TurnRecorder:
             "trigger": cue.trigger,
             "outcome": outcome,
         }
+        # Whether `AnswerGuard` had to force this moment. See
+        # `note_forced_answer`: the refused completion writes nothing, so
+        # without a mark here the guard firing leaves no trace at all.
+        if self._forced_opportunity is not None and cue.opportunity == self._forced_opportunity:
+            decision["forcedAnswer"] = True
+            self._forced_opportunity = None
         if self._config_version:
             decision["configVersion"] = self._config_version
         if latency is not None:
@@ -3369,6 +3394,11 @@ class SilenceGate(FrameProcessor):
                     # it: no turn (nothing was spoken) and NO decision either —
                     # their words were one moment to speak, and what that moment
                     # became is decided by the re-run, not by this completion.
+                    #
+                    # The moment is MARKED, though, or the guard would be
+                    # invisible in the ledger and the study's unanswered-answer
+                    # count could never be anything but zero.
+                    self._recorder.note_forced_answer()
                     retry = True
                 else:
                     self._recorder.decline(cue=self._cue)

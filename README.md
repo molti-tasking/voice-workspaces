@@ -297,9 +297,19 @@ defaults:
 | `pnpm study:condition --user <id> --set '{"agendaOffers":true}'` | the condition for that person's NEXT drives; each drive freezes its own copy (`--clear` resets to today's behaviour) |
 | `pnpm study:condition --user <id>` | print the template and the last ten drives' conditions |
 | `pnpm study:export` | one JSONL file per participant into `storage/study-export/` — counts, timings, ids and enums, no transcript, agent or workspace text |
+| `pnpm study:metrics [--user <id>] [--print]` | the four measure groups — system behaviour, steerability, thinking, relief — per drive and per participant, into `storage/study-metrics/` |
+| `pnpm study:review --user <id>` | the cards awaiting a day-7 verdict, oldest first |
+| `pnpm study:review --user <id> --card <id> --outcome done\|open\|lost` | record one verdict |
 
 `--include-text` on the export is refused unless `--user` is listed in
 `STUDY_PILOT_USER_IDS`: it exists for the researcher's own pilot account only.
+
+`study:metrics` reads transcript text to classify corrections and repeat
+requests, and returns counts only — the classification happens inside the
+privacy boundary and no text reaches the file. `--re-prompt-ms` sets how long
+the agent's silence must last before the participant's next words count as a
+re-prompt (default 5000); `--tz` sets the zone whose calendar days the revisit
+measures count in, overriding `STUDY_TIME_ZONE` for that run.
 
 ---
 
