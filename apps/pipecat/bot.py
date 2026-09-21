@@ -263,7 +263,7 @@ SUMMARISE_MODEL = os.getenv("MODEL_SUMMARISE") or os.environ["MODEL_CONVERSE"]
 #
 # The reason this exists: the composed prompt is assembled somewhere else
 # entirely — `composeSystemPrompt` in packages/talkback sandwiches the base
-# identity, the setting stanza and the output contract, and /api/realtime/context
+# identity, the profile stanza and the output contract, and /api/realtime/context
 # appends recalled passages per turn. By the time it reaches the model it has
 # been through two services, and the only record of what was ACTUALLY sent was a
 # character count in a log line. That is not enough to tell a bad reply caused by
@@ -350,10 +350,6 @@ def drive_span_attributes(session: dict, capture_session_id: str | None) -> dict
     unfindable months later, which is exactly the failure a test is for.
     """
     return {
-        # Which arm of the study this drive ran under, on every span. The
-        # setting decides the prompt's stanza and the reply length, so a
-        # trace that does not carry it cannot be compared with another.
-        "voicemural.setting": session.get("setting") or "unknown",
         # A degraded drive ran on FALLBACK_SYSTEM_PROMPT and knows nothing
         # about the person. Its replies are thin BY DESIGN, and without this
         # they look like a model regression months later.
@@ -369,7 +365,7 @@ def drive_span_attributes(session: dict, capture_session_id: str | None) -> dict
         # `conversation_id`, which `build_pipeline` passes to PipelineWorker,
         # groups spans into one trace; it does NOT populate Langfuse's session,
         # which reads the attribute below.
-        "langfuse.trace.name": f"drive · {session.get('setting') or 'unknown'}",
+        "langfuse.trace.name": "drive",
         # The ledger's own key, so a trace opens straight onto the drive it
         # came from — the same id in `capture_session`, `utterance` and
         # `agent_turn`. Empty string rather than None: OTel drops an
@@ -387,7 +383,6 @@ def drive_span_attributes(session: dict, capture_session_id: str | None) -> dict
         # Tags render as filter chips, which is how you find the degraded
         # drives without reading them.
         "langfuse.trace.tags": [
-            session.get("setting") or "unknown",
             "degraded" if session.get("degraded") else "full",
         ],
         # The prompt version this drive ran under. It already rides in the
@@ -469,8 +464,6 @@ def litellm_metadata(name: str, session: dict, capture_session_id: str | None) -
     tags = ["talkback", name]
     if session.get("configVersion"):
         tags.append(str(session["configVersion"]))
-    if session.get("setting"):
-        tags.append(f"setting:{session['setting']}")
     if session.get("degraded"):
         tags.append("degraded")
     meta: dict = {
@@ -1505,7 +1498,7 @@ def offers_enabled(session: dict) -> bool:
 # How many seconds of quiet may follow a completed, unanswered thought before
 # the engine offers a turn, by proactivity level.
 #
-# Mirrors PROACTIVE_AFTER_SECS in packages/talkback/src/setting.ts — change
+# Mirrors PROACTIVE_AFTER_SECS in packages/talkback/src/profile.ts — change
 # one, change both.
 PROACTIVE_AFTER_SECS = {"quiet": 25, "occasional": 12, "forthcoming": 7}
 
@@ -1633,7 +1626,7 @@ class Offers(FrameProcessor):
         self._recall = recall
         self._recorder = recorder
         self._enabled = offers_enabled(session)
-        # The setting's proactivity level, arrived via /api/realtime/session —
+        # The profile's proactivity level, arrived via /api/realtime/session —
         # the same value that governs how forthcoming the prompt is allowed to
         # be. Missing (a degraded connection) falls back to the driving
         # default's patience.

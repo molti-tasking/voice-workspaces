@@ -2,7 +2,6 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CaptureSetting, SettingSource } from "@voicemural/shared";
 import { capture } from "@/lib/analytics/client";
 import { DEBRIEF_MAX_MS } from "@/lib/study/debrief";
  import { earcon } from "./earcon";
@@ -351,15 +350,10 @@ export function useRecorder() {
   /**
    * Begin recording.
    *
-   * `setting` is where the person is, as detected or corrected. It reaches the
-   * server once, at session creation, and is immutable thereafter: it governs
-   * turn-taking and how much may go on screen, so a recording whose second
-   * half ran under different rules would not be interpretable. Omitted when
-   * nothing could be inferred, which the server reads as the historical default.
-   *
    * `voiceId` is the voice the system will speak with, from the catalogue in
-   * `@voicemural/talkback/voice`. Same lifecycle: stated once, stored on the
-   * session, immutable for the drive.
+   * `@voicemural/talkback/voice`. Stated once, stored on the session, and
+   * immutable for the drive: a recording whose second half ran under
+   * different rules would not be interpretable.
    *
    * `sttLanguage` is the language BOTH transcription paths will use, from
    * `@voicemural/talkback/language`. Null — the default — means auto-detect.
@@ -367,8 +361,6 @@ export function useRecorder() {
    * was transcribed under a different assumption is not interpretable.
    */
   const start = useCallback(async (
-    setting?: CaptureSetting,
-    source?: SettingSource,
     voiceId?: string,
     sttLanguage?: string | null,
      conditionOverride?: Record<string, boolean>,
@@ -417,8 +409,6 @@ export function useRecorder() {
       // Read after the request settles; false here predicts a drive that ends
       // when the screen locks.
       wake_lock_active: wakeLockRef.current !== null,
-      setting: setting ?? null,
-      setting_source: source ?? null,
       voice_id: voiceId ?? null,
       stt_language: sttLanguage ?? null,
     });
@@ -447,12 +437,6 @@ export function useRecorder() {
       id: meta.captureSessionId,
       startedAt: new Date(meta.startedAt).toISOString(),
       deviceInfo: { userAgent: navigator.userAgent, mimeType },
-      // How that setting was arrived at: observed, remembered, or corrected.
-      // Stored on the drive, not only reported to analytics — a profile that
-      // was guessed and one that was observed are different facts, and Pilot
-      // 01's `driving` was a guess nobody could see in the data.
-      settingSource: source,
-      setting,
       voiceId,
       // Null is normal (auto-detect); undefined on the wire keeps zod happy.
       sttLanguage: sttLanguage ?? undefined,

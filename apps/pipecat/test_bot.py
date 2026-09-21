@@ -2365,14 +2365,14 @@ def test_drive_spans_carry_the_langfuse_v4_correlating_attributes():
     for a self-hosted server that has not been upgraded yet.
     """
     attributes = bot.drive_span_attributes(
-        {"setting": "desk", "configVersion": "talkback-4"},
+        {"configVersion": "talkback-4"},
         "capture-session-1",
     )
 
     assert attributes["session.id"] == "capture-session-1"
     assert attributes["langfuse.session.id"] == "capture-session-1"
-    assert attributes["langfuse.trace.name"] == "drive · desk"
-    assert attributes["langfuse.trace.tags"] == ["desk", "full"]
+    assert attributes["langfuse.trace.name"] == "drive"
+    assert attributes["langfuse.trace.tags"] == ["full"]
     # Same key and same value the eval harness sets, so one filter shows both.
     assert attributes["langfuse.version"] == "talkback-4"
     # Deprecated in v4: overall input/output belong on the root observation.

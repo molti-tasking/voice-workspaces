@@ -6,7 +6,7 @@ import {
 } from "@voicemural/db/display";
 import { loadSessionDrafts } from "@voicemural/db/drafts";
 import { loadOps } from "@voicemural/db/workspace";
-import { settingProfile } from "@voicemural/talkback";
+import { PROFILE } from "@voicemural/talkback";
 import { diffWorkspace, foldWorkspace } from "@voicemural/workspace";
 import { currentUserId } from "@/lib/session";
 
@@ -55,17 +55,14 @@ export async function GET(req: Request) {
   const session = await loadLiveSession(userId, captureSessionId);
   if (!session) return new Response("not found", { status: 404 });
 
-  const profile = settingProfile(session.setting);
+  const profile = PROFILE;
 
-  // A setting with no screen gets no stream at all. Answering once and closing
+  // A profile with no screen gets no stream at all. Answering once and closing
   // is better than holding a connection open to send nothing, and it means the
   // "is there a display here" decision is made in exactly one place — the
   // profile — for both the agent's prompt and the browser.
   if (!profile.displayAllowed) {
-    return Response.json(
-      { displayAllowed: false, setting: session.setting ?? "driving" },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    return Response.json({ displayAllowed: false }, { headers: { "Cache-Control": "no-store" } });
   }
 
   // The polling fallback asks for exactly this (`Accept: application/json`,
@@ -222,9 +219,9 @@ async function buildCues(
 
   return {
     displayAllowed: true,
-    // Sent rather than re-derived in the browser: the session's setting is the
-    // one source, and the agent's prompt reads the same profile. Deriving it
-    // twice is how the two would come to disagree.
+    // Sent rather than re-derived in the browser: the profile is the one
+    // source, and the agent's prompt reads the same one. Deriving it twice is
+    // how the two would come to disagree.
     density: profile.density,
     content,
     directions,

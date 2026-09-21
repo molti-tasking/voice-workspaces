@@ -1,17 +1,11 @@
 "use client";
 
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
-import type { CaptureSetting } from "@voicemural/shared";
+import { createContext, useCallback, useContext, useMemo } from "react";
 import {
   useConditionOverride,
   type ConditionOverride,
   type ToggleableFlag,
 } from "@/lib/recorder/condition-store";
-import {
-  rememberSetting,
-  useDetectedSetting,
-  type SettingSource,
-} from "@/lib/recorder/detect-setting";
 import { useSttLanguage } from "@/lib/recorder/language-store";
 import { useRecorder } from "@/lib/recorder/use-recorder";
 import { useVoice } from "@/lib/recorder/voice-store";
@@ -45,22 +39,6 @@ export interface CaptureContextValue {
   /** True while the microphone is being opened or the last chunk closed out. */
   isBusy: boolean;
 
-  /** The setting this recording would run under: corrected, or detected. */
-  setting: CaptureSetting;
-  /** Where that answer came from, which is what `recording_started` reports. */
-  source: SettingSource;
-  /** Null until the person corrects the detector; the correction is remembered. */
-  chosenSetting: CaptureSetting | null;
-  chooseSetting: (next: CaptureSetting | null) => void;
-  /**
-   * Whether the setting is still a guess nobody has confirmed.
-   *
-   * True only while `source` is `default`: no laptop, no accelerometer, no
-   * remembered answer. The recorder asks rather than starting, because the
-   * fallback is `driving` — 25-word replies and no screen — and Pilot 01 ran
-   * a stationary first-time user under exactly that.
-   */
-  settingUnknown: boolean;
   /**
    * A per-drive override of the study condition, for the pilot's cold-start
    * test. Sparse, and honoured by the server only for pilot accounts — see
@@ -111,28 +89,6 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
   const isDebriefing = recorder.status === "debriefing";
   const isBusy = recorder.status === "requesting" || recorder.status === "stopping";
 
-  // Inferred from the device and its motion, not asked. See detect-setting.ts.
-  //
-  // Sampling now runs on every page rather than only on `/record`, which is a
-  // deliberate cost: the dock can start a drive from anywhere, so the setting
-  // has to be inferable from anywhere — a participant who taps record while
-  // reading the board still needs the right profile. It stops for the duration
-  // of the recording, which is when the phone is actually in a cradle.
-  const detected = useDetectedSetting({ enabled: !isRecording && !isDebriefing });
-  const [chosenSetting, setChosenSetting] = useState<CaptureSetting | null>(null);
-
-  /* A correction is remembered, not just applied.
-   *
-   * It used to last one visit, which is right for a one-off and wrong for a
-   * seven-day study on a phone that may never grant the accelerometer: the
-   * participant would correct the same wrong guess every morning, or stop
-   * bothering and let the drive run under it. The detector reads this back as
-   * `remembered`, and any live sensor reading still outranks it. */
-  const chooseSetting = useCallback((next: CaptureSetting | null) => {
-    setChosenSetting(next);
-    if (next) rememberSetting(next);
-  }, []);
-
   // Per-browser preferences, remembered across visits. See their stores.
   const [voiceId, chooseVoice] = useVoice();
   const [sttLanguage, chooseSttLanguage] = useSttLanguage();
@@ -146,36 +102,11 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     enabled: TALKBACK_ENABLED && isRecording,
   });
 
-  const setting = chosenSetting ?? detected.setting;
-  const source: SettingSource = chosenSetting ? "chosen" : detected.source;
-  const settingUnknown = source === "default";
-
-  const { requestMotion } = detected;
   const { start, stop, finishDebrief: endDebrief } = recorder;
 
   const startRecording = useCallback(() => {
-    // iOS gates the accelerometer behind a tap; this is the tap. The answer
-    // arrives for the next recording, and this one starts now.
-    void requestMotion();
-    // NOT WITH A GUESS NOBODY CONFIRMED. The caller shows the picker instead;
-    // this is the backstop, so no other path can start a drive under a
-    // setting that nothing observed. See `settingUnknown`.
-    if (settingUnknown) return;
-    // Read HERE rather than held in state: `takeUseCase` clears as it reads, so
-    // the example belongs to this drive and not to every later one, and this
-    // provider is mounted for the whole app — holding it would mean deciding
-    // when to forget it, which is the same question with more moving parts.
-    void start(setting, source, voiceId, sttLanguage,  conditionOverride);
-  }, [
-    requestMotion,
-    settingUnknown,
-    start,
-    setting,
-    source,
-    voiceId,
-    sttLanguage,
-    conditionOverride,
-  ]);
+    void start(voiceId, sttLanguage, conditionOverride);
+  }, [start, voiceId, sttLanguage, conditionOverride]);
 
   const stopRecording = useCallback(() => {
     void stop();
@@ -192,11 +123,6 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       isRecording,
       isDebriefing,
       isBusy,
-      setting,
-      source,
-      chosenSetting,
-      chooseSetting,
-      settingUnknown,
       conditionOverride,
       toggleCondition,
       voiceId,
@@ -213,11 +139,6 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       isRecording,
       isDebriefing,
       isBusy,
-      setting,
-      source,
-      chosenSetting,
-      chooseSetting,
-      settingUnknown,
       conditionOverride,
       toggleCondition,
       voiceId,

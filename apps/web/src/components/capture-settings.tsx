@@ -2,9 +2,8 @@
 
 // The `/…` subpaths, NOT the package index: the index re-exports retrieval.ts,
 // which imports @voicemural/db, and that drags the Postgres driver into the
-// browser bundle. These three modules are pure by construction.
+// browser bundle. Both modules are pure by construction.
 import { STT_LANGUAGES } from "@voicemural/talkback/language";
-import { SETTINGS, SETTING_PROFILES } from "@voicemural/talkback/setting";
 import { VOICES } from "@voicemural/talkback/voice";
 import {
   STUDY_TOGGLES_ENABLED,
@@ -13,7 +12,7 @@ import {
 import { TALKBACK_ENABLED, useCapture } from "./capture-provider";
 
 /**
- * The three choices a drive is fixed at.
+ * The two choices a drive is fixed at.
  *
  * Extracted out of the recorder screen because the dock's record button now
  * offers the same choices from any page, and two copies of a picker whose
@@ -21,8 +20,8 @@ import { TALKBACK_ENABLED, useCapture } from "./capture-provider";
  * a recording nobody can interpret. One implementation, one source of truth,
  * read straight off the capture context.
  *
- * All three are PRE-RECORDING ONLY, and that is a data constraint rather than
- * a UI preference: `capture_session.setting` and `voiceId` are fixed at insert
+ * Both are PRE-RECORDING ONLY, and that is a data constraint rather than
+ * a UI preference: `capture_session.voice_id` and `stt_language` are fixed at insert
  * (see `api/capture-sessions/route.ts`), and a drive whose second half ran
  * under different rules — different turn-taking, a different voice, a
  * different transcription language — is not interpretable under either. The
@@ -31,66 +30,11 @@ import { TALKBACK_ENABLED, useCapture } from "./capture-provider";
  */
 
 /**
- * The correction, for when the detector is wrong.
+ * Which voice talks back.
  *
- * Hidden by default on `/record`: the setting is read off the device and its
- * motion, and asking anyway would make choosing a mode the first task of every
- * recording — a task, for someone whose hands are on something else.
- *
- * Four options, one row, no icons: the labels are shorter to read than any
- * pictogram is to decode.
- */
-export function SettingPicker() {
-  const { setting, chosenSetting, chooseSetting, isBusy, isRecording } = useCapture();
-
-  return (
-    <fieldset
-      className="flex w-full max-w-md flex-wrap justify-center gap-1.5"
-      disabled={isBusy || isRecording}
-    >
-      <legend className="sr-only">Where are you?</legend>
-      {SETTINGS.map((option) => {
-        const active = option === setting;
-        return (
-          <button
-            key={option}
-            type="button"
-            aria-pressed={active}
-            onClick={() => chooseSetting(option)}
-            className={[
-              "cursor-pointer rounded-full px-3.5 py-1.5 text-sm transition-colors disabled:cursor-default disabled:opacity-50",
-              active
-                ? "bg-white/12 text-white ring-1 ring-white/25"
-                : "text-white/40 hover:text-white/70",
-            ].join(" ")}
-          >
-            {SETTING_PROFILES[option].label}
-          </button>
-        );
-      })}
-      {chosenSetting !== null && !isRecording && (
-        // A correction holds for this visit only — the next recording is
-        // detected afresh, because the situation is what changed, not the
-        // person's mind. This is how you get back to that.
-        <button
-          type="button"
-          onClick={() => chooseSetting(null)}
-          className="cursor-pointer rounded-full px-3 py-1.5 text-sm text-white/30 underline-offset-4 hover:text-white/60 hover:underline"
-        >
-          auto
-        </button>
-      )}
-    </fieldset>
-  );
-}
-
-/**
- * Which voice talks back, asked alongside the setting.
- *
- * Smaller and dimmer than the setting row because it is the less consequential
- * choice — it changes how the system sounds, not how it behaves — and the last
- * thing between opening the app and starting to think should stay one row of
- * four words.
+ * Small and dim because it is the less consequential choice — it changes how
+ * the system sounds, not how it behaves — and the last thing between opening
+ * the app and starting to think should stay one short row.
  *
  * Renders nothing without talk-back in the bundle, but the choice is still
  * sent: a session recorded before talk-back was enabled for it carries the
@@ -202,7 +146,7 @@ export function LanguagePicker() {
  * row as a bug and taps it for the rest of the drive.
  */
 export function LockedSummary() {
-  const { setting, voiceId, sttLanguage } = useCapture();
+  const { voiceId, sttLanguage } = useCapture();
   const voice = VOICES.find((v) => v.id === voiceId);
   const language =
     sttLanguage === null
@@ -211,8 +155,6 @@ export function LockedSummary() {
 
   return (
     <dl className="grid w-full max-w-md grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
-      <dt className="text-white/30">Setting</dt>
-      <dd className="text-white/70">{SETTING_PROFILES[setting].label}</dd>
       {TALKBACK_ENABLED && (
         <>
           <dt className="text-white/30">Voice</dt>

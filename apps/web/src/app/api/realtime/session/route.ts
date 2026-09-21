@@ -115,7 +115,6 @@ export async function POST(req: Request) {
   // look things up.
   const webSearch = Boolean(process.env.SEARXNG_URL);
   const composed = composeSystemPrompt({
-    setting: row.setting,
     sections: [...(boardEditable ? [BOARD_EDITING] : []), ...(webSearch ? [webSearchSection()] : [])],
   });
 
@@ -132,14 +131,12 @@ export async function POST(req: Request) {
       // An older web app that does not send this leaves the container's
       // `TopicTitle` inert, which is the right failure — no board, no calls.
       titlePrompt: TITLE_PROMPT,
-      // Echoed so a turn can be interpreted from the container's own logs, and
-      // so `bot.py` need not parse prose to know the reply cap.
-      setting: composed.setting,
-      // The setting's proactivity level, so the container's proactive engine
+      // The profile's proactivity level, so the container's proactive engine
       // (Offers) times its unprompted turns by the same value that governs how
       // forthcoming the prompt tells the model to be — one source of truth,
-      // read in two places (PROACTIVE_AFTER_SECS in bot.py / setting.ts).
+      // read in two places (PROACTIVE_AFTER_SECS in bot.py / profile.ts).
       proactivity: composed.proactivity,
+      // Echoed so `bot.py` need not parse prose to know the reply cap.
       maxReplyWords: composed.maxReplyWords,
       displayAllowed: composed.displayAllowed,
       // The voice chosen for this recording, or null for "use the container's

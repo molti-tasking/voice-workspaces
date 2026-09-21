@@ -11,13 +11,7 @@
  * Pure: no I/O, no model call, fully testable.
  */
 
-import {
-  PROACTIVITY_STANZAS,
-  SETTING_PROFILES,
-  asSetting,
-  type Setting,
-  type SettingProfile,
-} from "./setting";
+import { PROACTIVITY_STANZAS, PROFILE, type ConversationProfile } from "./profile";
 
 /**
  * Bumped when the prompt changes, so a drive's turns stay interpretable later.
@@ -76,8 +70,15 @@ import {
  * them: that acknowledgement, and the keep-alive said while a search the agent
  * has already announced is still running (`SEARCH_WAIT_PHRASES`). Both reach
  * the speaker, so both are written to `agent_turn` like any other turn.
+ *
+ * talkback-14 takes the SETTING out. Four profiles keyed on where the person
+ * was — driving, walking, hands busy, at a desk — chose the reply cap, the
+ * proactivity level, whether the screen could be mentioned and how dense it
+ * was; inferring, correcting, storing and explaining that had become most of
+ * what the recorder was. One profile now (`PROFILE` in profile.ts), and the
+ * question of where and when people use this is asked on `/survey`.
  */
-export const TALKBACK_CONFIG_VERSION = "talkback-13";
+export const TALKBACK_CONFIG_VERSION = "talkback-14";
 
 /**
  * The default register: brief, and present.
@@ -95,8 +96,8 @@ export const TALKBACK_CONFIG_VERSION = "talkback-13";
  * a word — which on a drive reads as not listening. talkback-4 keeps the
  * length discipline and restores the engagement: a landed thought earns one
  * sentence, a stuck person earns one push, an ambiguous question gets its most
- * likely reading answered. HOW OFTEN is the setting's business — see the
- * proactivity stanzas in `setting.ts`, which this prompt defers to.
+ * likely reading answered. HOW OFTEN is the profile's business — see the
+ * proactivity stanzas in `profile.ts`, which this prompt defers to.
  *
  * talkback-5 adds WHERE THINGS STAND: the memory index (see memory.ts) puts
  * the current state of the topics a turn touches in front of the model, and
@@ -161,7 +162,7 @@ If the transcript does not contain the answer, say so plainly and stop — out l
 Asked for your VIEW — what you think, whether an idea holds up, which of two options is stronger — just answer from what they have just said. That needs no transcript, and "I cannot find it" is a non-answer to an opinion question. Commit to a view; a hedge is a wasted sentence.
 
 HOW TO SPEAK
-- VERY short. One sentence, occasionally two. The setting section below gives the hard word cap; stay well inside it. Every word is spoken aloud, and a hundred words is a monologue, not a reply. Say the one thing that is worth saying and stop.
+- VERY short. One sentence, occasionally two. The section below gives the hard word cap; stay well inside it. Every word is spoken aloud, and a hundred words is a monologue, not a reply. Say the one thing that is worth saying and stop.
 - No preamble and no sign-off. Do not say "Sure" or "Great question" or "Let me know".
 - Be concrete and direct. If you did not understand, say so in a few words.
 - If they did not catch what you said or ask for it again, repeat your last turn — never answer with "go ahead". Automatic transcription often turns "can you repeat the question?" into "can I repeat the question?"; treat both as a request to hear it again.
@@ -426,7 +427,7 @@ export function extractDrafts(reply: string): { speech: string; drafts: Extracte
  * The output contract, restated after everything else.
  *
  * This is the load-bearing half of `composeSystemPrompt`. Composed sections are
- * user-authored text — today a setting stanza we wrote, but the same seam is
+ * user-authored text — today a profile stanza we wrote, but the same seam is
  * where `capability_version.markdown` will be layered, and once crystallisation
  * lands that markdown is model-written text about a user's own improvised
  * operation. A section that says "be expansive" or "always follow up" must not
@@ -497,8 +498,6 @@ You can change their task board with your tools: move_task, add_task, reword_tas
 export interface ComposeInputs {
   /** Defaults to `SYSTEM_PROMPT`. Overridable so the fallback prompt composes too. */
   base?: string;
-  /** The setting this recording was started in. Null behaves as `driving`. */
-  setting?: string | null;
   /**
    * Composed sections: the study condition's stanzas, and later the active
    * mode and persona. Placed after the proactivity stanza and before the
@@ -513,9 +512,8 @@ export interface ComposeInputs {
 
 export interface ComposedPrompt {
   prompt: string;
-  setting: Setting;
   /** How forthcoming the composed prompt tells the model to be. */
-  proactivity: SettingProfile["proactivity"];
+  proactivity: ConversationProfile["proactivity"];
   /** Mirrors the stanza's word cap, so callers need not parse prose. */
   maxReplyWords: number;
   /** Whether the agent may refer to the screen. Also gates the cue panel. */
@@ -527,18 +525,17 @@ export interface ComposedPrompt {
  *
  * Referenced by the header comment above and by `/api/realtime/session` since
  * before it existed; this is that function. It is intentionally thin: the
- * composed layers today are the setting and its proactivity level. Mode and
- * persona slot in between those and the output contract, and the sandwich is
- * already shaped for them.
+ * composed layers today are the conversation profile and its proactivity
+ * level. Mode and persona slot in between those and the output contract, and
+ * the sandwich is already shaped for them.
  */
 export function composeSystemPrompt(inputs: ComposeInputs = {}): ComposedPrompt {
-  const setting = asSetting(inputs.setting);
-  const profile = SETTING_PROFILES[setting];
+  const profile = PROFILE;
 
-  // Identity, then the setting, then HOW FORTHCOMING the setting allows, then
-  // the wire format. The proactivity stanza sits after the setting so it can
-  // refine the setting's "a pause is thinking" line rather than be overruled
-  // by it, and before the contract so the contract still has the last word.
+  // Identity, then the situation, then HOW FORTHCOMING to be, then the wire
+  // format. The proactivity stanza sits after the situation so it can refine
+  // its "a pause is thinking" line rather than be overruled by it, and before
+  // the contract so the contract still has the last word.
   // Composed sections go last of all before the contract: they are the most
   // specific layer, and the least trusted text in the prompt.
   const prompt = [
@@ -551,7 +548,6 @@ export function composeSystemPrompt(inputs: ComposeInputs = {}): ComposedPrompt 
 
   return {
     prompt,
-    setting,
     proactivity: profile.proactivity,
     maxReplyWords: profile.maxReplyWords,
     displayAllowed: profile.displayAllowed,

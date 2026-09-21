@@ -51,10 +51,10 @@ describe("the board tools", () => {
 
 describe("the editing section", () => {
   it("composes before the output contract, and only when asked for", () => {
-    const withBoard = composeSystemPrompt({ setting: "desk", sections: [BOARD_EDITING] }).prompt;
+    const withBoard = composeSystemPrompt({ sections: [BOARD_EDITING] }).prompt;
     expect(withBoard.indexOf(BOARD_EDITING)).toBeGreaterThan(-1);
     expect(withBoard.indexOf(BOARD_EDITING)).toBeLessThan(withBoard.indexOf(OUTPUT_CONTRACT));
-    expect(composeSystemPrompt({ setting: "desk" }).prompt).not.toContain("EDITING THEIR BOARD");
+    expect(composeSystemPrompt().prompt).not.toContain("EDITING THEIR BOARD");
   });
 
   it("treats delete as a move to dropped, and acts rather than asking first", () => {

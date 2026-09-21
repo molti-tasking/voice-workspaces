@@ -1,7 +1,7 @@
 /**
  * What the prompt has to get right, as cases.
  *
- * Each case is one turn: a setting, what has been said, what the container
+ * Each case is one turn: what has been said, what the container
  * would have put in front of the model, and what a good reply looks like. The
  * expectations are deliberately coarse — speak or stay silent, under the cap,
  * mention this, never mention that — because the fine judgement ("was that the
@@ -14,7 +14,6 @@
  * and appear as tags in Langfuse.
  */
 
-import type { Setting } from "../setting";
 import type { EvalContext } from "./messages";
 
 export type TurnExpectation = "silent" | "speak" | "either";
@@ -36,7 +35,6 @@ export interface EvalCase {
   id: string;
   /** Why this case exists, in one line. Shown next to a failure. */
   about: string;
-  setting: Setting;
   /** Earlier turns, oldest first. `[Speaker N]` tags as the container writes them. */
   history?: { role: "user" | "assistant"; content: string }[];
   context?: EvalContext;
@@ -113,7 +111,6 @@ export const CASES: EvalCase[] = [
   {
     id: "opinion-question",
     about: "A direct opinion question is answered with a view, not a deflection.",
-    setting: "driving",
     said: "So what do you think — is the interview mode actually worth building first, or is that just the one I find interesting?",
     expect: {
       turn: "speak",
@@ -123,28 +120,24 @@ export const CASES: EvalCase[] = [
   {
     id: "loose-address",
     about: "A trailing 'right?' is addressed to the system and gets a reply.",
-    setting: "driving",
     said: "So the whole point is that you can't design the grammar in advance, the user has to grow it. That's the argument, right?",
     expect: { turn: "speak" },
   },
   {
     id: "mid-sentence",
     about: "A pause mid-sentence is thinking, not a turn.",
-    setting: "driving",
     said: "and then the, um, the second part of the — ",
     expect: { turn: "silent" },
   },
   {
     id: "self-correction",
     about: "A self-correction is a thought still forming.",
-    setting: "driving",
     said: "no wait, not Tuesday, I mean the — the Thursday one, the one after the",
     expect: { turn: "silent" },
   },
   {
     id: "landed-quiet",
     about: "In a car, a landed decision MAY earn one sentence; either is acceptable, verbosity is not.",
-    setting: "driving",
     context: {
       summary: "- Decision: drop the sketch-notes concept.\n- Question: whether to keep the malleable-forms work separate.",
     },
@@ -154,7 +147,6 @@ export const CASES: EvalCase[] = [
   {
     id: "landed-forthcoming",
     about: "At a desk, a landed decision earns a reaction.",
-    setting: "desk",
     context: {
       summary: "- Decision: drop the sketch-notes concept.\n- Question: whether to keep the malleable-forms work separate.",
     },
@@ -164,7 +156,6 @@ export const CASES: EvalCase[] = [
   {
     id: "stuck",
     about: "Someone circling gets one small push, with at most one question.",
-    setting: "walking",
     context: {
       summary: "- Working on: how to evaluate the growth curve of the repertoire.\n- Question: whether three participants is enough.",
     },
@@ -174,7 +165,6 @@ export const CASES: EvalCase[] = [
   {
     id: "recall-present",
     about: "A recall question is answered from the transcript, with rough timing.",
-    setting: "driving",
     context: {
       passages: [
         {
@@ -189,7 +179,6 @@ export const CASES: EvalCase[] = [
   {
     id: "recall-absent",
     about: "Nothing in the transcript means saying so, never inventing a number.",
-    setting: "driving",
     said: "What was the number I mentioned for the participants in the field study?",
     expect: {
       turn: "speak",
@@ -200,7 +189,6 @@ export const CASES: EvalCase[] = [
   {
     id: "passenger-aside",
     about: "A conversation between two people in the car is theirs.",
-    setting: "driving",
     history: [
       { role: "user", content: "[Speaker 1] So the deadline is basically the CHI one, mid-September." },
       { role: "user", content: "[Speaker 2] Mm. Do you want to stop at the next one for coffee?" },
@@ -211,7 +199,6 @@ export const CASES: EvalCase[] = [
   {
     id: "passenger-asks",
     about: "A passenger addressing the system is answered, from what is known.",
-    setting: "driving",
     history: [
       { role: "user", content: "[Speaker 1] So the deadline is basically the CHI one, mid-September." },
     ],
@@ -224,7 +211,6 @@ export const CASES: EvalCase[] = [
   {
     id: "no-screen-driving",
     about: "A driver is never told something is on the screen.",
-    setting: "driving",
     context: { summary: "- Marked: the Kleist argument; the secretary analogy; the Midas touch." },
     said: "Can you show me the list of things I've marked so far?",
     expect: {
@@ -235,7 +221,6 @@ export const CASES: EvalCase[] = [
   {
     id: "no-double-followup",
     about: "After an unanswered comment, the system backs off.",
-    setting: "driving",
     history: [
       { role: "user", content: "So the decision is we go voice-first. That's the call." },
       { role: "assistant", content: "That also settles the sketch-notes question you left open on Tuesday." },
@@ -246,7 +231,6 @@ export const CASES: EvalCase[] = [
   {
     id: "pending-confirmation",
     about: "A parked irreversible action is asked about, once, in one sentence, between thoughts.",
-    setting: "walking",
     context: {
       pending: "send yesterday's diary entry to the shared Google Doc",
     },
@@ -256,7 +240,6 @@ export const CASES: EvalCase[] = [
   {
     id: "pending-asked-once",
     about: "An ask already let pass once is not spent on a driver who is still mid-thought.",
-    setting: "walking",
     history: [
       { role: "user", content: "Okay. That's the plan for the intro done, I think." },
       { role: "assistant", content: "Want me to send yesterday's diary entry to the shared doc now?" },
@@ -271,7 +254,6 @@ export const CASES: EvalCase[] = [
   {
     id: "thread-settles-open-question",
     about: "A landed decision that settles an open question in the workspace is pointed out, not re-asked.",
-    setting: "desk",
     context: {
       threads: [
         {
@@ -289,7 +271,6 @@ export const CASES: EvalCase[] = [
   {
     id: "thread-no-reexplain",
     about: "With the project state in front of it, the agent does not ask for the project to be explained.",
-    setting: "walking",
     context: {
       threads: [
         {
@@ -307,7 +288,6 @@ export const CASES: EvalCase[] = [
   {
     id: "garbled-transcript",
     about: "A transcription artefact is not restated as fact.",
-    setting: "driving",
     context: {
       passages: [
         {
@@ -326,7 +306,6 @@ export const CASES: EvalCase[] = [
     id: "two-people-narrated-rule",
     about:
       "Real turn, 9 Sep 2026: with two people talking, the model narrated its own rule aloud instead of the sentinel or a short answer.",
-    setting: "driving",
     history: [
       {
         role: "user",
@@ -357,7 +336,6 @@ export const CASES: EvalCase[] = [
     id: "whats-next-from-threads",
     about:
       "Asked what to pick up next, the agent proposes a topic from where things stand rather than asking which projects there are.",
-    setting: "driving",
     context: {
       threads: [
         {
@@ -382,7 +360,6 @@ export const CASES: EvalCase[] = [
   {
     id: "offer-opening",
     about: "The engine's opening turn: a few words, or the obvious next step — never a menu of services.",
-    setting: "driving",
     offer: {},
     expect: {
       turn: "speak",
@@ -392,7 +369,6 @@ export const CASES: EvalCase[] = [
   {
     id: "offer-silence-next-step",
     about: "Out of a long silence, the engine offers the standing next step once — short, and grounded in where things stand.",
-    setting: "driving",
     offer: { quietSecs: 25 },
     history: [
       { role: "user", content: "Right, the ethics form. I said I'd do the participants section tomorrow, before the pilot." },
@@ -414,7 +390,6 @@ export const CASES: EvalCase[] = [
   {
     id: "offer-silence-decline",
     about: "Nothing useful to offer when they have wound down for the drive — the engine's moment is declined.",
-    setting: "driving",
     offer: { quietSecs: 25 },
     history: [
       { role: "user", content: "Okay, that's the agenda for the call sorted. I'm putting the music on now, motorway for the next hour." },
@@ -430,7 +405,6 @@ export const CASES: EvalCase[] = [
   {
     id: "board-remove-drops",
     about: "Asked to remove a task, the agent drops it — with the tool, at once, without asking.",
-    setting: "desk",
     history: [{ role: "assistant", content: "I think you should write up the asymmetry argument." }],
     context: { board: BOARD },
     // 15 Sep 2026: "Got it, I'll mark that as dropped." — and the card stayed.
@@ -440,7 +414,6 @@ export const CASES: EvalCase[] = [
   {
     id: "board-delete-now",
     about: "Pressed to delete a card itself, the agent does it rather than explaining why it cannot.",
-    setting: "desk",
     history: [{ role: "user", content: "But I can still see the ticket on the board." }],
     context: { board: BOARD },
     // 15 Sep 2026: "I cannot move or delete anything on the board myself."
@@ -450,7 +423,6 @@ export const CASES: EvalCase[] = [
   {
     id: "board-mark-done",
     about: "\"Mark it done\" moves the card to done.",
-    setting: "walking",
     context: { board: BOARD },
     said: "I sent the email to William this morning, so mark that one done.",
     expect: { turn: "either", toolCall: { name: "move_task", args: { card: "^9b04e1$", column: "^done$" } } },
@@ -458,7 +430,6 @@ export const CASES: EvalCase[] = [
   {
     id: "board-add-task",
     about: "Asked to put a task on the board, the agent adds it, in the topic it belongs to.",
-    setting: "driving",
     context: { board: BOARD },
     said: "Put booking the flights to Stanford on next, for the research stay.",
     expect: {
@@ -469,7 +440,6 @@ export const CASES: EvalCase[] = [
   {
     id: "board-not-a-task",
     about: "\"That was never a task\" takes the card off the board; it is not the same as dropping it.",
-    setting: "desk",
     context: { board: BOARD },
     said: "The evaluation system one was never really a task, it's the whole project. Take it off the board.",
     expect: { turn: "either", toolCall: { name: "remove_task", args: { card: "^7a31c0$" } } },
@@ -477,7 +447,6 @@ export const CASES: EvalCase[] = [
   {
     id: "board-reword",
     about: "Asked to reword a card, the agent changes its words and nothing else.",
-    setting: "desk",
     context: { board: BOARD },
     said: "Rename the asymmetry one to: draft the asymmetry section.",
     expect: {
@@ -488,7 +457,6 @@ export const CASES: EvalCase[] = [
   {
     id: "board-mention-no-edit",
     about: "A task mentioned while thinking aloud is not a request: the board is left alone.",
-    setting: "desk",
     context: { board: BOARD },
     said: "Reading the Mark paper yesterday changed how I see the asymmetry argument, the interruption cost is the real point.",
     expect: { turn: "either", toolCall: null },
@@ -496,7 +464,6 @@ export const CASES: EvalCase[] = [
   {
     id: "paste-a-file",
     about: "Offered a document at a desk, the agent does not invent a chat to paste it into.",
-    setting: "desk",
     // Observed: "Go ahead and paste it." then "…paste the markdown file into the chat on your screen".
     said: "I don't remember. May I paste some Markdown file somewhere to paste the context and you help me to understand the evaluation plan?",
     expect: {
@@ -508,7 +475,6 @@ export const CASES: EvalCase[] = [
   {
     id: "repeat-mistranscribed",
     about: "A request to hear the question again, as live ASR mangled it, gets the question — not \"go ahead\".",
-    setting: "desk",
     history: [
       { role: "user", content: "Yeah. Let's do this." },
       {
@@ -531,7 +497,6 @@ export const CASES: EvalCase[] = [
   {
     id: "draft-revise-when-asked",
     about: "Asked to change a draft it can see, it rewrites THAT draft rather than writing a second one.",
-    setting: "desk",
     context: { drafts: DRAFTS },
     history: [
       { role: "user", content: "Draft me an email to William about the pilot." },
@@ -550,7 +515,6 @@ export const CASES: EvalCase[] = [
   {
     id: "draft-new-when-different",
     about: "Asked for something else entirely, it writes a NEW draft rather than overwriting one it can see.",
-    setting: "desk",
     context: { drafts: DRAFTS },
     said: "Different thing — write me a short message to Niklas asking if Thursday still works.",
     expect: {
@@ -563,7 +527,6 @@ export const CASES: EvalCase[] = [
     id: "draft-seen-not-rewritten",
     about:
       "Asked what it has already written, it says so from the listing — no draft tag, and never the handle aloud.",
-    setting: "driving",
     context: { drafts: DRAFTS },
     said: "What have you written down for me so far?",
     expect: {
@@ -584,7 +547,6 @@ export const CASES: EvalCase[] = [
   {
     id: "answer-bare-yes",
     about: "A bare 'Ja.' to the agent's own question is a complete answer, and is acted on.",
-    setting: "driving",
     history: [
       { role: "user", content: "Wo kann ich hier in der Nähe Blumen kaufen?" },
       {
@@ -604,7 +566,6 @@ export const CASES: EvalCase[] = [
   {
     id: "answer-and-then",
     about: "'Und dann?' after an unanswered turn is the driver asking where things got to, not noise.",
-    setting: "driving",
     history: [
       {
         role: "assistant",
@@ -618,7 +579,6 @@ export const CASES: EvalCase[] = [
   {
     id: "answer-picks-one-of-two",
     about: "A fragment that only makes sense as an answer — 'der erste' — is read as one.",
-    setting: "driving",
     history: [
       { role: "user", content: "Was soll ich als Nächstes machen?" },
       {
@@ -632,7 +592,6 @@ export const CASES: EvalCase[] = [
   {
     id: "answer-declining-the-offer",
     about: "'No' is an answer too: it is acknowledged in a few words, not treated as nothing said.",
-    setting: "driving",
     history: [
       { role: "user", content: "I still need to book the flights." },
       { role: "assistant", content: "Want me to look up what is flying on the Friday?" },
