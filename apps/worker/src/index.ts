@@ -3,7 +3,7 @@
 import { config } from "dotenv";
 config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true });
 
-import { PgBoss, type Job, type JobResult, type JobWithMetadata } from "pg-boss";
+import { PgBoss, type ConstructorOptions, type Job, type JobResult, type JobWithMetadata } from "pg-boss";
 import { closeDb } from "@voicemural/db";
 import { usersNeedingMemoryIndex } from "@voicemural/db/memory";
 import {
@@ -14,7 +14,8 @@ import { usersWithPendingSpeech } from "@voicemural/db/workspace";
 import { hasEmbeddings } from "@voicemural/llm";
 import { JOBS } from "@voicemural/shared";
 import { log } from "@voicemural/telemetry";
-import { captureException, installGenerationSink, shutdownAnalytics } from "@voicemural/telemetry";
+import { capture, captureException, installGenerationSink, shutdownAnalytics } from "@voicemural/telemetry";
+import { isConnectionError } from "./db-errors";
 import { classifyChunk } from "./jobs/classify-utterance";
 import { MACRO_WINDOW_DAYS, MIN_OCCURRENCES, detectMacros } from "./jobs/detect-macros";
 import { BATCH_SIZE, CLASSIFY_WAIT_MS, extractWorkspaceFully } from "./jobs/extract-workspace";
@@ -122,10 +123,27 @@ const MEMORY_SINGLETON_S = 30;
 const MACROS_SINGLETON_S = 300;
 
 async function main() {
-  const boss = new PgBoss({
+  // pg-boss forwards its constructor options straight to `new pg.Pool()`
+  // (pg-boss/dist/db.js), so pg-native pool fields it does not surface in its
+  // own types are still honoured at runtime. Declared here because @types/pg is
+  // not a dependency of this workspace.
+  type PgNativePoolOptions = { keepAlive?: boolean; idleTimeoutMillis?: number };
+
+  // Match the app pool in packages/db, plus TCP keepalive. Built from the
+  // connection string alone, pg-boss inherited pg's defaults, and a socket the
+  // database dropped on a restart or redeploy sat in the pool until the next
+  // `boss.send` handed it out dead — surfacing as "Connection terminated
+  // unexpectedly". keepAlive lets the OS notice a dead peer, and the shorter
+  // idle timeout recycles a stale socket before it is reused.
+  const bossOptions: ConstructorOptions & PgNativePoolOptions = {
     connectionString: DATABASE_URL,
     schema: "pgboss",
-  });
+    max: positiveIntEnv("PG_POOL_MAX", 10),
+    connectionTimeoutMillis: 10_000,
+    idleTimeoutMillis: 20_000,
+    keepAlive: true,
+  };
+  const boss = new PgBoss(bossOptions);
 
   /**
    * Chunks to leave alone for a while, and for how long.
@@ -435,10 +453,24 @@ async function main() {
         }
       }
     } catch (err) {
-      log.error("sweep failed", {
-        err: err instanceof Error ? err.message : String(err),
+      const message = err instanceof Error ? err.message : String(err);
+      const connectionError = isConnectionError(err);
+      if (connectionError) {
+        // A dropped pooled socket — the shape a database restart or redeploy
+        // leaves behind. This pass aborts, but the interval retries and only
+        // this loop enqueues, so pending rows are picked up next pass with no
+        // lost work. A warning, not a captured exception: it is transient and
+        // self-healing, and filing it as a production error is only noise.
+        log.warn("sweep aborted by database connection error", { err: message });
+      } else {
+        log.error("sweep failed", { err: message });
+        captureException(err);
+      }
+      // A counter, not an alarm: a one-off is a single event, a real outage a
+      // spike. `connection_error` splits the transient case from a genuine bug.
+      capture("system", "sweep_aborted", { connection_error: connectionError }, {
+        processPerson: false,
       });
-      captureException(err);
     } finally {
       sweeping = false;
     }
