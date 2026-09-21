@@ -29,18 +29,6 @@ export function extensionForMime(mime: string): string {
 }
 
 /**
- * Where the recording is happening.
- *
- * Chosen once, before the recording starts, and immutable for its duration: it
- * governs turn-taking and how much may go on screen, and both of those have to
- * be interpretable for the whole session afterwards. Mirrors
- * `SETTINGS` in `@voicemural/talkback/setting` — that package owns the
- * profiles, this one owns the wire format.
- */
-export const CaptureSetting = z.enum(["driving", "walking", "hands_busy", "desk"]);
-export type CaptureSetting = z.infer<typeof CaptureSetting>;
-
-/**
  * Which of the three invited use cases a drive was started from, if any.
  *
  * WHY THIS IS RECORDED. The peer week hands people three worked examples on
@@ -56,7 +44,7 @@ export type CaptureSetting = z.infer<typeof CaptureSetting>;
  * bookmark, or before this existed. That is the unseeded case, and it is the
  * one the longitudinal deployment will be made entirely of.
  *
- * Immutable per recording, like `setting` and `voiceId`, for the same reason:
+ * Immutable per recording, like `voiceId`, for the same reason:
  * it describes the intent a drive began under, and a drive whose second half
  * claims a different one is not interpretable.
  *
@@ -66,25 +54,6 @@ export type CaptureSetting = z.infer<typeof CaptureSetting>;
  */
 export const CaptureUseCase = z.enum(["think_aloud", "draft", "recall"]);
 export type CaptureUseCase = z.infer<typeof CaptureUseCase>;
-
-/**
- * How the setting a drive ran under was arrived at.
- *
- * Stored on the drive (`capture_session.setting_source`) rather than only
- * reported to analytics, because Pilot 01 was run stationary under the
- * `driving` profile — 25-word replies, no screen — and nothing in the data
- * said the profile had been guessed rather than observed.
- *
- * - `device`: a fine pointer with hover and no touch. A laptop is a desk.
- * - `motion`: the accelerometer said so over the last few seconds.
- * - `remembered`: the last correction this browser made, reused.
- * - `chosen`: the person picked it before starting.
- * - `default`: nothing said anything and the fallback stood. The recorder no
- *   longer starts a drive this way — it asks — so this is old rows and other
- *   clients.
- */
-export const SettingSource = z.enum(["device", "motion", "remembered", "chosen", "default"]);
-export type SettingSource = z.infer<typeof SettingSource>;
 
 /**
  * The behaviours the field study varies, for one drive.
@@ -161,17 +130,13 @@ export const CaptureSessionCreate = z.object({
     .date()
     .refine((d) => d.getTime() > Date.UTC(2024, 0, 1), "startedAt is implausibly old")
     .refine((d) => d.getTime() < Date.now() + 24 * 60 * 60 * 1000, "startedAt is in the future"),
-  /** Optional: recordings made before the question existed have none. */
-  setting: CaptureSetting.optional(),
-  /** Where `setting` came from. See `SettingSource`. */
-  settingSource: SettingSource.optional(),
   /**
    * The voice the system speaks with, as an ElevenLabs voice id.
    *
    * A free string here because this package owns the wire format and
    * `@voicemural/talkback/voice` owns the catalogue; the route narrows it to a
    * known voice and stores null for anything else. Immutable per recording,
-   * like `setting`, so a drive was heard in one voice throughout.
+   * so a drive was heard in one voice throughout.
    */
   voiceId: z.string().min(1).max(64).optional(),
   /**

@@ -9,17 +9,11 @@ import {
   SquareKanban,
   type LucideIcon,
 } from "lucide-react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { formatOffset } from "@voicemural/shared";
-import { SETTING_PROFILES } from "@voicemural/talkback/setting";
 import { TALKBACK_ENABLED, useCapture } from "./capture-provider";
-import {
-  LanguagePicker,
-  LockedSummary,
-  SettingPicker,
-  VoicePicker,
-} from "./capture-settings";
+import { LanguagePicker, LockedSummary, VoicePicker } from "./capture-settings";
 import { MicLevel } from "./mic-level";
 import { Link } from "./nav-link";
 
@@ -69,13 +63,11 @@ const TIMELINE: Tab = { href: "/timeline", label: "Timeline", Icon: ListTree };
  */
 export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
   const pathname = usePathname();
-  const router = useRouter();
   const {
     isRecording,
     isDebriefing,
     isBusy,
     recorder,
-    settingUnknown,
     startRecording,
     stopRecording,
     finishDebrief,
@@ -156,13 +148,6 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
               onToggleSheet={() => setSheetOpen((v) => !v)}
               onPress={() => {
                 if (!capturing) {
-                  // Nothing has said where they are, and a drive must not
-                  // start under a guess: send them to the recorder, where the
-                  // picker is. See `settingUnknown`.
-                  if (settingUnknown) {
-                    router.push("/record");
-                    return;
-                  }
                   startRecording();
                   return;
                 }
@@ -319,13 +304,13 @@ function RecordControl({
 /**
  * The sheet behind the chevron.
  *
- * Before a drive it is the three choices that are about to be fixed; during
+ * Before a drive it is the two choices that are about to be fixed; during
  * one it is a statement of what they were fixed at, plus the way back to the
  * live recorder. It never offers a mid-drive change, because there is no such
  * thing — see `capture-settings.tsx`.
  */
 function CaptureSheet({ onClose }: { onClose: () => void }) {
-  const { isRecording, setting, source, talkback } = useCapture();
+  const { isRecording, talkback } = useCapture();
 
   return (
     <div
@@ -354,14 +339,6 @@ function CaptureSheet({ onClose }: { onClose: () => void }) {
         </>
       ) : (
         <>
-          <p className="text-center text-sm text-white/60">
-            {source === "chosen" ? "Set to " : "Looks like "}
-            <span className="text-white/90">{SETTING_PROFILES[setting].label}</span>
-            <span className="mt-0.5 block text-xs text-white/35">
-              {SETTING_PROFILES[setting].hint}
-            </span>
-          </p>
-          <SettingPicker />
           <VoicePicker />
           <LanguagePicker />
         </>

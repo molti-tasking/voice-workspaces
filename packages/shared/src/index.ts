@@ -6,3 +6,4 @@ export * from "./directive";
 export * from "./spoken-answer";
 export * from "./tasks";
 export * from "./study-items";
+export * from "./survey";

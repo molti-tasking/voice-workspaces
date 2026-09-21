@@ -5,14 +5,13 @@
  *   pnpm talkback:eval --only stuck,mid-sentence
  *   pnpm talkback:eval --base ./candidate.md --label candidate-7
  *   pnpm talkback:eval --runs 3 --no-judge
- *   pnpm talkback:eval --setting desk           every case, in one setting
  *   pnpm talkback:eval --out report.json --strict
  *
  * No `--` before the flags: pnpm 10 forwards them as they are, and passes a
  * literal `--` through to this parser, which rejects it.
  *
  * `--base` swaps the base prompt for the contents of a file, leaving the
- * setting stanzas and the output contract as they are. That is the iteration
+ * profile stanza and the output contract as they are. That is the iteration
  * loop: write a candidate, run it against the same turns as the current
  * prompt, read the two reports side by side, and only then edit `prompt.ts`.
  *
@@ -34,7 +33,6 @@ import { fileURLToPath } from "node:url";
 import { chat } from "@voicemural/llm";
 import { BOARD_TOOLS } from "../board-tools";
 import { BOARD_EDITING, OPENING_NUDGE, TALKBACK_CONFIG_VERSION, renderSilenceNudge } from "../prompt";
-import { SETTINGS, type Setting } from "../setting";
 import { findCases, type EvalCase } from "./cases";
 import { checkReply, type CheckResult } from "./checks";
 import { JUDGE_AXES, judgeTurn, type Judgement } from "./judge";
@@ -78,7 +76,6 @@ interface Args {
   base: string | undefined;
   label: string;
   only: string[] | null;
-  setting: Setting | null;
   runs: number;
   judge: boolean;
   out: string | null;
@@ -90,7 +87,6 @@ function parseArgs(argv: string[]): Args {
     base: undefined,
     label: TALKBACK_CONFIG_VERSION,
     only: null,
-    setting: null,
     runs: 1,
     judge: true,
     out: null,
@@ -114,14 +110,6 @@ function parseArgs(argv: string[]): Args {
       case "--only":
         args.only = next().split(",").map((s) => s.trim()).filter(Boolean);
         break;
-      case "--setting": {
-        const value = next();
-        if (!(SETTINGS as readonly string[]).includes(value)) {
-          throw new Error(`--setting must be one of ${SETTINGS.join(", ")}`);
-        }
-        args.setting = value as Setting;
-        break;
-      }
       case "--runs":
         args.runs = Math.max(1, Number(next()) || 1);
         break;
@@ -148,7 +136,6 @@ function parseArgs(argv: string[]): Args {
 interface TurnReport {
   id: string;
   run: number;
-  setting: Setting;
   /** When the turn began, so the exported root observation covers the work. */
   startedAt: Date;
   /** The OpenTelemetry trace it was exported under, or "" if it was not. */
@@ -170,7 +157,6 @@ async function runTurn(
   args: Args,
   runId: string,
 ): Promise<TurnReport> {
-  const setting = args.setting ?? kase.setting;
   // An unprompted case carries the engine's instruction in the driver's slot
   // instead of their words — same shape the container produces, so the model
   // is judged on the system it will actually run in.
@@ -185,14 +171,14 @@ async function runTurn(
   // can see a board it has no hands for, or hands with no board.
   const boardOn = Boolean(kase.context?.board);
   const { composed, messages } = buildTurnMessages({
-    compose: { base: args.base, setting, sections: boardOn ? [BOARD_EDITING] : [] },
+    compose: { base: args.base, sections: boardOn ? [BOARD_EDITING] : [] },
     history: kase.history,
     context: kase.context,
     said: kase.said,
     nudge,
   });
 
-  const tags = ["talkback-eval", args.label, `case:${kase.id}`, `setting:${setting}`];
+  const tags = ["talkback-eval", args.label, `case:${kase.id}`];
   // LiteLLM keeps `metadata` on its own request log, so spend per prompt
   // version is attributable there too. Langfuse is written to directly below.
   const metadata = {
@@ -254,7 +240,6 @@ async function runTurn(
   return {
     id: kase.id,
     run,
-    setting,
     startedAt,
     // Assigned by OpenTelemetry when the turn is exported, below.
     traceId: "",
@@ -329,7 +314,6 @@ async function main(): Promise<void> {
         reports.push({
           id: kase.id,
           run,
-          setting: args.setting ?? kase.setting,
           startedAt: new Date(),
           traceId: "",
           reply: "",
@@ -376,7 +360,7 @@ async function main(): Promise<void> {
             version: args.label,
             input: report.messages,
             output: report.reply,
-            metadata: { case: kase.id, run, about: kase.about, setting: report.setting },
+            metadata: { case: kase.id, run, about: kase.about },
             generations: report.generations,
             scores,
             startedAt: report.startedAt,

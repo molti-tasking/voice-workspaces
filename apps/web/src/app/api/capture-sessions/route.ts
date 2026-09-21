@@ -29,7 +29,7 @@ export async function POST(req: Request) {
   }
 
   const db = getDb();
-  const { id, startedAt, deviceInfo, setting, settingSource, useCase } = parsed.data;
+  const { id, startedAt, deviceInfo, useCase } = parsed.data;
   // Narrowed to the catalogue, never rejected: a stale browser offering a voice
   // that has since been retired must still be able to register its recording.
   // Unknown becomes null, which the container reads as "use the fallback".
@@ -49,10 +49,9 @@ export async function POST(req: Request) {
     if (existing[0]?.userId !== userId) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
     }
-    // The setting is deliberately NOT updated on a resumed session. It governs
-    // turn-taking and how much went on screen for the whole recording, and a
-    // session whose second half was interpreted under different rules is not
-    // interpretable at all.
+    // Nothing about the drive is updated on a resumed session: the voice and
+    // the language govern the whole recording, and a session whose second
+    // half was interpreted under different rules is not interpretable at all.
     capture(
       userId,
       "capture_session_opened",
@@ -63,7 +62,7 @@ export async function POST(req: Request) {
   }
 
   // The study condition, frozen onto the drive here and nowhere else — the
-  // resume paths above and below never touch it, exactly like `setting`. Read
+  // resume paths above and below never touch it, exactly like `voiceId`. Read
   // only on a fresh insert, so a phase change the researcher makes mid-drive
   // applies from the participant's next drive, not halfway through this one.
   //
@@ -133,16 +132,10 @@ export async function POST(req: Request) {
       userId,
       startedAt,
       deviceInfo,
-      setting,
-      // Where that setting came from: observed, remembered, or corrected by
-      // hand. Reported to analytics since settings existed and stored nowhere,
-      // which is how Pilot 01 came to be run stationary under the `driving`
-      // profile without that being visible in the data.
-      settingSource,
       voiceId,
       sttLanguage,
       // Which worked example on `/welcome` sent them here, or null for a drive
-      // begun any other way. Set on the fresh insert only, like `setting` and
+      // begun any other way. Set on the fresh insert only, like `voiceId` and
       // the condition above: a resumed drive keeps the intent it started with.
       useCase,
       studyCondition: condition,
@@ -184,8 +177,6 @@ export async function POST(req: Request) {
     {
       capture_session_id: id,
       resumed: false,
-      setting: setting ?? null,
-      setting_source: settingSource ?? null,
       voice_id: voiceId,
       stt_language: sttLanguage,
       // Which example was picked — and, by its absence, how many drives people

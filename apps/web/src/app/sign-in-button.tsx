@@ -17,7 +17,15 @@ type SignInLocation = AnalyticsEventMap["sign_in_started"]["location"];
  * curve is measured identically. The catch is that the identity lives in the
  * cookie, so clearing site data or switching browsers starts a new person.
  */
-export function GuestButton() {
+export function GuestButton({
+  label = "Start recording",
+  next = "/record",
+}: {
+  /** What the button says. The default is the landing page's promise. */
+  label?: string;
+  /** Where to go once the guest exists. `/record` unless the page is the point. */
+  next?: string;
+} = {}) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,12 +44,12 @@ export function GuestButton() {
             setPending(false);
             return;
           }
-          router.push("/record");
+          router.push(next);
           router.refresh();
         }}
         className="w-full rounded-lg bg-accent px-5 py-3 font-medium text-white hover:opacity-90 disabled:opacity-60"
       >
-        {pending ? "Starting…" : "Start recording"}
+        {pending ? "Starting…" : label}
       </button>
       {error && <p className="mt-2 text-sm text-red-300">{error}</p>}
     </div>

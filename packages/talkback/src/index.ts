@@ -60,16 +60,13 @@ export {
   type ComposedPrompt,
 } from "./prompt";
 export {
-  DEFAULT_SETTING,
   PROACTIVITY_STANZAS,
-  SETTINGS,
-  SETTING_PROFILES,
-  asSetting,
-  settingProfile,
+  PROACTIVE_AFTER_SECS,
+  PROFILE,
+  type ConversationProfile,
+  type Density,
   type Proactivity,
-  type Setting,
-  type SettingProfile,
-} from "./setting";
+} from "./profile";
 export {
   DEFAULT_VOICE_ID,
   VOICES,

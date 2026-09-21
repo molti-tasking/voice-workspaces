@@ -175,8 +175,7 @@ export default async function WelcomePage() {
           </li>
           <li>
             It cannot change how it behaves mid-drive. “Be more proactive from
-            now on” does nothing; how talkative it is comes from the setting
-            you pick before you start. Ask it to do the thing now instead.
+            now on” does nothing. Ask it to do the thing now instead.
           </li>
           <li>
             It cannot record while the phone is locked or another app is in

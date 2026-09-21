@@ -1,17 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { formatOffset } from "@voicemural/shared";
-// The `/setting` subpath, NOT the package index: the index re-exports
+// The `/profile` subpath, NOT the package index: the index re-exports
 // retrieval.ts, which imports @voicemural/db, and that drags the Postgres
-// driver into the browser bundle. setting.ts is pure by construction.
-import { SETTING_PROFILES } from "@voicemural/talkback/setting";
+// driver into the browser bundle. profile.ts is pure by construction.
+import { PROFILE } from "@voicemural/talkback/profile";
 import { TALKBACK_ENABLED, useCapture } from "@/components/capture-provider";
 import {
   ConditionToggles,
   LanguagePicker,
-  SettingPicker,
   VoicePicker,
 } from "@/components/capture-settings";
 import { MicLevel } from "@/components/mic-level";
@@ -39,19 +38,10 @@ export function RecorderClient() {
     isRecording,
     isDebriefing,
     isBusy,
-    setting,
-    source,
-    settingUnknown,
     startRecording,
     stopRecording,
     finishDebrief,
   } = useCapture();
-
-  // Open by default when nothing has told us where they are. The fallback is
-  // `driving` — 25-word replies, no screen — and Pilot 01 ran a stationary
-  // first-time user under exactly that because the question was never put.
-  const [showPicker, setShowPicker] = useState(false);
-  const pickerOpen = showPicker || settingUnknown;
 
   /* The pre item's answer, held until a drive exists to attach it to.
    *
@@ -70,7 +60,6 @@ export function RecorderClient() {
       recordStudyResponse(sessionId, "pre", item, value);
     }
   }, [rec.currentSessionId]);
-  const profile = SETTING_PROFILES[setting];
   const hearing = talk.status === "speaking";
 
   // Reads Postgres, never the voice container: the panel keeps filling with
@@ -78,10 +67,10 @@ export function RecorderClient() {
   const cues = useCues({
     captureSessionId: rec.currentSessionId,
     budgets: {
-      content: profile.maxContentCues,
-      directions: profile.maxDirectionCues,
+      content: PROFILE.maxContentCues,
+      directions: PROFILE.maxDirectionCues,
     },
-    enabled: isRecording && profile.displayAllowed,
+    enabled: isRecording && PROFILE.displayAllowed,
   });
 
   return (
@@ -136,12 +125,6 @@ export function RecorderClient() {
               stopRecording();
               return;
             }
-            // Nothing has said where they are, so ask rather than start under
-            // a guess. See `settingUnknown`.
-            if (settingUnknown) {
-              setShowPicker(true);
-              return;
-            }
             startRecording();
           }}
           disabled={isBusy}
@@ -177,22 +160,9 @@ export function RecorderClient() {
           ) : isDebriefing ? (
             "Still recording. Answer out loud, then tap Done."
           ) : isRecording ? (
-            profile.hint
-          ) : settingUnknown ? (
-            <span className="text-amber-200/80">Where are you? Pick one to start.</span>
+            PROFILE.hint
           ) : (
-            <>
-              {source === "chosen" || source === "remembered" ? "" : "Looks like: "}
-              <span className="text-white/70">{profile.label}</span>
-              {" · "}
-              <button
-                type="button"
-                onClick={() => setShowPicker((v) => !v)}
-                className="cursor-pointer underline-offset-4 hover:underline"
-              >
-                {showPicker ? "done" : "not right?"}
-              </button>
-            </>
+            "Tap to start. Say whatever you are working on."
           )}
         </p>
 
@@ -204,8 +174,6 @@ export function RecorderClient() {
           />
         )}
 
-        {!isRecording && !isDebriefing && pickerOpen && <SettingPicker />}
-
         {!isRecording && !isDebriefing && <VoicePicker />}
 
         {!isRecording && !isDebriefing && <LanguagePicker />}
@@ -213,10 +181,8 @@ export function RecorderClient() {
         {/* Pilot builds only, and pilot accounts only. See `ConditionToggles`. */}
         {!isRecording && !isDebriefing && <ConditionToggles />}
 
-        {/* Before the drive, and only when one can start: the item is about
-            what they are carrying now, and asking it under a settings sheet
-            they are still working through would be asking it too early. */}
-        {!isRecording && !isDebriefing && !settingUnknown && (
+        {/* Before the drive: the item is about what they are carrying now. */}
+        {!isRecording && !isDebriefing && (
           <PreDriveItem
             onAnswer={(item, value) => {
               pendingPre.current[item] = value;

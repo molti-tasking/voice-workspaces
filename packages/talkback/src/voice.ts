@@ -2,7 +2,7 @@
  * The voices the system can speak with.
  *
  * A catalogue in code rather than a single env var, for the same reason the
- * setting profiles are: the choice has to be recoverable per recording months
+ * profile is: the choice has to be recoverable per recording months
  * later, and a value that lives only in a deployment's `.env` is not. The
  * recorder offers this list before a recording starts, the chosen id is stored
  * on `capture_session.voice_id`, and `/api/realtime/session` hands it to the
@@ -14,7 +14,7 @@
  * one of the ids below so the fallback is a voice the study has heard.
  *
  * Voice ids are not secrets — they name public ElevenLabs voices — so they are
- * safe to ship to the browser. Like `setting.ts`, this file is pure and free of
+ * safe to ship to the browser. Like `profile.ts`, this file is pure and free of
  * any @voicemural/db import, and is exported as `@voicemural/talkback/voice`
  * so the recorder (a client component) can reach it without dragging the
  * Postgres driver into the bundle.

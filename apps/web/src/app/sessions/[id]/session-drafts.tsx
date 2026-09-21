@@ -9,12 +9,11 @@ import { MAX_DRAFT_CHARS, MAX_DRAFT_TITLE_CHARS } from "@/lib/drafts";
  * The drafts from one drive, after it — and the only place they can be changed.
  *
  * The half of the feature that matters most, and the reason drafts are a table
- * rather than a message on the data channel. A draft asked for while driving
- * has no screen to appear on at the time — `SETTING_PROFILES.driving` sets
- * `displayAllowed: false` and the cue stream does not even open — so this page
- * is the FIRST time the person sees it. It is also where they will be when they
- * actually want to use it: at a desk, on a different device, hours later. So
- * this is where editing belongs. `/record` shows the version label and nothing
+ * rather than a message on the data channel. A draft asked for mid-drive is
+ * not read at the time — the screen is in a cradle or a pocket — so this page
+ * is often the FIRST time the person actually looks at it. It is also where
+ * they will be when they want to use it: at a desk, on a different device,
+ * hours later. So this is where editing belongs. `/record` shows the version label and nothing
  * else; there is no editing a paragraph at 110 km/h.
  *
  * The types deliberately mirror `DraftHistory` from `@voicemural/db/drafts`

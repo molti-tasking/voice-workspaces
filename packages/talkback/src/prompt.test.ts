@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PROACTIVITY_STANZAS, PROFILE } from "./profile";
 import {
   ANSWER_ACKNOWLEDGEMENTS,
   ANSWER_RETRY_NUDGE,
@@ -16,37 +17,29 @@ import {
   renderSilenceNudge,
   searchWaitPhrase,
 } from "./prompt";
-import { PROACTIVITY_STANZAS, SETTING_PROFILES } from "./setting";
 
 describe("composeSystemPrompt", () => {
   it("puts the output contract last, after the composed material", () => {
-    const { prompt } = composeSystemPrompt({ setting: "desk" });
+    const { prompt } = composeSystemPrompt();
     expect(prompt.endsWith(OUTPUT_CONTRACT)).toBe(true);
-    expect(prompt.indexOf(SYSTEM_PROMPT)).toBeLessThan(prompt.indexOf(SETTING_PROFILES.desk.stanza));
-    expect(prompt.indexOf(SETTING_PROFILES.desk.stanza)).toBeLessThan(
-      prompt.indexOf(OUTPUT_CONTRACT),
-    );
+    expect(prompt.indexOf(SYSTEM_PROMPT)).toBeLessThan(prompt.indexOf(PROFILE.stanza));
+    expect(prompt.indexOf(PROFILE.stanza)).toBeLessThan(prompt.indexOf(OUTPUT_CONTRACT));
   });
 
   /**
    * The proactivity level is the one composed layer that says HOW OFTEN to
-   * take an unasked-for turn. It sits after the setting so it refines the
-   * setting's "a pause is thinking" line, and before the contract so the
-   * contract still wins.
+   * take an unasked-for turn. It sits after the situation so it refines its
+   * "a pause is thinking" line, and before the contract so the contract still
+   * wins.
    */
-  it("places the setting's proactivity stanza between the setting and the contract", () => {
-    for (const [setting, profile] of Object.entries(SETTING_PROFILES)) {
-      const composed = composeSystemPrompt({ setting });
-      const stanza = PROACTIVITY_STANZAS[profile.proactivity];
-      expect(composed.proactivity).toBe(profile.proactivity);
-      expect(composed.prompt.indexOf(profile.stanza)).toBeLessThan(composed.prompt.indexOf(stanza));
-      expect(composed.prompt.indexOf(stanza)).toBeLessThan(composed.prompt.indexOf(OUTPUT_CONTRACT));
-    }
+  it("places the proactivity stanza between the situation and the contract", () => {
+    const composed = composeSystemPrompt();
+    const stanza = PROACTIVITY_STANZAS[PROFILE.proactivity];
+    expect(composed.prompt.indexOf(PROFILE.stanza)).toBeLessThan(composed.prompt.indexOf(stanza));
+    expect(composed.prompt.indexOf(stanza)).toBeLessThan(composed.prompt.indexOf(OUTPUT_CONTRACT));
   });
 
-  it("is quieter in a car than at a desk, and forthcoming nowhere lengthens a reply", () => {
-    expect(composeSystemPrompt({ setting: "driving" }).proactivity).toBe("quiet");
-    expect(composeSystemPrompt({ setting: "desk" }).proactivity).toBe("forthcoming");
+  it("is forthcoming nowhere in a way that lengthens a reply", () => {
     for (const stanza of Object.values(PROACTIVITY_STANZAS)) {
       // Every level keeps the two rules that never move.
       expect(stanza).toMatch(/never twice/i);
@@ -71,11 +64,10 @@ describe("composeSystemPrompt", () => {
 
   /**
    * The slot study conditions (and later modes and personas) compose into:
-   * identity → setting → proactivity → sections, in order → contract.
+   * identity → situation → proactivity → sections, in order → contract.
    */
   it("places composed sections after the proactivity stanza, in order, before the contract", () => {
     const { prompt, proactivity } = composeSystemPrompt({
-      setting: "walking",
       sections: ["SECTION ONE", "  ", "SECTION TWO"],
     });
     const stanza = PROACTIVITY_STANZAS[proactivity];
@@ -87,9 +79,7 @@ describe("composeSystemPrompt", () => {
   });
 
   it("composes exactly today's prompt when there are no sections", () => {
-    expect(composeSystemPrompt({ setting: "desk", sections: [] }).prompt).toBe(
-      composeSystemPrompt({ setting: "desk" }).prompt,
-    );
+    expect(composeSystemPrompt({ sections: [] }).prompt).toBe(composeSystemPrompt().prompt);
   });
 
   it("keeps the contract last after a composed section that tries to countermand it", () => {
@@ -99,29 +89,22 @@ describe("composeSystemPrompt", () => {
     expect(prompt.endsWith(OUTPUT_CONTRACT)).toBe(true);
   });
 
-  it("treats an absent or unrecognised setting as driving", () => {
-    for (const value of [undefined, null, "", "spelunking"]) {
-      const composed = composeSystemPrompt({ setting: value });
-      expect(composed.setting).toBe("driving");
-      expect(composed.displayAllowed).toBe(false);
-      expect(composed.maxReplyWords).toBe(SETTING_PROFILES.driving.maxReplyWords);
-    }
-  });
-
   it("reports the profile's own numbers rather than restating them", () => {
-    for (const [setting, profile] of Object.entries(SETTING_PROFILES)) {
-      const composed = composeSystemPrompt({ setting });
-      expect(composed.maxReplyWords).toBe(profile.maxReplyWords);
-      expect(composed.displayAllowed).toBe(profile.displayAllowed);
-      expect(composed.prompt).toContain(profile.stanza);
-    }
+    const composed = composeSystemPrompt();
+    expect(composed.maxReplyWords).toBe(PROFILE.maxReplyWords);
+    expect(composed.displayAllowed).toBe(PROFILE.displayAllowed);
+    expect(composed.proactivity).toBe(PROFILE.proactivity);
+    expect(composed.prompt).toContain(PROFILE.stanza);
   });
 
-  it("tells a driver not to mention the screen and a desk user that it exists", () => {
-    expect(composeSystemPrompt({ setting: "driving" }).prompt).toContain(
-      "Never offer to show anything",
-    );
-    expect(composeSystemPrompt({ setting: "desk" }).prompt).toContain("on the screen");
+  it("states the word cap the profile carries, so bot.py need not parse prose", () => {
+    expect(PROFILE.stanza).toContain(`under ${PROFILE.maxReplyWords} words`);
+  });
+
+  it("says the screen exists but is not being looked at", () => {
+    const { prompt } = composeSystemPrompt();
+    expect(prompt).toContain("on the screen");
+    expect(prompt).toContain("assume they are not looking at the screen");
   });
 });
 

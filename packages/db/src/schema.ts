@@ -155,14 +155,14 @@ export const capabilityOriginKindEnum = pgEnum("capability_origin_kind", [
 ]);
 
 /**
- * Where a recording happened.
+ * Where a recording happened — HISTORICAL. Nothing writes this any more.
  *
- * Not a fifth `capability_type`: Notes.md argues for the closure of
- * mode/persona/action/rule, and a setting is not something the user authors —
- * it is a fact about where they were, stated once per recording. It governs
- * turn-taking and how much may appear on screen, so it has to be recoverable
- * for the whole session afterwards, which is why it is stored rather than held
- * in the client.
+ * Until September 2026 every drive ran under one of four profiles chosen by
+ * this value, inferred from the device and its motion. The machinery was more
+ * of the product than the thing it tuned and was taken out; one profile now
+ * (`PROFILE` in @voicemural/talkback). The enum and the two columns below stay
+ * so the drives that ran under a setting keep saying which, and `study:export`
+ * keeps reading them.
  */
 export const captureSettingEnum = pgEnum("capture_setting", [
   "driving",
@@ -267,22 +267,15 @@ export const captureSession = pgTable(
      */
     analyticsEmittedAt: timestamp("analytics_emitted_at", { withTimezone: true }),
     /**
-     * The setting the user stated before starting. NULL for recordings made
-     * before the question was asked; readers treat that as `driving`, which is
-     * the stance the base prompt was written with, so old sessions are
-     * unchanged rather than retroactively reinterpreted.
+     * HISTORICAL — see `captureSettingEnum`. NULL for every drive since the
+     * setting was removed, and for recordings made before it was asked.
      */
     setting: captureSettingEnum("setting"),
     /**
-     * WHERE THAT SETTING CAME FROM: the device class, the accelerometer, a
-     * remembered choice, or the person correcting it before they started.
-     *
-     * Reported to PostHog since settings existed and stored nowhere, which is
-     * why Pilot 01 could be run stationary under the `driving` profile without
-     * that being visible in the data. `default` no longer reaches this column
-     * from the recorder — a drive with no evidence now asks — but old rows and
-     * any other client may still carry it, so it is text rather than an enum
-     * and readers treat an unknown value as "not stated".
+     * HISTORICAL — where the setting above came from: the device class, the
+     * accelerometer, a remembered choice, or the person correcting it. Text
+     * rather than an enum because old rows carry values the recorder stopped
+     * writing before the column existed; readers treat unknown as "not stated".
      */
     settingSource: text("setting_source").$type<
       "device" | "motion" | "remembered" | "chosen" | "default"
@@ -1641,4 +1634,46 @@ export const studyEvent = pgTable(
     index("study_event_user_at_idx").on(t.userId, t.occurredAt),
     index("study_event_user_card_idx").on(t.userId, t.cardId).where(sql`${t.cardId} is not null`),
   ],
+);
+
+/**
+ * One person's answers to one survey, as a document.
+ *
+ * NOT `study_response`. That table is counts only — an integer on a stated
+ * scale, keyed by item — and that constraint is what lets it cross the privacy
+ * boundary in `study:export` untouched. A survey is the opposite kind of
+ * instrument: it asks people to recall, in their own words, where and when
+ * they used the system and what happened in those moments. Sentences, lists,
+ * a variable number of moments per person. That is a document, so it is
+ * stored as one, and it is NOT exported with the counts: reading it is a
+ * deliberate act on a table that says what it holds.
+ *
+ * ONE ROW PER PERSON PER SURVEY. Saving again replaces the document, which is
+ * what lets the page be left half-done on a phone and finished at a desk: the
+ * form loads whatever was last saved. `submitted_at` is the mark that they
+ * pressed Send rather than merely saved; a row without it is a draft.
+ *
+ * `answers` is validated on the way in by `SurveyAnswers` in
+ * `@voicemural/shared`, which owns the shape. Stored as jsonb rather than
+ * columns because the questions will change between studies and a survey
+ * whose schema needs a migration per rewording will not be reworded.
+ */
+export const surveyResponse = pgTable(
+  "survey_response",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** Which survey: `initial` today. The key, never the title. */
+    survey: text("survey").notNull(),
+    /** The wording version the answers were given against. See `SURVEY_VERSION`. */
+    version: text("version").notNull(),
+    answers: jsonb("answers").$type<Record<string, unknown>>().notNull(),
+    /** Set when they pressed Send. Null is a draft. */
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("survey_response_user_survey_idx").on(t.userId, t.survey)],
 );

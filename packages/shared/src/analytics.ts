@@ -16,7 +16,6 @@
  *
  * Naming: `object_verb_past`, snake_case, properties snake_case too.
  */
-import type { SettingSource } from "./contracts";
 import type { TaskStateName } from "./tasks";
 
 /**
@@ -36,23 +35,6 @@ export interface AnalyticsEventMap {
     /** True when picking up an unfinished session from a previous page load. */
     resumed: boolean;
     wake_lock_active: boolean;
-    /**
-     * Where the person was. Null when nothing could be inferred.
-     *
-     * The independent variable for everything setting-governed: reply length,
-     * whether the cue panel rendered at all, how much went on it.
-     */
-    setting?: string | null;
-    /**
-     * How the setting was arrived at: read off the device class, inferred from
-     * motion, remembered from the last correction, or corrected by hand. The
-     * share of `chosen` is how often the detector is wrong enough to fix.
-     *
-     * `default` — nothing could be read — no longer reaches a started drive:
-     * the recorder asks rather than starting under a guess, which is what
-     * Pilot 01 did. Kept in the union for the events already recorded under it.
-     */
-    setting_source?: SettingSource | null;
     /** The ElevenLabs voice chosen for talk-back. Null when none was chosen. */
     voice_id?: string | null;
     /**
@@ -111,17 +93,6 @@ export interface AnalyticsEventMap {
   capture_session_opened: {
     capture_session_id: string;
     resumed: boolean;
-    /** Null for a resumed session, whose setting was fixed when it opened. */
-    setting?: string | null;
-    /**
-     * How that setting was arrived at — observed, remembered, or corrected.
-     *
-     * Also stored on the drive now (`capture_session.setting_source`), because
-     * a guess and an observation are different facts and only one of them was
-     * ever visible here. Pilot 01 was run stationary under the `driving`
-     * profile and nothing in the ledger said the profile had been guessed.
-     */
-    setting_source?: SettingSource | null;
     /** The voice stored on the session, narrowed to the catalogue; null if none. */
     voice_id?: string | null;
     /** The transcription language stored on the session; null = auto-detect. */
@@ -176,7 +147,7 @@ export interface AnalyticsEventMap {
    */
   sign_in_started: {
     provider: "github" | "google";
-    location: "landing" | "account_menu" | "guest_banner" | "welcome";
+    location: "landing" | "account_menu" | "guest_banner" | "welcome" | "survey";
   };
   user_signed_out: { is_guest: boolean };
   guest_account_upgraded: {

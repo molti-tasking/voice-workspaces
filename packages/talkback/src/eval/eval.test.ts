@@ -1,5 +1,6 @@
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { describe, expect, it } from "vitest";
+import { PROFILE } from "../profile";
 import { OUTPUT_CONTRACT, SYSTEM_PROMPT } from "../prompt";
 import { CASES, findCases } from "./cases";
 import { checkReply, endsOnAnAgentQuestion } from "./checks";
@@ -266,7 +267,7 @@ describe("the turn messages, which mirror bot.py", () => {
 
   it("order the turn as system, history, context block, then what was said", () => {
     const { messages, composed } = buildTurnMessages({
-      compose: { setting: "walking" },
+      compose: {},
       history: [{ role: "user", content: "[Speaker 1] earlier" }],
       context: { summary: "- x" },
       said: "now",
@@ -275,7 +276,7 @@ describe("the turn messages, which mirror bot.py", () => {
     expect(messages[0]!.content.startsWith(SYSTEM_PROMPT)).toBe(true);
     expect(messages[0]!.content.endsWith(OUTPUT_CONTRACT)).toBe(true);
     expect(messages[3]!.content).toBe("now");
-    expect(composed.maxReplyWords).toBe(35);
+    expect(composed.maxReplyWords).toBe(PROFILE.maxReplyWords);
   });
 
   /**
@@ -285,7 +286,7 @@ describe("the turn messages, which mirror bot.py", () => {
    */
   it("place the engine's nudge in the driver's slot on an unprompted turn", () => {
     const { messages } = buildTurnMessages({
-      compose: { setting: "driving" },
+      compose: {},
       history: [{ role: "user", content: "earlier" }, { role: "assistant", content: "mm" }],
       context: { summary: "- x" },
       nudge: "(An unprompted moment.)",

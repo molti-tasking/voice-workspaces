@@ -16,9 +16,9 @@ import type { DraftCue } from "@/lib/display/use-cues";
  * deliberate two-handed act performed when they have stopped. There is no
  * voice equivalent of "put this on my clipboard".
  *
- * It only ever appears where `displayAllowed` is true, so the driving case
- * never sees a button at all: a draft asked for at 110 km/h is written, stored,
- * and waiting on `/sessions/[id]` afterwards.
+ * It only ever appears where the profile's `displayAllowed` is true. A draft
+ * asked for at 110 km/h is written, stored, and waiting on `/sessions/[id]`
+ * afterwards whether or not anyone looked.
  *
  * ## Why it does not reorder or truncate
  *
