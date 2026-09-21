@@ -371,6 +371,22 @@ export interface AnalyticsEventMap {
     retryable: boolean;
     reason: string;
   };
+
+  // --- worker health, server-side ------------------------------------------
+  /**
+   * One sweep pass aborted before it finished.
+   *
+   * A rate to watch, not a per-occurrence alarm: the sweep runs every few
+   * seconds and is the only producer of jobs, so an aborted pass loses no work
+   * — the pending rows are picked up on the next pass. `connection_error` is
+   * true for a dropped database socket (the shape a restart or redeploy
+   * leaves), which is transient and self-healing; false for any other failure,
+   * which is also captured as an exception. A one-off looks like a single
+   * event; a real outage looks like a spike.
+   */
+  sweep_aborted: {
+    connection_error: boolean;
+  };
 }
 
 export type AnalyticsEventName = keyof AnalyticsEventMap;
