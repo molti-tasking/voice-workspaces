@@ -1,5 +1,6 @@
 "use client";
 
+import { X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef } from "react";
 import { formatOffset } from "@voicemural/shared";
@@ -13,7 +14,6 @@ import {
   LanguagePicker,
   VoicePicker,
 } from "@/components/capture-settings";
-import { MicLevel } from "@/components/mic-level";
 import { RecordingBadge } from "@/components/recording-badge";
 import { useCues } from "@/lib/display/use-cues";
 import { DEBRIEF_MAX_MS, DEBRIEF_QUESTIONS } from "@/lib/study/debrief";
@@ -25,8 +25,16 @@ import { TopicTitle } from "./topic-title";
 /**
  * The recorder screen.
  *
- * Designed to be operated at a glance from a car cradle: one enormous target,
- * state legible in peripheral vision, and no interaction that requires reading.
+ * Designed to be operated at a glance from a car cradle: one enormous target
+ * to START, state legible in peripheral vision, and no interaction that
+ * requires reading.
+ *
+ * WHILE RECORDING THERE IS NO BIG BUTTON. It used to stay on screen as a
+ * 224px "Stop", and with the dock's own stop control under it that was two
+ * ways to end a drive stacked on top of each other, taking the whole upper
+ * half of the screen to do it. Stopping is now a small control in the header
+ * and the dock's armed two-tap; the space goes to what the drive is ABOUT —
+ * the current subject, the trail of earlier ones, then the cue panel.
  */
 export function RecorderClient() {
   // The recorder itself lives above the router now (see capture-provider.tsx),
@@ -89,80 +97,73 @@ export function RecorderClient() {
         ) : (
           <span />
         )}
-        <StatusPills
-          pending={rec.pendingUploads}
-          uploading={rec.uploading}
-          wakeLock={rec.wakeLockActive}
-          recording={isRecording}
-          talkback={TALKBACK_ENABLED && isRecording ? talk.status : null}
-          memory={TALKBACK_ENABLED && isRecording ? talk.memory : null}
-        />
+        <div className="flex items-center gap-3">
+          <StatusPills
+            pending={rec.pendingUploads}
+            uploading={rec.uploading}
+            wakeLock={rec.wakeLockActive}
+            recording={isRecording}
+            talkback={TALKBACK_ENABLED && isRecording ? talk.status : null}
+            memory={TALKBACK_ENABLED && isRecording ? talk.memory : null}
+          />
+          {/* One tap, no confirmation, as the big button was — but small, so
+              a stray hand in a cradle is unlikely to find it. The dock's stop
+              is the deliberate one: it arms first (`STOP_ARM_MS` there). */}
+          {isRecording && (
+            <button
+              type="button"
+              onClick={stopRecording}
+              disabled={isBusy}
+              aria-label="Stop recording"
+              className={[
+                "grid size-9 shrink-0 cursor-pointer place-items-center rounded-full text-white/80",
+                "transition-colors hover:bg-white/20 hover:text-white disabled:opacity-50",
+                hearing ? "bg-accent/40 ring-2 ring-accent/60" : "bg-white/10",
+              ].join(" ")}
+            >
+              <X size={18} aria-hidden />
+            </button>
+          )}
+        </div>
       </header>
 
-      <div className="flex flex-col items-center gap-8">
-        <button
-          type="button"
-          onClick={() => {
-            if (isDebriefing) {
-              // Done with the three questions. The same enormous target, so a
-              // participant who has already put the phone in a pocket has one
-              // gesture to learn rather than two.
-              finishDebrief();
-              return;
-            }
-            if (isRecording) {
-              // One tap, no confirmation: this target is 224px and is meant to
-              // be hit without looking. The dock's 64px button arms first —
-              // see `STOP_ARM_MS` there.
-              stopRecording();
-              return;
-            }
-            startRecording();
-          }}
-          disabled={isBusy}
-          className={[
-            "relative cursor-pointer flex size-56 items-center justify-center rounded-full text-2xl font-medium",
-            "transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
-            isDebriefing
-              ? // Still recording, and it must not look like it is not — but not
-                // the drive's own colour either, because the channel has
-                // changed and the participant was told it would.
-                "bg-amber-500/90 text-white shadow-[0_0_0_12px_rgba(245,158,11,0.18)]"
-              : isRecording
-                ? hearing
-                  ? "bg-accent text-white shadow-[0_0_0_18px_var(--color-accent-soft)]"
-                  : "bg-accent text-white shadow-[0_0_0_12px_var(--color-accent-soft)]"
-                : "bg-ink-soft text-white ring-1 ring-line",
-          ].join(" ")}
-        >
-          {(isRecording || isDebriefing) && <MicLevel />}
-          <span className="relative">
-            {isBusy ? "…" : isDebriefing ? "Done" : isRecording ? "Stop" : "Record"}
-          </span>
-        </button>
+      <div className="flex w-full flex-col items-center gap-8">
+        {!isRecording && !isDebriefing && (
+          <>
+            <button
+              type="button"
+              onClick={startRecording}
+              disabled={isBusy}
+              className={[
+                "relative flex size-56 cursor-pointer items-center justify-center rounded-full text-2xl font-medium",
+                "bg-ink-soft text-white ring-1 ring-line transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
+              ].join(" ")}
+            >
+              {isBusy ? "…" : "Record"}
+            </button>
 
-        <p className="h-5 text-center text-sm text-white/40">
-          {isBusy ? (
-            // A tap that opens a microphone takes about a second, and until
-            // now that second showed an ellipsis on a disabled button — which
-            // reads as "it did not hear me" and invites a second tap.
-            <span className="text-white/60">
-              {rec.status === "requesting" ? "Opening the microphone…" : "Saving…"}
-            </span>
-          ) : isDebriefing ? (
-            "Still recording. Answer out loud, then tap Done."
-          ) : isRecording ? (
-            PROFILE.hint
-          ) : (
-            "Tap to start. Say whatever you are working on."
-          )}
-        </p>
+            <p className="h-5 text-center text-sm text-white/40">
+              {isBusy ? (
+                // A tap that opens a microphone takes about a second, and until
+                // now that second showed an ellipsis on a disabled button — which
+                // reads as "it did not hear me" and invites a second tap.
+                <span className="text-white/60">
+                  {rec.status === "requesting" ? "Opening the microphone…" : "Saving…"}
+                </span>
+              ) : (
+                "Tap to start. Say whatever you are working on."
+              )}
+            </p>
+          </>
+        )}
 
         {isDebriefing && (
           <DebriefPanel
             startedMs={rec.debriefStartedMs}
             elapsedMs={rec.elapsedMs}
             captureSessionId={rec.currentSessionId}
+            busy={isBusy}
+            onDone={finishDebrief}
           />
         )}
 
@@ -182,7 +183,13 @@ export function RecorderClient() {
           />
         )}
 
-        {TALKBACK_ENABLED && isRecording && <TopicTitle title={talk.title} />}
+        {TALKBACK_ENABLED && isRecording && (
+          <TopicTitle
+            title={talk.title}
+            sessionId={rec.currentSessionId}
+            placeholder={PROFILE.hint}
+          />
+        )}
 
         {isRecording && <CuePanel cues={cues} />}
 
@@ -276,10 +283,14 @@ function DebriefPanel({
   startedMs,
   elapsedMs,
   captureSessionId,
+  busy,
+  onDone,
 }: {
   startedMs: number | null;
   elapsedMs: number;
   captureSessionId: string | null;
+  busy: boolean;
+  onDone: () => void;
 }) {
   // From the chunk clock, not a wall clock: it is the same clock the stored
   // offsets are on, and it advances a chunk at a time, which is exactly the
@@ -312,6 +323,18 @@ function DebriefPanel({
           is for, and a row of number buttons above them would make the drive
           end with a form. */}
       <PostDriveItems captureSessionId={captureSessionId} />
+      {/* Ends the debrief, and with it the recording. Amber like the panel,
+          not the drive's own colour: the channel changed and they were told
+          it would. Full width, because the phone is in a hand by now and a
+          thumb wants the bottom of the card. */}
+      <button
+        type="button"
+        onClick={onDone}
+        disabled={busy}
+        className="mt-4 w-full cursor-pointer rounded-lg bg-amber-500/90 px-4 py-3 text-base font-medium text-white transition-transform active:scale-[0.98] disabled:opacity-50"
+      >
+        {busy ? "Saving…" : "Done"}
+      </button>
     </section>
   );
 }
