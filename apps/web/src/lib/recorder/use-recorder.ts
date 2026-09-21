@@ -5,8 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CaptureSetting, SettingSource } from "@voicemural/shared";
 import { capture } from "@/lib/analytics/client";
 import { DEBRIEF_MAX_MS } from "@/lib/study/debrief";
-import type { UseCaseId } from "@/lib/use-cases";
-import { earcon } from "./earcon";
+ import { earcon } from "./earcon";
 import {
   clearOpenSession,
   deleteRegistration,
@@ -372,8 +371,7 @@ export function useRecorder() {
     source?: SettingSource,
     voiceId?: string,
     sttLanguage?: string | null,
-    useCase?: UseCaseId,
-    conditionOverride?: Record<string, boolean>,
+     conditionOverride?: Record<string, boolean>,
   ) => {
     if (runningRef.current) return;
 
@@ -458,11 +456,6 @@ export function useRecorder() {
       voiceId,
       // Null is normal (auto-detect); undefined on the wire keeps zod happy.
       sttLanguage: sttLanguage ?? undefined,
-      // Which worked example on `/welcome` sent them here, if any. Part of the
-      // saved registration rather than a separate call, so a drive that starts
-      // in a dead zone still registers under the right one when the uploader
-      // replays it.
-      useCase,
       // A per-drive override of the study condition, for the cold-start test.
       // Honoured only for pilot accounts; the route says so when it drops one.
       // Undefined rather than {} so an ordinary drive sends nothing at all.

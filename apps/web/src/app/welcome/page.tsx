@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { AppDock } from "@/components/app-dock";
 import { configuredProviders } from "@/lib/auth";
 import { providerName } from "@/lib/providers";
@@ -35,9 +34,19 @@ export const dynamic = "force-dynamic";
  * ## What it is NOT
  *
  * Not the participant information sheet. `/study` carries consent, the privacy
- * boundary and the contact details, and this page links to it rather than
- * restating any of it — two documents that both describe the data handling are
- * two documents that will disagree.
+ * boundary and the contact details, and this page does not restate any of it —
+ * two documents that both describe the data handling are two documents that
+ * will disagree. It says only the one thing a reader needs before the first
+ * drive: that everything is kept, and where the models run.
+ *
+ * ## Keep the examples true
+ *
+ * Every worked example in `use-case-cards.tsx` and every line under "What it
+ * cannot do yet" is checked against the agent: `prompt.ts` for what it is
+ * told, `board-tools.ts`, `web-search.ts` and `draft-context.ts` for what it
+ * can do, `retrieval.ts` for how it dates what it recalls. Web search is only
+ * offered where `SEARXNG_URL` is set, so the fourth example assumes production
+ * has it.
  */
 
 export const metadata: Metadata = {
@@ -83,12 +92,14 @@ export default async function WelcomePage() {
   return (
     <div className="mx-auto max-w-2xl px-6 pt-10 pb-40">
       <header className="mb-8">
-        <h1 className="text-2xl font-semibold">Thanks for trying this</h1>
+        <h1 className="text-2xl font-semibold">Welcome to VoiceMural</h1>
         <p className="mt-2 leading-relaxed text-white/60">
-          VoiceMural listens while your hands and eyes are somewhere else — driving,
-          walking, washing up. You think out loud; it keeps everything you said, answers
-          when you ask it something, and turns what you decide into something you can
-          look at afterwards.
+          VoiceMural listens while you think out loud, keeps everything you
+          said, and helps you make something of it: an answer when you ask, a
+          draft you can paste, a task board that fills in from what you decide.
+          It is yours to use for whatever you are actually working on. We built
+          it so that you get something out of it, and we would like to hear
+          whether you do.
         </p>
       </header>
 
@@ -102,7 +113,7 @@ export default async function WelcomePage() {
       */}
       {VIDEO && (
         <video
-          className="mx-auto mb-8 w-full max-w-[300px] rounded-xl border border-[var(--color-line)]"
+          className="mx-auto mb-8 w-full max-w-75 rounded-xl border border-line"
           src={VIDEO.src}
           poster={VIDEO.poster}
           width={720}
@@ -112,18 +123,27 @@ export default async function WelcomePage() {
           preload="metadata"
         >
           {VIDEO.captions && (
-            <track kind="captions" src={VIDEO.captions} srcLang="en" label="English" default />
+            <track
+              kind="captions"
+              src={VIDEO.captions}
+              srcLang="en"
+              label="English"
+              default
+            />
           )}
         </video>
       )}
 
       <section className="mb-8" aria-labelledby="try">
-        <h2 id="try" className="mb-1 text-sm font-medium tracking-wide text-white/40 uppercase">
-          Three things to try
+        <h2
+          id="try"
+          className="mb-1 text-sm font-medium tracking-wide text-white/40 uppercase"
+        >
+          What to say into it
         </h2>
         <p className="mb-4 text-sm text-white/40">
-          Pick one and it starts a recording. You do not have to stick to it — say
-          whatever you actually want to say.
+          Four things it is good at, shown the way they play out. None of them
+          is a script: say whatever you actually want to say.
         </p>
         <UseCaseCards />
       </section>
@@ -137,24 +157,30 @@ export default async function WelcomePage() {
         which is precisely what G1 is about. Keep this list TRUE: a promise here
         that does not fire is worse than no page.
       */}
-      <section className="mb-8 rounded-xl border border-[var(--color-line)] p-5">
-        <h2 className="mb-2 text-sm font-medium">What it cannot do yet</h2>
-        <ul className="space-y-1.5 text-sm leading-relaxed text-white/50">
+      <section className="mb-8">
+        <h2 className="mb-2 text-sm font-medium">Current limitations</h2>
+        <ul className="space-y-1.5 text-sm text-white/50 list-disc">
           <li>
-            Speech is the only way in. There is no chat box — it cannot read a file, a
-            link or anything you paste.
+            Speech first: Do not expect all the different chat interactions from
+            tools you may already know
           </li>
           <li>
-            It cannot send anything anywhere. Drafts wait on screen for you to copy
-            them; nothing is emailed, shared or posted.
+            It cannot send anything anywhere. Drafts wait on screen for you to
+            copy them; nothing is emailed, shared or posted.
           </li>
           <li>
-            It only knows what you have said to it. Not your calendar, your inbox, or
-            anybody else&rsquo;s recordings.
+            Beyond what you have said and what it can find on the web, it knows
+            nothing. Not your calendar, your inbox, or anybody else&rsquo;s
+            recordings.
           </li>
           <li>
-            It cannot learn new behaviour mid-drive. Asking it to “be more proactive
-            from now on” does nothing — ask it to do the thing now instead.
+            It cannot change how it behaves mid-drive. “Be more proactive from
+            now on” does nothing; how talkative it is comes from the setting
+            you pick before you start. Ask it to do the thing now instead.
+          </li>
+          <li>
+            It cannot record while the phone is locked or another app is in
+            front. Keep it on screen, in a cradle, for the whole drive.
           </li>
         </ul>
       </section>
@@ -162,14 +188,11 @@ export default async function WelcomePage() {
       <section className="mb-8">
         <h2 className="mb-2 text-sm font-medium">A word on what is recorded</h2>
         <p className="text-sm leading-relaxed text-white/50">
-          Everything you say is transcribed and kept, so that you can read it back. Nobody
-          on the research team listens to your recordings or reads your transcripts — the{" "}
-          <Link href="/study" className="underline underline-offset-4 hover:text-white/80">
-            information sheet
-          </Link>{" "}
-          says exactly what is and is not seen. The models behind it run in the US, so the
-          same rule as any hosted assistant applies: nothing you would not put in a
-          third-party tool.
+          Everything you say is transcribed and kept, so that you can read it
+          back. When it looks something up, the search words go to a search
+          engine and nothing else from the drive does. The models behind it run
+          in the US, so the same rule as any hosted assistant applies: nothing
+          you would not put in a third-party tool. We will not read your specific transcripts unless you ask us to.
         </p>
       </section>
 
@@ -186,8 +209,8 @@ export default async function WelcomePage() {
       ) : (
         <section className="space-y-3">
           <p className="text-sm text-white/40">
-            Signing in keeps your recordings across devices. Starting as a guest needs no
-            account, and everything moves across if you sign in later.
+            Signing in keeps your recordings across devices. Starting as a guest
+            needs no account, and everything moves across if you sign in later.
           </p>
           <div className="max-w-xs space-y-2">
             <GuestButton />
