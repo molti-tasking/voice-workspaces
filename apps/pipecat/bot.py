@@ -113,6 +113,8 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.turns.user_start import MinWordsUserTurnStartStrategy
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
 # The board's one wire to the browser. The RTVI observer that PipelineWorker
 # installs turns this frame into a `server-message` on the data channel the
 # transcripts already use, so it can be pushed from anywhere in the pipeline.
@@ -519,6 +521,31 @@ def fetch_session(ticket: str | None) -> dict:
     except Exception as err:
         logger.warning(f"[session] unreachable, running degraded: {err}")
         return {"systemPrompt": FALLBACK_SYSTEM_PROMPT, "degraded": True}
+
+
+def interrupt_min_words() -> int:
+    """How many transcribed words it takes to cut the agent off mid-reply.
+
+    The 21 Sep 2026 drive answered "why don't you answer, you are always
+    stuck": it was not stuck, it was being interrupted by itself. The agent
+    said "The most pressing things", the phone's speaker put that back into
+    the microphone, Deepgram transcribed the echo as "[Speaker 2] Most price
+    of", and the default VAD start strategy treated the first sound of it as
+    the driver talking — broadcast an interruption, cancelled the reply four
+    words in. Every reply on that drive is cut off the same way.
+
+    So a user turn is no longer started by the VAD at all. It starts from the
+    TRANSCRIPT: one word while the agent is quiet (which is when a word is
+    unambiguously theirs), and this many while it is speaking, so an echo
+    fragment or a "mm" does not count as a barge-in but "stop, that's wrong"
+    does. Four by default: the echo fragments seen were one to three words.
+    Clamped to 1-10; `INTERRUPT_MIN_WORDS` tunes it without a rebuild.
+    """
+    try:
+        value = int(os.getenv("INTERRUPT_MIN_WORDS") or 4)
+    except ValueError:
+        value = 4
+    return max(1, min(10, value))
 
 
 def user_turn_stop_timeout_secs() -> float:
@@ -3606,6 +3633,11 @@ def build_pipeline(
         user_params=LLMUserAggregatorParams(
             vad_analyzer=silero(),
             user_turn_stop_timeout=user_turn_stop_timeout_secs(),
+            # Words start a turn, not sound: see `interrupt_min_words`. The
+            # stop side keeps the default turn analyzer.
+            user_turn_strategies=UserTurnStrategies(
+                start=[MinWordsUserTurnStartStrategy(min_words=interrupt_min_words())],
+            ),
         ),
     )
 

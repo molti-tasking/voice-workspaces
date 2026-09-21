@@ -100,14 +100,6 @@ export function RecorderClient() {
       </header>
 
       <div className="flex flex-col items-center gap-8">
-        <div
-          className="font-mono text-6xl tabular-nums sm:text-7xl"
-          aria-live="off"
-          aria-label="Elapsed recording time"
-        >
-          {formatOffset(rec.elapsedMs)}
-        </div>
-
         <button
           type="button"
           onClick={() => {
@@ -212,7 +204,7 @@ export function RecorderClient() {
             </p>
             <Link
               href={`/sessions/${rec.lastSessionId}`}
-              className="inline-block rounded bg-white px-3 py-1.5 font-medium text-[var(--color-ink)] hover:bg-white/90"
+              className="inline-block rounded bg-white px-3 py-1.5 font-medium text-ink hover:bg-white/90"
             >
               View transcript
             </Link>
