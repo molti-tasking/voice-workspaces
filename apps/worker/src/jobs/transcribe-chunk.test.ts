@@ -1,14 +1,13 @@
 /**
- * Payload validation for the chunk pipeline.
+ * How the chunk job classifies a permanent transcription failure.
  *
- * The claim under test is narrow: a chunk whose stored audio is too small to be
- * a decodable file is failed WITHOUT a model call, and marked permanent so it
- * is never retried. A single drive of these truncated payloads was what a day's
- * transcription-failure spike turned out to be, each one burning a GPU slot to
- * be told the bytes could not be decoded.
+ * The claim under test is narrow: when the model call reports an undecodable
+ * payload, the chunk is marked failed and NOT retried, and the rest of the
+ * drive is untouched. A single drive of truncated payloads was what a day's
+ * transcription-failure spike turned out to be. The floor itself lives in
+ * `transcribeChunk` and is covered by the llm package's own tests.
  *
- * The model is mocked, so the call count is the assertion. Needs the local
- * Postgres; skipped when it is unreachable.
+ * The model is mocked. Needs the local Postgres; skipped when it is unreachable.
  */
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -32,6 +31,7 @@ vi.mock("@voicemural/telemetry", async (importOriginal) => {
   return { ...actual, capture: captureMock };
 });
 
+const { UndecodableAudioError } = await import("@voicemural/llm");
 const { closeDb, getDb } = await import("@voicemural/db");
 const { audioChunk, captureSession, user } = await import("@voicemural/db/schema");
 const { eq, inArray } = await import("drizzle-orm");
@@ -74,13 +74,13 @@ async function seedChunk(bytes: Uint8Array) {
 
 async function chunkStatus() {
   const [row] = await getDb()
-    .select({ status: audioChunk.status, reason: audioChunk.failureReason })
+    .select({ status: audioChunk.status })
     .from(audioChunk)
     .where(eq(audioChunk.id, CHUNK_ID));
   return row;
 }
 
-describeIfDb("handleTranscribeChunk payload validation", () => {
+describeIfDb("handleTranscribeChunk failure classification", () => {
   beforeEach(() => {
     transcribeMock.mockReset();
     captureMock.mockReset();
@@ -91,24 +91,21 @@ describeIfDb("handleTranscribeChunk payload validation", () => {
     await closeDb();
   });
 
-  it("fails a too-small payload permanently, with no model call", async () => {
-    // Five bytes: what the failing drive actually uploaded. No header, no frame.
-    await seedChunk(new Uint8Array([1, 2, 3, 4, 5]));
+  it("fails an undecodable chunk permanently, never retried", async () => {
+    await seedChunk(new Uint8Array(256));
+    transcribeMock.mockRejectedValue(new UndecodableAudioError(5));
 
     await handleTranscribeChunk(CHUNK_ID);
 
-    expect(transcribeMock).not.toHaveBeenCalled();
     const row = await chunkStatus();
     expect(row?.status).toBe("failed");
 
     const [, event, props] = captureMock.mock.calls.at(-1) ?? [];
     expect(event).toBe("transcription_failed");
     expect((props as { retryable: boolean }).retryable).toBe(false);
-    expect((props as { failure_kind: string }).failure_kind).toBe("permanent");
   });
 
-  it("still transcribes a payload large enough to be audio", async () => {
-    // Above the floor: the guard must not reject a genuine, if small, chunk.
+  it("transcribes a chunk the model accepts", async () => {
     await seedChunk(new Uint8Array(256));
     transcribeMock.mockResolvedValue({ text: "", segments: [], degenerate: false });
 

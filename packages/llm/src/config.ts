@@ -140,10 +140,14 @@ const PERMANENT_UPSTREAM =
  * A chunk of a few bytes has no container header, let alone a frame. The proxy
  * answers every one with a permanent decode error, so this stops the doomed
  * call before it spends a GPU slot. Separate from `LiteLLMError` because no
- * request was made — there is no HTTP status to carry — and the transcribe job
- * classifies it as permanent, never retried.
+ * request was made — there is no HTTP status to carry. Carries `retryable` so
+ * the transcribe job classifies it exactly as it classifies a `LiteLLMError`,
+ * with no branch of its own.
  */
 export class UndecodableAudioError extends Error {
+  /** A payload too small now will be exactly as small on every retry. */
+  readonly retryable = false;
+
   constructor(readonly bytes: number) {
     super(`audio payload too small to decode: ${bytes} bytes`);
     this.name = "UndecodableAudioError";

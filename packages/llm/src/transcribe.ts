@@ -1,6 +1,7 @@
 import type { RelativeSegment } from "@voicemural/shared";
 import {
   LiteLLMError,
+  UndecodableAudioError,
   litellmConfig,
   modelFor,
   parseCostHeader,
@@ -31,6 +32,17 @@ export interface TranscriptionResult {
    */
   degenerate: boolean;
 }
+
+/**
+ * Below this, a payload cannot be decodable audio and is not sent to the model.
+ *
+ * Every audio container — webm, mp4, ogg — needs a header of tens of bytes
+ * before a single frame, and a real chunk runs to many kilobytes. A payload of
+ * a handful of bytes is a truncated or empty recording that the proxy rejects
+ * with a permanent decode error every time. The floor sits far below the
+ * smallest genuine chunk, so it only ever catches the broken ones.
+ */
+const MIN_DECODABLE_AUDIO_BYTES = 64;
 
 interface VerboseJsonResponse {
   text?: string;
@@ -77,6 +89,13 @@ export async function transcribeChunk(
     role?: Extract<ModelRole, "transcribe" | "transcribe_live">;
   },
 ): Promise<TranscriptionResult> {
+  // Refuse a payload too small to be audio before a GPU slot is spent to be
+  // told what the byte count already makes plain. Thrown for every caller,
+  // batch or live, so none can bypass the floor by construction.
+  if (audio.byteLength < MIN_DECODABLE_AUDIO_BYTES) {
+    throw new UndecodableAudioError(audio.byteLength);
+  }
+
   const { baseUrl, apiKey } = litellmConfig();
   const endpoint = `${baseUrl}/audio/transcriptions`;
   const role = options.role ?? "transcribe";

@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LiteLLMError } from "./config";
+import { LiteLLMError, UndecodableAudioError } from "./config";
 import { transcribeChunk } from "./transcribe";
 
-const AUDIO = new Uint8Array([1, 2, 3, 4]);
+// Comfortably above the decodable-audio floor: these tests are about the call,
+// not the guard, which has its own case below.
+const AUDIO = new Uint8Array(128);
 const OPTS = { filename: "0.webm", mimeType: "audio/webm" };
 
 function jsonResponse(body: unknown, status = 200) {
@@ -85,7 +87,7 @@ describe("transcribeChunk", () => {
     // Guards the Buffer-pool hazard: a Uint8Array view over a pooled Node
     // Buffer can otherwise carry the whole slab into the upload.
     const pooled = Buffer.allocUnsafe(8192);
-    const view = new Uint8Array(pooled.buffer, pooled.byteOffset, 4);
+    const view = new Uint8Array(pooled.buffer, pooled.byteOffset, 128);
 
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ text: "", segments: [] }));
     vi.stubGlobal("fetch", fetchMock);
@@ -93,7 +95,19 @@ describe("transcribeChunk", () => {
     await transcribeChunk(view, OPTS);
 
     const form = (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as FormData;
-    expect((form.get("file") as Blob).size).toBe(4);
+    expect((form.get("file") as Blob).size).toBe(128);
+  });
+
+  it("refuses a payload too small to be audio, without calling the model", async () => {
+    // A truncated or empty recording: no header, no frame. The proxy rejects
+    // every one with a permanent decode error, so it never reaches the wire.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const err = await transcribeChunk(new Uint8Array(5), OPTS).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UndecodableAudioError);
+    expect((err as UndecodableAudioError).retryable).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("raises a retryable error for 429 and 5xx", async () => {

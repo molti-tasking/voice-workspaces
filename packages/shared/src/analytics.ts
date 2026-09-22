@@ -368,14 +368,13 @@ export interface AnalyticsEventMap {
   transcription_failed: {
     chunk_id: string;
     capture_session_id: string;
-    retryable: boolean;
     /**
-     * Whether a retry could ever help, as one word to break the count on.
-     * `retryable` is the transient half (a proxy blip, a rate limit);
-     * `permanent` is the half a retry cannot fix (undecodable or too-small
-     * audio), which is what a single drive's worth of failures looks like.
+     * Whether a retry could ever help. The dimension to break the count on: the
+     * transient half (a proxy blip, a rate limit) against the half a retry
+     * cannot fix (undecodable or too-small audio), which is what a single
+     * drive's worth of failures looks like.
      */
-    failure_kind: "retryable" | "permanent";
+    retryable: boolean;
     reason: string;
   };
 }
