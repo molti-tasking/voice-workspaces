@@ -29,4 +29,20 @@ describe("LiteLLMError.retryable", () => {
   it("still retries a 500 that merely mentions audio in passing", () => {
     expect(at(500, "audio backend timed out")).toBe(true);
   });
+
+  it("does NOT retry an undecodable file dressed as a 415", () => {
+    // The proxy now reports the same decode failure as a 415 rather than a 500.
+    const body =
+      '{"error":{"message":"litellm.APIError: APIError: OpenAIException - ' +
+      "Error code: 415 - {'detail': 'Failed to decode audio. The provided " +
+      "file type is not supported.'}\"}}";
+    expect(at(415, body)).toBe(false);
+  });
+
+  it("does NOT retry a decode failure whatever status rides in front of it", () => {
+    // The cause is read before the status, so even a would-be-retryable code
+    // cannot turn an undecodable file into a retry storm.
+    expect(at(429, "Failed to decode audio")).toBe(false);
+    expect(at(503, "unsupported audio format")).toBe(false);
+  });
 });
