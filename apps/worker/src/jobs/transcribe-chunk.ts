@@ -1,12 +1,31 @@
 import { and, asc, desc, eq, getDb, lt, sql } from "@voicemural/db";
 import { audioChunk, captureSession, utterance } from "@voicemural/db/schema";
-import { LiteLLMError, collapseRepeats, isDegenerate, transcribeChunk } from "@voicemural/llm";
+import {
+  LiteLLMError,
+  UndecodableAudioError,
+  collapseRepeats,
+  isDegenerate,
+  transcribeChunk,
+} from "@voicemural/llm";
 import { extensionForMime, toAbsoluteSegments } from "@voicemural/shared";
 import { getStorage } from "@voicemural/shared/storage";
 import { capture, log } from "@voicemural/telemetry";
 
 /** Raised when the failure is transient and pg-boss should retry. */
 class RetryableJobError extends Error {}
+
+/**
+ * Below this, a payload cannot be decodable audio and is not sent to the model.
+ *
+ * Every audio container the recorder produces — webm, mp4, ogg — needs a header
+ * of tens of bytes before a single frame, and a real ten-second chunk runs to
+ * many kilobytes. A payload of a handful of bytes is a truncated or empty
+ * recording that the proxy rejects with a permanent decode error every time. A
+ * whole drive of these was what a day's failure spike turned out to be. The
+ * floor sits far below the smallest genuine chunk, so it only ever catches the
+ * broken ones.
+ */
+const MIN_DECODABLE_AUDIO_BYTES = 64;
 
 /**
  * Retain audio after transcription. Off by default — only the transcript is
@@ -73,6 +92,14 @@ export async function handleTranscribeChunk(chunkId: string, attempt = 1): Promi
 
   try {
     const audio = await getStorage().get(storageKey);
+
+    // Refuse a payload too small to be audio before spending a GPU slot to be
+    // told what the byte count already makes plain. Thrown, not marked inline,
+    // so the catch below classifies it as permanent and the drive's other
+    // chunks carry on untouched.
+    if (audio.byteLength < MIN_DECODABLE_AUDIO_BYTES) {
+      throw new UndecodableAudioError(audio.byteLength);
+    }
 
     // Feed the tail of the previous chunk as a prompt. Whisper uses it for
     // context, which measurably improves continuity across the boundary —
@@ -215,7 +242,15 @@ export async function handleTranscribeChunk(chunkId: string, attempt = 1): Promi
       audioDiscarded: discarded,
     });
   } catch (err) {
-    const retryable = err instanceof LiteLLMError ? err.retryable : true;
+    // An undecodable payload and a non-retryable proxy error are both permanent
+    // — a retry cannot fix either. Anything else (a proxy blip, a dropped
+    // connection) is assumed transient and handed back to pg-boss.
+    const retryable =
+      err instanceof UndecodableAudioError
+        ? false
+        : err instanceof LiteLLMError
+          ? err.retryable
+          : true;
     const reason = err instanceof Error ? err.message : String(err);
 
     await db
@@ -248,6 +283,7 @@ export async function handleTranscribeChunk(chunkId: string, attempt = 1): Promi
         chunk_id: chunkId,
         capture_session_id: chunk.captureSessionId,
         retryable,
+        failure_kind: retryable ? "retryable" : "permanent",
         reason: reason.slice(0, 200),
       },
       { processPerson: false },
