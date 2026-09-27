@@ -1,3 +1,41 @@
+Sep 27, 2026
+
+## **Pilot feedback round — what was built, what is only noted**
+
+### **Summary**
+
+Not a meeting: a working note, so the deferred items from the pilot feedback and the German debrief (`Inverview/Topics.md`, R6/R7) sit next to the decisions they will need. Built this round, on `develop`: system light/dark theme with larger type (N7), native-sounding TTS in Danish, German and Spanish, archive and restore for topics, items and drafts, the board folded into the workspace on phones (N2), agent drafts filed in the workspace (N1), dates on entries (N8), a sticky record header clear of the status bar (N3), plainer dock copy (N4), and the agent told which screen is open (N6). The prompt is now `talkback-15`.
+
+### **Decisions**
+
+## Aligned
+
+- **Curation is manual and never a delete.** Archive is a tombstone op (`retire_topic`, `retire_block`, `via: "user"`) with Undo and a restorable Archived section. Automatic expiry was not built.
+
+- **On a phone there is no board tab.** The workspace carries task state instead; the board stays on wider screens. Noted in `EVALUATION_PLAN.md` §10.3 because it changes how §10.1's claim is presented.
+
+## Tentative
+
+- **Native voice ids are still to be picked.** `NATIVE_VOICE_IDS` in `packages/talkback/src/voice.ts` is empty for da, de and es. Until they are filled, TTS is told the language (pronunciation improves) but keeps the English voice's accent.
+
+### **Open, not built**
+
+- **Voice stop (N5).** She asked the agent to stop the recording several times; it cannot. A spoken stop conflicts with the rule that the conversation never controls capture (`EVALUATION_PLAN.md` constraint 2). Options: allow stop only, never start, and log it as its own event; or keep the rule and have the agent say where the stop is, which it now can, grounded in the screen.
+
+- **Expiry and auto-archive (N9).** She compared it to mail that deletes itself after a week. It is a design stance, not a feature: it changes what "offloaded" means in the `judge()` measures, because an item that expires was never returned to by definition. The `workspace_curated` event (with `age_days`) will show whether manual archiving is pruning stale items or correcting fresh ones, which is the evidence to decide on.
+
+- **A calendar-shaped day view (N10).** Her strongest positive vision: colour-coded appointments, a strip of ongoing projects, a Tomorrow tab, a routine reminder. Needs calendar write access, which does not exist. Candidate for future work in the paper rather than the study.
+
+- **Printable and shareable output (N11).** The Markdown export now carries dates and drafts, but she wanted a PDF she could email herself. A print stylesheet for a topic card would be the cheap version.
+
+- **Reminder channel (Topics §1 row 3).** She wants to be reminded of a project, but not by voice. The agenda design has no channel outside a drive.
+
+- **Dialect and song titles in ASR.** "Dat du min Leevsten büst" (Low German) came out as "du, du", and her spoken correction did not take. Check the ledger for that session (the same query shape as `PILOT_01.md` §2).
+
+- **Positioning, target group and method (N12–N14).** ChatGPT heard the title but lost the list too: persistence and structure are where both tools failed her, which is the gap this project claims. She thinks the target group is "business people, younger people"; recruit beyond that. The developer cannot see these problems himself, which is the argument for external pilots.
+
+- **Privacy of the interview files.** `Inverview/Recording_7.md` contains a medical appointment, a family house with its location and a guest's visit. The files are staged but not committed; decide before committing them.
+
 Sep 9, 2026
 
 ## **Voice AI Agents — advisor discussion, recorded with the tool**
