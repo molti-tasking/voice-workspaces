@@ -75,7 +75,7 @@ export function composeContextBlock(context: EvalContext | undefined): string | 
   if (sections.length === 0 && !context.pending) return null;
 
   let block = sections.join("\n\n");
-  if (block) block += "\n\nThat is background. Answer only what was just said to you.";
+  if (block) block += "\n\nThat is background. Answer what was just said to you, and use it to say which thing you mean.";
 
   if (context.pending) {
     const ask =

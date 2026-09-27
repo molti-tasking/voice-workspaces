@@ -211,6 +211,25 @@ describe("an answer the agent asked for, which bot.py mirrors", () => {
   });
 });
 
+describe("the evaluation drive of 27 Sep 2026", () => {
+  it("forbids claiming a note or a report that nothing wrote", () => {
+    // Seven turns said "I've added that to your notes" or "I'll report this
+    // as a bug" and wrote nothing; the old rule covered the board only.
+    expect(SYSTEM_PROMPT).toMatch(/Nothing is noted, saved, added, logged, filed or reported unless/);
+    expect(SYSTEM_PROMPT).toMatch(/no bug tracker/);
+  });
+
+  it("treats a note request as a draft, and more notes as a revision of it", () => {
+    expect(OUTPUT_CONTRACT).toMatch(/note down/);
+    expect(OUTPUT_CONTRACT).toMatch(/Do not start a second draft on the same subject/);
+  });
+
+  it("treats an out-of-place word as misheard, and names the thing it suggests", () => {
+    expect(SYSTEM_PROMPT).toMatch(/most likely misheard/);
+    expect(SYSTEM_PROMPT).toMatch(/Name the actual thing/);
+  });
+});
+
 describe("the keep-alive said while a tool runs, which bot.py mirrors", () => {
   it("runs out rather than nagging", () => {
     const de = SEARCH_WAIT_PHRASES.de!;
