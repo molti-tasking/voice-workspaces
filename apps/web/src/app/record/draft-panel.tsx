@@ -41,7 +41,14 @@ export function DraftPanel({ drafts }: { drafts: DraftCue[] }) {
   if (drafts.length === 0) return null;
 
   return (
-    <section className="w-full max-w-md space-y-2" aria-label="Drafts">
+    // Named on screen, and anchored. The agent tells people their text is
+    // "under the drafts", and on 27 Sep 2026 there was nothing on the screen
+    // called that — only unlabelled cards at the foot of the page, under the
+    // dock's scrim. The header's drafts count links here.
+    <section id="drafts" className="w-full max-w-md scroll-mt-28 space-y-2" aria-labelledby="drafts-heading">
+      <h2 id="drafts-heading" className="text-sm font-medium text-fg/70">
+        Drafts on this drive <span className="text-fg/45 tabular-nums">({drafts.length})</span>
+      </h2>
       {drafts.map((draft) => (
         <DraftCard key={draft.id} draft={draft} />
       ))}
@@ -102,7 +109,9 @@ function DraftCard({ draft }: { draft: DraftCue }) {
         make an email or a list arrive as one paragraph. Scrolls rather than
         growing, so a long draft cannot push the record button off screen.
       */}
-      <p className="max-h-56 overflow-y-auto whitespace-pre-wrap text-[0.8125rem] leading-snug text-fg/85">
+      {/* `select-text` because `main` turns selection off for the rest of the
+          screen, which made the fallback promised in `copy` above untrue. */}
+      <p className="max-h-56 select-text overflow-y-auto whitespace-pre-wrap text-[0.8125rem] leading-snug text-fg/85">
         {draft.text}
       </p>
     </article>

@@ -115,9 +115,12 @@ export async function GET(req: Request) {
 
           const version = await cueVersion(userId, captureSessionId);
           if (version === lastVersion) return;
-          lastVersion = version;
 
           send("cues", await buildCues(userId, current.startedAt, captureSessionId, profile));
+          // Only once it has actually gone out. Set before `buildCues`, a
+          // failed build marked the version sent, and a new draft whose frame
+          // failed stayed off the screen until something else changed.
+          lastVersion = version;
         } catch (err) {
           // A transient database error must not kill the stream: the recorder
           // is mid-session and reconnecting costs a round trip for nothing.

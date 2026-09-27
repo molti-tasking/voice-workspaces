@@ -51,12 +51,15 @@ const TRAIL_OPACITY = [0.5, 0.3, 0.16];
 
 export function TopicTitle({
   title,
-  sessionId,
+  trail: earlier,
   placeholder,
 }: {
   title: string | null;
-  /** The trail belongs to one drive; a new id clears it. */
-  sessionId: string | null;
+  /**
+   * Earlier subjects, newest first — held above the router with the recorder
+   * (`useTitleTrail`), so leaving this screen mid-drive does not lose them.
+   */
+  trail: string[];
   /** Shown in the title's place until the first one arrives. */
   placeholder?: string;
 }) {
@@ -78,22 +81,10 @@ export function TopicTitle({
     return () => window.clearTimeout(id);
   }, [changing, title, shown, still]);
 
-  // The subjects this drive has moved on from, newest first. Appended when
-  // the SHOWN title changes — after the blur, so the trail gains its entry at
-  // the moment the headline loses it — and cleared with the drive.
-  const [trail, setTrail] = useState<string[]>([]);
-  const [trailFor, setTrailFor] = useState(sessionId);
-  if (trailFor !== sessionId) {
-    setTrailFor(sessionId);
-    setTrail([]);
-  }
-  const [previous, setPrevious] = useState(shown);
-  if (previous !== shown) {
-    setPrevious(shown);
-    if (previous && previous !== shown) {
-      setTrail((t) => [previous, ...t.filter((x) => x !== previous && x !== shown)].slice(0, TRAIL));
-    }
-  }
+  // The trail gains an entry as soon as a new title arrives, but the old one
+  // is still the headline until its blur finishes — so what is on screen as
+  // the headline is left out, and it joins the trail the moment it leaves.
+  const trail = earlier.filter((x) => x !== shown).slice(0, TRAIL);
 
   return (
     <section

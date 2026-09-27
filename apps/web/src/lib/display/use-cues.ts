@@ -236,7 +236,10 @@ export function useCues({
 
       source.onerror = () => {
         errors += 1;
-        if (errors >= STREAM_ERRORS_BEFORE_POLLING) {
+        // CLOSED means the browser has given up and will not reconnect — what
+        // a non-200 answer does — so waiting for a second error would wait
+        // for the rest of the drive with an empty panel.
+        if (errors >= STREAM_ERRORS_BEFORE_POLLING || source?.readyState === EventSource.CLOSED) {
           source?.close();
           startPolling();
         }

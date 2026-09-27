@@ -15,7 +15,6 @@ import {
   VoicePicker,
 } from "@/components/capture-settings";
 import { RecordingBadge } from "@/components/recording-badge";
-import { useCues } from "@/lib/display/use-cues";
 import { DEBRIEF_MAX_MS, DEBRIEF_QUESTIONS } from "@/lib/study/debrief";
 import { CuePanel } from "./cue-panel";
 import { DraftPanel } from "./draft-panel";
@@ -43,6 +42,8 @@ export function RecorderClient() {
   const {
     recorder: rec,
     talkback: talk,
+    trail,
+    cues,
     isRecording,
     isDebriefing,
     isBusy,
@@ -88,17 +89,6 @@ export function RecorderClient() {
     return () => io.disconnect();
   }, [isRecording]);
 
-  // Reads Postgres, never the voice container: the panel keeps filling with
-  // talk-back dead, and survives a reload mid-recording. See the route comment.
-  const cues = useCues({
-    captureSessionId: rec.currentSessionId,
-    budgets: {
-      content: PROFILE.maxContentCues,
-      directions: PROFILE.maxDirectionCues,
-    },
-    enabled: isRecording && PROFILE.displayAllowed,
-  });
-
   return (
     // `pb-40` clears the dock: leaving mid-drive is the point of hoisting the
     // recorder, so the dock is on this screen too — with its own record button
@@ -123,6 +113,17 @@ export function RecorderClient() {
               <span />
             )}
             <div className="flex items-center gap-3">
+              {isRecording && cues.drafts.length > 0 && (
+                // Where the drafts are, from anywhere on this screen: they sit
+                // at its foot, and the pilot scrolled past the title and the
+                // cues without finding them.
+                <a
+                  href="#drafts"
+                  className="rounded-full bg-fg/10 px-2.5 py-1 text-xs text-fg/80 tabular-nums hover:bg-fg/20"
+                >
+                  {cues.drafts.length} draft{cues.drafts.length === 1 ? "" : "s"} ↓
+                </a>
+              )}
               <StatusPills
                 pending={rec.pendingUploads}
                 uploading={rec.uploading}
@@ -219,7 +220,7 @@ export function RecorderClient() {
           <div ref={titleRef} className="w-full max-w-md">
             <TopicTitle
               title={talk.title}
-              sessionId={rec.currentSessionId}
+              trail={trail}
               placeholder={PROFILE.hint}
             />
           </div>
