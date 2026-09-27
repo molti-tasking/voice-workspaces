@@ -784,6 +784,13 @@ critical thinking, and the work shifting from doing to supervising.
   for the next — which `proactiveOffers` can already express and the per-drive toggles can
   already flip (§11.2). Nobody has decided to run it. `PILOT_01.md` §3 asks for the same shape
   of experiment on `agendaOffers` for a different reason, and they are the same afternoon.
+- **On a phone the board is folded into the workspace** (Sep 2026). §10.1 argues the board is
+  the non-linear structure thinking aloud needs, but a first-time user on a phone read it as
+  "just a kind of log" and said "I don't need another view" (`Inverview/Topics.md` N2): below
+  `md` its five columns stack into one list of the tasks the workspace already shows. The dock
+  now offers the board from `md` up only, and workspace task rows carry their state as a
+  control. The structure is the same fold either way, so the claim stands; how it is *presented*
+  on a small screen is what changed, and the paper should say so.
 
 **Sources.**
 [Ericsson & Simon, *Protocol Analysis*](https://www.ida.liu.se/~nilda08/Anders_Ericsson/Ericsson_protocol.pdf) ·

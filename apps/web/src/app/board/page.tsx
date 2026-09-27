@@ -117,6 +117,16 @@ export default async function BoardPage({
         </div>
       </header>
 
+      {/* Reachable on a phone by a link or a bookmark, so say where tasks
+          live there rather than redirecting: desktop links keep working. */}
+      <p className="mb-6 rounded-xl border border-[var(--color-line)] px-4 py-3 text-sm text-fg/70 md:hidden">
+        On a phone your tasks live in the{" "}
+        <Link href="/workspace" className="underline">
+          workspace
+        </Link>
+        , where you can change their state too. The board is laid out for a wider screen.
+      </p>
+
       {board.cards.length === 0 ? (
         <EmptyState hasOps={ops.length > 0} />
       ) : (

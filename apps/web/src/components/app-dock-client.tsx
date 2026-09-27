@@ -166,21 +166,35 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
             />
           )}
 
-          <DockTab tab={right} active={pathname.startsWith(right.href)} />
+          {/* ON A PHONE THE BOARD IS NOT A TAB. The pilot read it as "just a
+              kind of log" and said "I don't need another view": on a narrow
+              screen its five columns stack into one long list of the same
+              tasks the workspace already shows, and the workspace can now move
+              them. From `md` up, where the columns sit side by side and mean
+              something, it is back. */}
+          {right === BOARD ? (
+            <>
+              <DockTab tab={BOARD} active={pathname.startsWith(BOARD.href)} className="hidden md:flex" />
+              <DockTab tab={TIMELINE} active={pathname.startsWith(TIMELINE.href)} className="md:hidden" />
+            </>
+          ) : (
+            <DockTab tab={right} active={pathname.startsWith(right.href)} />
+          )}
         </nav>
       </div>
     </div>
   );
 }
 
-function DockTab({ tab, active }: { tab: Tab; active: boolean }) {
+function DockTab({ tab, active, className = "flex" }: { tab: Tab; active: boolean; className?: string }) {
   const { Icon, href, label } = tab;
   return (
     <Link
       href={href}
       aria-current={active ? "page" : undefined}
       className={[
-        "flex w-[5.5rem] flex-col items-center gap-1 rounded-[1.375rem] px-2 py-2.5 transition-colors",
+        className,
+        "w-[5.5rem] flex-col items-center gap-1 rounded-[1.375rem] px-2 py-2.5 transition-colors",
         active
           ? "bg-fg/10 text-fg"
           : "text-fg/60 hover:bg-fg/5 hover:text-fg/80",
