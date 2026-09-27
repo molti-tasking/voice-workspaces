@@ -9,6 +9,7 @@ import { AppDock } from "@/components/app-dock";
 import { ViewEvent } from "@/lib/analytics/view-event";
 import { currentUser } from "@/lib/session";
 import { AutoRefresh } from "./auto-refresh";
+import { RetryFailed } from "./retry-failed";
 import { SessionDrafts } from "./session-drafts";
 import { Transcript, type AgentTurnRow, type TranscriptRow } from "./transcript";
 
@@ -172,6 +173,9 @@ export default async function SessionPage({
           <Banner tone="error" title={`${failed.length} chunk(s) failed to transcribe`}>
             {failed[0]?.failureReason ?? "Unknown error"}. The audio is still stored, so
             these can be retried.
+            <div>
+              <RetryFailed sessionId={id} />
+            </div>
           </Banner>
         )}
       </div>

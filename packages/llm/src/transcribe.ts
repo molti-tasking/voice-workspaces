@@ -40,6 +40,23 @@ interface VerboseJsonResponse {
 }
 
 /**
+ * The container type alone, without codec parameters: `audio/webm;codecs=opus`
+ * goes upstream as `audio/webm`.
+ *
+ * The browser records with the parameter and it is stored as recorded, which
+ * is right for the ledger but wrong for the ASR server. A drive on 27 September
+ * 2026 lost all 82 of its chunks to `415 Failed to decode audio. The provided
+ * file type is not supported.` from a server that had accepted the same bytes
+ * before, with nothing on our side changed. An upload filter that matches
+ * types exactly rejects the parameter while the decoder behind it would have
+ * read the file. The filename already carries the container as an extension,
+ * so nothing the decoder needs is lost.
+ */
+export function containerType(mimeType: string): string {
+  return mimeType.split(";")[0]!.trim();
+}
+
+/**
  * Transcribe one audio chunk via LiteLLM's OpenAI-compatible
  * `/audio/transcriptions` endpoint.
  *
@@ -87,7 +104,7 @@ export async function transcribeChunk(
   // can carry the whole slab, uploading far more bytes than the chunk.
   const bytes = new Uint8Array(audio.byteLength);
   bytes.set(audio);
-  form.append("file", new Blob([bytes], { type: options.mimeType }), options.filename);
+  form.append("file", new Blob([bytes], { type: containerType(options.mimeType) }), options.filename);
   form.append("model", model);
   form.append("response_format", "verbose_json");
   form.append("timestamp_granularities[]", "segment");

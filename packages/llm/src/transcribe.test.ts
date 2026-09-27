@@ -96,6 +96,18 @@ describe("transcribeChunk", () => {
     expect((form.get("file") as Blob).size).toBe(4);
   });
 
+  it("sends the container type without codec parameters, under the chunk's filename", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ text: "", segments: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await transcribeChunk(AUDIO, { filename: "12.webm", mimeType: "audio/webm;codecs=opus" });
+
+    const form = (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as FormData;
+    const file = form.get("file") as File;
+    expect(file.type).toBe("audio/webm");
+    expect(file.name).toBe("12.webm");
+  });
+
   it("raises a retryable error for 429 and 5xx", async () => {
     for (const status of [429, 500, 503]) {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("upstream", { status })));
