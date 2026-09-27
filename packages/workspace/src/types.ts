@@ -145,6 +145,8 @@ export interface Block {
   /** The block this one replaced, if any — the revision chain. */
   supersedes?: string;
   retiredAt?: Date;
+  /** Who retired it — `"user"` for the archive button, absent for the extractor. */
+  retiredVia?: OpVia;
   /** Which model call produced it. Null for ops not sourced from an extraction. */
   extractionId?: string;
 }
@@ -159,6 +161,14 @@ export interface Topic {
   lastTouchedAt: Date;
   /** Set when merged away; the topic is kept as a tombstone so ids stay valid. */
   mergedIntoId?: string;
+  /**
+   * Set when the person archived it. A tombstone like `mergedIntoId`: the
+   * topic and its blocks stay in the log and in `allBlocks`, it just leaves
+   * `topics` — and with it the board, the agent's context, the extractor's
+   * view and the memory index. `restore_topic` clears it, and so does new
+   * content landing on it.
+   */
+  retiredAt?: Date;
 }
 
 /* ---------------------------------------------------------------------------
@@ -226,6 +236,28 @@ export const WorkspaceOp = z.discriminatedUnion("type", [
     blockId: z.string().min(1),
     via: OpVia.optional(),
   }),
+  /*
+   * Archive and restore. The person's own curation, never the extractor's:
+   * the pilots' main complaint was a workspace that only ever grew ("I can
+   * only download it"). Tombstones, not deletes — the ledger is append-only
+   * (EVALUATION_PLAN §4 constraint 3), so undoing an archive is one more op
+   * and the workspace as it stood before is still one `asOf` away.
+   */
+  z.object({
+    type: z.literal("retire_topic"),
+    topicId: z.string().min(1),
+    via: OpVia.optional(),
+  }),
+  z.object({
+    type: z.literal("restore_topic"),
+    topicId: z.string().min(1),
+    via: OpVia.optional(),
+  }),
+  z.object({
+    type: z.literal("restore_block"),
+    blockId: z.string().min(1),
+    via: OpVia.optional(),
+  }),
   z.object({
     type: z.literal("move_block"),
     blockId: z.string().min(1),
@@ -253,9 +285,11 @@ export interface StoredOp {
  * ------------------------------------------------------------------------- */
 
 export interface WorkspaceState {
-  /** Live topics, most recently touched first. Merged-away topics are excluded. */
+  /** Live topics, most recently touched first. Merged-away and archived topics are excluded. */
   topics: Topic[];
-  /** Visible blocks by topic id: not superseded, not retired. */
+  /** Topics the person archived, most recently archived first. */
+  archivedTopics: Topic[];
+  /** Visible blocks by topic id: not superseded, not retired. Archived topics keep theirs here. */
   blocksByTopic: Map<string, Block[]>;
   /** Every block ever, including superseded and retired ones, by id. */
   allBlocks: Map<string, Block>;

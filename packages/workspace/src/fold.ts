@@ -96,6 +96,9 @@ export function foldWorkspace(ops: readonly StoredOp[], asOf?: Date): WorkspaceS
           occurredAt: stored.occurredAt,
           extractionId: stored.extractionId,
         });
+        // Something new said about an archived topic brings it back: archiving
+        // puts a topic out of the way, it does not forbid talking about it.
+        reopen(topics, topicId);
         touch(topics, topicId, stored.occurredAt);
         break;
       }
@@ -136,7 +139,37 @@ export function foldWorkspace(ops: readonly StoredOp[], asOf?: Date): WorkspaceS
         const block = allBlocks.get(op.blockId);
         if (!block || block.retiredAt) break;
         block.retiredAt = stored.occurredAt;
+        block.retiredVia = op.via;
         touch(topics, block.topicId, stored.occurredAt);
+        break;
+      }
+
+      case "restore_block": {
+        // Only the visible end of a chain can come back; a superseded block
+        // returning would fork it.
+        const block = allBlocks.get(op.blockId);
+        if (!block || !block.retiredAt || block.supersededById) break;
+        block.retiredAt = undefined;
+        block.retiredVia = undefined;
+        const topicId = resolveTopic(topics, block.topicId);
+        if (topicId) reopen(topics, topicId);
+        touch(topics, block.topicId, stored.occurredAt);
+        break;
+      }
+
+      case "retire_topic": {
+        const topicId = resolveTopic(topics, op.topicId);
+        const topic = topicId ? topics.get(topicId) : undefined;
+        if (!topic || topic.retiredAt) break;
+        // Not a touch: archiving is not activity on the topic, and a restored
+        // topic should come back where its content puts it.
+        topic.retiredAt = stored.occurredAt;
+        break;
+      }
+
+      case "restore_topic": {
+        const topicId = resolveTopic(topics, op.topicId);
+        if (topicId) reopen(topics, topicId);
         break;
       }
 
@@ -172,15 +205,23 @@ export function foldWorkspace(ops: readonly StoredOp[], asOf?: Date): WorkspaceS
   }
 
   const liveTopics = [...topics.values()]
-    .filter((t) => !t.mergedIntoId)
+    .filter((t) => !t.mergedIntoId && !t.retiredAt)
     .sort(
       (a, b) =>
         b.lastTouchedAt.getTime() - a.lastTouchedAt.getTime() ||
         (a.id < b.id ? -1 : 1),
     );
 
+  const archivedTopics = [...topics.values()]
+    .filter((t) => !t.mergedIntoId && t.retiredAt)
+    .sort(
+      (a, b) =>
+        b.retiredAt!.getTime() - a.retiredAt!.getTime() || (a.id < b.id ? -1 : 1),
+    );
+
   return {
     topics: liveTopics,
+    archivedTopics,
     blocksByTopic,
     allBlocks,
     asOf: relevant.length > 0 ? relevant[relevant.length - 1]!.occurredAt : null,
@@ -260,6 +301,11 @@ function taskState(
 ): TaskState | undefined {
   if (kind !== "task") return undefined;
   return given ?? previous?.state ?? "open";
+}
+
+function reopen(topics: Map<string, Topic>, topicId: string): void {
+  const topic = topics.get(topicId);
+  if (topic) topic.retiredAt = undefined;
 }
 
 function touch(topics: Map<string, Topic>, topicId: string, at: Date): void {

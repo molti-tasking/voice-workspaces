@@ -2,7 +2,13 @@ import { X } from "lucide-react";
 import type { Metadata } from "next";
 import { listSessionsWithStats } from "@voicemural/db/sessions";
 import { loadOps } from "@voicemural/db/workspace";
-import { diffWorkspace, foldWorkspace } from "@voicemural/workspace";
+import {
+  diffWorkspace,
+  foldWorkspace,
+  type Block,
+  type Topic,
+  type WorkspaceState,
+} from "@voicemural/workspace";
 import { AppDock } from "@/components/app-dock";
 import { Link } from "@/components/nav-link";
 import { NavMenu } from "@/components/nav-menu";
@@ -10,6 +16,8 @@ import { SurveyHost } from "@/components/survey-host";
 import { ViewEvent } from "@/lib/analytics/view-event";
 import { parseInstant } from "@/lib/instant";
 import { currentUser } from "@/lib/session";
+import { CurationProvider, RestoreButton } from "./curation";
+import { topicIcon } from "./icons";
 import { TopicCard } from "./topic-card";
 
 export const dynamic = "force-dynamic";
@@ -157,6 +165,7 @@ export default async function WorkspacePage({
         </div>
       )}
 
+      <CurationProvider>
       {state.topics.length === 0 ? (
         <EmptyState hasSessions={sessions.length > 0} hasOps={ops.length > 0} />
       ) : (
@@ -170,10 +179,14 @@ export default async function WorkspacePage({
               blocks={state.blocksByTopic.get(topic.id) ?? []}
               allBlocks={state.allBlocks}
               highlight={changedBlockIds}
+              editable={!validAsOf}
             />
           ))}
         </div>
       )}
+
+      {!validAsOf && <Archived state={state} />}
+      </CurationProvider>
 
       <AppDock />
     </div>
@@ -207,4 +220,84 @@ function EmptyState({
       </p>
     </div>
   );
+}
+
+/**
+ * What the person archived, out of the way at the bottom and closed by
+ * default — but never gone, because an archive that cannot be undone later is
+ * a delete, and "I archived the wrong thing last week" is an ordinary moment.
+ *
+ * Whole topics first, then single items from topics that are still live.
+ * Only items the PERSON archived: the extractor retires blocks too, when a
+ * later drive contradicts them, and those are revisions, not curation.
+ */
+function Archived({ state }: { state: WorkspaceState }) {
+  const liveTopicIds = new Set(state.topics.map((t) => t.id));
+  const items: Block[] = [...state.allBlocks.values()]
+    .filter(
+      (b) =>
+        b.retiredAt && b.retiredVia === "user" && !b.supersededById && liveTopicIds.has(b.topicId),
+    )
+    .sort((a, b) => b.retiredAt!.getTime() - a.retiredAt!.getTime());
+
+  const count = state.archivedTopics.length + items.length;
+  if (count === 0) return null;
+  const titleOf = (id: string) => state.topics.find((t) => t.id === id)?.title ?? "";
+
+  return (
+    <details className="mt-10 rounded-xl border border-[var(--color-line)] p-4">
+      <summary className="cursor-pointer text-sm text-fg/65 hover:text-fg">
+        Archived ({count})
+      </summary>
+      <ul className="mt-3 divide-y divide-[var(--color-line)]">
+        {state.archivedTopics.map((topic) => (
+          <ArchivedRow
+            key={topic.id}
+            topic={topic}
+            detail={`${state.blocksByTopic.get(topic.id)?.length ?? 0} items · archived ${shortDate(topic.retiredAt!)}`}
+          >
+            <RestoreButton topicId={topic.id} />
+          </ArchivedRow>
+        ))}
+        {items.map((block) => (
+          <li key={block.id} className="flex items-center gap-3 py-2 text-sm">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-fg/75">{block.text}</p>
+              <p className="text-xs text-fg/50">
+                {titleOf(block.topicId)} · archived {shortDate(block.retiredAt!)}
+              </p>
+            </div>
+            <RestoreButton blockId={block.id} />
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+function ArchivedRow({
+  topic,
+  detail,
+  children,
+}: {
+  topic: Topic;
+  detail: string;
+  children: React.ReactNode;
+}) {
+  const Icon = topicIcon(topic.icon);
+  return (
+    <li className="flex items-center gap-3 py-2 text-sm">
+      {/* eslint-disable-next-line react-hooks/static-components */}
+      <Icon size={14} aria-hidden className="shrink-0 text-fg/50" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-medium text-fg/80">{topic.title}</p>
+        <p className="text-xs text-fg/50">{detail}</p>
+      </div>
+      {children}
+    </li>
+  );
+}
+
+function shortDate(d: Date): string {
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
