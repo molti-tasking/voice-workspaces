@@ -129,7 +129,10 @@ export default async function TimelinePage({
       </header>
 
       {/* Oldest first means earlier drives load upward, above what is on screen. */}
-      {hasEarlier && <LoadMoreSentinel nextCount={shown + PAGE_SIZE} />}
+      {/* Keyed so each page of drives gets a fresh sentinel: it asks once per
+          mount, and without a new mount it asked once, then showed a spinner
+          that never went away. */}
+      {hasEarlier && <LoadMoreSentinel key={shown} nextCount={shown + PAGE_SIZE} />}
 
       <div className="space-y-10">
         {visible.map((session, i) => (
