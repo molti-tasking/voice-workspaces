@@ -39,7 +39,7 @@
  * millisecond.
  */
 import { and, asc, desc, eq, max } from "drizzle-orm";
-import { agentDraft, agentDraftVersion, captureSession } from "./schema";
+import { agentDraft, agentDraftCuration, agentDraftVersion, captureSession } from "./schema";
 import { getDb } from "./index";
 
 export type DraftAuthor = "agent" | "user";
@@ -95,6 +95,8 @@ export interface Draft {
 
 export interface RecordDraftInput {
   captureSessionId: string;
+  /** The workspace topic it is filed on, when the tag named one that matched. */
+  topicId?: string | null;
   seq: number;
   startOffsetMs: number;
   title: string;
@@ -138,6 +140,7 @@ export async function recordDraft(
         title: input.title,
         text: input.text,
         respondingToText: input.respondingToText ?? null,
+        topicId: input.topicId ?? null,
       })
       .onConflictDoNothing({
         target: [agentDraft.captureSessionId, agentDraft.seq],
@@ -402,6 +405,115 @@ export async function loadSessionDrafts(captureSessionId: string): Promise<Draft
       updatedAt: r.updatedAt,
     }))
     .sort(byAsked);
+}
+
+/** A draft as the workspace shows it: current version, where it is filed, whether archived. */
+export interface WorkspaceDraft {
+  id: string;
+  captureSessionId: string;
+  topicId: string | null;
+  title: string;
+  text: string;
+  version: string;
+  /** When it was first asked for. */
+  createdAt: Date;
+  /** When the current version was written. */
+  updatedAt: Date;
+  archived: boolean;
+}
+
+/**
+ * Every draft a person has, at its current version, newest first.
+ *
+ * WHY THE WORKSPACE READS DRAFTS. A pilot asked for additions to her song list
+ * during a drive; the agent wrote them as a draft on the live view, and after
+ * Stop they were nowhere she looked — "the workspace still shows only the old
+ * list". Drafts were only on the session page. Now they are filed on the
+ * topic they belong to, or listed under "From your drives".
+ *
+ * Two queries, merged in JS: the heads (the same `DISTINCT ON` as
+ * `loadSessionDrafts`, scoped by owner instead of drive) and the latest
+ * curation row per draft.
+ */
+export async function loadUserDrafts(userId: string): Promise<WorkspaceDraft[]> {
+  const db = getDb();
+  const heads = await db
+    .selectDistinctOn([agentDraftVersion.draftId], {
+      id: agentDraft.id,
+      captureSessionId: agentDraft.captureSessionId,
+      topicId: agentDraft.topicId,
+      createdAt: agentDraft.createdAt,
+      major: agentDraftVersion.major,
+      minor: agentDraftVersion.minor,
+      title: agentDraftVersion.title,
+      text: agentDraftVersion.text,
+      updatedAt: agentDraftVersion.createdAt,
+    })
+    .from(agentDraftVersion)
+    .innerJoin(agentDraft, eq(agentDraft.id, agentDraftVersion.draftId))
+    .innerJoin(captureSession, eq(captureSession.id, agentDraft.captureSessionId))
+    .where(eq(captureSession.userId, userId))
+    .orderBy(
+      asc(agentDraftVersion.draftId),
+      desc(agentDraftVersion.major),
+      desc(agentDraftVersion.minor),
+    );
+  if (heads.length === 0) return [];
+
+  const curation = await db
+    .selectDistinctOn([agentDraftCuration.draftId], {
+      draftId: agentDraftCuration.draftId,
+      action: agentDraftCuration.action,
+    })
+    .from(agentDraftCuration)
+    .innerJoin(agentDraft, eq(agentDraft.id, agentDraftCuration.draftId))
+    .innerJoin(captureSession, eq(captureSession.id, agentDraft.captureSessionId))
+    .where(eq(captureSession.userId, userId))
+    .orderBy(asc(agentDraftCuration.draftId), desc(agentDraftCuration.createdAt));
+  const archived = new Set(curation.filter((c) => c.action === "archive").map((c) => c.draftId));
+
+  return heads
+    .map((r) => ({
+      id: r.id,
+      captureSessionId: r.captureSessionId,
+      topicId: r.topicId,
+      title: r.title,
+      text: r.text,
+      version: draftVersionLabel(r.major, r.minor),
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+      archived: archived.has(r.id),
+    }))
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+
+/**
+ * Archive a draft, or bring it back. Idempotent on the client's `id`.
+ *
+ * Ownership is proved in the same statement's guard: a draft that is not on
+ * one of this person's drives is `not_found`, never written.
+ */
+export async function curateDraft(input: {
+  id: string;
+  draftId: string;
+  userId: string;
+  action: "archive" | "restore";
+}): Promise<"inserted" | "duplicate" | "not_found"> {
+  const db = getDb();
+  const [owned] = await db
+    .select({ id: agentDraft.id })
+    .from(agentDraft)
+    .innerJoin(captureSession, eq(captureSession.id, agentDraft.captureSessionId))
+    .where(and(eq(agentDraft.id, input.draftId), eq(captureSession.userId, input.userId)))
+    .limit(1);
+  if (!owned) return "not_found";
+
+  const inserted = await db
+    .insert(agentDraftCuration)
+    .values({ id: input.id, draftId: input.draftId, action: input.action })
+    .onConflictDoNothing({ target: agentDraftCuration.id })
+    .returning({ id: agentDraftCuration.id });
+  return inserted.length > 0 ? "inserted" : "duplicate";
 }
 
 /** One lineage with its whole history, for the session page. */

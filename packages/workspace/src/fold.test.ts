@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diffWorkspace, foldWorkspace } from "./fold";
+import { diffWorkspace, foldWorkspace, matchTopic } from "./fold";
 import type { StoredOp, WorkspaceOp } from "./types";
 
 const T0 = new Date("2026-08-01T08:00:00Z");
@@ -558,6 +558,29 @@ describe("archiving", () => {
     ];
 
     expect(foldWorkspace(ops).blocksByTopic.get("topic-a")?.map((b) => b.id)).toEqual(["block-1b"]);
+  });
+});
+
+describe("matchTopic", () => {
+  const topics = foldWorkspace([
+    ...baseline(),
+    op(T1, { type: "create_topic", topicId: "topic-b", title: "Seniors' song list" }),
+    op(T1, { type: "create_topic", topicId: "topic-c", title: "House repairs" }),
+  ]).topics;
+
+  it("finds a topic by its name, however it is cased or punctuated", () => {
+    expect(matchTopic(topics, "research stay")?.id).toBe("topic-a");
+    expect(matchTopic(topics, "Seniors song list")?.id).toBe("topic-b");
+  });
+
+  it("forgives a paraphrase that points at exactly one topic", () => {
+    expect(matchTopic(topics, "song list")?.id).toBe("topic-b");
+  });
+
+  it("files nothing rather than guessing", () => {
+    expect(matchTopic(topics, "")).toBeUndefined();
+    expect(matchTopic(topics, "Garden")).toBeUndefined();
+    expect(matchTopic(topics, "s")).toBeUndefined();
   });
 });
 

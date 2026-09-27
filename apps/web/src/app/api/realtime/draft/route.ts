@@ -3,7 +3,9 @@ import { z } from "zod";
 import { captureSession, eq, getDb } from "@voicemural/db";
 import { appendDraftVersion, loadSessionDrafts, recordDraft } from "@voicemural/db/drafts";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
+import { loadOps } from "@voicemural/db/workspace";
 import { draftHandle } from "@voicemural/talkback";
+import { foldWorkspace, matchTopic } from "@voicemural/workspace";
 import { MAX_DRAFT_CHARS, MAX_DRAFT_TITLE_CHARS } from "@/lib/drafts";
 
 export const runtime = "nodejs";
@@ -62,6 +64,13 @@ const Body = z.object({
    * of a query. Anything that does not resolve becomes a new draft anyway.
    */
   revises: z.string().max(64).optional(),
+  /**
+   * The topic it belongs to, by name, from the tag's `topic`. Resolved here
+   * against their workspace (`matchTopic`) and stored as `agent_draft.topic_id`,
+   * so the draft shows on that topic's card after the drive. Unmatched is
+   * harmless: the draft is still kept, under "From your drives".
+   */
+  topic: z.string().max(200).optional(),
 });
 
 export async function POST(req: Request) {
@@ -70,7 +79,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
 
-  const { ticket, seq, startOffsetMs, title, text, respondingToText, revises } = parsed.data;
+  const { ticket, seq, startOffsetMs, title, text, respondingToText, revises, topic } = parsed.data;
 
   let payload;
   try {
@@ -120,8 +129,11 @@ export async function POST(req: Request) {
     // Fall through and write a new draft rather than dropping the text.
   }
 
+  const topicId = topic ? await resolveTopic(payload.userId, topic) : null;
+
   const created = await recordDraft({
     captureSessionId: payload.captureSessionId,
+    topicId,
     seq,
     startOffsetMs,
     title: clippedTitle,
@@ -163,4 +175,16 @@ async function resolveHandle(
   const drafts = await loadSessionDrafts(captureSessionId).catch(() => []);
   const matches = drafts.filter((d) => draftHandle(d.id) === wanted);
   return matches.length === 1 ? matches[0]!.id : null;
+}
+
+/**
+ * Which live topic a model-written name refers to, or null. Never throws: a
+ * draft that cannot be filed is still a draft worth keeping.
+ */
+async function resolveTopic(userId: string, name: string): Promise<string | null> {
+  try {
+    return matchTopic(foldWorkspace(await loadOps(userId)).topics, name)?.id ?? null;
+  } catch {
+    return null;
+  }
 }

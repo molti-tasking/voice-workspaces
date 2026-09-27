@@ -580,6 +580,13 @@ def test_extract_draft_runs_an_unterminated_block_to_the_end():
     assert drafts == [{"title": "Email", "text": "Dear W. and then some"}]
 
 
+def test_a_draft_carries_the_topic_it_is_filed_on():
+    _, drafts = bot.extract_drafts('<draft title="More songs" topic="Seniors song list">- one</draft>')
+    assert drafts == [{"title": "More songs", "text": "- one", "topic": "Seniors song list"}]
+    _, drafts = bot.extract_drafts('<draft title="X" topic="">body</draft>')
+    assert "topic" not in drafts[0]
+
+
 def test_extract_takes_several_drafts_from_one_completion():
     _, drafts = bot.extract_drafts('<draft title="A">one</draft>and<draft title="B">two</draft>')
     assert [d["title"] for d in drafts] == ["A", "B"]

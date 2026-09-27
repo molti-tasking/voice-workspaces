@@ -1329,6 +1329,14 @@ export const agentDraft = pgTable(
     text: text("text").notNull(),
     /** The user turn that asked for it, for reading the two back together. */
     respondingToText: text("responding_to_text"),
+    /**
+     * The workspace topic it was filed on, resolved at write time from the
+     * tag's `topic` name. A topic id from the op log (not a foreign key: topics
+     * are folded, not stored). Null when none was named or none matched — the
+     * draft then shows under "From your drives". Set once, at insert, like
+     * every other column here.
+     */
+    topicId: text("topic_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -1337,6 +1345,30 @@ export const agentDraft = pgTable(
     uniqueIndex("agent_draft_session_seq_idx").on(t.captureSessionId, t.seq),
     index("agent_draft_session_idx").on(t.captureSessionId),
   ],
+);
+
+/**
+ * The person archiving a draft in the workspace, or bringing it back.
+ *
+ * Its own append-only table rather than a column on `agent_draft`, because
+ * that row is the draft's identity and is never updated. The latest row per
+ * draft is its state; no row means live. Same stance as `retire_topic` in the
+ * op log: curation is recorded, never a delete.
+ */
+export const agentDraftCurationEnum = pgEnum("agent_draft_curation_action", ["archive", "restore"]);
+
+export const agentDraftCuration = pgTable(
+  "agent_draft_curation",
+  {
+    /** The client's idempotency key, as with `workspace_op`. */
+    id: uuid("id").primaryKey(),
+    draftId: uuid("draft_id")
+      .notNull()
+      .references(() => agentDraft.id, { onDelete: "cascade" }),
+    action: agentDraftCurationEnum("action").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("agent_draft_curation_draft_idx").on(t.draftId, t.createdAt)],
 );
 
 /**

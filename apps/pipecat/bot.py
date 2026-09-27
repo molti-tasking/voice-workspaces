@@ -1965,7 +1965,8 @@ def extract_drafts(reply: str) -> tuple[str, list[dict]]:
     than being thrown away over seven missing characters.
 
     Returns (speech, drafts) where each draft is {"title", "text"} plus
-    {"revises": handle} when the tag named a draft it replaces. The key is
+    {"revises": handle} when the tag named a draft it replaces, and
+    {"topic": name} when it named the topic it belongs to. The key is
     ABSENT on a new draft rather than empty, which is how the write path tells
     "this is new" from "this replaces something" without a sentinel value.
     """
@@ -1994,6 +1995,8 @@ def extract_drafts(reply: str) -> tuple[str, list[dict]]:
         title = title_match.group(1).strip() if title_match else ""
         revises_match = re.search(r'revises\s*=\s*"([^"]*)"', attributes)
         revises = revises_match.group(1).strip() if revises_match else ""
+        topic_match = re.search(r'topic\s*=\s*"([^"]*)"', attributes)
+        topic = topic_match.group(1).strip() if topic_match else ""
 
         close_at = rest.find(DRAFT_CLOSE, open_end)
         body = rest[open_end + 1 :] if close_at == -1 else rest[open_end + 1 : close_at]
@@ -2003,6 +2006,10 @@ def extract_drafts(reply: str) -> tuple[str, list[dict]]:
             # attribute it was shown rather than naming a draft.
             if revises:
                 draft["revises"] = revises
+            # Which of their topics it is filed on, by name. Same rule: only
+            # when named.
+            if topic:
+                draft["topic"] = topic
             drafts.append(draft)
         if close_at == -1:
             break
@@ -3090,6 +3097,8 @@ class DraftRecorder:
             # hallucinated handle costs a version link and never a draft.
             if draft.get("revises"):
                 payload["revises"] = draft["revises"]
+            if draft.get("topic"):
+                payload["topic"] = draft["topic"]
             payloads.append(payload)
 
         async def send() -> None:

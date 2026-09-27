@@ -82,6 +82,8 @@ import { PROACTIVITY_STANZAS, PROFILE, type ConversationProfile } from "./profil
  * Spanish speakers heard every reply with an English accent: TTS is now told
  * the drive's language (bot.py `LanguageFollower`), and HOW TO SPEAK says to
  * answer in the language they last spoke rather than drifting to English.
+ * A draft may now name the topic it belongs to (`topic="…"`), so it is filed
+ * on that topic in the workspace instead of vanishing with the live view.
  */
 export const TALKBACK_CONFIG_VERSION = "talkback-15";
 
@@ -369,6 +371,17 @@ export interface ExtractedDraft {
    * `draft-context.ts` for where handles come from.
    */
   revises?: string;
+  /**
+   * Which of their topics it belongs to, by name, from the tag's `topic`.
+   *
+   * What lets a draft outlive the drive IN THE RIGHT PLACE: the write path
+   * matches it against their workspace and the draft then shows on that
+   * topic's card. A pilot asked for additions to her song list, got them as a
+   * draft on the live view, and after Stop found the workspace still showing
+   * the old list. Absent when the model named none; unmatched names are
+   * harmless and the draft lands under "From your drives".
+   */
+  topic?: string;
 }
 
 /**
@@ -408,6 +421,7 @@ export function extractDrafts(reply: string): { speech: string; drafts: Extracte
     const attributes = rest.slice(open, openEnd);
     const title = /title\s*=\s*"([^"]*)"/.exec(attributes)?.[1] ?? "";
     const revises = /revises\s*=\s*"([^"]*)"/.exec(attributes)?.[1]?.trim() ?? "";
+    const topic = /topic\s*=\s*"([^"]*)"/.exec(attributes)?.[1]?.trim() ?? "";
     const close = rest.indexOf(DRAFT_CLOSE, openEnd);
     const body = close === -1 ? rest.slice(openEnd + 1) : rest.slice(openEnd + 1, close);
 
@@ -420,6 +434,7 @@ export function extractDrafts(reply: string): { speech: string; drafts: Extracte
         title: title.trim(),
         text: body.trim(),
         ...(revises ? { revises } : {}),
+        ...(topic ? { topic } : {}),
       });
     }
     if (close === -1) break;
@@ -467,6 +482,7 @@ ${DRAFT_CLOSE}
 - Say ONE short sentence outside the tags so they know it is there. Never read the draft aloud, and never summarise it.
 - Inside the tags, write the finished text only — no commentary, no "here is". Markdown is allowed there; it is read, not spoken.
 - Only when they asked for something to keep or copy. An ordinary answer is speech, not a draft.
+- When it belongs to one of their topics you have been shown by name, add topic="that name" to the tag, spelled as shown — it is filed on that topic in their workspace. Otherwise leave topic out.
 
 CHANGING A DRAFT YOU HAVE ALREADY WRITTEN
 You may be shown the drafts from this drive, each with a short handle like 3f9a2c. To change one — shorter, warmer, a name fixed, a paragraph added — write the WHOLE new text and name it:

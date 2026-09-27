@@ -167,7 +167,13 @@ export interface AnalyticsEventMap {
    * pruning stale entries or correcting fresh ones.
    */
   workspace_curated: {
-    action: "retire_topic" | "restore_topic" | "retire_block" | "restore_block";
+    action:
+      | "retire_topic"
+      | "restore_topic"
+      | "retire_block"
+      | "restore_block"
+      | "archive_draft"
+      | "restore_draft";
     block_kind?: string;
     block_count: number;
     age_days: number;
