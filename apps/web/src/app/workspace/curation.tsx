@@ -23,6 +23,8 @@ type Action =
   | { action: "restore_topic"; topicId: string }
   | { action: "retire_block"; blockId: string }
   | { action: "restore_block"; blockId: string }
+  | { action: "archive_draft"; draftId: string }
+  | { action: "restore_draft"; draftId: string }
   | { action: "set_state"; blockId: string; state: TaskState };
 
 interface Toast {
@@ -53,6 +55,8 @@ function undoOf(action: Action, target: string | undefined): Action | undefined 
       return { action: "restore_topic", topicId: target ?? action.topicId };
     case "retire_block":
       return { action: "restore_block", blockId: target ?? action.blockId };
+    case "archive_draft":
+      return { action: "restore_draft", draftId: action.draftId };
     default:
       return undefined;
   }
@@ -165,12 +169,33 @@ export function ArchiveItemButton({ blockId }: { blockId: string }) {
   );
 }
 
-export function RestoreButton(props: { topicId: string } | { blockId: string }) {
+/** Archive a draft the agent wrote, from wherever the workspace shows it. */
+export function ArchiveDraftButton({ draftId }: { draftId: string }) {
+  const { run, pending } = useCuration();
+  return (
+    <button
+      type="button"
+      title="Archive this draft"
+      aria-label="Archive this draft"
+      disabled={pending}
+      onClick={() => run({ action: "archive_draft", draftId }, { message: "Draft archived", undoable: true })}
+      className="shrink-0 cursor-pointer rounded p-1 text-fg/40 hover:text-fg/80 disabled:opacity-40"
+    >
+      <Archive size={12} aria-hidden />
+    </button>
+  );
+}
+
+export function RestoreButton(
+  props: { topicId: string } | { blockId: string } | { draftId: string },
+) {
   const { run, pending } = useCuration();
   const action: Action =
     "topicId" in props
       ? { action: "restore_topic", topicId: props.topicId }
-      : { action: "restore_block", blockId: props.blockId };
+      : "blockId" in props
+        ? { action: "restore_block", blockId: props.blockId }
+        : { action: "restore_draft", draftId: props.draftId };
   return (
     <button
       type="button"

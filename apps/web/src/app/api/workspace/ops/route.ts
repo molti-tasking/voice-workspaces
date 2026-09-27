@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { curateDraft } from "@voicemural/db/drafts";
 import { appendUserOp, loadOps, withBoardLock } from "@voicemural/db/workspace";
 import {
   TaskState,
@@ -19,6 +20,8 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("restore_topic"), topicId: z.string().min(1), opId: z.uuid() }),
   z.object({ action: z.literal("retire_block"), blockId: z.string().min(1), opId: z.uuid() }),
   z.object({ action: z.literal("restore_block"), blockId: z.string().min(1), opId: z.uuid() }),
+  z.object({ action: z.literal("archive_draft"), draftId: z.uuid(), opId: z.uuid() }),
+  z.object({ action: z.literal("restore_draft"), draftId: z.uuid(), opId: z.uuid() }),
   z.object({
     action: z.literal("set_state"),
     blockId: z.string().min(1),
@@ -57,6 +60,27 @@ export async function POST(req: Request) {
   }
   const body = parsed.data;
   const analyticsSessionId = sessionIdFrom(req) ?? undefined;
+
+  // Drafts are not ops: they live in their own append-only tables, so they
+  // need neither the fold nor the board lock.
+  if (body.action === "archive_draft" || body.action === "restore_draft") {
+    const written = await curateDraft({
+      id: body.opId,
+      draftId: body.draftId,
+      userId,
+      action: body.action === "archive_draft" ? "archive" : "restore",
+    });
+    if (written === "not_found") return NextResponse.json({ error: "not_found" }, { status: 404 });
+    if (written === "inserted") {
+      capture(
+        userId,
+        "workspace_curated",
+        { action: body.action, block_count: 1, age_days: 0 },
+        { sessionId: analyticsSessionId },
+      );
+    }
+    return NextResponse.json({ status: written === "inserted" ? "ok" : "unchanged", target: body.draftId });
+  }
 
   const outcome = await withBoardLock(userId, async (db) => {
     const ops = await loadOps(userId, db);

@@ -14,8 +14,14 @@ config({ path: new URL("../../../../../../../.env", import.meta.url).pathname, q
 
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { closeDb, getDb, inArray } from "@voicemural/db";
-import { loadSessionDraftHistory, loadSessionDrafts, recordDraft } from "@voicemural/db/drafts";
-import { captureSession, user } from "@voicemural/db/schema";
+import {
+  curateDraft,
+  loadSessionDraftHistory,
+  loadSessionDrafts,
+  loadUserDrafts,
+  recordDraft,
+} from "@voicemural/db/drafts";
+import { captureSession, user, workspaceOp } from "@voicemural/db/schema";
 import { isDatabaseReachable } from "@voicemural/db/testing";
 import { issueTicket } from "@voicemural/shared/realtime-ticket";
 import { draftHandle } from "@voicemural/talkback";
@@ -43,6 +49,13 @@ async function seed() {
   await db
     .insert(captureSession)
     .values({ id: OTHER_SESSION_ID, userId: OTHER_ID, startedAt: new Date() });
+  await db.insert(workspaceOp).values({
+    userId: USER_ID,
+    type: "create_topic",
+    payload: { topicId: "songs", title: "Seniors' song list" },
+    occurredAt: new Date(),
+    sourceUtteranceIds: [],
+  });
 
   const created = await recordDraft({
     captureSessionId: SESSION_ID,
@@ -75,6 +88,27 @@ describeIfDb("POST /api/realtime/draft", () => {
   afterAll(async () => {
     await getDb().delete(user).where(inArray(user.id, [USER_ID, OTHER_ID]));
     await closeDb();
+  });
+
+  it("files a draft on the topic it names, so it shows there after the drive", async () => {
+    await post({ seq: 1, startOffsetMs: 2_000, title: "More songs", text: "- one", topic: "song list" });
+    await post({ seq: 2, startOffsetMs: 3_000, title: "Other", text: "- two", topic: "Garden" });
+
+    const byTitle = new Map((await loadUserDrafts(USER_ID)).map((d) => [d.title, d]));
+    expect(byTitle.get("More songs")?.topicId).toBe("songs");
+    // Named but unmatched: still kept, just not filed.
+    expect(byTitle.get("Other")?.topicId).toBeNull();
+  });
+
+  it("archives and restores a draft, and only the owner can", async () => {
+    const A = "00000000-0000-4000-8000-0000000d0ca1";
+    const B = "00000000-0000-4000-8000-0000000d0ca2";
+    expect(await curateDraft({ id: A, draftId, userId: OTHER_ID, action: "archive" })).toBe("not_found");
+    expect(await curateDraft({ id: A, draftId, userId: USER_ID, action: "archive" })).toBe("inserted");
+    expect(await curateDraft({ id: A, draftId, userId: USER_ID, action: "archive" })).toBe("duplicate");
+    expect((await loadUserDrafts(USER_ID))[0]?.archived).toBe(true);
+    await curateDraft({ id: B, draftId, userId: USER_ID, action: "restore" });
+    expect((await loadUserDrafts(USER_ID))[0]?.archived).toBe(false);
   });
 
   it("turns a revise into the next major version of the same draft", async () => {

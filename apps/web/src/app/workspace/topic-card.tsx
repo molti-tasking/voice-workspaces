@@ -4,7 +4,9 @@ import {
   type Block,
   type Topic,
 } from "@voicemural/workspace";
+import type { WorkspaceDraft } from "@voicemural/db/drafts";
 import { ArchiveItemButton, ArchiveTopicButton, TaskStateSelect } from "./curation";
+import { DraftItem } from "./draft-item";
 import { ExportButton } from "./export-button";
 import { topicIcon } from "./icons";
 
@@ -31,8 +33,11 @@ export function TopicCard({
   allBlocks,
   highlight,
   editable = true,
+  drafts = [],
 }: {
   topic: Topic;
+  /** Drafts the agent filed on this topic during a drive, newest first. */
+  drafts?: WorkspaceDraft[];
   blocks: Block[];
   allBlocks: Map<string, Block>;
   /** Blocks a `?since=` diff touched; everything else recedes. */
@@ -128,6 +133,17 @@ export function TopicCard({
                 </li>
               );
             })}
+          </ul>
+        )}
+
+        {/* What the agent wrote down for them on this topic. After the
+            questions and tasks, because a draft is usually the answer to
+            one of them — "add some songs to the list". */}
+        {drafts.length > 0 && (
+          <ul className="space-y-1.5">
+            {drafts.map((d) => (
+              <DraftItem key={d.id} draft={d} editable={editable} />
+            ))}
           </ul>
         )}
 

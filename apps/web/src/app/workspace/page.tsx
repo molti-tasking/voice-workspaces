@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import type { Metadata } from "next";
+import { loadUserDrafts, type WorkspaceDraft } from "@voicemural/db/drafts";
 import { listSessionsWithStats } from "@voicemural/db/sessions";
 import { loadOps } from "@voicemural/db/workspace";
 import {
@@ -17,6 +18,7 @@ import { ViewEvent } from "@/lib/analytics/view-event";
 import { parseInstant } from "@/lib/instant";
 import { currentUser } from "@/lib/session";
 import { CurationProvider, RestoreButton } from "./curation";
+import { DraftItem } from "./draft-item";
 import { topicIcon } from "./icons";
 import { TopicCard } from "./topic-card";
 
@@ -56,12 +58,32 @@ export default async function WorkspacePage({
   const validAsOf = parseInstant(asOfParam);
   const validSince = parseInstant(sinceParam);
 
-  const [ops, sessions] = await Promise.all([
+  const [ops, sessions, allDrafts] = await Promise.all([
     loadOps(user.id),
     listSessionsWithStats(user.id, 20),
+    loadUserDrafts(user.id),
   ]);
 
   const state = foldWorkspace(ops, validAsOf);
+
+  // Drafts as of the same moment as the fold, filed on the topic they name.
+  // One on a topic that is no longer live (merged away, or never matched)
+  // counts as unfiled; one on an ARCHIVED topic goes where the topic went.
+  const drafts = allDrafts.filter(
+    (d) => !validAsOf || d.createdAt.getTime() <= validAsOf.getTime(),
+  );
+  const liveTopicIds = new Set(state.topics.map((t) => t.id));
+  const archivedTopicIds = new Set(state.archivedTopics.map((t) => t.id));
+  const draftsByTopic = new Map<string, WorkspaceDraft[]>();
+  const unfiledDrafts: WorkspaceDraft[] = [];
+  for (const d of drafts) {
+    if (d.archived) continue;
+    if (d.topicId && liveTopicIds.has(d.topicId)) {
+      draftsByTopic.set(d.topicId, [...(draftsByTopic.get(d.topicId) ?? []), d]);
+    } else if (!d.topicId || !archivedTopicIds.has(d.topicId)) {
+      unfiledDrafts.push(d);
+    }
+  }
 
   // `?since=` turns the page into a diff: what a drive, or a single extraction,
   // actually contributed. Both bounds live in the URL, so "the workspace as it
@@ -166,9 +188,24 @@ export default async function WorkspacePage({
       )}
 
       <CurationProvider>
-      {state.topics.length === 0 ? (
+      {/* What the agent wrote down during drives that is not filed on a
+          topic. First, because it is the thing most likely to have been
+          looked for and not found: before this, a draft existed only on the
+          live view and the drive's own page. */}
+      {unfiledDrafts.length > 0 && (
+        <section className="mb-6 rounded-xl border border-[var(--color-line)] p-4">
+          <h2 className="mb-3 text-sm font-medium text-fg/75">From your drives</h2>
+          <ul className="space-y-1.5">
+            {unfiledDrafts.slice(0, 8).map((d) => (
+              <DraftItem key={d.id} draft={d} editable={!validAsOf} />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {state.topics.length === 0 && unfiledDrafts.length === 0 ? (
         <EmptyState hasSessions={sessions.length > 0} hasOps={ops.length > 0} />
-      ) : (
+      ) : state.topics.length === 0 ? null : (
         // Masonry via CSS columns: cards are wildly uneven in height, and a grid
         // would leave a ragged gap under every short one.
         <div className="columns-1 gap-4 md:columns-2 lg:columns-3 [&>*]:mb-4 [&>*]:break-inside-avoid">
@@ -177,6 +214,7 @@ export default async function WorkspacePage({
               key={topic.id}
               topic={topic}
               blocks={state.blocksByTopic.get(topic.id) ?? []}
+              drafts={draftsByTopic.get(topic.id)}
               allBlocks={state.allBlocks}
               highlight={changedBlockIds}
               editable={!validAsOf}
@@ -185,7 +223,7 @@ export default async function WorkspacePage({
         </div>
       )}
 
-      {!validAsOf && <Archived state={state} />}
+      {!validAsOf && <Archived state={state} drafts={drafts.filter((d) => d.archived)} />}
       </CurationProvider>
 
       <AppDock />
@@ -231,7 +269,7 @@ function EmptyState({
  * Only items the PERSON archived: the extractor retires blocks too, when a
  * later drive contradicts them, and those are revisions, not curation.
  */
-function Archived({ state }: { state: WorkspaceState }) {
+function Archived({ state, drafts }: { state: WorkspaceState; drafts: WorkspaceDraft[] }) {
   const liveTopicIds = new Set(state.topics.map((t) => t.id));
   const items: Block[] = [...state.allBlocks.values()]
     .filter(
@@ -240,7 +278,7 @@ function Archived({ state }: { state: WorkspaceState }) {
     )
     .sort((a, b) => b.retiredAt!.getTime() - a.retiredAt!.getTime());
 
-  const count = state.archivedTopics.length + items.length;
+  const count = state.archivedTopics.length + items.length + drafts.length;
   if (count === 0) return null;
   const titleOf = (id: string) => state.topics.find((t) => t.id === id)?.title ?? "";
 
@@ -268,6 +306,15 @@ function Archived({ state }: { state: WorkspaceState }) {
               </p>
             </div>
             <RestoreButton blockId={block.id} />
+          </li>
+        ))}
+        {drafts.map((draft) => (
+          <li key={draft.id} className="flex items-center gap-3 py-2 text-sm">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-fg/75">{draft.title || "Draft"}</p>
+              <p className="text-xs text-fg/50">Draft · {shortDate(draft.createdAt)}</p>
+            </div>
+            <RestoreButton draftId={draft.id} />
           </li>
         ))}
       </ul>

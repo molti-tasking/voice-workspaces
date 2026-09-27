@@ -370,3 +370,25 @@ export function diffWorkspace(
 
   return { addedTopics, addedBlocks, revisedBlocks, retiredBlocks };
 }
+
+/**
+ * The live topic a model-written NAME refers to, or undefined.
+ *
+ * For a draft tagged `topic="…"`: the model saw the topic titles in its
+ * context and is asked to copy one, but a model paraphrases — "song list"
+ * for "Seniors' song list". So: the same slug, else exactly one topic whose
+ * slug contains the name's or is contained in it. Two candidates is no match;
+ * filing a draft on the wrong topic is worse than filing it on none.
+ */
+export function matchTopic(topics: readonly Topic[], name: string): Topic | undefined {
+  const wanted = slugify(name);
+  if (wanted === "topic" && !/topic/i.test(name)) return undefined;
+  const exact = topics.find((t) => t.slug === wanted || slugify(t.title) === wanted);
+  if (exact) return exact;
+  if (wanted.length < 4) return undefined;
+  const partial = topics.filter((t) => {
+    const slug = slugify(t.title);
+    return slug.length >= 4 && (slug.includes(wanted) || wanted.includes(slug));
+  });
+  return partial.length === 1 ? partial[0] : undefined;
+}

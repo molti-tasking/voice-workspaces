@@ -296,6 +296,12 @@ describe("extractDrafts, which bot.py mirrors", () => {
     expect(drafts[0]?.revises).toBe("b7e40d");
   });
 
+  it("carries the topic a draft is filed on, and only when named", () => {
+    const { drafts } = extractDrafts('<draft title="More songs" topic="Seniors song list">- Hoch auf dem gelben Wagen</draft>');
+    expect(drafts[0]?.topic).toBe("Seniors song list");
+    expect(extractDrafts('<draft title="X" topic="">body</draft>').drafts[0]).not.toHaveProperty("topic");
+  });
+
   it("leaves revises off a new draft, rather than sending an empty one", () => {
     // ABSENT, not "". The write path tells "this is new" from "this replaces
     // something" by the field being missing, so a model that fills in the
