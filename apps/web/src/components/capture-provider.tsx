@@ -3,7 +3,10 @@
 import { usePathname } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo } from "react";
 // The `/screen` subpath, not the package index — see capture-settings.tsx.
+// The `/profile` subpath for the same reason: the index drags in the database.
+import { PROFILE } from "@voicemural/talkback/profile";
 import { screenFor } from "@voicemural/talkback/screen";
+import { useCues, type CueState } from "@/lib/display/use-cues";
 import {
   useConditionOverride,
   type ConditionOverride,
@@ -13,6 +16,7 @@ import { useSttLanguage } from "@/lib/recorder/language-store";
 import { useRecorder } from "@/lib/recorder/use-recorder";
 import { useVoice } from "@/lib/recorder/voice-store";
 import { useTalkback, type TalkbackState } from "@/lib/talkback/use-talkback";
+import { useTitleTrail } from "@/lib/talkback/use-title-trail";
  
 /**
  * Whether talk-back is built into this bundle.
@@ -27,6 +31,20 @@ export const TALKBACK_ENABLED =
 export interface CaptureContextValue {
   recorder: ReturnType<typeof useRecorder>;
   talkback: TalkbackState;
+  /** Earlier subjects of this drive, newest first. See `useTitleTrail`. */
+  trail: string[];
+  /**
+   * What the record screen shows under the title: cues and the drafts written
+   * on this drive.
+   *
+   * Held here, not on `/record`, for the reason the recorder is: state that
+   * belongs to the drive must not belong to a route. On the page it was
+   * dropped on every navigation, so coming back from the timeline mid-drive
+   * found the panel empty until a new stream had connected and ticked — and
+   * the drafts the agent had just written "gone" (27 Sep 2026). One stream
+   * now runs for the whole drive, whichever screen is open.
+   */
+  cues: CueState;
   isRecording: boolean;
   /**
    * The post-drive debrief: Stop has been tapped, the three questions are on
@@ -105,6 +123,19 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     enabled: TALKBACK_ENABLED && isRecording,
   });
 
+  const trail = useTitleTrail(talkback.title, recorder.currentSessionId);
+
+  // Reads Postgres, never the voice container: the panel keeps filling with
+  // talk-back dead, and survives a reload mid-recording. See the route comment.
+  const cues = useCues({
+    captureSessionId: recorder.currentSessionId,
+    budgets: {
+      content: PROFILE.maxContentCues,
+      directions: PROFILE.maxDirectionCues,
+    },
+    enabled: isRecording && PROFILE.displayAllowed,
+  });
+
   // Which screen they have open, reported on every navigation during a drive
   // so the agent can stop describing screens it cannot see. Fire and forget:
   // a missed report means the agent is told the screen is not known, which is
@@ -140,6 +171,8 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     () => ({
       recorder,
       talkback,
+      trail,
+      cues,
       isRecording,
       isDebriefing,
       isBusy,
@@ -156,6 +189,8 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     [
       recorder,
       talkback,
+      trail,
+      cues,
       isRecording,
       isDebriefing,
       isBusy,
