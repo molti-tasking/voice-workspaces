@@ -50,7 +50,7 @@ export function SessionDrafts({ drafts }: { drafts: SessionDraft[] }) {
 
   return (
     <section className="mb-8" aria-label="Drafts">
-      <h2 className="mb-3 text-[11px] tracking-wide text-white/30 uppercase">
+      <h2 className="mb-3 text-xs tracking-wide text-fg/50 uppercase">
         {drafts.length} draft{drafts.length === 1 ? "" : "s"}
       </h2>
       <div className="space-y-3">
@@ -70,7 +70,7 @@ function DraftCard({ draft }: { draft: SessionDraft }) {
   const [editing, setEditing] = useState(false);
 
   return (
-    <article className="rounded-xl border border-[var(--color-line)] bg-[var(--color-ink-soft)]/40 p-4">
+    <article className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)]/40 p-4">
       {editing ? (
         <DraftEditor draft={draft} onClose={() => setEditing(false)} />
       ) : (
@@ -103,7 +103,7 @@ function DraftView({ draft, onEdit }: { draft: SessionDraft; onEdit: () => void 
         <button
           type="button"
           onClick={() => void copy()}
-          className="flex shrink-0 items-center gap-1.5 rounded border border-[var(--color-line)] px-2.5 py-1 text-xs text-white/50 hover:border-white/30 hover:text-white/90"
+          className="flex shrink-0 items-center gap-1.5 rounded border border-[var(--color-line)] px-2.5 py-1 text-xs text-fg/65 hover:border-fg/30 hover:text-fg/90"
         >
           {copied ? (
             <>
@@ -120,7 +120,7 @@ function DraftView({ draft, onEdit }: { draft: SessionDraft; onEdit: () => void 
         <button
           type="button"
           onClick={onEdit}
-          className="flex shrink-0 items-center gap-1.5 rounded border border-[var(--color-line)] px-2.5 py-1 text-xs text-white/50 hover:border-white/30 hover:text-white/90"
+          className="flex shrink-0 items-center gap-1.5 rounded border border-[var(--color-line)] px-2.5 py-1 text-xs text-fg/65 hover:border-fg/30 hover:text-fg/90"
         >
           <Pencil size={13} aria-hidden />
           Edit
@@ -138,12 +138,12 @@ function DraftView({ draft, onEdit }: { draft: SessionDraft; onEdit: () => void 
         draft that misread the request is only diagnosable with both halves.
       */}
       {current.respondingToText && (
-        <p className="mb-2 border-l-2 border-[var(--color-line)] pl-2.5 text-xs text-white/35 italic">
+        <p className="mb-2 border-l-2 border-[var(--color-line)] pl-2.5 text-xs text-fg/55 italic">
           “{current.respondingToText}”
         </p>
       )}
 
-      <p className="whitespace-pre-wrap text-sm leading-relaxed text-white/85">{current.text}</p>
+      <p className="whitespace-pre-wrap text-sm leading-relaxed text-fg/85">{current.text}</p>
 
       <DraftHistory draft={draft} />
     </>
@@ -153,7 +153,7 @@ function DraftView({ draft, onEdit }: { draft: SessionDraft; onEdit: () => void 
 /** `v2.1 · edited by you · 14:32`, plus where a restore came from. */
 function VersionLine({ version }: { version: SessionDraftVersion }) {
   return (
-    <p className="mb-2 flex flex-wrap items-center gap-x-2 text-[11px] text-white/30">
+    <p className="mb-2 flex flex-wrap items-center gap-x-2 text-xs text-fg/50">
       <span className="font-mono">{version.version}</span>
       <span aria-hidden>·</span>
       <span>{version.author === "user" ? "edited by you" : "written by the agent"}</span>
@@ -224,7 +224,7 @@ function DraftEditor({ draft, onClose }: { draft: SessionDraft; onClose: () => v
         maxLength={MAX_DRAFT_TITLE_CHARS}
         aria-label="Draft title"
         placeholder="Draft"
-        className="w-full rounded border border-[var(--color-line)] bg-transparent px-2.5 py-1.5 text-sm font-medium outline-none focus:border-white/30"
+        className="w-full rounded border border-[var(--color-line)] bg-transparent px-2.5 py-1.5 text-sm font-medium outline-none focus:border-fg/30"
       />
       <textarea
         value={text}
@@ -235,7 +235,7 @@ function DraftEditor({ draft, onClose }: { draft: SessionDraft; onClose: () => v
         maxLength={MAX_DRAFT_CHARS}
         rows={10}
         aria-label="Draft text"
-        className="w-full resize-y rounded border border-[var(--color-line)] bg-transparent px-2.5 py-2 text-sm leading-relaxed outline-none focus:border-white/30"
+        className="w-full resize-y rounded border border-[var(--color-line)] bg-transparent px-2.5 py-2 text-sm leading-relaxed outline-none focus:border-fg/30"
       />
 
       {notice && <p className="text-xs text-amber-200/80">{notice}</p>}
@@ -245,14 +245,14 @@ function DraftEditor({ draft, onClose }: { draft: SessionDraft; onClose: () => v
           type="button"
           onClick={() => void save()}
           disabled={saving || !text.trim()}
-          className="rounded border border-[var(--color-line)] px-2.5 py-1 text-xs text-white/70 hover:border-white/30 hover:text-white/90 disabled:opacity-40"
+          className="rounded border border-[var(--color-line)] px-2.5 py-1 text-xs text-fg/70 hover:border-fg/30 hover:text-fg/90 disabled:opacity-40"
         >
           {saving ? "Saving…" : "Save"}
         </button>
         <button
           type="button"
           onClick={onClose}
-          className="rounded px-2.5 py-1 text-xs text-white/40 hover:text-white/70"
+          className="rounded px-2.5 py-1 text-xs text-fg/60 hover:text-fg/70"
         >
           Cancel
         </button>
@@ -273,7 +273,7 @@ function DraftHistory({ draft }: { draft: SessionDraft }) {
 
   return (
     <details className="mt-2">
-      <summary className="cursor-pointer list-none text-[10px] text-white/20 hover:text-white/50">
+      <summary className="cursor-pointer list-none text-xs text-fg/35 hover:text-fg/65">
         {draft.earlier.length} earlier version{draft.earlier.length === 1 ? "" : "s"}
       </summary>
       <ol className="mt-1 space-y-3 border-l border-[var(--color-line)] pl-2.5">
@@ -283,14 +283,14 @@ function DraftHistory({ draft }: { draft: SessionDraft }) {
               <div className="min-w-0 flex-1">
                 <VersionLine version={version} />
                 {version.respondingToText && (
-                  <p className="mb-1 text-[11px] text-white/25 italic">
+                  <p className="mb-1 text-xs text-fg/45 italic">
                     “{version.respondingToText}”
                   </p>
                 )}
               </div>
               <RestoreButton draftId={draft.id} base={draft.current.id} versionId={version.id} />
             </div>
-            <p className="whitespace-pre-wrap text-xs leading-relaxed text-white/40">
+            <p className="whitespace-pre-wrap text-xs leading-relaxed text-fg/60">
               {version.text}
             </p>
           </li>
@@ -348,7 +348,7 @@ function RestoreButton({
       type="button"
       onClick={() => void restore()}
       disabled={busy}
-      className="flex shrink-0 items-center gap-1 rounded border border-[var(--color-line)] px-2 py-0.5 text-[10px] text-white/40 hover:border-white/30 hover:text-white/80 disabled:opacity-40"
+      className="flex shrink-0 items-center gap-1 rounded border border-[var(--color-line)] px-2 py-0.5 text-xs text-fg/60 hover:border-fg/30 hover:text-fg/80 disabled:opacity-40"
     >
       <RotateCcw size={11} aria-hidden />
       {failed ? "Try again" : "Restore"}

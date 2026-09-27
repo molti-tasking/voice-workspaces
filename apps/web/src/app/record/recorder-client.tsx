@@ -86,7 +86,7 @@ export function RecorderClient() {
     // recorder, so the dock is on this screen too — with its own record button
     // suppressed, because the 224px one below is the transport here.
     <main className="no-touch-fuss flex min-h-dvh flex-col items-center justify-between p-6 pb-40">
-      <header className="flex w-full max-w-md items-center justify-between gap-3 text-sm text-white/50">
+      <header className="flex w-full max-w-md items-center justify-between gap-3 text-sm text-fg/65">
         {/* PRESENT OR ABSENT, never a shade of something. Everything else that
             said "recording" was a modifier of a control that is always there —
             a colour, a meter inside the button, a timer that starts counting —
@@ -116,9 +116,9 @@ export function RecorderClient() {
               disabled={isBusy}
               aria-label="Stop recording"
               className={[
-                "grid size-9 shrink-0 cursor-pointer place-items-center rounded-full text-white/80",
-                "transition-colors hover:bg-white/20 hover:text-white disabled:opacity-50",
-                hearing ? "bg-accent/40 ring-2 ring-accent/60" : "bg-white/10",
+                "grid size-9 shrink-0 cursor-pointer place-items-center rounded-full text-fg/80",
+                "transition-colors hover:bg-fg/20 hover:text-fg disabled:opacity-50",
+                hearing ? "bg-accent/40 ring-2 ring-accent/60" : "bg-fg/10",
               ].join(" ")}
             >
               <X size={18} aria-hidden />
@@ -136,18 +136,18 @@ export function RecorderClient() {
               disabled={isBusy}
               className={[
                 "relative flex size-56 cursor-pointer items-center justify-center rounded-full text-2xl font-medium",
-                "bg-ink-soft text-white ring-1 ring-line transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
+                "bg-surface text-fg ring-1 ring-line transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
               ].join(" ")}
             >
               {isBusy ? "…" : "Record"}
             </button>
 
-            <p className="h-5 text-center text-sm text-white/40">
+            <p className="h-5 text-center text-sm text-fg/60">
               {isBusy ? (
                 // A tap that opens a microphone takes about a second, and until
                 // now that second showed an ellipsis on a disabled button — which
                 // reads as "it did not hear me" and invites a second tap.
-                <span className="text-white/60">
+                <span className="text-fg/60">
                   {rec.status === "requesting" ? "Opening the microphone…" : "Saving…"}
                 </span>
               ) : (
@@ -204,14 +204,14 @@ export function RecorderClient() {
             <p className="mb-1 font-medium text-emerald-100">
               Saved {formatOffset(rec.lastSessionMs)}
             </p>
-            <p className="mb-3 text-white/60">
+            <p className="mb-3 text-fg/60">
               {rec.pendingUploads > 0
                 ? `${rec.pendingUploads} chunk${rec.pendingUploads === 1 ? "" : "s"} still uploading. The transcript fills in as they land.`
                 : "Transcription runs in the background; the transcript fills in as it goes."}
             </p>
             <Link
               href={`/sessions/${rec.lastSessionId}`}
-              className="inline-block rounded bg-white px-3 py-1.5 font-medium text-ink hover:bg-white/90"
+              className="inline-block rounded bg-fg px-3 py-1.5 font-medium text-canvas hover:bg-fg/90"
             >
               View transcript
             </Link>
@@ -252,7 +252,7 @@ export function RecorderClient() {
               <button
                 type="button"
                 onClick={() => void rec.dismissResumable()}
-                className="rounded bg-white/10 px-3 py-1.5 hover:bg-white/20"
+                className="rounded bg-fg/10 px-3 py-1.5 hover:bg-fg/20"
               >
                 Close it out
               </button>
@@ -306,15 +306,15 @@ function DebriefPanel({
           {leftSecs}s
         </span>
       </header>
-      <ol className="space-y-2.5 text-sm leading-relaxed text-white/80">
+      <ol className="space-y-2.5 text-sm leading-relaxed text-fg/80">
         {DEBRIEF_QUESTIONS.map((question, i) => (
           <li key={question} className="flex gap-3">
-            <span className="shrink-0 font-mono text-xs text-white/30">{i + 1}</span>
+            <span className="shrink-0 font-mono text-xs text-fg/50">{i + 1}</span>
             {question}
           </li>
         ))}
       </ol>
-      <p className="mt-3 text-xs text-white/40">
+      <p className="mt-3 text-xs text-fg/60">
         Say them out loud. These answers are the part of a drive the research
         team reads — nothing else is. &ldquo;Nothing today&rdquo; is a fine
         answer.
@@ -412,7 +412,7 @@ function Notice({
       ].join(" ")}
     >
       <p className="mb-1 font-medium">{title}</p>
-      <div className="text-white/70">{children}</div>
+      <div className="text-fg/70">{children}</div>
     </div>
   );
 }

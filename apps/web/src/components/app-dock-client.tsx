@@ -124,7 +124,7 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
 
   return (
     <div
-      className="vm-dock pointer-events-none fixed inset-x-0 bottom-0 z-40 flex flex-col items-center bg-gradient-to-t from-[var(--color-ink)] via-[var(--color-ink)]/55 to-transparent px-4 pt-14"
+      className="vm-dock pointer-events-none fixed inset-x-0 bottom-0 z-40 flex flex-col items-center bg-gradient-to-t from-[var(--color-canvas)] via-[var(--color-canvas)]/55 to-transparent px-4 pt-14"
       /* The scrim is what makes white text on the glass readable over an
          arbitrary page; the glass alone is not opaque enough at the bottom of
          a dense board. */
@@ -182,8 +182,8 @@ function DockTab({ tab, active }: { tab: Tab; active: boolean }) {
       className={[
         "flex w-[5.5rem] flex-col items-center gap-1 rounded-[1.375rem] px-2 py-2.5 transition-colors",
         active
-          ? "bg-white/10 text-white"
-          : "text-white/45 hover:bg-white/5 hover:text-white/80",
+          ? "bg-fg/10 text-fg"
+          : "text-fg/60 hover:bg-fg/5 hover:text-fg/80",
       ].join(" ")}
     >
       <Icon size={20} aria-hidden />
@@ -254,7 +254,7 @@ function RecordControl({
           "transition-transform active:scale-95 disabled:cursor-default disabled:opacity-50",
           "bg-[var(--color-accent)]",
           isRecording && !armed ? "vm-recording" : "",
-          armed ? "ring-2 ring-white ring-offset-2 ring-offset-transparent" : "",
+          armed ? "ring-2 ring-fg ring-offset-2 ring-offset-transparent" : "",
         ].join(" ")}
       >
         {isRecording && <MicLevel />}
@@ -292,7 +292,7 @@ function RecordControl({
       <span
         className={[
           "text-[0.6875rem] leading-none font-medium tabular-nums",
-          isRecording ? "text-white" : "text-white/60",
+          isRecording ? "text-fg" : "text-fg/60",
         ].join(" ")}
       >
         {label}
@@ -320,7 +320,7 @@ function CaptureSheet({ onClose }: { onClose: () => void }) {
     >
       {isRecording ? (
         <>
-          <p className="text-center text-sm text-white/70">
+          <p className="text-center text-sm text-fg/70">
             Recording. These are fixed for this drive.
           </p>
           <LockedSummary />
@@ -332,7 +332,7 @@ function CaptureSheet({ onClose }: { onClose: () => void }) {
           <Link
             href="/record"
             onClick={onClose}
-            className="w-full rounded-full bg-white/10 px-4 py-2 text-center text-sm font-medium text-white hover:bg-white/20"
+            className="w-full rounded-full bg-fg/10 px-4 py-2 text-center text-sm font-medium text-fg hover:bg-fg/20"
           >
             Open the live view
           </Link>

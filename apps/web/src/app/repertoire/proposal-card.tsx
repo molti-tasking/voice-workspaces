@@ -66,30 +66,30 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
           You keep doing this
         </p>
         <h3 className="mt-1 text-lg font-medium">{proposal.proposedName}</h3>
-        <p className="mt-0.5 text-sm text-white/70">{proposal.restatement}</p>
+        <p className="mt-0.5 text-sm text-fg/70">{proposal.restatement}</p>
       </header>
 
-      <p className="mb-3 text-xs text-white/35">
+      <p className="mb-3 text-xs text-fg/55">
         {proposal.occurrenceCount} time{proposal.occurrenceCount === 1 ? "" : "s"} across{" "}
         {proposal.sessionCount} recording{proposal.sessionCount === 1 ? "" : "s"}
       </p>
 
       {proposal.replay && (
-        <div className="mb-3 rounded-lg border border-[var(--color-line)] bg-black/20 p-3">
-          <p className="mb-1.5 text-[11px] text-white/30">
+        <div className="mb-3 rounded-lg border border-[var(--color-line)] bg-fg/5 p-3">
+          <p className="mb-1.5 text-xs text-fg/50">
             What it would have produced, from your own words:
           </p>
-          <pre className="text-[13px] leading-snug whitespace-pre-wrap text-white/70">
+          <pre className="text-[0.8125rem] leading-snug whitespace-pre-wrap text-fg/70">
             {proposal.replay.body}
           </pre>
         </div>
       )}
 
       <details className="mb-3">
-        <summary className="cursor-pointer list-none text-[11px] text-white/25 hover:text-white/50">
+        <summary className="cursor-pointer list-none text-xs text-fg/45 hover:text-fg/65">
           the capability itself
         </summary>
-        <pre className="mt-1.5 rounded bg-black/20 p-2.5 text-xs leading-snug whitespace-pre-wrap text-white/50">
+        <pre className="mt-1.5 rounded bg-fg/5 p-2.5 text-xs leading-snug whitespace-pre-wrap text-fg/65">
           {proposal.markdown}
         </pre>
       </details>
@@ -99,7 +99,7 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
           type="button"
           disabled={pending}
           onClick={() => decide(true)}
-          className="rounded bg-white px-3 py-1.5 text-sm font-medium text-[var(--color-ink)] hover:bg-white/90 disabled:opacity-50"
+          className="rounded bg-fg px-3 py-1.5 text-sm font-medium text-[var(--color-canvas)] hover:bg-fg/90 disabled:opacity-50"
         >
           Keep it
         </button>
@@ -107,7 +107,7 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
           type="button"
           disabled={pending}
           onClick={() => decide(false)}
-          className="rounded px-3 py-1.5 text-sm text-white/40 hover:text-white/70 disabled:opacity-50"
+          className="rounded px-3 py-1.5 text-sm text-fg/60 hover:text-fg/70 disabled:opacity-50"
         >
           No thanks
         </button>

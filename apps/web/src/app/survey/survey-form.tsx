@@ -138,16 +138,16 @@ export function SurveyForm() {
   };
 
   if (status === "loading") {
-    return <p className="text-sm text-white/40">Loading what you saved…</p>;
+    return <p className="text-sm text-fg/60">Loading what you saved…</p>;
   }
 
   return (
     <div className="space-y-10">
       <section aria-labelledby="moments">
-        <h2 id="moments" className="mb-1 text-sm font-medium tracking-wide text-white/40 uppercase">
+        <h2 id="moments" className="mb-1 text-sm font-medium tracking-wide text-fg/60 uppercase">
           The moments
         </h2>
-        <p className="mb-4 text-sm text-white/40">
+        <p className="mb-4 text-sm text-fg/60">
           One card per time you used it. Start with the one you remember best.
         </p>
 
@@ -167,7 +167,7 @@ export function SurveyForm() {
         <button
           type="button"
           onClick={addMoment}
-          className="mt-4 flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-ink-soft px-4 py-2.5 text-sm font-medium text-white/90 hover:border-white/30 hover:text-white"
+          className="mt-4 flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-medium text-fg/90 hover:border-fg/30 hover:text-fg"
         >
           <Plus size={15} aria-hidden />
           {answers.moments.length === 0 ? "Add the first moment" : "Add another moment"}
@@ -175,7 +175,7 @@ export function SurveyForm() {
       </section>
 
       <section aria-labelledby="overall" className="space-y-5">
-        <h2 id="overall" className="text-sm font-medium tracking-wide text-white/40 uppercase">
+        <h2 id="overall" className="text-sm font-medium tracking-wide text-fg/60 uppercase">
           Overall
         </h2>
         <Field
@@ -200,7 +200,7 @@ export function SurveyForm() {
           type="button"
           onClick={send}
           disabled={answers.moments.length === 0 || status === "saving"}
-          className="cursor-pointer rounded-full bg-white/12 px-5 py-2.5 text-sm font-medium text-white ring-1 ring-white/25 hover:bg-white/20 disabled:cursor-default disabled:opacity-40"
+          className="cursor-pointer rounded-full bg-fg/12 px-5 py-2.5 text-sm font-medium text-fg ring-1 ring-fg/25 hover:bg-fg/20 disabled:cursor-default disabled:opacity-40"
         >
           {submittedAt ? "Send again" : "Send"}
         </button>
@@ -223,10 +223,10 @@ function MomentCard({
   onRemove: () => void;
 }) {
   return (
-    <article className="rounded-xl border border-line bg-ink-soft/40 p-5">
+    <article className="rounded-xl border border-line bg-surface/40 p-5">
       <header className="mb-5 flex items-baseline justify-between gap-3">
         <h3 className="flex items-baseline gap-3 text-base font-medium">
-          <span className="font-mono text-xs text-white/25 tabular-nums" aria-hidden>
+          <span className="font-mono text-xs text-fg/45 tabular-nums" aria-hidden>
             {n}
           </span>
           {moment.when?.trim() ? moment.when : "A moment"}
@@ -235,7 +235,7 @@ function MomentCard({
           type="button"
           onClick={onRemove}
           aria-label={`Remove moment ${n}`}
-          className="cursor-pointer rounded p-1 text-white/25 hover:text-white/70"
+          className="cursor-pointer rounded p-1 text-fg/45 hover:text-fg/70"
         >
           <Trash2 size={15} aria-hidden />
         </button>
@@ -359,21 +359,21 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-sm text-white/70">{label}</span>
-      {hint && <span className="mb-1.5 block text-xs text-white/35">{hint}</span>}
+      <span className="mb-1.5 block text-sm text-fg/70">{label}</span>
+      {hint && <span className="mb-1.5 block text-xs text-fg/55">{hint}</span>}
       <textarea
         value={value}
         rows={rows}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full resize-y rounded-lg border border-line bg-black/20 px-3 py-2 text-sm leading-relaxed text-white placeholder:text-white/25 focus:border-white/30 focus:outline-none"
+        className="w-full resize-y rounded-lg border border-line bg-fg/5 px-3 py-2 text-sm leading-relaxed text-fg placeholder:text-fg/25 focus:border-fg/30 focus:outline-none"
       />
     </label>
   );
 }
 
 const CHIP = "cursor-pointer rounded-full px-3 py-1.5 text-sm transition-colors";
-const CHIP_ON = "bg-white/12 text-white ring-1 ring-white/25";
-const CHIP_OFF = "text-white/40 hover:text-white/70 ring-1 ring-white/10";
+const CHIP_ON = "bg-fg/12 text-fg ring-1 ring-fg/25";
+const CHIP_OFF = "text-fg/60 hover:text-fg/70 ring-1 ring-fg/10";
 
 function Chips<T extends string>({
   label,
@@ -390,7 +390,7 @@ function Chips<T extends string>({
 }) {
   return (
     <fieldset>
-      <legend className="mb-2 text-sm text-white/70">{label}</legend>
+      <legend className="mb-2 text-sm text-fg/70">{label}</legend>
       <div className="flex flex-wrap gap-1.5">
         {options.map((option) => (
           <button
@@ -425,7 +425,7 @@ function MultiChips<T extends string>({
     onChange(value.includes(option) ? value.filter((v) => v !== option) : [...value, option]);
   return (
     <fieldset>
-      <legend className="mb-2 text-sm text-white/70">{label}</legend>
+      <legend className="mb-2 text-sm text-fg/70">{label}</legend>
       <div className="flex flex-wrap gap-1.5">
         {options.map((option) => {
           const on = value.includes(option);
@@ -462,7 +462,7 @@ function Scale({
 }) {
   return (
     <fieldset>
-      <legend className="mb-2 text-sm text-white/70">{label}</legend>
+      <legend className="mb-2 text-sm text-fg/70">{label}</legend>
       <div className="flex gap-1.5">
         {Array.from({ length: 7 }, (_, i) => i + 1).map((n) => (
           <button
@@ -472,14 +472,14 @@ function Scale({
             onClick={() => onPick(n)}
             className={[
               "grid size-10 cursor-pointer place-items-center rounded-lg text-sm tabular-nums transition-colors",
-              n === value ? CHIP_ON : "text-white/40 ring-1 ring-white/10 hover:text-white/70",
+              n === value ? CHIP_ON : "text-fg/60 ring-1 ring-fg/10 hover:text-fg/70",
             ].join(" ")}
           >
             {n}
           </button>
         ))}
       </div>
-      <div className="mt-1 flex justify-between text-[11px] text-white/30">
+      <div className="mt-1 flex justify-between text-xs text-fg/50">
         <span>{low}</span>
         <span>{high}</span>
       </div>
@@ -491,7 +491,7 @@ function SaveState({ status, submittedAt }: { status: Status; submittedAt: strin
   if (status === "error") {
     return <p className="text-sm text-red-300">Could not save. Check the connection and try again.</p>;
   }
-  if (status === "saving") return <p className="text-sm text-white/40">Saving…</p>;
+  if (status === "saving") return <p className="text-sm text-fg/60">Saving…</p>;
   if (status === "sent" && submittedAt) {
     return (
       <p className="flex items-center gap-1.5 text-sm text-emerald-200">
@@ -500,6 +500,6 @@ function SaveState({ status, submittedAt }: { status: Status; submittedAt: strin
       </p>
     );
   }
-  if (status === "saved") return <p className="text-sm text-white/40">Saved.</p>;
+  if (status === "saved") return <p className="text-sm text-fg/60">Saved.</p>;
   return null;
 }

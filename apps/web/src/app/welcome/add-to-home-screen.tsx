@@ -83,7 +83,7 @@ export function AddToHomeScreen({ host }: { host: string }) {
         </div>
       </div>
 
-      <p className="mb-4 text-sm leading-relaxed text-white/50">
+      <p className="mb-4 text-sm leading-relaxed text-fg/65">
         The installed icon opens straight into the recorder, full screen, so a drive
         starts with one tap instead of with finding a browser tab. Fifteen seconds,
         once.
@@ -100,7 +100,7 @@ export function AddToHomeScreen({ host }: { host: string }) {
         <button
           type="button"
           onClick={prompt.install}
-          className="mb-4 flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-ink-soft px-4 py-2.5 text-sm font-medium text-white/90 hover:border-white/30 hover:text-white"
+          className="mb-4 flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-medium text-fg/90 hover:border-fg/30 hover:text-fg"
         >
           <SquarePlus size={15} aria-hidden />
           {onDesk ? "Install it on this computer" : "Add to home screen"}
@@ -111,7 +111,7 @@ export function AddToHomeScreen({ host }: { host: string }) {
         // The button above does this for them; the steps stay reachable for the
         // case where it opens a dialog they were not expecting and back out of.
         <details>
-          <summary className="w-fit cursor-pointer text-xs text-white/30 hover:text-white/60">
+          <summary className="w-fit cursor-pointer text-xs text-fg/50 hover:text-fg/60">
             Or add it by hand
           </summary>
           <div className="mt-4">
@@ -178,9 +178,9 @@ function IosSteps() {
 
         <Step n={3} instruction="Tap “Add”, top right. The icon lands on your home screen.">
           <Mock>
-            <div className="flex items-center justify-between gap-2 border-b border-white/5 pb-2 text-[11px]">
-              <span className="text-white/25">Cancel</span>
-              <span className="truncate text-white/40">Add to Home Screen</span>
+            <div className="flex items-center justify-between gap-2 border-b border-fg/5 pb-2 text-xs">
+              <span className="text-fg/45">Cancel</span>
+              <span className="truncate text-fg/60">Add to Home Screen</span>
               <Chip>Add</Chip>
             </div>
             <AppRow />
@@ -188,7 +188,7 @@ function IosSteps() {
         </Step>
       </ol>
 
-      <p className="mt-4 text-xs leading-relaxed text-white/30">
+      <p className="mt-4 text-xs leading-relaxed text-fg/50">
         Opened this link from a message or an email? Some apps open links in a browser
         of their own, which has no “Add to Home Screen” — tap the share button and
         choose “Open in Safari” first.
@@ -209,7 +209,7 @@ function AndroidSteps({ host }: { host: string }) {
       <Step n={1} instruction="Tap the three-dot menu in the top right of Chrome.">
         <Mock>
           <div className="flex items-center gap-2">
-            <span className="min-w-0 flex-1 truncate rounded-full bg-white/5 px-3 py-1.5 text-[11px] text-white/30">
+            <span className="min-w-0 flex-1 truncate rounded-full bg-fg/5 px-3 py-1.5 text-xs text-fg/50">
               {host}
             </span>
             <Glyph hit>
@@ -239,8 +239,8 @@ function AndroidSteps({ host }: { host: string }) {
       <Step n={3} instruction="Tap “Install”. The icon lands on your home screen.">
         <Mock>
           <AppRow host={host} />
-          <div className="mt-2.5 flex items-center justify-end gap-2 text-[11px]">
-            <span className="px-2 py-0.5 text-white/25">Cancel</span>
+          <div className="mt-2.5 flex items-center justify-end gap-2 text-xs">
+            <span className="px-2 py-0.5 text-fg/45">Cancel</span>
             <Chip>Install</Chip>
           </div>
         </Mock>
@@ -269,11 +269,11 @@ function Step({
 }) {
   return (
     <li className="flex gap-3">
-      <span className="mt-0.5 font-mono text-xs text-white/25 tabular-nums" aria-hidden>
+      <span className="mt-0.5 font-mono text-xs text-fg/45 tabular-nums" aria-hidden>
         {n}
       </span>
       <div className="min-w-0 flex-1">
-        <p className="mb-2 text-sm leading-relaxed text-white/60">{instruction}</p>
+        <p className="mb-2 text-sm leading-relaxed text-fg/60">{instruction}</p>
         {children}
       </div>
     </li>
@@ -292,7 +292,7 @@ function Mock({ children }: { children: React.ReactNode }) {
   return (
     <div
       aria-hidden
-      className="pointer-events-none rounded-lg border border-white/10 bg-black/40 p-2 select-none"
+      className="pointer-events-none rounded-lg border border-fg/10 bg-black/40 p-2 select-none"
     >
       {children}
     </div>
@@ -302,7 +302,7 @@ function Mock({ children }: { children: React.ReactNode }) {
 /** A stack of menu rows, hairline-separated the way both platforms draw them. */
 function Rows({ children }: { children: React.ReactNode }) {
   return (
-    <div className="divide-y divide-white/5 rounded-md bg-white/3">{children}</div>
+    <div className="divide-y divide-fg/5 rounded-md bg-fg/3">{children}</div>
   );
 }
 
@@ -319,10 +319,10 @@ function Row({
   return (
     <div
       className={[
-        "flex items-center justify-between gap-3 px-2.5 py-2 text-[13px]",
+        "flex items-center justify-between gap-3 px-2.5 py-2 text-[0.8125rem]",
         hit
-          ? "rounded-md bg-white/10 text-white ring-2 ring-white/60"
-          : "text-white/30",
+          ? "rounded-md bg-fg/10 text-fg ring-2 ring-fg/60"
+          : "text-fg/50",
       ].join(" ")}
     >
       <span className="truncate">{children}</span>
@@ -337,7 +337,7 @@ function Glyph({ hit = false, children }: { hit?: boolean; children: React.React
     <span
       className={[
         "grid size-8 shrink-0 place-items-center rounded-lg",
-        hit ? "bg-white/10 text-white ring-2 ring-white/60" : "text-white/25",
+        hit ? "bg-fg/10 text-fg ring-2 ring-fg/60" : "text-fg/45",
       ].join(" ")}
     >
       {children}
@@ -348,7 +348,7 @@ function Glyph({ hit = false, children }: { hit?: boolean; children: React.React
 /** The button that finishes the job, drawn as the phone highlights it. */
 function Chip({ children }: { children: React.ReactNode }) {
   return (
-    <span className="shrink-0 rounded-md bg-white/10 px-2 py-0.5 text-white ring-2 ring-white/60">
+    <span className="shrink-0 rounded-md bg-fg/10 px-2 py-0.5 text-fg ring-2 ring-fg/60">
       {children}
     </span>
   );
@@ -371,8 +371,8 @@ function AppRow({ host }: { host?: string }) {
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src="/icons/icon-192.png" alt="" width={36} height={36} className="size-9 rounded-[9px]" />
       <div className="min-w-0">
-        <p className="truncate text-[13px] text-white/60">{SITE.name}</p>
-        {host && <p className="truncate text-[10px] text-white/25">{host}</p>}
+        <p className="truncate text-[0.8125rem] text-fg/60">{SITE.name}</p>
+        {host && <p className="truncate text-xs text-fg/45">{host}</p>}
       </div>
     </div>
   );
@@ -397,8 +397,8 @@ function PhoneTab({
       className={[
         "cursor-pointer rounded-full px-3 py-1 text-xs transition-colors",
         active
-          ? "bg-white/12 text-white ring-1 ring-white/25"
-          : "text-white/40 hover:text-white/70",
+          ? "bg-fg/12 text-fg ring-1 ring-fg/25"
+          : "text-fg/60 hover:text-fg/70",
       ].join(" ")}
     >
       {phone === "ios" ? "iPhone" : "Android"}

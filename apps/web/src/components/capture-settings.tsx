@@ -50,7 +50,7 @@ export function VoicePicker() {
       disabled={isBusy || isRecording}
     >
       <legend className="sr-only">Which voice?</legend>
-      <span className="mr-1 text-white/30">Voice</span>
+      <span className="mr-1 text-fg/50">Voice</span>
       {VOICES.map((voice) => {
         const active = voice.id === voiceId;
         return (
@@ -63,8 +63,8 @@ export function VoicePicker() {
             className={[
               "cursor-pointer rounded-full px-3 py-1 transition-colors disabled:cursor-default disabled:opacity-50",
               active
-                ? "bg-white/12 text-white ring-1 ring-white/25"
-                : "text-white/40 hover:text-white/70",
+                ? "bg-fg/12 text-fg ring-1 ring-fg/25"
+                : "text-fg/60 hover:text-fg/70",
             ].join(" ")}
           >
             {voice.label}
@@ -98,7 +98,7 @@ export function LanguagePicker() {
       disabled={isBusy || isRecording}
     >
       <legend className="sr-only">Which language?</legend>
-      <span className="mr-1 text-white/30">Language</span>
+      <span className="mr-1 text-fg/50">Language</span>
       <button
         type="button"
         aria-pressed={auto}
@@ -107,8 +107,8 @@ export function LanguagePicker() {
         className={[
           "cursor-pointer rounded-full px-3 py-1 transition-colors disabled:cursor-default disabled:opacity-50",
           auto
-            ? "bg-white/12 text-white ring-1 ring-white/25"
-            : "text-white/40 hover:text-white/70",
+            ? "bg-fg/12 text-fg ring-1 ring-fg/25"
+            : "text-fg/60 hover:text-fg/70",
         ].join(" ")}
       >
         Auto
@@ -125,8 +125,8 @@ export function LanguagePicker() {
             className={[
               "cursor-pointer rounded-full px-3 py-1 transition-colors disabled:cursor-default disabled:opacity-50",
               active
-                ? "bg-white/12 text-white ring-1 ring-white/25"
-                : "text-white/40 hover:text-white/70",
+                ? "bg-fg/12 text-fg ring-1 ring-fg/25"
+                : "text-fg/60 hover:text-fg/70",
             ].join(" ")}
           >
             {language.label}
@@ -157,12 +157,12 @@ export function LockedSummary() {
     <dl className="grid w-full max-w-md grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
       {TALKBACK_ENABLED && (
         <>
-          <dt className="text-white/30">Voice</dt>
-          <dd className="text-white/70">{voice?.label ?? "Default"}</dd>
+          <dt className="text-fg/50">Voice</dt>
+          <dd className="text-fg/70">{voice?.label ?? "Default"}</dd>
         </>
       )}
-      <dt className="text-white/30">Language</dt>
-      <dd className="text-white/70">{language}</dd>
+      <dt className="text-fg/50">Language</dt>
+      <dd className="text-fg/70">{language}</dd>
     </dl>
   );
 }
@@ -203,7 +203,7 @@ export function ConditionToggles() {
             disabled={isBusy || isRecording}
           >
             <legend className="sr-only">{flag}</legend>
-            <span className="font-mono text-xs text-white/50">{flag}</span>
+            <span className="font-mono text-xs text-fg/65">{flag}</span>
             <div className="flex gap-1">
               {(
                 [
@@ -220,8 +220,8 @@ export function ConditionToggles() {
                   className={[
                     "cursor-pointer rounded px-2 py-1 text-xs transition-colors disabled:opacity-50",
                     (next === null && value === undefined) || value === next
-                      ? "bg-white/15 text-white"
-                      : "text-white/40 hover:text-white/70",
+                      ? "bg-fg/15 text-fg"
+                      : "text-fg/60 hover:text-fg/70",
                   ].join(" ")}
                 >
                   {label}
@@ -231,7 +231,7 @@ export function ConditionToggles() {
           </fieldset>
         );
       })}
-      <p className="text-xs text-white/30">
+      <p className="text-xs text-fg/50">
         &ldquo;—&rdquo; leaves the participant&rsquo;s own condition in place.
       </p>
     </div>

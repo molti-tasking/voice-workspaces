@@ -49,11 +49,11 @@ export default async function SurveyPage() {
   return (
     <div className="mx-auto max-w-2xl px-6 pt-10 pb-40">
       <header className="mb-8">
-        <p className="mb-2 text-sm font-medium tracking-wide text-white/40 uppercase">
+        <p className="mb-2 text-sm font-medium tracking-wide text-fg/60 uppercase">
           A few questions
         </p>
         <h1 className="text-2xl font-semibold">Where and when did you use it?</h1>
-        <p className="mt-2 leading-relaxed text-white/60">
+        <p className="mt-2 leading-relaxed text-fg/60">
           Think back to the moments you actually had VoiceMural on. Add each
           one you can remember, and tell us a little about it. Half-sentences
           are fine, and you can skip anything. It saves as you go, so you can
@@ -65,7 +65,7 @@ export default async function SurveyPage() {
         <SurveyForm />
       ) : (
         <section className="space-y-3">
-          <p className="text-sm text-white/40">
+          <p className="text-sm text-fg/60">
             Your answers are kept with your recordings, so you need to be the
             same person here as you were in the app. Starting as a guest needs
             no account.

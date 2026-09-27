@@ -81,7 +81,7 @@ export function SignInButton({
         capture("sign_in_started", { provider, location });
         void signIn.social({ provider, callbackURL: "/" });
       }}
-      className="cursor-pointer w-full rounded-lg border border-line bg-ink-soft px-5 py-3 font-medium text-white hover:bg-white/10 disabled:opacity-60"
+      className="cursor-pointer w-full rounded-lg border border-line bg-surface px-5 py-3 font-medium text-fg hover:bg-fg/10 disabled:opacity-60"
     >
       {pending
         ? "Redirecting…"

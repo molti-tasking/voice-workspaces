@@ -130,7 +130,7 @@ export default async function SessionPage({
         }}
       />
 
-      <Link href="/" className="text-sm text-white/40 underline-offset-4 hover:underline">
+      <Link href="/" className="text-sm text-fg/60 underline-offset-4 hover:underline">
         ← Sessions
       </Link>
 
@@ -141,7 +141,7 @@ export default async function SessionPage({
             timeStyle: "short",
           })}
         </h1>
-        <p className="mt-1 text-sm text-white/40">
+        <p className="mt-1 text-sm text-fg/60">
           {formatOffset(recordedMs)} recorded · {chunks.length} chunks ·{" "}
           {rows.length} utterances
           {turns.length > 0 && ` · ${turns.length} agent turn${turns.length === 1 ? "" : "s"}`}
@@ -164,7 +164,7 @@ export default async function SessionPage({
         {untranscribed.length > 0 && (
           <Banner tone="info" title={`${untranscribed.length} chunk(s) awaiting transcription`}>
             The worker picks these up automatically. If they sit here, check that
-            <code className="mx-1 rounded bg-white/10 px-1">apps/worker</code>is running.
+            <code className="mx-1 rounded bg-fg/10 px-1">apps/worker</code>is running.
           </Banner>
         )}
 
@@ -217,7 +217,7 @@ function Banner({
   return (
     <div className={`rounded-lg border p-3 ${styles[tone]}`}>
       <p className="mb-1 font-medium">{title}</p>
-      <div className="text-white/60">{children}</div>
+      <div className="text-fg/60">{children}</div>
     </div>
   );
 }

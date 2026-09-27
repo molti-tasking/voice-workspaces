@@ -49,7 +49,7 @@ export default async function RepertoirePage() {
   if (!user) {
     return (
       <main className="mx-auto max-w-lg px-6 py-16 text-center">
-        <p className="text-white/60">
+        <p className="text-fg/60">
           <Link href="/" className="underline">
             Sign in
           </Link>{" "}
@@ -140,7 +140,7 @@ export default async function RepertoirePage() {
       <header className="mb-8 flex flex-wrap items-baseline justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Repertoire</h1>
-          <p className="mt-1 text-sm text-white/40">
+          <p className="mt-1 text-sm text-fg/60">
             {capabilities.length} capabilit{capabilities.length === 1 ? "y" : "ies"} ·{" "}
             {totalFires} use{totalFires === 1 ? "" : "s"}
             {proposals.length > 0 && ` · ${proposals.length} waiting on you`}
@@ -159,8 +159,8 @@ export default async function RepertoirePage() {
       )}
 
       {growth.length > 1 && (
-        <section className="mb-10 rounded-xl border border-[var(--color-line)] bg-[var(--color-ink-soft)]/30 p-4">
-          <h2 className="mb-2 text-sm font-medium text-white/50">How it grew</h2>
+        <section className="mb-10 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)]/30 p-4">
+          <h2 className="mb-2 text-sm font-medium text-fg/65">How it grew</h2>
           <GrowthCurve points={growth} />
         </section>
       )}
@@ -181,8 +181,8 @@ export default async function RepertoirePage() {
 
             return (
               <section key={section.type}>
-                <h2 className="text-sm font-medium text-white/50">{section.title}</h2>
-                <p className="mb-3 text-xs text-white/25">{section.blurb}</p>
+                <h2 className="text-sm font-medium text-fg/65">{section.title}</h2>
+                <p className="mb-3 text-xs text-fg/45">{section.blurb}</p>
                 <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
                   {inSection.map((capability) => (
                     <CapabilityCard key={capability.id} capability={capability} />
@@ -203,7 +203,7 @@ function EmptyState() {
   return (
     <div className="rounded-xl border border-dashed border-[var(--color-line)] p-10 text-center">
       <p className="mb-1 font-medium">Nothing here yet</p>
-      <p className="text-sm text-white/40">
+      <p className="text-sm text-fg/60">
         The starter repertoire installs on first sign-in, and grows from what you
         actually ask for.{" "}
         <Link href="/record" className="underline">

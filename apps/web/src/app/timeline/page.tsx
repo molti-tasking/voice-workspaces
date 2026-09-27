@@ -50,7 +50,7 @@ export default async function TimelinePage({
   if (!user) {
     return (
       <main className="mx-auto max-w-lg px-6 py-16 text-center">
-        <p className="text-white/60">
+        <p className="text-fg/60">
           <Link href="/" className="underline">
             Sign in
           </Link>{" "}
@@ -118,7 +118,7 @@ export default async function TimelinePage({
       <header className="mb-8 flex flex-wrap items-baseline justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Timeline</h1>
-          <p className="mt-1 text-sm text-white/40">
+          <p className="mt-1 text-sm text-fg/60">
             {allSessions.length} drive{allSessions.length === 1 ? "" : "s"} ·{" "}
             {markers.filter((m) => m.opCount > 0).length} workspace update
             {markers.filter((m) => m.opCount > 0).length === 1 ? "" : "s"}
@@ -163,7 +163,7 @@ function EmptyState() {
         <NavMenu />
       </div>
       <h1 className="mb-2 text-2xl font-semibold">Timeline</h1>
-      <p className="text-sm text-white/40">
+      <p className="text-sm text-fg/60">
         Nothing recorded yet.{" "}
         <Link href="/record" className="underline">
           Start recording

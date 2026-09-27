@@ -57,13 +57,13 @@ export function CuePanel({ cues }: { cues: CueState }) {
       aria-label="Captured so far"
     >
       <div
-        className="flex flex-col justify-end gap-1.5 rounded-xl border border-[var(--color-line)] bg-[var(--color-ink-soft)]/30 px-3 py-2.5"
+        className="flex flex-col justify-end gap-1.5 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)]/30 px-3 py-2.5"
         // Height reserved from the first render, so a cue arriving never
         // reflows the record button above it.
         style={{ minHeight: `${rules.minRows * 1.65}rem` }}
       >
         {empty ? (
-          <p className="text-center text-[13px] text-white/25">
+          <p className="text-center text-[0.8125rem] text-fg/45">
             {cues.pending > 0 ? "Listening…" : "Nothing captured yet."}
           </p>
         ) : cues.density === "read" ? (
@@ -90,12 +90,12 @@ function GlanceView({ cues }: { cues: CueState }) {
       {cues.content.map((cue) => (
         <p
           key={cue.id}
-          className="truncate text-sm leading-snug text-white/85 motion-reduce:animate-none"
+          className="truncate text-sm leading-snug text-fg/85 motion-reduce:animate-none"
           style={{ animation: `vm-cue-in ${ENTER_MS}ms ease-out` }}
         >
           {/* Prefixed before the cut, so the column survives the eight words. */}
           {cue.kind === "task" && (
-            <span className="font-mono text-[10px] text-white/40">{cue.state ?? "open"} </span>
+            <span className="font-mono text-xs text-fg/60">{cue.state ?? "open"} </span>
           )}
           {toGlance(cue.text, DISPLAY_RULES.glance.maxWords)}
         </p>
@@ -135,7 +135,7 @@ function ReadView({ cues }: { cues: CueState }) {
 
       {groups.map((group) => (
         <section key={group.topic} className="space-y-1">
-          <h3 className="text-[11px] tracking-wide text-white/30 uppercase">{group.topic}</h3>
+          <h3 className="text-xs tracking-wide text-fg/50 uppercase">{group.topic}</h3>
           {group.cues.map((cue) => (
             <ContentRow key={cue.id} cue={cue} />
           ))}
@@ -170,8 +170,8 @@ function ContentRow({ cue }: { cue: Cue }) {
         className="flex items-baseline gap-2 text-sm leading-snug motion-reduce:animate-none"
         style={style}
       >
-        <span className="shrink-0 font-mono text-[10px] text-white/40">{cue.state ?? "open"}</span>
-        <span className="text-white/85">{cue.text}</span>
+        <span className="shrink-0 font-mono text-xs text-fg/60">{cue.state ?? "open"}</span>
+        <span className="text-fg/85">{cue.text}</span>
       </p>
     );
   }
@@ -180,11 +180,11 @@ function ContentRow({ cue }: { cue: Cue }) {
   if (cue.kind === "fact" && cue.label) {
     return (
       <p
-        className="flex gap-2 text-[13px] leading-snug motion-reduce:animate-none"
+        className="flex gap-2 text-[0.8125rem] leading-snug motion-reduce:animate-none"
         style={style}
       >
-        <span className="shrink-0 text-white/30">{cue.label}</span>
-        <span className="text-white/70">{cue.text}</span>
+        <span className="shrink-0 text-fg/50">{cue.label}</span>
+        <span className="text-fg/70">{cue.text}</span>
       </p>
     );
   }
@@ -196,7 +196,7 @@ function ContentRow({ cue }: { cue: Cue }) {
     <p
       className={[
         "text-sm leading-snug motion-reduce:animate-none",
-        aside ? "text-[13px] text-white/40" : "text-white/85",
+        aside ? "text-[0.8125rem] text-fg/60" : "text-fg/85",
       ].join(" ")}
       style={style}
     >
@@ -225,7 +225,7 @@ function ContentRow({ cue }: { cue: Cue }) {
 function DirectionRow({ cue, density }: { cue: Cue; density: Density }) {
   return (
     <p
-      className="flex items-baseline gap-1.5 font-mono text-[13px] leading-snug text-sky-300/70 motion-reduce:animate-none"
+      className="flex items-baseline gap-1.5 font-mono text-[0.8125rem] leading-snug text-sky-300/70 motion-reduce:animate-none"
       style={{ animation: `vm-cue-in ${ENTER_MS}ms ease-out` }}
     >
       <span aria-hidden className="shrink-0 opacity-50">
@@ -235,7 +235,7 @@ function DirectionRow({ cue, density }: { cue: Cue; density: Density }) {
         {toGlance(cue.text, DISPLAY_RULES[density].maxWords)}
       </span>
       {cue.resolved === false && (
-        <span aria-hidden className="shrink-0 text-[10px] text-white/20">
+        <span aria-hidden className="shrink-0 text-xs text-fg/35">
           new
         </span>
       )}

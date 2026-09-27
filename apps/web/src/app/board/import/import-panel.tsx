@@ -112,7 +112,7 @@ export function ImportPanel() {
   return (
     <div className="space-y-6">
       <section>
-        <label htmlFor="paste" className="mb-2 block text-sm text-white/60">
+        <label htmlFor="paste" className="mb-2 block text-sm text-fg/60">
           Paste your board or list
         </label>
         <textarea
@@ -122,18 +122,18 @@ export function ImportPanel() {
           rows={12}
           spellCheck={false}
           placeholder={PLACEHOLDER}
-          className="w-full rounded-xl border border-line bg-ink-soft/40 p-3 font-mono text-sm text-white/80 placeholder:text-white/20 focus:border-white/30 focus:outline-none"
+          className="w-full rounded-xl border border-line bg-surface/40 p-3 font-mono text-sm text-fg/80 placeholder:text-fg/20 focus:border-fg/30 focus:outline-none"
         />
         <div className="mt-3 flex items-center gap-3">
           <button
             type="button"
             onClick={read}
             disabled={!text.trim()}
-            className="rounded-full border border-line px-4 py-1.5 text-sm text-white/80 hover:border-white/30 disabled:opacity-30"
+            className="rounded-full border border-line px-4 py-1.5 text-sm text-fg/80 hover:border-fg/30 disabled:opacity-30"
           >
             Read it
           </button>
-          <p className="text-xs text-white/30">
+          <p className="text-xs text-fg/50">
             Nothing is saved until you say so, and the paste itself never leaves this device.
           </p>
         </div>
@@ -145,11 +145,11 @@ export function ImportPanel() {
             <h2 className="text-sm font-medium">
               {keeping.length} task{keeping.length === 1 ? "" : "s"} to add
             </h2>
-            <p className="text-xs text-white/30">read as {FORMAT_NAMES[parsed.format]}</p>
+            <p className="text-xs text-fg/50">read as {FORMAT_NAMES[parsed.format]}</p>
           </header>
 
           {rows.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-line p-6 text-center text-sm text-white/40">
+            <p className="rounded-xl border border-dashed border-line p-6 text-center text-sm text-fg/60">
               Nothing in that looked like a task. Try a list, one task per line.
             </p>
           ) : (
@@ -168,7 +168,7 @@ export function ImportPanel() {
                     </span>
 
                     {row.topic && (
-                      <span className="rounded-full border border-line px-2 py-0.5 text-[11px] text-white/40">
+                      <span className="rounded-full border border-line px-2 py-0.5 text-xs text-fg/60">
                         {row.topic}
                       </span>
                     )}
@@ -181,7 +181,7 @@ export function ImportPanel() {
                       value={row.state}
                       disabled={row.dropped}
                       onChange={(e) => setRow(row.key, { state: e.target.value as ImportedTask["state"] })}
-                      className="rounded-full border border-line bg-ink-soft/40 px-2 py-1 text-xs text-white/70"
+                      className="rounded-full border border-line bg-surface/40 px-2 py-1 text-xs text-fg/70"
                     >
                       {STATES.map((state) => (
                         <option key={state} value={state}>
@@ -193,7 +193,7 @@ export function ImportPanel() {
                     <button
                       type="button"
                       onClick={() => setRow(row.key, { dropped: !row.dropped })}
-                      className="text-xs text-white/30 underline-offset-4 hover:text-white/60 hover:underline"
+                      className="text-xs text-fg/50 underline-offset-4 hover:text-fg/60 hover:underline"
                     >
                       {row.dropped ? "keep" : "not a task"}
                     </button>
@@ -203,7 +203,7 @@ export function ImportPanel() {
 
               <div className="mt-4 flex flex-wrap items-end gap-4">
                 <div>
-                  <label htmlFor="topic" className="mb-1 block text-xs text-white/40">
+                  <label htmlFor="topic" className="mb-1 block text-xs text-fg/60">
                     Topic for anything that did not name one
                   </label>
                   <input
@@ -212,7 +212,7 @@ export function ImportPanel() {
                     onChange={(e) => setTopic(e.target.value)}
                     maxLength={80}
                     placeholder={DEFAULT_IMPORT_TOPIC}
-                    className="rounded-full border border-line bg-ink-soft/40 px-3 py-1.5 text-sm text-white/80 placeholder:text-white/20 focus:border-white/30 focus:outline-none"
+                    className="rounded-full border border-line bg-surface/40 px-3 py-1.5 text-sm text-fg/80 placeholder:text-fg/20 focus:border-fg/30 focus:outline-none"
                   />
                 </div>
 
@@ -220,7 +220,7 @@ export function ImportPanel() {
                   type="button"
                   onClick={send}
                   disabled={busy || keeping.length === 0}
-                  className="rounded-full border border-white/30 px-4 py-1.5 text-sm hover:border-white/60 disabled:opacity-30"
+                  className="rounded-full border border-fg/30 px-4 py-1.5 text-sm hover:border-fg/60 disabled:opacity-30"
                 >
                   {busy ? "Adding…" : `Add ${keeping.length} to the board`}
                 </button>
@@ -251,14 +251,14 @@ export function ImportPanel() {
 function Skipped({ skipped }: { skipped: SkippedTask[] }) {
   if (skipped.length === 0) return null;
   return (
-    <details className="mt-4 text-xs text-white/40">
+    <details className="mt-4 text-xs text-fg/60">
       <summary className="cursor-pointer">
         {skipped.length} line{skipped.length === 1 ? "" : "s"} left out
       </summary>
       <ul className="mt-2 space-y-1">
         {skipped.map((s, i) => (
           <li key={`${s.reason}-${i}`} className="truncate">
-            <span className="text-white/60">{s.text}</span> — {SKIP_REASONS[s.reason]}
+            <span className="text-fg/60">{s.text}</span> — {SKIP_REASONS[s.reason]}
           </li>
         ))}
       </ul>
@@ -273,7 +273,7 @@ function Done({ outcome, onAgain }: { outcome: Outcome; onAgain: () => void }) {
         {outcome.imported} card{outcome.imported === 1 ? "" : "s"} added
         {outcome.topicsCreated.length > 0 && ` · ${outcome.topicsCreated.join(", ")}`}
       </p>
-      <p className="mt-1 text-sm text-white/40">
+      <p className="mt-1 text-sm text-fg/60">
         They sit on the board like any other card, and say they came from an import. Speech moves
         them from here: say how one went and it changes column.
       </p>
@@ -285,7 +285,7 @@ function Done({ outcome, onAgain }: { outcome: Outcome; onAgain: () => void }) {
         <button
           type="button"
           onClick={onAgain}
-          className="text-white/40 underline-offset-4 hover:text-white/70 hover:underline"
+          className="text-fg/60 underline-offset-4 hover:text-fg/70 hover:underline"
         >
           Import another
         </button>

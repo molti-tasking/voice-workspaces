@@ -42,7 +42,7 @@ export function AgentTurnBubble({
 
   return (
     <div className="inline-block max-w-full rounded-lg rounded-tr-sm border border-sky-400/25 bg-sky-400/10 px-3 py-1.5 text-left">
-      <div className="mb-1 flex items-center gap-2 text-[10px] font-medium tracking-wide text-sky-300/70 uppercase">
+      <div className="mb-1 flex items-center gap-2 text-xs font-medium tracking-wide text-sky-300/70 uppercase">
         <span>agent · turn {seq + 1}</span>
         {bargedIn && <span className="text-amber-300/80">interrupted</span>}
         {error && <span className="text-red-300/80">failed</span>}
@@ -51,7 +51,7 @@ export function AgentTurnBubble({
       {text ? (
         <p className="text-sky-50">{text}</p>
       ) : (
-        <p className="text-white/40 italic">
+        <p className="text-fg/60 italic">
           {bargedIn ? "cut off before anything was heard" : "nothing was spoken"}
         </p>
       )}
@@ -60,7 +60,7 @@ export function AgentTurnBubble({
           hidden: the difference between the two IS the turn-taking data, and
           hiding it would make an interrupted turn look like a complete one. */}
       {unheard && (
-        <p className="mt-1 text-sm text-white/30 line-through decoration-white/20">{unheard}</p>
+        <p className="mt-1 text-sm text-fg/50 line-through decoration-fg/20">{unheard}</p>
       )}
     </div>
   );

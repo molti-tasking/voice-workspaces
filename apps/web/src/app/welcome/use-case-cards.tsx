@@ -167,23 +167,23 @@ export function UseCaseCards() {
         const Icon = useCase.icon;
         return (
           <li key={useCase.id}>
-            <article className="overflow-hidden rounded-xl border border-line bg-ink-soft/40">
+            <article className="overflow-hidden rounded-xl border border-line bg-surface/40">
               <header className="flex items-start gap-3 px-5 pt-5 pb-3">
                 <span
-                  className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full bg-white/[0.06] text-white/70"
+                  className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full bg-fg/[0.06] text-fg/70"
                   aria-hidden
                 >
                   <Icon size={16} />
                 </span>
                 <div className="min-w-0 flex-1">
                   <h3 className="text-base font-medium">{useCase.title}</h3>
-                  <p className="mt-1 text-sm leading-relaxed text-white/60">{useCase.promise}</p>
+                  <p className="mt-1 text-sm leading-relaxed text-fg/60">{useCase.promise}</p>
                 </div>
               </header>
 
               <Conversation beats={useCase.beats} />
 
-              <p className="px-5 pt-3 pb-5 text-xs leading-relaxed text-white/40">
+              <p className="px-5 pt-3 pb-5 text-xs leading-relaxed text-fg/60">
                 {useCase.point}
               </p>
             </article>
@@ -203,7 +203,7 @@ export function UseCaseCards() {
  */
 function Conversation({ beats }: { beats: Beat[] }) {
   return (
-    <div className="border-y border-line bg-black/20 px-4 py-4">
+    <div className="border-y border-line bg-fg/5 px-4 py-4">
       <ol className="space-y-2.5">
         {beats.map((beat, i) => (
           <li key={i}>
@@ -222,10 +222,10 @@ function BeatView({ beat }: { beat: Beat }) {
         // The transcript's own line for the driver: `UserLine` in
         // sessions/[id]/transcript.tsx, minus the timestamp gutter.
         <div className="flex flex-col items-start pr-10">
-          <span className="mb-0.5 text-[10px] font-medium tracking-wide text-white/30 uppercase">
+          <span className="mb-0.5 text-xs font-medium tracking-wide text-fg/50 uppercase">
             you
           </span>
-          <p className="inline-block max-w-full rounded-lg rounded-tl-sm bg-white/[0.04] px-3 py-1.5 text-sm text-white">
+          <p className="inline-block max-w-full rounded-lg rounded-tl-sm bg-fg/[0.04] px-3 py-1.5 text-sm text-fg">
             {beat.text}
           </p>
         </div>
@@ -235,7 +235,7 @@ function BeatView({ beat }: { beat: Beat }) {
         // `AgentTurnBubble`, without the turn number: this is an example, not a
         // record.
         <div className="flex flex-col items-end pl-10">
-          <span className="mb-0.5 text-[10px] font-medium tracking-wide text-sky-300/70 uppercase">
+          <span className="mb-0.5 text-xs font-medium tracking-wide text-sky-300/70 uppercase">
             agent
           </span>
           <p className="inline-block max-w-full rounded-lg rounded-tr-sm border border-sky-400/25 bg-sky-400/10 px-3 py-1.5 text-sm text-sky-50">
@@ -244,13 +244,13 @@ function BeatView({ beat }: { beat: Beat }) {
         </div>
       );
     case "quiet":
-      return <p className="py-1 text-center text-xs text-white/30 italic">{beat.text}</p>;
+      return <p className="py-1 text-center text-xs text-fg/50 italic">{beat.text}</p>;
     case "later":
       return (
-        <p className="flex items-center gap-3 py-1 text-[11px] text-white/30">
-          <span className="h-px flex-1 bg-white/10" aria-hidden />
+        <p className="flex items-center gap-3 py-1 text-xs text-fg/50">
+          <span className="h-px flex-1 bg-fg/10" aria-hidden />
           <span>{beat.text}</span>
-          <span className="h-px flex-1 bg-white/10" aria-hidden />
+          <span className="h-px flex-1 bg-fg/10" aria-hidden />
         </p>
       );
     case "board":
@@ -258,16 +258,16 @@ function BeatView({ beat }: { beat: Beat }) {
         // `board-card.tsx`, at the size it has on the board, under the name
         // of the column it lands in.
         <div className="flex flex-col items-end pl-10" aria-hidden>
-          <span className="mb-0.5 text-[10px] font-medium tracking-wide text-white/30 uppercase">
+          <span className="mb-0.5 text-xs font-medium tracking-wide text-fg/50 uppercase">
             on the board · {beat.column}
           </span>
-          <div className="w-full max-w-[260px] rounded-xl border border-line bg-ink-soft/40 p-3">
-            <p className="mb-1.5 flex items-center gap-1.5 text-[11px] text-white/30">
+          <div className="w-full max-w-[260px] rounded-xl border border-line bg-surface/40 p-3">
+            <p className="mb-1.5 flex items-center gap-1.5 text-xs text-fg/50">
               <Lightbulb size={12} className="shrink-0" />
               <span className="truncate">{beat.topic}</span>
             </p>
             <p className="text-sm leading-snug">{beat.text}</p>
-            <p className="mt-1.5 text-[11px] text-white/30">said just now · 1 utterance</p>
+            <p className="mt-1.5 text-xs text-fg/50">said just now · 1 utterance</p>
           </div>
         </div>
       );
@@ -276,23 +276,23 @@ function BeatView({ beat }: { beat: Beat }) {
         // `draft-panel.tsx`, including the version label that is the only
         // visible evidence a revision happened.
         <div className="flex flex-col items-end pl-10" aria-hidden>
-          <span className="mb-0.5 text-[10px] font-medium tracking-wide text-white/30 uppercase">
+          <span className="mb-0.5 text-xs font-medium tracking-wide text-fg/50 uppercase">
             on the screen
           </span>
-          <div className="w-full max-w-[300px] rounded-xl border border-line bg-ink-soft/40 p-3">
+          <div className="w-full max-w-[300px] rounded-xl border border-line bg-surface/40 p-3">
             <div className="mb-1.5 flex items-baseline gap-2">
-              <span className="min-w-0 flex-1 truncate text-[11px] tracking-wide text-white/40 uppercase">
+              <span className="min-w-0 flex-1 truncate text-xs tracking-wide text-fg/60 uppercase">
                 {beat.title}
               </span>
-              <span className="shrink-0 font-mono text-[10px] text-white/25 tabular-nums">
+              <span className="shrink-0 font-mono text-xs text-fg/45 tabular-nums">
                 v{beat.version}
               </span>
-              <span className="flex shrink-0 items-center gap-1 rounded border border-line px-2 py-1 text-[11px] text-white/50">
+              <span className="flex shrink-0 items-center gap-1 rounded border border-line px-2 py-1 text-xs text-fg/65">
                 <Copy size={11} />
                 Copy
               </span>
             </div>
-            <p className="text-[13px] leading-snug text-white/85">{beat.text}</p>
+            <p className="text-[0.8125rem] leading-snug text-fg/85">{beat.text}</p>
           </div>
         </div>
       );

@@ -93,7 +93,7 @@ export default async function WelcomePage() {
     <div className="mx-auto max-w-2xl px-6 pt-10 pb-40">
       <header className="mb-8">
         <h1 className="text-2xl font-semibold">Welcome to VoiceMural</h1>
-        <p className="mt-2 leading-relaxed text-white/60">
+        <p className="mt-2 leading-relaxed text-fg/60">
           VoiceMural listens while you think out loud, keeps everything you
           said, and helps you make something of it: an answer when you ask, a
           draft you can paste, a task board that fills in from what you decide.
@@ -137,11 +137,11 @@ export default async function WelcomePage() {
       <section className="mb-8" aria-labelledby="try">
         <h2
           id="try"
-          className="mb-1 text-sm font-medium tracking-wide text-white/40 uppercase"
+          className="mb-1 text-sm font-medium tracking-wide text-fg/60 uppercase"
         >
           What to say into it
         </h2>
-        <p className="mb-4 text-sm text-white/40">
+        <p className="mb-4 text-sm text-fg/60">
           Four things it is good at, shown the way they play out. None of them
           is a script: say whatever you actually want to say.
         </p>
@@ -159,7 +159,7 @@ export default async function WelcomePage() {
       */}
       <section className="mb-8">
         <h2 className="mb-2 text-sm font-medium">Current limitations</h2>
-        <ul className="space-y-1.5 text-sm text-white/50 list-disc">
+        <ul className="space-y-1.5 text-sm text-fg/65 list-disc">
           <li>
             Speech first: Do not expect all the different chat interactions from
             tools you may already know
@@ -186,7 +186,7 @@ export default async function WelcomePage() {
 
       <section className="mb-8">
         <h2 className="mb-2 text-sm font-medium">A word on what is recorded</h2>
-        <p className="text-sm leading-relaxed text-white/50">
+        <p className="text-sm leading-relaxed text-fg/65">
           Everything you say is transcribed and kept, so that you can read it
           back. When it looks something up, the search words go to a search
           engine and nothing else from the drive does. The models behind it run
@@ -207,7 +207,7 @@ export default async function WelcomePage() {
         <AppDock />
       ) : (
         <section className="space-y-3">
-          <p className="text-sm text-white/40">
+          <p className="text-sm text-fg/60">
             Signing in keeps your recordings across devices. Starting as a guest
             needs no account, and everything moves across if you sign in later.
           </p>

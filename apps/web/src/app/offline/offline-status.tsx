@@ -60,11 +60,11 @@ export function OfflineStatus() {
   return (
     <div className="mb-8">
       {online !== null && (
-        <p className="mb-4 text-white/60">
+        <p className="mb-4 text-fg/60">
           {online ? (
             <>
               Your phone{" "}
-              <strong className="font-medium text-white">does</strong> have a
+              <strong className="font-medium text-fg">does</strong> have a
               connection, so this is not the signal. Either VoiceMural is down
               for a moment, or something on this network or browser is blocking
               the site.
@@ -77,7 +77,7 @@ export function OfflineStatus() {
       <button
         type="button"
         onClick={() => window.location.reload()}
-        className="cursor-pointer rounded-lg border border-line bg-ink-soft px-5 py-3 font-medium text-white hover:bg-white/10"
+        className="cursor-pointer rounded-lg border border-line bg-surface px-5 py-3 font-medium text-fg hover:bg-fg/10"
       >
         Try again
       </button>

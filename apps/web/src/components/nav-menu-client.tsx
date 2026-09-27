@@ -115,7 +115,7 @@ export function NavMenuClient({
         aria-expanded={open}
         aria-label={user.isGuest ? "Guest account" : (user.email ?? "Account")}
         onClick={() => setOpen((v) => !v)}
-        className="vm-glass flex size-9 cursor-pointer items-center justify-center overflow-hidden rounded-full text-xs font-medium text-white/70 hover:text-white"
+        className="vm-glass flex size-9 cursor-pointer items-center justify-center overflow-hidden rounded-full text-xs font-medium text-fg/70 hover:text-fg"
       >
         {user.image && failedSrc !== user.image ? (
           // Provider avatars are arbitrary remote hosts, so this stays a plain
@@ -148,7 +148,7 @@ export function NavMenuClient({
             <p className="truncate text-sm font-medium">
               {user.isGuest ? "Guest" : (user.name ?? user.email ?? "Signed in")}
             </p>
-            <p className="mt-0.5 truncate text-xs text-white/40">
+            <p className="mt-0.5 truncate text-xs text-fg/60">
               {/* A guest's address is a synthetic @guest.voicemural.local one;
                   showing it would read as a real account. */}
               {user.isGuest ? "Recordings tied to this browser" : user.email}
@@ -169,13 +169,13 @@ export function NavMenuClient({
                     onClick={() => setOpen(false)}
                     className={[
                       "flex items-start gap-3 px-4 py-2 text-sm",
-                      active ? "text-white" : "text-white/70 hover:bg-white/5 hover:text-white",
+                      active ? "text-fg" : "text-fg/70 hover:bg-fg/5 hover:text-fg",
                     ].join(" ")}
                   >
                     <Icon size={15} aria-hidden className="mt-0.5 shrink-0 opacity-70" />
                     <span>
                       {label}
-                      <span className="block text-xs text-white/35">{hint}</span>
+                      <span className="block text-xs text-fg/55">{hint}</span>
                     </span>
                   </Link>
                 </li>
@@ -187,7 +187,7 @@ export function NavMenuClient({
             <div className="px-4 py-3">
               {providers.length > 0 ? (
                 <>
-                  <p className="mb-3 text-xs leading-relaxed text-white/50">
+                  <p className="mb-3 text-xs leading-relaxed text-fg/65">
                     Clearing site data or recording from another device starts a
                     separate account. Signing in moves everything you have recorded
                     so far across.
@@ -207,7 +207,7 @@ export function NavMenuClient({
                           });
                           void signIn.social({ provider, callbackURL: "/" });
                         }}
-                        className="w-full rounded-lg border border-[var(--color-line)] bg-white/5 px-3 py-2 text-sm font-medium hover:bg-white/10 disabled:opacity-60"
+                        className="w-full rounded-lg border border-[var(--color-line)] bg-fg/5 px-3 py-2 text-sm font-medium hover:bg-fg/10 disabled:opacity-60"
                       >
                         {pending === provider
                           ? "Redirecting…"
@@ -220,7 +220,7 @@ export function NavMenuClient({
                 // Without this the menu is silently empty for a guest and looks
                 // broken, when the real cause is that no provider is configured
                 // in this deployment's environment.
-                <p className="text-xs leading-relaxed text-white/50">
+                <p className="text-xs leading-relaxed text-fg/65">
                   No sign-in provider is configured for this deployment, so
                   recordings stay tied to this browser.
                 </p>
@@ -239,7 +239,7 @@ export function NavMenuClient({
                 resetIdentity();
                 void signOut({ fetchOptions: { onSuccess: () => location.reload() } });
               }}
-              className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-white/70 hover:bg-white/5 hover:text-white"
+              className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-fg/70 hover:bg-fg/5 hover:text-fg"
             >
               <LogOut size={14} aria-hidden />
               Sign out

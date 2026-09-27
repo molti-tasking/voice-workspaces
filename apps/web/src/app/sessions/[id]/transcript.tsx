@@ -73,7 +73,7 @@ export function Transcript({
 }) {
   if (rows.length === 0 && turns.length === 0) {
     return (
-      <p className="rounded-xl border border-dashed border-[var(--color-line)] p-8 text-center text-sm text-white/40">
+      <p className="rounded-xl border border-dashed border-[var(--color-line)] p-8 text-center text-sm text-fg/60">
         No transcript yet. Chunks are transcribed by the worker — check that it is
         running.
       </p>
@@ -189,7 +189,7 @@ function UserLine({
        being highlighted. */
     <li id={`u-${row.id}`} className="group flex scroll-mt-24 gap-3">
       <span
-        className="w-12 shrink-0 pt-1 text-right font-mono text-xs text-white/25 tabular-nums"
+        className="w-12 shrink-0 pt-1 text-right font-mono text-xs text-fg/45 tabular-nums"
         title={`${formatOffset(row.startOffsetMs)}–${formatOffset(row.endOffsetMs)}`}
       >
         {formatOffset(row.startOffsetMs)}
@@ -199,10 +199,10 @@ function UserLine({
           className={[
             "inline-block rounded-lg rounded-tl-sm px-3 py-1.5",
             suspect || echoOf !== undefined
-              ? "border border-dashed border-white/15 bg-transparent text-white/35"
-              : "bg-white/[0.04]",
+              ? "border border-dashed border-fg/15 bg-transparent text-fg/55"
+              : "bg-fg/[0.04]",
             kind === "directive" && !suspect ? "text-amber-300" : "",
-            !suspect && echoOf === undefined ? "text-white" : "",
+            !suspect && echoOf === undefined ? "text-fg" : "",
           ].join(" ")}
         >
           {row.text}
@@ -214,19 +214,19 @@ function UserLine({
         {/* Said by nobody. The ledger keeps it — it is the verbatim record and
             nothing is deleted — but presenting it as speech would be a lie. */}
         {hallucinated && (
-          <p className="mt-0.5 text-[11px] text-white/30">
+          <p className="mt-0.5 text-xs text-fg/50">
             likely a transcription artefact — Whisper invents sign-offs like this on
             silence
           </p>
         )}
         {looped && (
-          <p className="mt-0.5 text-[11px] text-white/30">
+          <p className="mt-0.5 text-xs text-fg/50">
             repeat of the line above — Whisper looping on quiet audio, not something
             said again
           </p>
         )}
         {echoOf !== undefined && (
-          <p className="mt-0.5 text-[11px] text-white/30">
+          <p className="mt-0.5 text-xs text-fg/50">
             likely the agent&rsquo;s turn {echoOf + 1} heard through the microphone
           </p>
         )}
@@ -241,7 +241,7 @@ function AgentLine({ turn }: { turn: AgentTurnRow }) {
   return (
     <li className="flex gap-3">
       <span
-        className="w-12 shrink-0 pt-1 text-right font-mono text-xs text-white/25 tabular-nums"
+        className="w-12 shrink-0 pt-1 text-right font-mono text-xs text-fg/45 tabular-nums"
         title={`${formatOffset(turn.startOffsetMs)}\u2013${formatOffset(turn.endOffsetMs)}`}
       >
         {formatOffset(turn.startOffsetMs)}
@@ -259,7 +259,7 @@ function AgentLine({ turn }: { turn: AgentTurnRow }) {
             The ledger lines on this page are a different transcription of the
             same audio, so the two can disagree. */}
         {turn.respondingToText && (
-          <p className="mb-1 truncate text-[11px] text-white/30" title={turn.respondingToText}>
+          <p className="mb-1 truncate text-xs text-fg/50" title={turn.respondingToText}>
             answering “{turn.respondingToText}”
           </p>
         )}
@@ -308,9 +308,9 @@ function Meta({ turn, spokeMs }: { turn: AgentTurnRow; spokeMs: number }) {
   if (parts.length === 0 && !turn.resolvedModel) return null;
 
   return (
-    <p className="mt-1.5 font-mono text-[10px] text-white/25">
+    <p className="mt-1.5 font-mono text-xs text-fg/45">
       {parts.join(" · ")}
-      {turn.resolvedModel && <span className="ml-2 text-white/20">{turn.resolvedModel}</span>}
+      {turn.resolvedModel && <span className="ml-2 text-fg/35">{turn.resolvedModel}</span>}
     </p>
   );
 }

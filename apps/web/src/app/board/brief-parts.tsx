@@ -45,16 +45,16 @@ export function Quotes({
     <ul className="space-y-2.5">
       {rows.map((row) => (
         <li key={row.id}>
-          <blockquote className="border-l-2 border-line pl-3 text-sm leading-snug text-white/80">
+          <blockquote className="border-l-2 border-line pl-3 text-sm leading-snug text-fg/80">
             {/* The label is the person's own speech, so it must not be
                 autocaptured — hence the class on the link below, not here. */}
             {row.text}
           </blockquote>
-          <p className="mt-1 pl-3 text-[11px] text-white/30">
+          <p className="mt-1 pl-3 text-xs text-fg/50">
             <Link
               href={transcriptHref(row.captureSessionId, row.id)}
               title="Open this line in the drive's transcript"
-              className="underline decoration-white/20 underline-offset-2 hover:text-white/60"
+              className="underline decoration-fg/20 underline-offset-2 hover:text-fg/60"
             >
               {formatWhen(row.occurredAt)}
             </Link>
@@ -82,7 +82,7 @@ function NoQuotes({ brief }: { brief: CardBrief }) {
   // speech" here would be the one thing this page must never do.
   if (first?.via === "import") {
     return (
-      <p className="text-sm text-white/35">
+      <p className="text-sm text-fg/55">
         Brought in from another board, so there is nothing recorded to quote.
       </p>
     );
@@ -91,16 +91,16 @@ function NoQuotes({ brief }: { brief: CardBrief }) {
   const added = first?.via === "agent" ? "added by the agent" : "from speech";
 
   if (!sessionId || !first) {
-    return <p className="text-sm text-white/35">No line is cited.</p>;
+    return <p className="text-sm text-fg/55">No line is cited.</p>;
   }
 
   return (
-    <p className="text-sm text-white/35">
+    <p className="text-sm text-fg/55">
       {added} during the{" "}
       <Link
         href={transcriptHref(sessionId)}
         title="Open the drive this task came from"
-        className="underline decoration-white/20 underline-offset-2 hover:text-white/60"
+        className="underline decoration-fg/20 underline-offset-2 hover:text-fg/60"
       >
         drive on {formatWhen(first.at)}
       </Link>
@@ -121,13 +121,13 @@ export function Steps({ brief }: { brief: CardBrief }) {
     <ol className="space-y-2">
       {brief.steps.map((step) => (
         <li key={step.block.id} className="flex gap-3 text-sm">
-          <span className="w-32 shrink-0 pt-px font-mono text-[11px] text-white/30 tabular-nums">
+          <span className="w-32 shrink-0 pt-px font-mono text-xs text-fg/50 tabular-nums">
             {formatWhen(step.block.occurredAt)}
           </span>
           <span className="min-w-0 flex-1">
-            <span className="font-mono text-[11px] text-amber-300/70">{stepLabel(step)}</span>
+            <span className="font-mono text-xs text-amber-300/70">{stepLabel(step)}</span>
             {step.previousText && (
-              <span className="mt-0.5 block text-[13px] leading-snug text-white/25 line-through">
+              <span className="mt-0.5 block text-[0.8125rem] leading-snug text-fg/45 line-through">
                 {step.previousText}
               </span>
             )}
@@ -172,8 +172,8 @@ export function TopicNotes({
       {notes.length > 0 && (
         <ul className="space-y-1">
           {notes.map((b) => (
-            <li key={b.id} className="text-[13px] leading-snug text-white/50">
-              {b.label && <span className="text-white/30">{b.label}: </span>}
+            <li key={b.id} className="text-[0.8125rem] leading-snug text-fg/65">
+              {b.label && <span className="text-fg/50">{b.label}: </span>}
               {b.text}
             </li>
           ))}

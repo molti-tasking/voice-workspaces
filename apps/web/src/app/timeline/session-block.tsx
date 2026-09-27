@@ -33,14 +33,14 @@ export function SessionBlock({
 
   return (
     <section id={`session-${session.id}`} className="scroll-mt-20">
-      <header className="sticky top-0 z-10 -mx-4 mb-3 bg-[var(--color-ink)]/85 px-4 py-2 backdrop-blur">
+      <header className="sticky top-0 z-10 -mx-4 mb-3 bg-[var(--color-canvas)]/85 px-4 py-2 backdrop-blur">
         <h2 className="text-sm font-medium">
           {session.startedAt.toLocaleDateString(undefined, {
             weekday: "long",
             day: "numeric",
             month: "long",
           })}
-          <span className="ml-2 font-normal text-white/30">
+          <span className="ml-2 font-normal text-fg/50">
             {session.startedAt.toLocaleTimeString(undefined, {
               hour: "2-digit",
               minute: "2-digit",
@@ -82,7 +82,7 @@ export function SessionBlock({
 function AgentRow({ turn }: { turn: TimelineAgentTurn }) {
   return (
     <li className="flex gap-3 py-0.5">
-      <span className="w-12 shrink-0 pt-1 text-right font-mono text-[10px] text-white/20 tabular-nums">
+      <span className="w-12 shrink-0 pt-1 text-right font-mono text-xs text-fg/35 tabular-nums">
         {turn.occurredAt.toLocaleTimeString(undefined, {
           hour: "2-digit",
           minute: "2-digit",
@@ -104,7 +104,7 @@ function AgentRow({ turn }: { turn: TimelineAgentTurn }) {
 function UtteranceRow({ utterance }: { utterance: TimelineUtterance }) {
   return (
     <li className="flex gap-3 py-0.5 text-sm leading-snug">
-      <span className="w-12 shrink-0 pt-px text-right font-mono text-[10px] text-white/20 tabular-nums">
+      <span className="w-12 shrink-0 pt-px text-right font-mono text-xs text-fg/35 tabular-nums">
         {utterance.occurredAt.toLocaleTimeString(undefined, {
           hour: "2-digit",
           minute: "2-digit",
@@ -112,7 +112,7 @@ function UtteranceRow({ utterance }: { utterance: TimelineUtterance }) {
       </span>
       <span
         className={
-          utterance.kind === "directive" ? "text-amber-300/90" : "text-white/75"
+          utterance.kind === "directive" ? "text-amber-300/90" : "text-fg/75"
         }
       >
         {utterance.text}
@@ -151,10 +151,10 @@ function MarkerRow({ marker }: { marker: TimelineMarker }) {
         totalTokens={marker.totalTokens}
         resolvedModel={marker.resolvedModel}
         className={[
-          "group inline-flex items-center gap-2 rounded-full border py-1 pr-2.5 pl-1.5 text-[11px] transition-colors",
+          "group inline-flex items-center gap-2 rounded-full border py-1 pr-2.5 pl-1.5 text-xs transition-colors",
           changed
             ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
-            : "border-[var(--color-line)] bg-white/[0.03] text-white/25 hover:text-white/50",
+            : "border-[var(--color-line)] bg-fg/[0.03] text-fg/45 hover:text-fg/65",
         ].join(" ")}
         title={`${marker.totalTokens} tokens · ${marker.resolvedModel}`}
       >

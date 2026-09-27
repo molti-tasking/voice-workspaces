@@ -39,7 +39,7 @@ export default async function TrajectoryPage({
   if (!user) {
     return (
       <main className="mx-auto max-w-lg px-6 py-16 text-center">
-        <p className="text-white/60">
+        <p className="text-fg/60">
           <Link href="/" className="underline">
             Sign in
           </Link>{" "}
@@ -70,7 +70,7 @@ export default async function TrajectoryPage({
       <header className="mb-8 flex flex-wrap items-baseline justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Trajectory</h1>
-          <p className="mt-1 text-sm text-white/40">
+          <p className="mt-1 text-sm text-fg/60">
             {trajectory.tracks.length} topic{trajectory.tracks.length === 1 ? "" : "s"} across{" "}
             {trajectory.buckets.length} recording
             {trajectory.buckets.length === 1 ? "" : "s"} · {trajectory.revisions.length} revision
@@ -88,7 +88,7 @@ export default async function TrajectoryPage({
         <EmptyState />
       ) : (
         <>
-          <section className="rounded-xl border border-[var(--color-line)] bg-[var(--color-ink-soft)]/30 p-4">
+          <section className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)]/30 p-4">
             <Stream trajectory={trajectory} asOf={asOf} />
           </section>
 
@@ -115,24 +115,24 @@ export default async function TrajectoryPage({
 function Legend({ trajectory }: { trajectory: ReturnType<typeof buildTrajectory> }) {
   return (
     <section>
-      <h2 className="mb-3 text-sm font-medium text-white/50">Topics, as they appeared</h2>
+      <h2 className="mb-3 text-sm font-medium text-fg/65">Topics, as they appeared</h2>
       <ol className="space-y-1.5">
         {trajectory.tracks.map((track) => {
           const Icon = topicIcon(track.icon);
           return (
             <li key={track.topicId} className="flex items-baseline gap-2.5 text-sm">
-              <Icon size={14} aria-hidden className="shrink-0 translate-y-0.5 text-white/30" />
-              <span className={track.current === 0 ? "text-white/35 line-through" : ""}>
+              <Icon size={14} aria-hidden className="shrink-0 translate-y-0.5 text-fg/50" />
+              <span className={track.current === 0 ? "text-fg/55 line-through" : ""}>
                 {track.title}
               </span>
-              <span className="ml-auto shrink-0 font-mono text-xs text-white/25">
+              <span className="ml-auto shrink-0 font-mono text-xs text-fg/45">
                 {track.current} · {track.weight}
               </span>
             </li>
           );
         })}
       </ol>
-      <p className="mt-2 text-xs text-white/25">
+      <p className="mt-2 text-xs text-fg/45">
         Live blocks · total changes. A struck-through topic has nothing left standing.
       </p>
     </section>
@@ -151,9 +151,9 @@ function Revisions({ trajectory }: { trajectory: ReturnType<typeof buildTrajecto
 
   return (
     <section>
-      <h2 className="mb-3 text-sm font-medium text-white/50">Where it changed</h2>
+      <h2 className="mb-3 text-sm font-medium text-fg/65">Where it changed</h2>
       {recent.length === 0 ? (
-        <p className="text-sm text-white/30">
+        <p className="text-sm text-fg/50">
           Nothing has been superseded yet. Revisions appear here as the same idea comes
           round again, sharper.
         </p>
@@ -164,12 +164,12 @@ function Revisions({ trajectory }: { trajectory: ReturnType<typeof buildTrajecto
               key={revision.to.id}
               className="border-l border-[var(--color-line)] pl-3 text-sm leading-snug"
             >
-              <p className="text-white/30 line-through">{revision.from.text}</p>
-              <p className="mt-0.5 flex gap-1.5 text-white/80">
-                <ArrowRight size={13} aria-hidden className="mt-1 shrink-0 text-white/25" />
+              <p className="text-fg/50 line-through">{revision.from.text}</p>
+              <p className="mt-0.5 flex gap-1.5 text-fg/80">
+                <ArrowRight size={13} aria-hidden className="mt-1 shrink-0 text-fg/45" />
                 <span>{revision.to.text}</span>
               </p>
-              <p className="mt-1 text-[11px] text-white/25">
+              <p className="mt-1 text-xs text-fg/45">
                 {revision.at.toLocaleDateString(undefined, {
                   day: "numeric",
                   month: "short",
@@ -187,7 +187,7 @@ function EmptyState() {
   return (
     <div className="rounded-xl border border-dashed border-[var(--color-line)] p-10 text-center">
       <p className="mb-1 font-medium">No trajectory yet</p>
-      <p className="text-sm text-white/40">
+      <p className="text-sm text-fg/60">
         This is built from the workspace, which is built from what you say.{" "}
         <Link href="/record" className="underline">
           Start recording

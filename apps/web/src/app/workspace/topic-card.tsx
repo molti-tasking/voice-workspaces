@@ -45,7 +45,7 @@ export function TopicCard({
   const faded = (b: Block) => highlight !== undefined && !highlight.has(b.id);
 
   return (
-    <section className="rounded-xl border border-[var(--color-line)] bg-[var(--color-ink-soft)]/40 p-4">
+    <section className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)]/40 p-4">
       <header className="mb-3 flex items-start gap-2.5">
         {/*
           `topicIcon` selects from a module-level map of Lucide components rather
@@ -54,7 +54,7 @@ export function TopicCard({
           The rule cannot see through the lookup.
         */}
         {/* eslint-disable-next-line react-hooks/static-components */}
-        <Icon size={16} aria-hidden className="mt-0.5 shrink-0 text-white/40" />
+        <Icon size={16} aria-hidden className="mt-0.5 shrink-0 text-fg/60" />
         <h2 className="min-w-0 flex-1 leading-tight font-medium">{topic.title}</h2>
         <ExportButton
           markdown={topicToMarkdown(topic, blocks)}
@@ -93,19 +93,19 @@ export function TopicCard({
                   key={b.id}
                   className={`flex gap-2 text-sm leading-snug ${faded(b) ? "opacity-30" : ""}`}
                 >
-                  <span aria-hidden className="shrink-0 font-mono text-xs text-white/30">
+                  <span aria-hidden className="shrink-0 font-mono text-xs text-fg/50">
                     {finished ? "☑" : "☐"}
                   </span>
-                  <span className={state === "dropped" ? "text-white/30 line-through" : ""}>
+                  <span className={state === "dropped" ? "text-fg/50 line-through" : ""}>
                     {b.text}
                   </span>
                   <span
                     className={[
-                      "ml-auto shrink-0 font-mono text-[10px]",
+                      "ml-auto shrink-0 font-mono text-xs",
                       state === "done"
                         ? "text-emerald-300/80"
                         : state === "open" || state === "dropped"
-                          ? "text-white/30"
+                          ? "text-fg/50"
                           : "text-amber-300",
                     ].join(" ")}
                   >
@@ -135,11 +135,11 @@ export function TopicCard({
         {/* Attributes, as a table. Three sentences of prose become three short
             rows, which is most of where the card's density comes from. */}
         {facts.length > 0 && (
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 border-t border-[var(--color-line)] pt-2.5 text-[13px]">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 border-t border-[var(--color-line)] pt-2.5 text-[0.8125rem]">
             {facts.map((b) => (
               <div key={b.id} className={`contents ${faded(b) ? "opacity-30" : ""}`}>
-                <dt className="text-white/30">{b.label ?? "—"}</dt>
-                <dd className="text-white/70">{b.text}</dd>
+                <dt className="text-fg/50">{b.label ?? "—"}</dt>
+                <dd className="text-fg/70">{b.text}</dd>
               </div>
             ))}
           </dl>
@@ -152,8 +152,8 @@ export function TopicCard({
               <li
                 key={b.id}
                 className={[
-                  "text-[13px] leading-snug",
-                  b.kind === "meta" ? "text-sky-300/70 italic" : "text-white/40",
+                  "text-[0.8125rem] leading-snug",
+                  b.kind === "meta" ? "text-sky-300/70 italic" : "text-fg/60",
                   faded(b) ? "opacity-30" : "",
                 ].join(" ")}
               >
@@ -189,12 +189,12 @@ function RevisionNote({
 
   return (
     <details className="mt-0.5">
-      <summary className="cursor-pointer list-none text-[10px] text-white/20 hover:text-white/50">
+      <summary className="cursor-pointer list-none text-xs text-fg/35 hover:text-fg/65">
         revised · {history.length} earlier
       </summary>
       <ol className="mt-1 space-y-1 border-l border-[var(--color-line)] pl-2.5">
         {history.map((old) => (
-          <li key={old.id} className="text-xs text-white/25 line-through">
+          <li key={old.id} className="text-xs text-fg/45 line-through">
             {old.text}
           </li>
         ))}

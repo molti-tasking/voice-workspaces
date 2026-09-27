@@ -83,7 +83,7 @@ export function GrowthCurve({ points }: { points: GrowthPoint[] }) {
         </svg>
       </div>
 
-      <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-white/35">
+      <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg/55">
         {[...byOrigin.entries()].map(([origin, count]) => (
           <li key={origin} className="flex items-center gap-1.5">
             <span

@@ -73,13 +73,13 @@ export default function StudyPage() {
   return (
     <main className="mx-auto max-w-2xl px-6 py-12">
       <header className="mb-12">
-        <p className="mb-2 text-sm font-medium tracking-wide text-white/40 uppercase">
+        <p className="mb-2 text-sm font-medium tracking-wide text-fg/60 uppercase">
           Taking part
         </p>
         <h1 className="mb-4 text-3xl font-semibold">
           Thinking out loud on your commute
         </h1>
-        <p className="text-lg leading-relaxed text-white/60">
+        <p className="text-lg leading-relaxed text-fg/60">
           You already do some of your best thinking in the car, where you cannot
           write any of it down. For {STUDY.days} days, VoiceMural listens while
           you drive and keeps what you said. We want to find out whether that
@@ -130,13 +130,13 @@ export default function StudyPage() {
           ]}
         />
         <div className="rounded-xl border border-line p-5">
-          <p className="mb-3 text-sm font-medium tracking-wide text-white/40 uppercase">
+          <p className="mb-3 text-sm font-medium tracking-wide text-fg/60 uppercase">
             The three questions
           </p>
           <ol className="space-y-2.5">
             {DEBRIEF_QUESTIONS.map((q, i) => (
               <li key={q} className="flex gap-3 leading-relaxed">
-                <span className="shrink-0 font-mono text-sm text-white/30">
+                <span className="shrink-0 font-mono text-sm text-fg/50">
                   {i + 1}
                 </span>
                 {q}
@@ -144,7 +144,7 @@ export default function StudyPage() {
             ))}
           </ol>
         </div>
-        <p className="text-white/50">
+        <p className="text-fg/65">
           Same three every time, so you can turn them over while you drive.
           &ldquo;Nothing today&rdquo; is a fine answer, and complaints are the
           useful one — if it keeps doing something irritating, say exactly that.
@@ -186,7 +186,7 @@ export default function StudyPage() {
           {PHRASES.map(([phrase, what]) => (
             <div key={phrase} className="p-4">
               <dt className="mb-1 font-medium">&ldquo;{phrase}&rdquo;</dt>
-              <dd className="text-sm leading-relaxed text-white/50">{what}</dd>
+              <dd className="text-sm leading-relaxed text-fg/65">{what}</dd>
             </div>
           ))}
         </dl>
@@ -203,12 +203,12 @@ export default function StudyPage() {
           suspects a colleague might hear the recording does not think out loud,
           and then there is nothing here worth studying.
         </p>
-        <div className="my-5 rounded-xl border border-line bg-ink-soft p-5">
+        <div className="my-5 rounded-xl border border-line bg-surface p-5">
           <p className="mb-2 font-medium">
             No one on the research team listens to your drives or reads your
             transcripts.
           </p>
-          <p className="text-sm leading-relaxed text-white/60">
+          <p className="text-sm leading-relaxed text-fg/60">
             Not selectively, not in summary, not &ldquo;only if something looks
             interesting&rdquo;. Speech is turned into text {STUDY.transcription},
             the audio is deleted as soon as that is done, and the text stays in
@@ -264,7 +264,7 @@ export default function StudyPage() {
             and see everything we hold about you whenever you ask.
           </li>
         </List>
-        <p className="text-sm text-white/40">
+        <p className="text-sm text-fg/60">
           Approved by the research ethics committee at {STUDY.institution} under{" "}
           {STUDY.approval}, which is also the data controller. If you have a
           concern you would rather not raise with us, the committee&rsquo;s
@@ -273,7 +273,7 @@ export default function StudyPage() {
       </Section>
 
       <footer className="mt-14 border-t border-line pt-6">
-        <p className="mb-4 text-white/50">
+        <p className="mb-4 text-fg/65">
           Questions before you start, however small — ask. If something here is
           unclear, we wrote it badly.
         </p>
@@ -286,11 +286,11 @@ export default function StudyPage() {
           </Link>
           <a
             href={`mailto:${STUDY.email}`}
-            className="text-white/40 underline-offset-4 hover:underline"
+            className="text-fg/60 underline-offset-4 hover:underline"
           >
             {STUDY.email}
           </a>
-          <span className="text-white/40">{STUDY.phone}</span>
+          <span className="text-fg/60">{STUDY.phone}</span>
         </div>
       </footer>
     </main>
@@ -309,12 +309,12 @@ function Section({
   return (
     <section className="mb-12">
       <h2 className="mb-4 flex items-baseline gap-3 text-xl font-semibold">
-        <span className="font-mono text-sm text-white/25">
+        <span className="font-mono text-sm text-fg/45">
           {String(n).padStart(2, "0")}
         </span>
         {title}
       </h2>
-      <div className="space-y-4 leading-relaxed text-white/70">{children}</div>
+      <div className="space-y-4 leading-relaxed text-fg/70">{children}</div>
     </section>
   );
 }
@@ -328,7 +328,7 @@ function List({
 }) {
   return (
     <ul
-      className={`list-outside list-disc space-y-2.5 pl-5 marker:text-white/25 ${className}`}
+      className={`list-outside list-disc space-y-2.5 pl-5 marker:text-fg/25 ${className}`}
     >
       {children}
     </ul>
@@ -341,8 +341,8 @@ function Steps({ steps }: { steps: [string, React.ReactNode][] }) {
       {steps.map(([label, body]) => (
         <li key={label} className="relative">
           <span className="absolute top-2 -left-[25px] size-2 rounded-full bg-line" />
-          <p className="mb-1 font-medium text-white">{label}</p>
-          <p className="text-white/60">{body}</p>
+          <p className="mb-1 font-medium text-fg">{label}</p>
+          <p className="text-fg/60">{body}</p>
         </li>
       ))}
     </ol>
@@ -351,7 +351,7 @@ function Steps({ steps }: { steps: [string, React.ReactNode][] }) {
 
 function Code({ children }: { children: React.ReactNode }) {
   return (
-    <code className="rounded bg-white/8 px-1.5 py-0.5 font-mono text-[0.9em]">
+    <code className="rounded bg-fg/8 px-1.5 py-0.5 font-mono text-[0.9em]">
       {children}
     </code>
   );

@@ -66,14 +66,14 @@ export function BoardCard({
        * pointer moves.
        */
       className={[
-        "rounded-xl border border-line bg-ink-soft/40 p-3",
+        "rounded-xl border border-line bg-surface/40 p-3",
         "cursor-grab active:cursor-grabbing",
         // Left in place at reduced opacity rather than removed: taking it out
         // of the column would reflow every other card under the cursor.
         dragging ? "opacity-40" : "",
       ].join(" ")}
     >
-      <header className="mb-1.5 flex items-center gap-1.5 text-[11px] text-white/30">
+      <header className="mb-1.5 flex items-center gap-1.5 text-xs text-fg/50">
         {/*
           `topicIcon` selects from a module-level map of Lucide components, so
           the identity is stable for a given name; the rule cannot see through
@@ -86,13 +86,13 @@ export function BoardCard({
 
       <p className="text-sm leading-snug">{card.text}</p>
 
-      <p className="mt-1.5 text-[11px] text-white/30">
+      <p className="mt-1.5 text-xs text-fg/50">
         said {card.said} · {card.spanCount} utterance
         {card.spanCount === 1 ? "" : "s"}
       </p>
 
       {card.marker && (
-        <p className="mt-1 font-mono text-[10px] text-amber-300/70">
+        <p className="mt-1 font-mono text-xs text-amber-300/70">
           {card.marker}
         </p>
       )}
@@ -113,7 +113,7 @@ export function BoardCard({
           href={card.href}
           draggable={false}
           title="What was said about this task, and how it got here"
-          className="rounded px-1.5 py-0.5 text-[10px] text-white/25 hover:text-white/60 focus-visible:text-white/80 focus-visible:outline-none"
+          className="rounded px-1.5 py-0.5 text-xs text-fg/45 hover:text-fg/60 focus-visible:text-fg/80 focus-visible:outline-none"
         >
           brief
         </Link>
@@ -123,7 +123,7 @@ export function BoardCard({
           disabled={busy}
           onClick={onRetire}
           title="Remove this card — it was not a task"
-          className="rounded px-1.5 py-0.5 text-[10px] text-white/25 hover:text-white/60 focus-visible:text-white/80 focus-visible:outline-none disabled:opacity-40"
+          className="rounded px-1.5 py-0.5 text-xs text-fg/45 hover:text-fg/60 focus-visible:text-fg/80 focus-visible:outline-none disabled:opacity-40"
         >
           not a task
         </button>

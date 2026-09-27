@@ -97,7 +97,7 @@ export default async function CardBriefPage({
 
       <header className="mb-8">
         <div className="mb-4 flex items-center justify-between gap-4">
-          <p className="flex min-w-0 items-center gap-1.5 text-xs text-white/40">
+          <p className="flex min-w-0 items-center gap-1.5 text-xs text-fg/60">
             {/*
               `topicIcon` selects from a module-level map of Lucide components,
               so the identity is stable for a given name; the rule cannot see
@@ -112,7 +112,7 @@ export default async function CardBriefPage({
 
         <h1 className="text-xl leading-snug font-medium">{card.block.text}</h1>
 
-        <p className="mt-2 font-mono text-[11px] text-white/35">
+        <p className="mt-2 font-mono text-xs text-fg/55">
           {card.state}
           {marker && <> · {marker}</>}
           {asOf && <> · as of {asOf.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</>}
@@ -143,14 +143,14 @@ export default async function CardBriefPage({
                       className="ph-no-capture min-w-0 flex-1 leading-snug hover:underline"
                     >
                       {task.state === "dropped" ? (
-                        <span className="text-white/30 line-through">{task.block.text}</span>
+                        <span className="text-fg/50 line-through">{task.block.text}</span>
                       ) : (
-                        <span className={task.state === "done" ? "text-white/40" : ""}>
+                        <span className={task.state === "done" ? "text-fg/60" : ""}>
                           {task.block.text}
                         </span>
                       )}
                     </Link>
-                    <span className="shrink-0 font-mono text-[10px] text-white/25">
+                    <span className="shrink-0 font-mono text-xs text-fg/45">
                       {task.state}
                     </span>
                   </li>
@@ -161,7 +161,7 @@ export default async function CardBriefPage({
             {context.questions.length === 0 &&
               context.notes.length === 0 &&
               others.length === 0 && (
-                <p className="text-sm text-white/35">
+                <p className="text-sm text-fg/55">
                   Nothing else has been said about this topic yet.
                 </p>
               )}
@@ -169,11 +169,11 @@ export default async function CardBriefPage({
         </Section>
       </div>
 
-      <nav className="mt-10 flex gap-4 text-xs text-white/35">
-        <Link href={withAsOf("/board", asOf)} className="hover:text-white/70">
+      <nav className="mt-10 flex gap-4 text-xs text-fg/55">
+        <Link href={withAsOf("/board", asOf)} className="hover:text-fg/70">
           ← Board
         </Link>
-        <Link href={withAsOf("/board/brief", asOf)} className="hover:text-white/70">
+        <Link href={withAsOf("/board/brief", asOf)} className="hover:text-fg/70">
           All briefs
         </Link>
       </nav>
@@ -186,7 +186,7 @@ export default async function CardBriefPage({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section>
-      <h2 className="mb-3 text-sm font-medium text-white/50">{title}</h2>
+      <h2 className="mb-3 text-sm font-medium text-fg/65">{title}</h2>
       {children}
     </section>
   );

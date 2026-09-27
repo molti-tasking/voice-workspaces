@@ -62,7 +62,7 @@ function Scale({
 }) {
   return (
     <fieldset className="w-full">
-      <legend className="mb-2 text-sm text-white/70">{item.question}</legend>
+      <legend className="mb-2 text-sm text-fg/70">{item.question}</legend>
       <div className="flex gap-1.5">
         {Array.from({ length: STUDY_SCALE_MAX }, (_, i) => i + 1).map((n) => (
           <button
@@ -73,15 +73,15 @@ function Scale({
             className={[
               "h-11 flex-1 cursor-pointer rounded-lg font-mono text-sm transition-colors",
               value === n
-                ? "bg-white text-[var(--color-ink)]"
-                : "bg-white/10 text-white/70 hover:bg-white/20",
+                ? "bg-fg text-[var(--color-canvas)]"
+                : "bg-fg/10 text-fg/70 hover:bg-fg/20",
             ].join(" ")}
           >
             {n}
           </button>
         ))}
       </div>
-      <div className="mt-1 flex justify-between text-xs text-white/35">
+      <div className="mt-1 flex justify-between text-xs text-fg/55">
         <span>{item.anchors[0]}</span>
         <span>{item.anchors[1]}</span>
       </div>
@@ -102,7 +102,7 @@ export function PreDriveItem({ onAnswer }: { onAnswer: (item: string, value: num
   const [picked, setPicked] = useState<Record<string, number>>({});
 
   return (
-    <div className="w-full max-w-md space-y-4 rounded-xl border border-line bg-white/[0.03] p-4">
+    <div className="w-full max-w-md space-y-4 rounded-xl border border-line bg-fg/[0.03] p-4">
       {itemsForPhase("pre").map((item) => (
         <Scale
           key={item.key}
@@ -114,7 +114,7 @@ export function PreDriveItem({ onAnswer }: { onAnswer: (item: string, value: num
           }}
         />
       ))}
-      <p className="text-xs text-white/35">
+      <p className="text-xs text-fg/55">
         Before you start. One tap, or just press record — it is not required.
       </p>
     </div>

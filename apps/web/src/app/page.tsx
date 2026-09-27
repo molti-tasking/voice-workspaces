@@ -57,7 +57,7 @@ export default async function HomePage({
           <p className="mb-1 font-medium text-amber-100">
             These recordings live in this browser&rsquo;s cookie
           </p>
-          <p className="mb-3 text-sm text-white/60">
+          <p className="mb-3 text-sm text-fg/60">
             Clearing site data, switching browsers, or recording from another
             device starts a separate account — and your sessions would be split
             across the two. Signing in moves everything you have recorded so far
@@ -76,7 +76,7 @@ export default async function HomePage({
         </div>
       )}
 
-      <h2 className="mb-3 text-sm font-medium tracking-wide text-white/40 uppercase">
+      <h2 className="mb-3 text-sm font-medium tracking-wide text-fg/60 uppercase">
         Sessions
       </h2>
 
@@ -88,7 +88,7 @@ export default async function HomePage({
             <li key={s.id}>
               <Link
                 href={`/sessions/${s.id}`}
-                className="flex items-center justify-between gap-4 p-4 hover:bg-white/5"
+                className="flex items-center justify-between gap-4 p-4 hover:bg-fg/5"
               >
                 <div className="min-w-0">
                   <p className="truncate font-medium">
@@ -97,7 +97,7 @@ export default async function HomePage({
                       timeStyle: "short",
                     })}
                   </p>
-                  <p className="text-sm text-white/40">
+                  <p className="text-sm text-fg/60">
                     {formatOffset(s.recordedMs)} recorded · {s.chunkCount}{" "}
                     chunks · {s.utteranceCount} utterances
                     {s.endedAt === null && " · still open"}
@@ -146,13 +146,13 @@ function SignInProblem({ code }: { code?: string }) {
   return (
     <div className="mb-8 rounded-xl border border-red-500/30 bg-red-500/10 p-4">
       <p className="mb-1 font-medium text-red-100">Sign-in did not complete</p>
-      <p className="text-sm text-white/60">
+      <p className="text-sm text-fg/60">
         {explanations[code] ??
           "Something went wrong on our side and the sign-in was stopped."}{" "}
         Nothing you have recorded has been lost — it is still here, and you can
         carry on recording while this is sorted out.
       </p>
-      <p className="mt-2 font-mono text-xs text-white/30">{code}</p>
+      <p className="mt-2 font-mono text-xs text-fg/50">{code}</p>
     </div>
   );
 }
@@ -161,7 +161,7 @@ function EmptyState() {
   return (
     <div className="rounded-xl border border-dashed border-line p-8 text-center">
       <p className="mb-1 font-medium">No sessions yet</p>
-      <p className="text-sm text-white/40">
+      <p className="text-sm text-fg/60">
         Mount your phone, open{" "}
         <Link href="/record" className="underline">
           /record
@@ -208,7 +208,7 @@ function Landing({ error }: { error?: string }) {
       <StructuredData />
       <SignInProblem code={error} />
       <h1 className="mb-3 text-3xl font-semibold">VoiceMural</h1>
-      <p className="mb-8 text-white/60">
+      <p className="mb-8 text-fg/60">
         Speech is a good medium for formulating difficult problems and a poor
         medium for operating software. VoiceMural listens while you are
         eyes-busy and treats everything as content by default.
@@ -221,7 +221,7 @@ function Landing({ error }: { error?: string }) {
         ))}
       </div>
 
-      <p className="mt-4 text-sm text-white/40">
+      <p className="mt-4 text-sm text-fg/60">
         Starting as a guest needs no account. Your recordings are tied to this
         browser, so sign in when you want them to survive a cleared cookie —
         everything you have recorded moves across with you.
