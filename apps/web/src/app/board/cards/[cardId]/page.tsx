@@ -79,7 +79,7 @@ export default async function CardBriefPage({
   const Icon = topicIcon(card.topic.icon);
 
   return (
-    <div className="mx-auto max-w-2xl px-6 pt-10 pb-40">
+    <div className="mx-auto max-w-2xl vm-page-top px-6 pb-40">
       {/* Opening a card IS the revisit the offloading measures are about: an
           item somebody comes back to and never edits leaves no other trace. */}
       <StudyOpen kind="card_open" cardId={card.cardId} />

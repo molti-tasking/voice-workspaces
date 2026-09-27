@@ -47,7 +47,7 @@ export default async function SurveyPage() {
   const user = await currentUser();
 
   return (
-    <div className="mx-auto max-w-2xl px-6 pt-10 pb-40">
+    <div className="mx-auto max-w-2xl vm-page-top px-6 pb-40">
       <header className="mb-8">
         <p className="mb-2 text-sm font-medium tracking-wide text-fg/60 uppercase">
           A few questions

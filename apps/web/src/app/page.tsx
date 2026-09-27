@@ -42,7 +42,7 @@ export default async function HomePage({
   const sessions = await listSessionsWithStats(user.id);
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-10 pb-40">
+    <div className="mx-auto max-w-3xl vm-page-top px-6 pb-40">
       <header className="mb-10 flex items-baseline justify-between">
         <div>
           <h1 className="text-2xl font-semibold">VoiceMural</h1>

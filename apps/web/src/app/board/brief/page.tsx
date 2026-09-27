@@ -73,7 +73,7 @@ export default async function BriefPage({
     .filter((c) => !c.utteranceIds.some((id) => byId.has(id))).length;
 
   return (
-    <div className="mx-auto max-w-2xl px-6 pt-10 pb-40">
+    <div className="mx-auto max-w-2xl vm-page-top px-6 pb-40">
       <ViewEvent
         event="board_brief_viewed"
         properties={{

@@ -1,8 +1,8 @@
 "use client";
 
-import { X } from "lucide-react";
+import { Square } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatOffset } from "@voicemural/shared";
 // The `/profile` subpath, NOT the package index: the index re-exports
 // retrieval.ts, which imports @voicemural/db, and that drags the Postgres
@@ -70,6 +70,24 @@ export function RecorderClient() {
   }, [rec.currentSessionId]);
   const hearing = talk.status === "speaking";
 
+  // Whether the big subject has scrolled out from under the sticky header.
+  const titleRef = useRef<HTMLDivElement>(null);
+  const [titleDocked, setTitleDocked] = useState(false);
+  useEffect(() => {
+    const el = titleRef.current;
+    if (!el) {
+      setTitleDocked(false);
+      return;
+    }
+    const io = new IntersectionObserver(
+      ([entry]) => setTitleDocked(!!entry && !entry.isIntersecting),
+      // The header covers roughly the top 5rem, so "visible" means below it.
+      { rootMargin: "-80px 0px 0px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [isRecording]);
+
   // Reads Postgres, never the voice container: the panel keeps filling with
   // talk-back dead, and survives a reload mid-recording. See the route comment.
   const cues = useCues({
@@ -84,48 +102,62 @@ export function RecorderClient() {
   return (
     // `pb-40` clears the dock: leaving mid-drive is the point of hoisting the
     // recorder, so the dock is on this screen too — with its own record button
-    // suppressed, because the 224px one below is the transport here.
-    <main className="no-touch-fuss flex min-h-dvh flex-col items-center justify-between p-6 pb-40">
-      <header className="flex w-full max-w-md items-center justify-between gap-3 text-sm text-fg/65">
-        {/* PRESENT OR ABSENT, never a shade of something. Everything else that
-            said "recording" was a modifier of a control that is always there —
-            a colour, a meter inside the button, a timer that starts counting —
-            and a first-time participant has nothing to compare it against.
-            See `RecordingBadge`. */}
-        {isRecording || isDebriefing ? (
-          <RecordingBadge elapsedMs={rec.elapsedMs} debriefing={isDebriefing} />
-        ) : (
-          <span />
-        )}
-        <div className="flex items-center gap-3">
-          <StatusPills
-            pending={rec.pendingUploads}
-            uploading={rec.uploading}
-            wakeLock={rec.wakeLockActive}
-            recording={isRecording}
-            talkback={TALKBACK_ENABLED && isRecording ? talk.status : null}
-            memory={TALKBACK_ENABLED && isRecording ? talk.memory : null}
-          />
-          {/* One tap, no confirmation, as the big button was — but small, so
-              a stray hand in a cradle is unlikely to find it. The dock's stop
-              is the deliberate one: it arms first (`STOP_ARM_MS` there). */}
-          {isRecording && (
-            <button
-              type="button"
-              onClick={stopRecording}
-              disabled={isBusy}
-              aria-label="Stop recording"
-              className={[
-                "grid size-9 shrink-0 cursor-pointer place-items-center rounded-full text-fg/80",
-                "transition-colors hover:bg-fg/20 hover:text-fg disabled:opacity-50",
-                hearing ? "bg-accent/40 ring-2 ring-accent/60" : "bg-fg/10",
-              ].join(" ")}
-            >
-              <X size={18} aria-hidden />
-            </button>
+    // suppressed, because the header's stop is the transport here.
+    <main className="no-touch-fuss flex min-h-dvh flex-col items-center justify-between px-6 pb-40">
+      {/* STICKY, and clear of the status bar. The pilot lost "Recording", the
+          stop and the subject as soon as the drafts pushed them off the top,
+          and in a standalone PWA the stop sat under the clock. Once the big
+          subject has scrolled away its words dock in here, so the one strip
+          always says what is happening and what it is about. */}
+      <div className="vm-safe-top sticky top-0 z-30 -mx-6 flex w-[calc(100%+3rem)] justify-center bg-canvas/90 px-6 pb-3 backdrop-blur">
+        <header className="flex w-full max-w-md flex-col gap-1 text-sm text-fg/65">
+          <div className="flex w-full items-center justify-between gap-3">
+            {/* PRESENT OR ABSENT, never a shade of something. Everything else that
+                said "recording" was a modifier of a control that is always there —
+                a colour, a meter inside the button, a timer that starts counting —
+                and a first-time participant has nothing to compare it against.
+                See `RecordingBadge`. */}
+            {isRecording || isDebriefing ? (
+              <RecordingBadge elapsedMs={rec.elapsedMs} debriefing={isDebriefing} />
+            ) : (
+              <span />
+            )}
+            <div className="flex items-center gap-3">
+              <StatusPills
+                pending={rec.pendingUploads}
+                uploading={rec.uploading}
+                wakeLock={rec.wakeLockActive}
+                recording={isRecording}
+                talkback={TALKBACK_ENABLED && isRecording ? talk.status : null}
+                memory={TALKBACK_ENABLED && isRecording ? talk.memory : null}
+              />
+              {/* One tap, no confirmation, as the big button was — but small, so
+                  a stray hand in a cradle is unlikely to find it. The dock's stop
+                  is the deliberate one: it arms first (`STOP_ARM_MS` there). */}
+              {isRecording && (
+                <button
+                  type="button"
+                  onClick={stopRecording}
+                  disabled={isBusy}
+                  aria-label="Stop recording"
+                  className={[
+                    "grid size-11 shrink-0 cursor-pointer place-items-center rounded-full text-fg/80",
+                    "transition-colors hover:bg-fg/20 hover:text-fg disabled:opacity-50",
+                    hearing ? "bg-accent/40 ring-2 ring-accent/60" : "bg-fg/10",
+                  ].join(" ")}
+                >
+                  <Square size={16} fill="currentColor" aria-hidden />
+                </button>
+              )}
+            </div>
+          </div>
+          {TALKBACK_ENABLED && isRecording && titleDocked && talk.title && (
+            <p className="truncate text-base font-semibold tracking-tight text-fg">
+              {talk.title}
+            </p>
           )}
-        </div>
-      </header>
+        </header>
+      </div>
 
       <div className="flex w-full flex-col items-center gap-8">
         {!isRecording && !isDebriefing && (
@@ -184,11 +216,13 @@ export function RecorderClient() {
         )}
 
         {TALKBACK_ENABLED && isRecording && (
-          <TopicTitle
-            title={talk.title}
-            sessionId={rec.currentSessionId}
-            placeholder={PROFILE.hint}
-          />
+          <div ref={titleRef} className="w-full max-w-md">
+            <TopicTitle
+              title={talk.title}
+              sessionId={rec.currentSessionId}
+              placeholder={PROFILE.hint}
+            />
+          </div>
         )}
 
         {isRecording && <CuePanel cues={cues} />}

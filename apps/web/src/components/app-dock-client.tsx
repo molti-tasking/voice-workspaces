@@ -321,7 +321,7 @@ function CaptureSheet({ onClose }: { onClose: () => void }) {
       {isRecording ? (
         <>
           <p className="text-center text-sm text-fg/70">
-            Recording. These are fixed for this drive.
+            Voice and language for this recording
           </p>
           <LockedSummary />
           {TALKBACK_ENABLED && talkback.status === "degraded" && (
@@ -334,7 +334,7 @@ function CaptureSheet({ onClose }: { onClose: () => void }) {
             onClick={onClose}
             className="w-full rounded-full bg-fg/10 px-4 py-2 text-center text-sm font-medium text-fg hover:bg-fg/20"
           >
-            Open the live view
+            Show conversation
           </Link>
         </>
       ) : (

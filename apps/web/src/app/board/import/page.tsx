@@ -49,7 +49,7 @@ export default async function ImportBoardPage() {
   if (!(await boardEnabledAt(user.id))) notFound();
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-10 pb-40">
+    <div className="mx-auto max-w-3xl vm-page-top px-6 pb-40">
       <header className="mb-8">
         <Link href="/board" className="text-sm text-fg/60 underline-offset-4 hover:underline">
           ← Board

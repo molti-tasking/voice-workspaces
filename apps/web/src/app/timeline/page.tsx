@@ -96,7 +96,7 @@ export default async function TimelinePage({
     // Bottom padding clears the dock and its scrim: the timeline's last line
     // is the most-recent utterance, and reading it half-covered by the record
     // button is the one thing this page must not do.
-    <div className="mx-auto max-w-3xl px-6 pt-10 pb-40">
+    <div className="mx-auto max-w-3xl vm-page-top px-6 pb-40">
       <ScrollToLatest targetId={`session-${latest.id}`} />
       <ViewEvent
         event="timeline_viewed"

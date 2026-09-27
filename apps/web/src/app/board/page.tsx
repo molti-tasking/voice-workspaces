@@ -68,7 +68,7 @@ export default async function BoardPage({
   ).length;
 
   return (
-    <div className="mx-auto max-w-6xl px-6 pt-10 pb-40">
+    <div className="mx-auto max-w-6xl vm-page-top px-6 pb-40">
       {/* The study's own record that the board was opened. PostHog below is
           product analytics and lives outside the export; this is one row in
           `study_event`, which the day-7 measures read. See `StudyOpen`. */}

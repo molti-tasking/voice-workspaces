@@ -57,7 +57,7 @@ export default async function TrajectoryPage({
   const trajectory = buildTrajectory(ops, { bucket, asOf });
 
   return (
-    <div className="mx-auto max-w-6xl px-6 pt-10 pb-40">
+    <div className="mx-auto max-w-6xl vm-page-top px-6 pb-40">
       <ViewEvent
         event="trajectory_viewed"
         properties={{
