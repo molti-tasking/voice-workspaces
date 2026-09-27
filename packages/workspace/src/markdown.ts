@@ -21,9 +21,21 @@ import type { Block, Topic } from "./types";
 export function topicToMarkdown(
   topic: Topic,
   blocks: readonly Block[],
-  options: { includeFrontmatter?: boolean; asOf?: Date } = {},
+  options: {
+    includeFrontmatter?: boolean;
+    asOf?: Date;
+    /**
+     * Date each entry by when it was said (`2026-09-12`, never localised, so
+     * the file reads the same on every device). The pilot's "there's no date
+     * on it" was about exactly this: an export that could not say when.
+     */
+    dates?: boolean;
+    /** Drafts the agent filed on this topic, appended as their own section. */
+    drafts?: readonly { title: string; text: string; date: Date }[];
+  } = {},
 ): string {
   const lines: string[] = [];
+  const when = (b: { occurredAt: Date }) => (options.dates ? ` — ${isoDay(b.occurredAt)}` : "");
 
   if (options.includeFrontmatter) {
     lines.push("---");
@@ -49,14 +61,14 @@ export function topicToMarkdown(
   if (questions.length > 0) {
     lines.push("## Open questions");
     lines.push("");
-    for (const q of questions) lines.push(`- [ ] ${q.text}`);
+    for (const q of questions) lines.push(`- [ ] ${q.text}${when(q)}`);
     lines.push("");
   }
 
   if (tasks.length > 0) {
     lines.push("## Tasks");
     lines.push("");
-    for (const t of tasks) lines.push(taskLine(t));
+    for (const t of tasks) lines.push(taskLine(t) + when(t));
     lines.push("");
   }
 
@@ -75,12 +87,19 @@ export function topicToMarkdown(
   }
 
   for (const block of claims) {
-    lines.push(block.text);
+    lines.push(block.text + when(block));
     lines.push("");
   }
 
   for (const block of rest) {
     lines.push(block.kind === "meta" ? `*${block.text}*` : `> ${block.text}`);
+    lines.push("");
+  }
+
+  for (const draft of options.drafts ?? []) {
+    lines.push(`## ${draft.title || "Draft"}${options.dates ? ` — ${isoDay(draft.date)}` : ""}`);
+    lines.push("");
+    lines.push(draft.text.trim());
     lines.push("");
   }
 
@@ -109,6 +128,10 @@ function taskLine(task: Block): string {
   if (state === "done") return `- [x] ${task.text} (done)`;
   if (state === "dropped") return `- [x] ~~${task.text}~~ (dropped)`;
   return `- [ ] ${task.text} (${state})`;
+}
+
+function isoDay(d: Date): string {
+  return d.toISOString().slice(0, 10);
 }
 
 /** A pipe inside a cell would split it into two columns. */
