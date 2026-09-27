@@ -6,6 +6,7 @@ import {
 } from "@voicemural/workspace";
 import type { WorkspaceDraft } from "@voicemural/db/drafts";
 import { ArchiveItemButton, ArchiveTopicButton, TaskStateSelect } from "./curation";
+import { When } from "@/components/when";
 import { DraftItem } from "./draft-item";
 import { ExportButton } from "./export-button";
 import { topicIcon } from "./icons";
@@ -45,6 +46,11 @@ export function TopicCard({
   editable?: boolean;
 }) {
   const archive = (b: Block) => (editable ? <ArchiveItemButton blockId={b.id} /> : null);
+  // When it was said. The pilot lost track of what came from which day:
+  // "there's no date on it".
+  const said = (b: Block) => (
+    <When date={b.occurredAt} className="ml-1.5 text-xs whitespace-nowrap text-fg/45" />
+  );
   const Icon = topicIcon(topic.icon);
 
   const questions = blocks.filter((b) => b.kind === "question");
@@ -66,9 +72,18 @@ export function TopicCard({
         */}
         {/* eslint-disable-next-line react-hooks/static-components */}
         <Icon size={16} aria-hidden className="mt-0.5 shrink-0 text-fg/60" />
-        <h2 className="min-w-0 flex-1 leading-tight font-medium">{topic.title}</h2>
+        <div className="min-w-0 flex-1">
+          <h2 className="leading-tight font-medium">{topic.title}</h2>
+          <p className="mt-0.5 text-xs text-fg/50">
+            Last touched <When date={topic.lastTouchedAt} />
+          </p>
+        </div>
         <ExportButton
-          markdown={topicToMarkdown(topic, blocks)}
+          markdown={topicToMarkdown(topic, blocks, {
+            includeFrontmatter: true,
+            dates: true,
+            drafts: drafts.map((d) => ({ title: d.title, text: d.text, date: d.updatedAt })),
+          })}
           filename={topicFilename(topic)}
           blockCount={blocks.length}
         />
@@ -87,7 +102,10 @@ export function TopicCard({
                 <span aria-hidden className="shrink-0 font-mono text-xs opacity-60">
                   ?
                 </span>
-                <span className="flex-1">{b.text}</span>
+                <span className="flex-1">
+                  {b.text}
+                  {said(b)}
+                </span>
                 {archive(b)}
               </li>
             ))}
@@ -110,8 +128,11 @@ export function TopicCard({
                   <span aria-hidden className="shrink-0 font-mono text-xs text-fg/50">
                     {finished ? "☑" : "☐"}
                   </span>
-                  <span className={state === "dropped" ? "text-fg/50 line-through" : ""}>
-                    {b.text}
+                  <span>
+                    <span className={state === "dropped" ? "text-fg/50 line-through" : ""}>
+                      {b.text}
+                    </span>
+                    {said(b)}
                   </span>
                   {editable ? (
                     <TaskStateSelect blockId={b.id} state={state} />
@@ -157,6 +178,7 @@ export function TopicCard({
               >
                 <div className="min-w-0 flex-1">
                   {b.text}
+                  {said(b)}
                   <RevisionNote block={b} allBlocks={allBlocks} />
                 </div>
                 {archive(b)}

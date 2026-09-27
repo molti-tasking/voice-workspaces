@@ -187,3 +187,39 @@ describe("topicFilename", () => {
     expect(topicFilename({ ...topic, slug: "" })).toBe("topic.md");
   });
 });
+
+describe("dates and drafts in the export", () => {
+  const topic: Topic = {
+    id: "t",
+    title: "Song list",
+    slug: "song-list",
+    icon: "Music",
+    createdAt: new Date("2026-09-10T08:00:00Z"),
+    lastTouchedAt: new Date("2026-09-12T08:00:00Z"),
+  };
+  const block = (kind: Block["kind"], text: string, day: string): Block => ({
+    id: text,
+    topicId: "t",
+    kind,
+    text,
+    spans: [],
+    occurredAt: new Date(`${day}T09:00:00Z`),
+  });
+
+  it("dates each entry by when it was said, only when asked", () => {
+    const blocks = [block("question", "Which key?", "2026-09-11"), block("claim", "Keep it short.", "2026-09-12")];
+    const dated = topicToMarkdown(topic, blocks, { dates: true });
+    expect(dated).toContain("- [ ] Which key? — 2026-09-11");
+    expect(dated).toContain("Keep it short. — 2026-09-12");
+    expect(topicToMarkdown(topic, blocks)).not.toContain("2026-09-11");
+  });
+
+  it("appends the drafts filed on the topic", () => {
+    const md = topicToMarkdown(topic, [], {
+      dates: true,
+      drafts: [{ title: "More songs", text: "- Hoch auf dem gelben Wagen\n", date: new Date("2026-09-12T10:00:00Z") }],
+    });
+    expect(md).toContain("## More songs — 2026-09-12\n\n- Hoch auf dem gelben Wagen");
+  });
+});
+
