@@ -1428,7 +1428,7 @@ class Recall(FrameProcessor):
 
         block = "\n\n".join(sections) if sections else ""
         if block:
-            block += "\n\nThat is background. Answer only what was just said to you."
+            block += "\n\nThat is background. Answer what was just said to you, and use it to say which thing you mean."
 
         # An outbound or irreversible action they asked for, parked until they
         # agree. The instruction is deliberately permissive about waiting: the
@@ -1930,10 +1930,21 @@ class AnswerGuard(FrameProcessor):
         # True between asking for the re-run and the turn it produces. One per
         # moment: a second decline is answered with words, not a third try.
         self._retrying = False
+        # True once the re-run's completion has actually been started. Pipecat
+        # can run its own second inference for the same user turn in between,
+        # and a decline from THAT is not the re-run declining — it used to be
+        # answered with the acknowledgement while the re-run was still to come
+        # ("Sorry, I lost that" twice on the 27 Sep 2026 evaluation drive).
+        self._retry_started = False
 
     @property
     def retrying(self) -> bool:
         return self._retrying
+
+    @property
+    def retry_started(self) -> bool:
+        """Whether the completion now running can be the re-run itself."""
+        return self._retrying and self._retry_started
 
     @property
     def acknowledgement(self) -> str:
@@ -1945,17 +1956,28 @@ class AnswerGuard(FrameProcessor):
         Synchronous on purpose: the gate calls it while handling the declined
         completion's end frame, and the work happens on a task afterwards.
         """
+        if self._retrying:
+            # Already asked for; one re-run per moment.
+            return
         self._retrying = True
+        self._retry_started = False
         self.create_task(self._retry(), name="answers:retry")
 
     def settled(self) -> None:
         """The moment is over — something was spoken, or the driver moved on."""
         self._retrying = False
+        self._retry_started = False
 
     async def _retry(self) -> None:
+        await asyncio.sleep(self.SETTLE_SECS)
+        # Pipecat's own end-of-turn inference may have spoken in the meantime.
+        # Re-running then would answer the same words twice.
+        if not self._retrying:
+            logger.info("[answer] settled before the re-run — not re-running")
+            return
         self._context.add_message({"role": "user", "content": ANSWER_RETRY_NUDGE})
         logger.info("[answer] a declined answer to our own question — re-running the turn")
-        await asyncio.sleep(self.SETTLE_SECS)
+        self._retry_started = True
         await self.push_frame(LLMRunFrame())
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
@@ -1964,7 +1986,7 @@ class AnswerGuard(FrameProcessor):
         # this a retry abandoned by a barge-in would leave the flag set and the
         # NEXT decline would be answered with the acknowledgement.
         if isinstance(frame, TranscriptionFrame) and frame.text.strip() and self._retrying:
-            self._retrying = False
+            self.settled()
         await self.push_frame(frame, direction)
 
 
@@ -3225,6 +3247,37 @@ class SilenceGate(FrameProcessor):
         # The recorder's cue as it stood when this completion started.
         self._cue: "Cue | None" = None
         self._turn_metrics: dict = {}
+        # The moment whose reply has already reached the speaker, when that
+        # reply did not hand over to a tool. See `_superseded`.
+        self._answered_opportunity: int | None = None
+        # This completion answers a moment that has already been answered, so
+        # nothing of it is released. Pipecat runs inference more than once in
+        # one user turn (see the counting rule on `agent_decision`); when the
+        # first already had the whole sentence, BOTH spoke — on the 27 Sep 2026
+        # drive "and then I come back, then it's suddenly empty" got two replies
+        # in a row, the second restating the first. The second dispatch still
+        # runs, as the schema requires; it is just not spoken.
+        self._superseded = False
+        # Whether the completion now running is `AnswerGuard`'s re-run.
+        self._is_retry = False
+
+    def _record_drafts(self, text: str) -> None:
+        """Send the drafts in `text` to be kept, and mark them on the turn.
+
+        Marked as tool calls so the turn that wrote a draft can be told from
+        one that only said it had: on the 27 Sep 2026 drive two turns wrote
+        drafts and seven more claimed to, and the transcript showed all nine
+        alike, with no timing next to any of them.
+        """
+        _, drafts = extract_drafts(text)
+        if not drafts:
+            return
+        self._drafts.record(drafts)
+        if self._recorder is not None:
+            for draft in drafts:
+                self._recorder.note_tool_call(
+                    "revise_draft" if draft.get("revises") else "write_draft", 0
+                )
 
     def _reset(self) -> None:
         """Back to the state before a completion: holding, nothing spoken."""
@@ -3238,6 +3291,8 @@ class SilenceGate(FrameProcessor):
         self._calling_tools = False
         self._cue = None
         self._turn_metrics = {}
+        self._superseded = False
+        self._is_retry = False
 
     def _note_metrics(self, frame: MetricsFrame) -> None:
         """Keep this turn's timing and token counts.
@@ -3374,6 +3429,12 @@ class SilenceGate(FrameProcessor):
             self._in_response = True
             if self._recorder is not None:
                 self._cue = self._recorder.cue()
+            self._superseded = (
+                self._cue is not None
+                and self._cue.opportunity > 0
+                and self._cue.opportunity == self._answered_opportunity
+            )
+            self._is_retry = self._answers is not None and self._answers.retry_started
         elif isinstance(frame, MetricsFrame):
             self._note_metrics(frame)
         elif isinstance(frame, (BotStartedSpeakingFrame, BotStoppedSpeakingFrame)):
@@ -3393,9 +3454,15 @@ class SilenceGate(FrameProcessor):
                 self._playback.abandon()
         elif isinstance(frame, FunctionCallsStartedFrame):
             self._calling_tools = True
+            # A tool that runs has effects, and its result must be spoken, so a
+            # completion that calls one is never the duplicate of anything.
+            self._superseded = False
+            self._answered_opportunity = None
             logger.info(f"[turn] calling {', '.join(c.function_name for c in frame.function_calls)}")
         elif isinstance(frame, LLMTextFrame):
             self._text += frame.text
+            if self._superseded:
+                return
             if self._holding:
                 if self._could_become_sentinel(self._text):
                     # Still might be a decline — say nothing yet.
@@ -3451,6 +3518,18 @@ class SilenceGate(FrameProcessor):
             # the speaker at all, so it counts as not having happened.
             if self._offers is not None:
                 self._offers.note_agent_turn(bool(self._spoken.strip()))
+            # A draft whose closing tag had already arrived is finished, and the
+            # interruption cannot have been about it — its body is never spoken,
+            # so the person talking over the reply is the ordinary case while
+            # one is written. It used to be dropped with the rest of the text
+            # while the model's history said it had been written.
+            if self._drafts is not None and DRAFT_CLOSE in self._text and not self._superseded:
+                self._record_drafts(self._text[: self._text.rindex(DRAFT_CLOSE) + len(DRAFT_CLOSE)])
+            self._reset()
+        elif isinstance(frame, LLMFullResponseEndFrame) and self._superseded:
+            logger.info(
+                f"[turn] already answered this moment, not speaking again: {self._text.strip()!r}"
+            )
             self._reset()
         elif isinstance(frame, LLMFullResponseEndFrame):
             if self._holding:
@@ -3472,9 +3551,7 @@ class SilenceGate(FrameProcessor):
             # can still be recovered. `_pending` is dropped on purpose — it is
             # by construction a fragment of a tag, never speech.
             if self._drafts is not None:
-                _, drafts = extract_drafts(self._text)
-                if drafts:
-                    self._drafts.record(drafts)
+                self._record_drafts(self._text)
             # ONE row per turn, written here because this is the only point that
             # knows the whole reply. A suppressed turn leaves `_spoken` empty and
             # records nothing — the echo filter must only ever learn about audio
@@ -3485,6 +3562,8 @@ class SilenceGate(FrameProcessor):
             # A decline writes its DECISION instead — the silence the agent
             # chose, which used to exist only as the log line above.
             spoke = bool(self._spoken.strip())
+            if spoke and not self._calling_tools and self._cue is not None:
+                self._answered_opportunity = self._cue.opportunity
             if self._recorder is not None and spoke:
                 if self._answers is not None:
                     self._answers.settled()
@@ -3497,7 +3576,15 @@ class SilenceGate(FrameProcessor):
                     playback=self._playback,
                 )
             elif self._recorder is not None and self._in_response and not self._calling_tools:
-                if self._answers is not None and self._answers.retrying:
+                if self._answers is not None and self._answers.retrying and not self._is_retry:
+                    # Declined while the re-run is still to come — Pipecat's own
+                    # second inference for the same words. The re-run decides
+                    # what this moment became; this completion decides nothing.
+                    logger.info("[answer] declined ahead of the re-run — waiting for it")
+                    # Not a decline either, for the proactive engine; asking
+                    # again is a no-op while the re-run is pending.
+                    retry = True
+                elif self._answers is not None and self._is_retry:
                     # The re-run declined as well. Say the fixed sentence rather
                     # than nothing: they answered a question the agent asked, and
                     # a second silence is the failure this guard exists for. It
@@ -3523,6 +3610,8 @@ class SilenceGate(FrameProcessor):
                         playback=self._playback,
                     )
                     spoke = True
+                    if self._cue is not None:
+                        self._answered_opportunity = self._cue.opportunity
                 elif (
                     self._answers is not None
                     and self._cue is not None
