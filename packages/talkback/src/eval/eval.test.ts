@@ -219,7 +219,7 @@ describe("the turn messages, which mirror bot.py", () => {
     expect(block.indexOf("From their past recordings:")).toBe(0);
     expect(block).toContain("[yesterday] call Niklas");
     expect(block.indexOf("So far in this drive:")).toBeGreaterThan(block.indexOf("[yesterday]"));
-    expect(block.endsWith("That is background. Answer only what was just said to you.")).toBe(true);
+    expect(block.endsWith("That is background. Answer what was just said to you, and use it to say which thing you mean.")).toBe(true);
   });
 
   it("put the board ahead of everything, as Recall._compose does", () => {
@@ -251,7 +251,7 @@ describe("the turn messages, which mirror bot.py", () => {
 
   it("append the pending confirmation ask after the background, or alone", () => {
     const withBlock = composeContextBlock({ summary: "- x", pending: "send the diary" })!;
-    expect(withBlock).toMatch(/Answer only what was just said to you\.\n\nThey earlier asked for this/);
+    expect(withBlock).toMatch(/say which thing you mean\.\n\nThey earlier asked for this/);
     const alone = composeContextBlock({ pending: "send the diary" })!;
     expect(alone.startsWith("They earlier asked for this")).toBe(true);
     expect(alone).toContain("cannot be undone: send the diary");
