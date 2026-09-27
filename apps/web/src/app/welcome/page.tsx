@@ -90,7 +90,7 @@ export default async function WelcomePage() {
   const user = await currentUser();
 
   return (
-    <div className="mx-auto max-w-2xl px-6 pt-10 pb-40">
+    <div className="mx-auto max-w-2xl vm-page-top px-6 pb-40">
       <header className="mb-8">
         <h1 className="text-2xl font-semibold">Welcome to VoiceMural</h1>
         <p className="mt-2 leading-relaxed text-fg/60">

@@ -116,7 +116,7 @@ export default async function SessionPage({
   }));
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-10 pb-40">
+    <div className="mx-auto max-w-3xl vm-page-top px-6 pb-40">
       <AutoRefresh pending={untranscribed.length} />
       <ViewEvent
         event="transcript_viewed"

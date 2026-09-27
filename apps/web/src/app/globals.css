@@ -404,3 +404,16 @@ body {
     opacity: var(--vm-mic-level, 0);
   }
 }
+
+/* --- Clear of the status bar ----------------------------------------------
+   `viewportFit: "cover"` lets pages draw under the notch and clock in a
+   standalone PWA. A page's top strip takes the inset as padding; `env()` is
+   zero elsewhere, so the max() is plain 1.5rem there. */
+.vm-safe-top {
+  padding-top: max(1.5rem, env(safe-area-inset-top));
+}
+
+/* The same for a whole page: its usual 2.5rem, or the inset plus a gap. */
+.vm-page-top {
+  padding-top: max(2.5rem, calc(env(safe-area-inset-top) + 1rem));
+}

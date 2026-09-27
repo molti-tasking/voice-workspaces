@@ -73,7 +73,7 @@ export default async function WorkspacePage({
   );
 
   return (
-    <div className="mx-auto max-w-6xl px-6 pt-10 pb-40">
+    <div className="mx-auto max-w-6xl vm-page-top px-6 pb-40">
       <ViewEvent
         event="workspace_viewed"
         properties={{
