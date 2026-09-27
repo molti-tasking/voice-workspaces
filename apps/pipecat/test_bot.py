@@ -91,9 +91,13 @@ class FakeRecorder:
         # `TurnRecorder.note_forced_answer` — and the one trace the refused
         # completion leaves, since it writes no decision of its own.
         self.forced = 0
+        self.tool_calls = []
 
     def cue(self):
         return self.current
+
+    def note_tool_call(self, name, latency_ms, error=None):
+        self.tool_calls.append(name)
 
     def record(
         self,
@@ -357,14 +361,22 @@ class FakeAnswers:
         self.acknowledgement = acknowledgement
         self.retries = 0
         self.settlements = 0
+        # Whether the next completion is the re-run. By default a requested
+        # re-run starts straight away; the race tests hold it back.
+        self.retry_started = retrying
+        self.start_immediately = True
 
     def request_retry(self):
+        if self.retrying:
+            return
         self.retries += 1
         self.retrying = True
+        self.retry_started = self.start_immediately
 
     def settled(self):
         self.settlements += 1
         self.retrying = False
+        self.retry_started = False
 
 
 class FakeOffers:
@@ -2481,3 +2493,162 @@ def test_it_switches_back_and_only_once_per_change():
     assert told == ["da", "en"]
     # Back to English: the chosen voice returns.
     assert updates[1].voice == "en-voice"
+
+
+# --- The evaluation drive of 27 Sep 2026 -------------------------------------
+#
+# The person gave feedback on the system and asked for it to be noted. One
+# utterance got two replies in a row, "Sorry, I lost that" was said to someone
+# still mid-thought, and the transcript could not tell the two turns that wrote
+# drafts from the seven that only claimed to.
+
+
+class FakeDrafts:
+    def __init__(self):
+        self.recorded = []
+
+    def record(self, drafts):
+        self.recorded.extend(drafts)
+
+
+def drive_gate(frames, recorder, answers=None, drafts=None):
+    """Like `drive_answers`, with the draft recorder in place as well."""
+    spoken = []
+
+    async def run():
+        gate = bot.SilenceGate(recorder=recorder, answers=answers, drafts=drafts)
+
+        async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+            if isinstance(frame, (LLMTextFrame, bot.TTSSpeakFrame)):
+                spoken.append(frame.text)
+
+        gate.push_frame = capture
+        for frame in frames:
+            await gate.process_frame(frame, FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    return spoken
+
+
+def moment(n):
+    return bot.Cue("user_turn", None, 1_000, n)
+
+
+def test_a_moment_already_answered_is_not_answered_again():
+    recorder = FakeRecorder(cue=moment(7))
+    frames = [
+        *reply("So the timeline view is empty when you come back?"),
+        *reply("I'll add that the view is empty when you come back."),
+    ]
+
+    assert drive_gate(frames, recorder) == ["So the timeline view is empty when you come back?"]
+    # One turn, and no decline for the second completion: the moment's outcome
+    # is the reply the person heard, and a later "declined" would overwrite it.
+    assert len(recorder.calls) == 1
+    assert recorder.declines == []
+
+
+def test_new_words_are_a_new_moment_and_are_answered():
+    recorder = FakeRecorder(cue=moment(7))
+    spoken = []
+
+    async def run():
+        gate = bot.SilenceGate(recorder=recorder)
+
+        async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+            if isinstance(frame, LLMTextFrame):
+                spoken.append(frame.text)
+
+        gate.push_frame = capture
+        for frame in reply("First answer."):
+            await gate.process_frame(frame, FrameDirection.DOWNSTREAM)
+        recorder.current = moment(8)
+        for frame in reply("Second answer."):
+            await gate.process_frame(frame, FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert spoken == ["First answer.", "Second answer."]
+
+
+def test_the_reply_after_a_tool_is_still_spoken():
+    # "Looking up the Magna Center." then the result: two turns, one moment,
+    # both meant.
+    recorder = FakeRecorder(cue=moment(3))
+    frames = [
+        LLMFullResponseStartFrame(),
+        LLMTextFrame(text="Looking that up."),
+        FunctionCallsStartedFrame(function_calls=[]),
+        LLMFullResponseEndFrame(),
+        *reply("There are two."),
+    ]
+
+    assert drive_gate(frames, recorder) == ["Looking that up.", "There are two."]
+
+
+def test_a_decline_ahead_of_the_re_run_is_not_answered_with_the_acknowledgement():
+    # Pipecat's own second inference declined while the re-run was still to
+    # come. The acknowledgement is for the re-run declining, not for this.
+    recorder, answers = asking_recorder(), FakeAnswers()
+    answers.start_immediately = False
+
+    frames = [*reply("<silence>"), *reply("<silence>")]
+    assert drive_gate(frames, recorder, answers) == []
+
+    assert recorder.calls == []
+    assert recorder.declines == []
+    assert answers.retries == 1
+
+
+def test_a_draft_is_marked_on_the_turn_that_wrote_it():
+    recorder, drafts = FakeRecorder(), FakeDrafts()
+    frames = reply('Noted. <draft title="System notes">- header scrolls away</draft>')
+
+    assert drive_gate(frames, recorder, drafts=drafts) == ["Noted. "]
+    assert [d["title"] for d in drafts.recorded] == ["System notes"]
+    assert recorder.tool_calls == ["write_draft"]
+
+
+def test_a_finished_draft_survives_being_talked_over():
+    recorder, drafts = FakeRecorder(), FakeDrafts()
+    frames = [
+        LLMFullResponseStartFrame(),
+        LLMTextFrame(text='It is in your notes. <draft title="Notes" revises="3f9a2c">'),
+        LLMTextFrame(text="- one\n- two</draft> And"),
+        InterruptionFrame(),
+    ]
+
+    drive_gate(frames, recorder, drafts=drafts)
+    assert drafts.recorded == [{"title": "Notes", "text": "- one\n- two", "revises": "3f9a2c"}]
+    assert recorder.tool_calls == ["revise_draft"]
+
+
+def test_an_unfinished_draft_is_not_kept_when_talked_over():
+    recorder, drafts = FakeRecorder(), FakeDrafts()
+    frames = [
+        LLMFullResponseStartFrame(),
+        LLMTextFrame(text='Writing it. <draft title="Notes">- one'),
+        InterruptionFrame(),
+    ]
+
+    drive_gate(frames, recorder, drafts=drafts)
+    assert drafts.recorded == []
+
+
+def test_the_answer_guard_does_not_re_run_a_moment_that_has_settled():
+    async def run():
+        context = bot.LLMContext()
+        guard = bot.AnswerGuard(context)
+        pushed = []
+
+        async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+            pushed.append(frame)
+
+        guard.push_frame = capture
+        guard._retrying = True
+        guard.settled()
+        await guard._retry()
+        return pushed, context.get_messages()
+
+    pushed, messages = asyncio.run(run())
+    assert pushed == []
+    assert messages == []
