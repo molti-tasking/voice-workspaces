@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { ViewTransitions } from "next-view-transitions";
 import { CaptureProvider } from "@/components/capture-provider";
+import { LiveDriveBar } from "@/components/live-drive-bar";
 import { NavDirectionTracker } from "@/components/nav-link";
 import { ServiceWorker } from "@/components/service-worker";
 import { PostHogIdentity } from "@/lib/analytics/identity";
@@ -86,7 +87,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             It reads no cookies and fetches nothing on mount, so the layout
             stays statically renderable — `/offline` is precached and must
             remain servable without a session. */}
-        <CaptureProvider>{children}</CaptureProvider>
+        <CaptureProvider>
+          <LiveDriveBar />
+          {children}
+        </CaptureProvider>
       </body>
     </html>
     </ViewTransitions>
