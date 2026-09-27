@@ -15,6 +15,8 @@ import type { ChatMessage } from "@voicemural/llm";
 import { composeSystemPrompt, type ComposeInputs, type ComposedPrompt } from "../prompt";
 
 export interface EvalContext {
+  /** Which screen they have open, the one line `renderScreen` produces. */
+  screen?: string;
   /**
    * The rendered task board, as `/api/realtime/context` returns it
    * (`buildBoardContext`). Was missing from the port while `Recall._compose`
@@ -45,6 +47,7 @@ export interface EvalContext {
 export function composeContextBlock(context: EvalContext | undefined): string | null {
   if (!context) return null;
   const sections: string[] = [];
+  if (context.screen) sections.push(context.screen);
   if (context.board) sections.push(context.board);
   if (context.threads?.length) {
     sections.push(

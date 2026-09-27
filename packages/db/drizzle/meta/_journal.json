@@ -148,6 +148,13 @@
       "when": 1790521985152,
       "tag": "0020_draft_topic",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790522231762,
+      "tag": "0021_capture_screen",
+      "breakpoints": true
     }
   ]
 }

@@ -12,6 +12,7 @@ import { and, asc, desc, eq, gte, max, sql } from "drizzle-orm";
 import {
   agentDraft,
   agentDraftVersion,
+  captureScreen,
   captureSession,
   directive,
   utterance,
@@ -162,4 +163,44 @@ export async function opsSince(userId: string, since: Date) {
     .where(and(eq(workspaceOp.userId, userId), gte(workspaceOp.occurredAt, since)))
     .orderBy(asc(workspaceOp.seq))
     .limit(1);
+}
+
+/**
+ * Record that the person opened `screen` during this drive, if they own it.
+ *
+ * Skips the write when the latest row already says the same screen, so a
+ * refresh or a re-render is not a navigation. Returns false when the drive is
+ * not theirs.
+ */
+export async function recordScreen(input: {
+  captureSessionId: string;
+  userId: string;
+  screen: string;
+}): Promise<boolean> {
+  const db = getDb();
+  const [owned] = await db
+    .select({ id: captureSession.id })
+    .from(captureSession)
+    .where(and(eq(captureSession.id, input.captureSessionId), eq(captureSession.userId, input.userId)))
+    .limit(1);
+  if (!owned) return false;
+
+  const latest = await currentScreen(input.captureSessionId);
+  if (latest === input.screen) return true;
+  await db.insert(captureScreen).values({
+    captureSessionId: input.captureSessionId,
+    screen: input.screen,
+  });
+  return true;
+}
+
+/** The screen the person most recently had open during this drive, or null. */
+export async function currentScreen(captureSessionId: string): Promise<string | null> {
+  const [row] = await getDb()
+    .select({ screen: captureScreen.screen })
+    .from(captureScreen)
+    .where(eq(captureScreen.captureSessionId, captureSessionId))
+    .orderBy(desc(captureScreen.at))
+    .limit(1);
+  return row?.screen ?? null;
 }

@@ -79,6 +79,7 @@ export {
   voicesForPicker,
   type VoiceProfile,
 } from "./voice";
+export { SCREENS, isScreen, renderScreen, screenFor, type Screen } from "./screen";
 export {
   STT_LANGUAGES,
   STT_LANGUAGE_CODES,

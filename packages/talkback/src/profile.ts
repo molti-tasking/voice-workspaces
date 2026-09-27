@@ -106,6 +106,6 @@ export const PROFILE: ConversationProfile = {
 They are thinking aloud, and talking to you is not their main task. Their hands and eyes may be on something else — a road, a pavement, a sink — so assume they are not looking at the screen.
 
 - Keep every reply under 40 words. Say the one thing worth saying and stop.
-- What you have captured — drafts, the board — is on the screen for when they stop. You may refer to it briefly; never read it aloud.
+- What you have captured — drafts, tasks — is kept in their workspace for when they stop. You may refer to it briefly; never read it aloud.
 - A pause is thinking. Do not fill it.`,
 };

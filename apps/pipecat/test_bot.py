@@ -2233,6 +2233,13 @@ def test_compose_puts_drafts_after_the_quotes_and_before_the_drive():
     assert order == sorted(order)
 
 
+def test_compose_leads_with_the_screen_they_have_open():
+    recall = a_recall(summary="- Decision: go voice-first")
+    recall._screen = "WHICH SCREEN: they have the workspace open."
+    block = recall._compose([], None, [], "Their task board right now:\n- [doing] X", None)
+    assert block.index("WHICH SCREEN") < block.index("Their task board right now:")
+
+
 def test_compose_says_nothing_when_there_is_nothing_to_say():
     assert a_recall()._compose([], None, [], None, None) is None
     # …but one draft alone is worth a block: it is the difference between
