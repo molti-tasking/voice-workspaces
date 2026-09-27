@@ -4,7 +4,7 @@
 // which imports @voicemural/db, and that drags the Postgres driver into the
 // browser bundle. Both modules are pure by construction.
 import { STT_LANGUAGES } from "@voicemural/talkback/language";
-import { VOICES } from "@voicemural/talkback/voice";
+import { VOICES, voicesForPicker } from "@voicemural/talkback/voice";
 import {
   STUDY_TOGGLES_ENABLED,
   TOGGLEABLE,
@@ -41,8 +41,11 @@ import { TALKBACK_ENABLED, useCapture } from "./capture-provider";
  * voice it would have had.
  */
 export function VoicePicker() {
-  const { voiceId, chooseVoice, isBusy, isRecording } = useCapture();
+  const { voiceId, chooseVoice, sttLanguage, isBusy, isRecording } = useCapture();
   if (!TALKBACK_ENABLED) return null;
+  // A pinned language puts its native speakers first. Every voice is told the
+  // drive's language either way; only a native one loses the accent.
+  const offered = voicesForPicker(sttLanguage);
 
   return (
     <fieldset
@@ -51,7 +54,7 @@ export function VoicePicker() {
     >
       <legend className="sr-only">Which voice?</legend>
       <span className="mr-1 text-fg/50">Voice</span>
-      {VOICES.map((voice) => {
+      {offered.map((voice) => {
         const active = voice.id === voiceId;
         return (
           <button
@@ -102,7 +105,7 @@ export function LanguagePicker() {
       <button
         type="button"
         aria-pressed={auto}
-        title="Detect per utterance — right for mixed German/English"
+        title="Detect the language as you speak — right for mixed-language drives"
         onClick={() => chooseSttLanguage(null)}
         className={[
           "cursor-pointer rounded-full px-3 py-1 transition-colors disabled:cursor-default disabled:opacity-50",

@@ -77,8 +77,13 @@ import { PROACTIVITY_STANZAS, PROFILE, type ConversationProfile } from "./profil
  * was; inferring, correcting, storing and explaining that had become most of
  * what the recorder was. One profile now (`PROFILE` in profile.ts), and the
  * question of where and when people use this is asked on `/survey`.
+ *
+ * talkback-15 answers the pilot feedback of late Sep 2026. Danish, German and
+ * Spanish speakers heard every reply with an English accent: TTS is now told
+ * the drive's language (bot.py `LanguageFollower`), and HOW TO SPEAK says to
+ * answer in the language they last spoke rather than drifting to English.
  */
-export const TALKBACK_CONFIG_VERSION = "talkback-14";
+export const TALKBACK_CONFIG_VERSION = "talkback-15";
 
 /**
  * The default register: brief, and present.
@@ -165,6 +170,7 @@ HOW TO SPEAK
 - VERY short. One sentence, occasionally two. The section below gives the hard word cap; stay well inside it. Every word is spoken aloud, and a hundred words is a monologue, not a reply. Say the one thing that is worth saying and stop.
 - No preamble and no sign-off. Do not say "Sure" or "Great question" or "Let me know".
 - Be concrete and direct. If you did not understand, say so in a few words.
+- Answer in the language they last spoke — Danish to Danish, Spanish to Spanish — never drifting back to English because these instructions are in English.
 - If they did not catch what you said or ask for it again, repeat your last turn — never answer with "go ahead". Automatic transcription often turns "can you repeat the question?" into "can I repeat the question?"; treat both as a request to hear it again.
 - Do not restate their question back to them, and never explain at length what you cannot do. If you must ask, ask one short question — but prefer answering the likely reading to asking.`;
 
@@ -243,6 +249,8 @@ export const ANSWER_RETRY_NUDGE = `(They have just answered the question YOU ask
 export const ANSWER_ACKNOWLEDGEMENTS: Readonly<Record<string, string>> = {
   en: "Sorry, I lost that. Say it again.",
   de: "Entschuldige, das ist mir entgangen. Sag es noch mal.",
+  da: "Undskyld, det gik mig forbi. Sig det igen.",
+  es: "Perdona, se me ha escapado. Dilo otra vez.",
 };
 
 /**
@@ -272,6 +280,8 @@ export const ANSWER_ACKNOWLEDGEMENTS: Readonly<Record<string, string>> = {
 export const SEARCH_WAIT_PHRASES: Readonly<Record<string, readonly string[]>> = {
   en: ["Still looking that up.", "Bear with me, I am still searching."],
   de: ["Ich suche noch.", "Hab ein bisschen Geduld, ich suche noch."],
+  da: ["Jeg leder stadig efter det.", "Et øjeblik, jeg søger stadig."],
+  es: ["Todavía lo estoy buscando.", "Un momento, sigo buscando todavía."],
 };
 
 /** The language the container speaks its fixed phrases in. Null is auto-detect. */

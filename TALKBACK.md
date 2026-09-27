@@ -618,6 +618,19 @@ simply produces no reply.
 point — one continuous synthesis fed incrementally is what separates speech from
 stitched fragments. Keep `ELEVENLABS_MODEL_ID` on a turbo/flash model.
 
+**TTS must be told the language, or every language gets an English accent.**
+Without `language_code` ElevenLabs guesses from the text, and a voice speaks
+every language with the accent of the person it was made from; pilots heard
+Danish, German and Spanish all spoken like an American would. Only the `*_v2_5`
+models accept the code. A pinned drive gets it at connect (`ttsLanguage` from
+`/session`); an auto-detect drive gets it from `LanguageFollower`, which pushes a
+`TTSUpdateSettingsFrame` once two final transcripts in a row agree on a new
+language (logged `[tts] language → da`). The switch reconnects the websocket,
+which is why it waits for agreement. The code alone fixes pronunciation, not
+timbre: the accent goes only with a NATIVE voice, which `voice.ts` swaps in per
+language once `NATIVE_VOICE_IDS` has one (pick them from the ElevenLabs Voice
+Library, filtered by language and accent).
+
 **`docker compose up -d` does not pick up `.env` changes.** Compose interpolates
 at container-create time, so a container that predates the edit keeps its old
 values — `STT_PROVIDER=deepgram` sat in `.env` for a whole drive while the

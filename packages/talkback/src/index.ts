@@ -73,7 +73,10 @@ export {
   VOICE_IDS,
   asVoiceId,
   isKnownVoice,
+  nativeVoicesByLanguage,
+  voiceFor,
   voiceProfile,
+  voicesForPicker,
   type VoiceProfile,
 } from "./voice";
 export {

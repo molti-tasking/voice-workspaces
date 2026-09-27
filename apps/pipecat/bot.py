@@ -97,6 +97,7 @@ from pipecat.frames.frames import (
     StartFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
+    TTSUpdateSettingsFrame,
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
     VADUserStartedSpeakingFrame,
@@ -120,6 +121,7 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 # transcripts already use, so it can be pushed from anywhere in the pipeline.
 from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+from pipecat.transcriptions.language import Language
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.openai.stt import OpenAISTTService
@@ -741,6 +743,98 @@ class Trace(FrameProcessor):
             logger.info(f"[{self._label}] heard: {frame.text!r}")
 
         await self.push_frame(frame, direction)
+
+
+class LanguageFollower(FrameProcessor):
+    """Tells TTS which language it is speaking, on an auto-detect drive.
+
+    THE ACCENT. ElevenLabs voices are multilingual, but without a
+    `language_code` the model guesses from the text, and every voice speaks
+    every language with the accent of the person it was made from. The pilots
+    heard Danish, German and Spanish all spoken as an American would. A PINNED
+    drive fixes that at connect (`ttsLanguage` / `ttsVoiceId` from
+    /api/realtime/session); this does the same for an auto-detect one, from
+    what STT reports it heard.
+
+    STABLE, NOT TWITCHY. A switch reconnects the ElevenLabs websocket (the
+    language is a URL field), so it happens only when the last WINDOW final
+    transcripts agree on a language that differs from the current one. One
+    English name in a German sentence changes nothing.
+
+    THE VOICE follows too, by the rule `voiceFor` in voice.ts states: keep the
+    chosen voice if it is native to the new language or nothing native exists;
+    otherwise swap to the native one. `nativeVoices` is that catalogue, handed
+    over by the session so there is one copy of it.
+
+    The fixed phrases (`AnswerGuard`, `KeepAlive`) are told as well, so a
+    Danish drive hears "Undskyld" rather than "Sorry".
+    """
+
+    WINDOW = 2
+
+    def __init__(
+        self,
+        tts,
+        *,
+        chosen_voice: str,
+        native_voices: dict | None,
+        pinned: bool,
+        on_change=None,
+    ):
+        super().__init__()
+        self._tts = tts
+        self._chosen = chosen_voice
+        self._native = native_voices or {}
+        self._pinned = pinned
+        self._on_change = on_change or []
+        self._recent: list[str] = []
+        self._current: str | None = None
+        self._voice = chosen_voice
+
+    @staticmethod
+    def _base(language) -> str | None:
+        if language is None:
+            return None
+        code = str(getattr(language, "value", language)).lower()
+        return code.split("-")[0] or None
+
+    def _voice_for(self, language: str) -> str:
+        if self._chosen in self._native.values():
+            # The chosen voice is a native speaker of SOME language: keep it
+            # only for that one.
+            chosen_language = next(k for k, v in self._native.items() if v == self._chosen)
+            if chosen_language == language:
+                return self._chosen
+        return self._native.get(language, self._chosen)
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        await self.push_frame(frame, direction)
+
+        if self._pinned or not isinstance(frame, TranscriptionFrame):
+            return
+        language = self._base(getattr(frame, "language", None))
+        if language is None:
+            return
+        self._recent = (self._recent + [language])[-self.WINDOW :]
+        if len(self._recent) < self.WINDOW or len(set(self._recent)) != 1:
+            return
+        if language == self._current:
+            return
+
+        voice = self._voice_for(language)
+        logger.info(
+            f"[tts] language → {language}"
+            f"{f' (voice {voice})' if voice != self._voice else ''}"
+        )
+        self._current = language
+        delta = ElevenLabsTTSService.Settings(language=Language(language))
+        if voice != self._voice:
+            delta.voice = voice
+            self._voice = voice
+        await self.push_frame(TTSUpdateSettingsFrame(delta=delta, service=self._tts))
+        for callback in self._on_change:
+            callback(language)
 
 
 SPEAKER_TAG = re.compile(r"^\[Speaker (\d+)\]\s*")
@@ -1569,10 +1663,14 @@ ANSWER_RETRY_NUDGE = (
 ANSWER_ACKNOWLEDGEMENTS = {
     "en": "Sorry, I lost that. Say it again.",
     "de": "Entschuldige, das ist mir entgangen. Sag es noch mal.",
+    "da": "Undskyld, det gik mig forbi. Sig det igen.",
+    "es": "Perdona, se me ha escapado. Dilo otra vez.",
 }
 SEARCH_WAIT_PHRASES = {
     "en": ("Still looking that up.", "Bear with me, I am still searching."),
     "de": ("Ich suche noch.", "Hab ein bisschen Geduld, ich suche noch."),
+    "da": ("Jeg leder stadig efter det.", "Et øjeblik, jeg søger stadig."),
+    "es": ("Todavía lo estoy buscando.", "Un momento, sigo buscando todavía."),
 }
 FALLBACK_PHRASE_LANGUAGE = "en"
 
@@ -1581,8 +1679,8 @@ def phrase_language(session: dict) -> str:
     """Which language the fixed phrases above are said in.
 
     The drive's own `sttLanguage`, which is a property of the recording rather
-    than of this container. Null — auto-detect — falls back to English, which
-    is what the participant would have heard anyway.
+    than of this container. Null — auto-detect — starts in English and is
+    then moved by `LanguageFollower` once STT has heard what is being spoken.
     """
     language = (session or {}).get("sttLanguage")
     return language if language in ANSWER_ACKNOWLEDGEMENTS else FALLBACK_PHRASE_LANGUAGE
@@ -3539,14 +3637,26 @@ def build_pipeline(
     # this container never decides and never validates. `ELEVENLABS_VOICE_ID`
     # is the fallback for a session that carries no choice, including every
     # degraded connection, and it stays REQUIRED so that fallback always exists.
-    voice = session.get("voiceId") or FALLBACK_VOICE_ID
-    logger.info(f"[tts] voice {voice}{'' if session.get('voiceId') else ' (fallback)'}")
+    #
+    # `ttsVoiceId` over `voiceId`: on a drive pinned to a language the catalogue
+    # has a native speaker for, the session swaps that speaker in (`voiceFor`
+    # in voice.ts). Absent from an older web deploy, which means the choice.
+    voice = session.get("ttsVoiceId") or session.get("voiceId") or FALLBACK_VOICE_ID
+    # WHICH LANGUAGE it is speaking. Unset, ElevenLabs guesses from the text and
+    # speaks it with the voice's own (English) accent. Only the *_v2_5 models
+    # accept a language_code; Pipecat warns and drops it for any other.
+    tts_language = session.get("ttsLanguage")
+    logger.info(
+        f"[tts] voice {voice}{'' if session.get('voiceId') else ' (fallback)'}"
+        f", language {tts_language or 'auto (follows STT)'}"
+    )
 
     tts = ElevenLabsTTSService(
         api_key=os.environ["ELEVENLABS_API_KEY"],
         settings=ElevenLabsTTSService.Settings(
             voice=voice,
             model=os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5"),
+            language=Language(tts_language) if tts_language else None,
         ),
         # NO `optimize_streaming_latency` here, and it is not an oversight: in
         # 1.7.0 that field belongs to ElevenLabsHttpTTSService, not to the
@@ -3652,6 +3762,20 @@ def build_pipeline(
     # re-runs a turn by the same route — a message on the context and an
     # LLMRunFrame from upstream of the user aggregator.
     answers = AnswerGuard(context, session)
+
+    def _phrases_follow(language: str) -> None:
+        if language in ANSWER_ACKNOWLEDGEMENTS:
+            answers._language = language
+            keepalive._language = language
+
+    language_follower = LanguageFollower(
+        tts,
+        chosen_voice=voice,
+        native_voices=session.get("nativeVoices"),
+        # A pinned drive already told TTS at connect; nothing to follow.
+        pinned=bool(tts_language),
+        on_change=[_phrases_follow],
+    )
     logger.info(f"[study] condition {session.get('studyCondition') or 'none (degraded)'}")
 
     pipeline = Pipeline(
@@ -3662,6 +3786,9 @@ def build_pipeline(
             stt,
             # Before the trace, so the log shows the tag the model will see.
             SpeakerTagger(),
+            # Before anything that speaks, so a language switch reaches TTS
+            # before the reply to the words that caused it.
+            language_follower,
             Trace("stt"),
             # Before Recall: the summary must see this turn's speech, and Recall
             # reads the summary when it composes the block.

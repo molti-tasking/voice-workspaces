@@ -27,6 +27,41 @@ export interface VoiceProfile {
   label: string;
   /** One line under the label. */
   hint: string;
+  /**
+   * The language this voice is a NATIVE speaker of, as a catalogue code from
+   * `language.ts`. ElevenLabs voices are multilingual, but a voice speaks every
+   * language with the accent of the person it was cloned from: "USA Girl"
+   * reading Danish sounds like an American reading Danish, and the pilots
+   * heard exactly that. `voiceFor` uses this to swap in a native speaker.
+   */
+  language: string;
+}
+
+/**
+ * One native speaker per non-English language — TO BE FILLED IN.
+ *
+ * Pick each from the ElevenLabs Voice Library (filter by language and accent,
+ * e.g. "Danish / Copenhagen"), add it to the account's "My Voices", and paste
+ * its id here. An empty id is left out of the catalogue entirely, so until a
+ * language has one its drives keep the chosen English voice — now told which
+ * language it is speaking (see `ttsLanguage` in /api/realtime/session), which
+ * already fixes pronunciation of numbers and names, but not the accent.
+ */
+const NATIVE_VOICE_IDS: Record<string, { id: string; label: string }> = {
+  de: { id: "", label: "Deutsch" },
+  da: { id: "", label: "Dansk" },
+  es: { id: "", label: "Español" },
+};
+
+function nativeVoices(): VoiceProfile[] {
+  return Object.entries(NATIVE_VOICE_IDS)
+    .filter(([, v]) => v.id.length > 0)
+    .map(([language, v]) => ({
+      id: v.id,
+      label: v.label,
+      hint: `Native ${v.label} voice`,
+      language,
+    }));
 }
 
 /**
@@ -35,9 +70,10 @@ export interface VoiceProfile {
  * identity, and `capture_session.voice_id` stores the id, never the label.
  */
 export const VOICES: readonly VoiceProfile[] = [
-  { id: "XHqlxleHbYnK8xmft8Vq", label: "Voice A", hint: "ElevenLabs XHql…" },
-  { id: "x86DtpnPPuq2BpEiKPRy", label: "Voice B", hint: "ElevenLabs x86D…" },
-  { id: "A9evEp8yGjv4c3WsIKuY", label: "Voice C", hint: "ElevenLabs A9ev…" },
+  { id: "XHqlxleHbYnK8xmft8Vq", label: "Voice A", hint: "ElevenLabs XHql…", language: "en" },
+  { id: "x86DtpnPPuq2BpEiKPRy", label: "Voice B", hint: "ElevenLabs x86D…", language: "en" },
+  { id: "A9evEp8yGjv4c3WsIKuY", label: "Voice C", hint: "ElevenLabs A9ev…", language: "en" },
+  ...nativeVoices(),
 ];
 
 export const VOICE_IDS: readonly string[] = VOICES.map((v) => v.id);
@@ -63,4 +99,42 @@ export function asVoiceId(value: string | null | undefined): string | null {
 
 export function voiceProfile(id: string | null | undefined): VoiceProfile | null {
   return VOICES.find((v) => v.id === id) ?? null;
+}
+
+/**
+ * The voice a drive should speak with in `language`.
+ *
+ * The chosen voice when it is a native speaker of that language — or when
+ * the catalogue has no native speaker for it, since a known voice with an
+ * accent beats a silent swap to nothing. Otherwise the language's native
+ * voice. Null language (auto-detect, nothing heard yet) keeps the choice.
+ *
+ * Mirrored by `LanguageFollower` in bot.py, which applies the same rule
+ * mid-drive from the map `nativeVoicesByLanguage` hands it.
+ */
+export function voiceFor(language: string | null | undefined, chosen: string | null): string | null {
+  if (!language) return chosen;
+  const current = voiceProfile(chosen);
+  if (current?.language === language) return chosen;
+  return nativeVoicesByLanguage()[language] ?? chosen;
+}
+
+/** Language code -> the native voice id, for languages that have one. */
+export function nativeVoicesByLanguage(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const v of VOICES) {
+    if (v.language !== "en" && !(v.language in out)) out[v.language] = v.id;
+  }
+  return out;
+}
+
+/**
+ * What the picker offers once a language is pinned: the native speakers of
+ * it first, then the rest. Auto (null) offers everything, in catalogue order.
+ */
+export function voicesForPicker(language: string | null): VoiceProfile[] {
+  if (!language) return [...VOICES];
+  const native = VOICES.filter((v) => v.language === language);
+  const other = VOICES.filter((v) => v.language !== language && v.language === "en");
+  return [...native, ...other];
 }

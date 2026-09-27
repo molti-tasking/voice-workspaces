@@ -41,6 +41,8 @@ export interface SttLanguageProfile {
 export const STT_LANGUAGES: readonly SttLanguageProfile[] = [
   { code: "en", label: "English", hint: "Transcribe English only" },
   { code: "de", label: "Deutsch", hint: "Transcribe German only" },
+  { code: "da", label: "Dansk", hint: "Transcribe Danish only" },
+  { code: "es", label: "Español", hint: "Transcribe Spanish only" },
 ];
 
 export const STT_LANGUAGE_CODES: readonly string[] = STT_LANGUAGES.map((l) => l.code);

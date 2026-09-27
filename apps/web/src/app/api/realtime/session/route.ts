@@ -16,7 +16,9 @@ import {
   composeSystemPrompt,
   foldSummary,
   loadDriveSoFarText,
+  nativeVoicesByLanguage,
   summaryPromptFor,
+  voiceFor,
   webSearchSection,
 } from "@voicemural/talkback";
 
@@ -149,6 +151,18 @@ export async function POST(req: Request) {
       // ASR provider. Empty for every drive recorded before this existed,
       // which is fine — detection was what those drives were running anyway.
       sttLanguage: asSttLanguage(row.sttLanguage),
+      // What TTS is TOLD it is speaking. Without it ElevenLabs guesses from the
+      // text, and the pilots heard every language with an English accent.
+      // Null on auto-detect: bot.py's LanguageFollower sets it from what STT
+      // hears instead.
+      ttsLanguage: asSttLanguage(row.sttLanguage),
+      // The voice that actually speaks: the chosen one, unless the drive is
+      // pinned to a language the catalogue has a native speaker for. Kept
+      // apart from `voiceId`, which stays what the person chose.
+      ttsVoiceId: voiceFor(asSttLanguage(row.sttLanguage), asVoiceId(row.voiceId)),
+      // For auto-detect drives: which voice to switch to when STT hears a
+      // language, so the rule in `voiceFor` has one copy of its data.
+      nativeVoices: nativeVoicesByLanguage(),
       driveSummary,
       // The container computes offsets against this so `agent_turn` shares a
       // clock with `utterance`, which is ms since the drive started.

@@ -423,10 +423,14 @@ def test_the_phrases_match_the_typescript_they_mirror():
     assert bot.ANSWER_ACKNOWLEDGEMENTS == {
         "en": "Sorry, I lost that. Say it again.",
         "de": "Entschuldige, das ist mir entgangen. Sag es noch mal.",
+        "da": "Undskyld, det gik mig forbi. Sig det igen.",
+        "es": "Perdona, se me ha escapado. Dilo otra vez.",
     }
     assert bot.SEARCH_WAIT_PHRASES == {
         "en": ("Still looking that up.", "Bear with me, I am still searching."),
         "de": ("Ich suche noch.", "Hab ein bisschen Geduld, ich suche noch."),
+        "da": ("Jeg leder stadig efter det.", "Et øjeblik, jeg søger stadig."),
+        "es": ("Todavía lo estoy buscando.", "Un momento, sigo buscando todavía."),
     }
 
 
@@ -2398,3 +2402,68 @@ def test_the_environment_attribute_is_set_only_when_configured(monkeypatch):
 
     monkeypatch.setattr(bot, "LANGFUSE_ENVIRONMENT", "staging")
     assert bot.drive_span_attributes({}, None)["langfuse.environment"] == "staging"
+
+
+# --- LanguageFollower -------------------------------------------------------
+
+
+def follow(languages, *, chosen="en-voice", native=None, pinned=False):
+    """Push transcripts heard in `languages`; return the TTS updates pushed and
+    the languages the phrase callback was told about."""
+    updates, told = [], []
+
+    async def run():
+        follower = bot.LanguageFollower(
+            object(),
+            chosen_voice=chosen,
+            native_voices=native if native is not None else {"da": "da-voice", "es": "es-voice"},
+            pinned=pinned,
+            on_change=[told.append],
+        )
+
+        async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+            if isinstance(frame, bot.TTSUpdateSettingsFrame):
+                updates.append(frame.delta)
+
+        follower.push_frame = capture
+        for code in languages:
+            frame = heard("hej med dig")
+            frame.language = bot.Language(code) if code else None
+            await follower.process_frame(frame, FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    return updates, told
+
+
+def test_the_voice_follows_a_language_once_it_holds():
+    updates, told = follow(["da", "da"])
+    assert len(updates) == 1
+    assert str(updates[0].language.value) == "da"
+    assert updates[0].voice == "da-voice"
+    assert told == ["da"]
+
+
+def test_one_stray_word_in_another_language_changes_nothing():
+    updates, _ = follow(["de", "en", "de", "en"])
+    assert updates == []
+
+
+def test_no_native_speaker_keeps_the_chosen_voice_but_sets_the_language():
+    updates, _ = follow(["de", "de"])
+    assert len(updates) == 1
+    assert str(updates[0].language.value) == "de"
+    from pipecat.services.settings import is_given
+
+    assert not is_given(updates[0].voice)
+
+
+def test_a_pinned_drive_is_left_alone():
+    updates, told = follow(["es", "es", "es"], pinned=True)
+    assert updates == [] and told == []
+
+
+def test_it_switches_back_and_only_once_per_change():
+    updates, told = follow(["da", "da", "da", "en", "en", "en"])
+    assert told == ["da", "en"]
+    # Back to English: the chosen voice returns.
+    assert updates[1].voice == "en-voice"
