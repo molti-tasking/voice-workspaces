@@ -479,6 +479,88 @@ describe("diffWorkspace", () => {
 });
 
 /** Comparable snapshot of folded state, for equality assertions. */
+describe("archiving", () => {
+  it("takes an archived topic out of the live list and keeps its blocks", () => {
+    const ops = [...baseline(), op(T1, { type: "retire_topic", topicId: "topic-a", via: "user" })];
+    const state = foldWorkspace(ops);
+
+    expect(state.topics).toHaveLength(0);
+    expect(state.archivedTopics.map((t) => t.id)).toEqual(["topic-a"]);
+    expect(state.archivedTopics[0]?.retiredAt).toEqual(T1);
+    expect(state.blocksByTopic.get("topic-a")).toHaveLength(1);
+  });
+
+  it("brings a topic back on restore, where its content puts it", () => {
+    const ops = [
+      ...baseline(),
+      op(T1, { type: "retire_topic", topicId: "topic-a", via: "user" }),
+      op(T2, { type: "restore_topic", topicId: "topic-a", via: "user" }),
+    ];
+    const state = foldWorkspace(ops);
+
+    expect(state.topics.map((t) => t.id)).toEqual(["topic-a"]);
+    expect(state.archivedTopics).toHaveLength(0);
+    // Archiving and restoring are not activity on the topic.
+    expect(state.topics[0]?.lastTouchedAt).toEqual(T0);
+  });
+
+  it("reopens an archived topic when something new is said about it", () => {
+    const ops = [
+      ...baseline(),
+      op(T1, { type: "retire_topic", topicId: "topic-a", via: "user" }),
+      op(T2, {
+        type: "add_block",
+        blockId: "block-2",
+        topicId: "topic-a",
+        kind: "question",
+        text: "Which lab, though?",
+        spans: [],
+      }),
+    ];
+
+    expect(foldWorkspace(ops).topics.map((t) => t.id)).toEqual(["topic-a"]);
+  });
+
+  it("is time travel like everything else: before the archive, it is there", () => {
+    const ops = [...baseline(), op(T2, { type: "retire_topic", topicId: "topic-a", via: "user" })];
+
+    expect(foldWorkspace(ops, T1).topics).toHaveLength(1);
+    expect(foldWorkspace(ops, T3).topics).toHaveLength(0);
+  });
+
+  it("restores a single archived block and records who retired it", () => {
+    const retired = [...baseline(), op(T1, { type: "retire_block", blockId: "block-1", via: "user" })];
+    const before = foldWorkspace(retired);
+    expect(before.blocksByTopic.get("topic-a") ?? []).toHaveLength(0);
+    expect(before.allBlocks.get("block-1")?.retiredVia).toBe("user");
+
+    const restored = foldWorkspace([
+      ...retired,
+      op(T2, { type: "restore_block", blockId: "block-1", via: "user" }),
+    ]);
+    expect(restored.blocksByTopic.get("topic-a")?.map((b) => b.id)).toEqual(["block-1"]);
+    expect(restored.allBlocks.get("block-1")?.retiredVia).toBeUndefined();
+  });
+
+  it("never restores a superseded block, which would fork its chain", () => {
+    const ops = [
+      ...baseline(),
+      op(T1, {
+        type: "revise_block",
+        blockId: "block-1b",
+        supersedesBlockId: "block-1",
+        topicId: "topic-a",
+        kind: "claim",
+        text: "I want strong HCI and a good lab.",
+        spans: [],
+      }),
+      op(T2, { type: "restore_block", blockId: "block-1", via: "user" }),
+    ];
+
+    expect(foldWorkspace(ops).blocksByTopic.get("topic-a")?.map((b) => b.id)).toEqual(["block-1b"]);
+  });
+});
+
 function serialise(state: ReturnType<typeof foldWorkspace>) {
   return {
     topics: state.topics.map((t) => ({ id: t.id, title: t.title })),

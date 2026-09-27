@@ -1163,6 +1163,11 @@ export const workspaceOpTypeEnum = pgEnum("workspace_op_type", [
   "revise_block",
   "retire_block",
   "move_block",
+  // The person's own curation of the workspace — see WorkspaceOp in
+  // packages/workspace/src/types.ts.
+  "retire_topic",
+  "restore_topic",
+  "restore_block",
 ]);
 
 /**

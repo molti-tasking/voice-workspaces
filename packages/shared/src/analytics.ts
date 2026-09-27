@@ -160,6 +160,18 @@ export interface AnalyticsEventMap {
   // --- workspace / timeline, client-side -----------------------------------
   workspace_viewed: { topic_count: number; block_count: number; has_diff: boolean };
   workspace_topic_exported: { topic_slug: string; block_count: number; bytes: number };
+  /**
+   * The person archiving or restoring something in the workspace. Counts and
+   * kinds only, never text (EVALUATION_PLAN §4 constraint 1). `age_days` is how
+   * long the thing had existed, which is what says whether archiving is
+   * pruning stale entries or correcting fresh ones.
+   */
+  workspace_curated: {
+    action: "retire_topic" | "restore_topic" | "retire_block" | "restore_block";
+    block_kind?: string;
+    block_count: number;
+    age_days: number;
+  };
   workspace_diff_viewed: { added: number; revised: number; new_topics: number };
   // Clearing a diff and expanding a revision history are both plain element
   // clicks (an <a> and a <summary>), which autocapture already records. Naming

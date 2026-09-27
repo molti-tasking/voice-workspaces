@@ -4,6 +4,7 @@ import {
   type Block,
   type Topic,
 } from "@voicemural/workspace";
+import { ArchiveItemButton, ArchiveTopicButton, TaskStateSelect } from "./curation";
 import { ExportButton } from "./export-button";
 import { topicIcon } from "./icons";
 
@@ -20,20 +21,25 @@ import { topicIcon } from "./icons";
  * a card reads as a document: what is still open, then what is thought, then
  * the attributes, then the asides.
  *
- * A pure server component apart from the download button.
+ * A server component apart from the buttons. `editable` is off when the page
+ * is showing the workspace as it stood at some earlier moment (`?asOf=`):
+ * archiving something from a view of the past would change the present.
  */
 export function TopicCard({
   topic,
   blocks,
   allBlocks,
   highlight,
+  editable = true,
 }: {
   topic: Topic;
   blocks: Block[];
   allBlocks: Map<string, Block>;
   /** Blocks a `?since=` diff touched; everything else recedes. */
   highlight?: Set<string>;
+  editable?: boolean;
 }) {
+  const archive = (b: Block) => (editable ? <ArchiveItemButton blockId={b.id} /> : null);
   const Icon = topicIcon(topic.icon);
 
   const questions = blocks.filter((b) => b.kind === "question");
@@ -61,6 +67,7 @@ export function TopicCard({
           filename={topicFilename(topic)}
           blockCount={blocks.length}
         />
+        {editable && <ArchiveTopicButton topicId={topic.id} title={topic.title} />}
       </header>
 
       <div className="space-y-3">
@@ -70,19 +77,21 @@ export function TopicCard({
             {questions.map((b) => (
               <li
                 key={b.id}
-                className={`flex gap-2 text-sm leading-snug text-amber-300 ${faded(b) ? "opacity-30" : ""}`}
+                className={`group flex gap-2 text-sm leading-snug text-amber-300 ${faded(b) ? "opacity-30" : ""}`}
               >
                 <span aria-hidden className="shrink-0 font-mono text-xs opacity-60">
                   ?
                 </span>
-                <span>{b.text}</span>
+                <span className="flex-1">{b.text}</span>
+                {archive(b)}
               </li>
             ))}
           </ul>
         )}
 
-        {/* What was said would get done, with the column it sits in. The
-            board is the place to move these; here they read as a checklist. */}
+        {/* What was said would get done, with the column it sits in —
+            changeable here, which is how a phone moves a task: the board is a
+            desktop view. */}
         {tasks.length > 0 && (
           <ul className="space-y-1.5">
             {tasks.map((b) => {
@@ -91,7 +100,7 @@ export function TopicCard({
               return (
                 <li
                   key={b.id}
-                  className={`flex gap-2 text-sm leading-snug ${faded(b) ? "opacity-30" : ""}`}
+                  className={`group flex gap-2 text-sm leading-snug ${faded(b) ? "opacity-30" : ""}`}
                 >
                   <span aria-hidden className="shrink-0 font-mono text-xs text-fg/50">
                     {finished ? "☑" : "☐"}
@@ -99,18 +108,23 @@ export function TopicCard({
                   <span className={state === "dropped" ? "text-fg/50 line-through" : ""}>
                     {b.text}
                   </span>
-                  <span
-                    className={[
-                      "ml-auto shrink-0 font-mono text-xs",
-                      state === "done"
-                        ? "text-emerald-300/80"
-                        : state === "open" || state === "dropped"
-                          ? "text-fg/50"
-                          : "text-amber-300",
-                    ].join(" ")}
-                  >
-                    {state}
-                  </span>
+                  {editable ? (
+                    <TaskStateSelect blockId={b.id} state={state} />
+                  ) : (
+                    <span
+                      className={[
+                        "ml-auto shrink-0 font-mono text-xs",
+                        state === "done"
+                          ? "text-emerald-300/80"
+                          : state === "open" || state === "dropped"
+                            ? "text-fg/50"
+                            : "text-amber-300",
+                      ].join(" ")}
+                    >
+                      {state}
+                    </span>
+                  )}
+                  {archive(b)}
                 </li>
               );
             })}
@@ -123,10 +137,13 @@ export function TopicCard({
             {claims.map((b) => (
               <li
                 key={b.id}
-                className={`text-sm leading-snug ${faded(b) ? "opacity-30" : ""}`}
+                className={`group flex gap-2 text-sm leading-snug ${faded(b) ? "opacity-30" : ""}`}
               >
-                {b.text}
-                <RevisionNote block={b} allBlocks={allBlocks} />
+                <div className="min-w-0 flex-1">
+                  {b.text}
+                  <RevisionNote block={b} allBlocks={allBlocks} />
+                </div>
+                {archive(b)}
               </li>
             ))}
           </ul>
@@ -135,11 +152,12 @@ export function TopicCard({
         {/* Attributes, as a table. Three sentences of prose become three short
             rows, which is most of where the card's density comes from. */}
         {facts.length > 0 && (
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 border-t border-[var(--color-line)] pt-2.5 text-[0.8125rem]">
+          <dl className="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-1 border-t border-[var(--color-line)] pt-2.5 text-[0.8125rem]">
             {facts.map((b) => (
-              <div key={b.id} className={`contents ${faded(b) ? "opacity-30" : ""}`}>
+              <div key={b.id} className={`group contents ${faded(b) ? "opacity-30" : ""}`}>
                 <dt className="text-fg/50">{b.label ?? "—"}</dt>
                 <dd className="text-fg/70">{b.text}</dd>
+                <dd>{archive(b)}</dd>
               </div>
             ))}
           </dl>
@@ -152,12 +170,13 @@ export function TopicCard({
               <li
                 key={b.id}
                 className={[
-                  "text-[0.8125rem] leading-snug",
+                  "group flex gap-2 text-[0.8125rem] leading-snug",
                   b.kind === "meta" ? "text-sky-300/70 italic" : "text-fg/60",
                   faded(b) ? "opacity-30" : "",
                 ].join(" ")}
               >
-                {b.text}
+                <span className="flex-1">{b.text}</span>
+                {archive(b)}
               </li>
             ))}
           </ul>
