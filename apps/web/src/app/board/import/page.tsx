@@ -36,7 +36,7 @@ export default async function ImportBoardPage() {
   if (!user) {
     return (
       <main className="mx-auto max-w-lg px-6 py-16 text-center">
-        <p className="text-white/60">
+        <p className="text-fg/60">
           <Link href="/" className="underline">
             Sign in
           </Link>{" "}
@@ -51,11 +51,11 @@ export default async function ImportBoardPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 pt-10 pb-40">
       <header className="mb-8">
-        <Link href="/board" className="text-sm text-white/40 underline-offset-4 hover:underline">
+        <Link href="/board" className="text-sm text-fg/60 underline-offset-4 hover:underline">
           ← Board
         </Link>
         <h1 className="mt-2 text-2xl font-semibold">Bring in a board you already have</h1>
-        <p className="mt-2 max-w-prose text-sm text-white/40">
+        <p className="mt-2 max-w-prose text-sm text-fg/60">
           Paste a Trello export, a Jira or Trello CSV, a Notion table, or just a list of things you
           mean to do. The columns other tools use are mapped onto these five; anything the reader
           does not recognise becomes a topic rather than a column.

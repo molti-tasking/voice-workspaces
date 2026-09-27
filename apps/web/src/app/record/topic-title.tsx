@@ -111,12 +111,12 @@ export function TopicTitle({
             // in from the blur the old one left behind.
             key={shown}
             data-blurred={changing && !still ? "" : undefined}
-            className="vm-title text-balance text-center text-3xl font-semibold leading-tight tracking-tight text-white sm:text-4xl"
+            className="vm-title text-balance text-center text-3xl font-semibold leading-tight tracking-tight text-fg sm:text-4xl"
           >
             {shown}
           </p>
         ) : (
-          placeholder && <p className="text-center text-sm text-white/40">{placeholder}</p>
+          placeholder && <p className="text-center text-sm text-fg/60">{placeholder}</p>
         )}
       </div>
       {trail.length > 0 && (
@@ -125,7 +125,7 @@ export function TopicTitle({
             <li
               key={subject}
               style={{ opacity: TRAIL_OPACITY[i] ?? 0 }}
-              className="truncate px-4 text-base font-medium tracking-tight text-white sm:text-lg"
+              className="truncate px-4 text-base font-medium tracking-tight text-fg sm:text-lg"
             >
               {subject}
             </li>

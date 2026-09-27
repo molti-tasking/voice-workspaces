@@ -87,7 +87,7 @@ export default async function BriefPage({
       <header className="mb-8 flex flex-wrap items-baseline justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Brief</h1>
-          <p className="mt-1 text-sm text-white/40">
+          <p className="mt-1 text-sm text-fg/60">
             {cardCount} active task{cardCount === 1 ? "" : "s"} across {topics.length} topic
             {topics.length === 1 ? "" : "s"}
             {asOf && (
@@ -102,7 +102,7 @@ export default async function BriefPage({
       {topics.length === 0 ? (
         <div className="rounded-xl border border-dashed border-line p-10 text-center">
           <p className="mb-1 font-medium">Nothing to brief</p>
-          <p className="text-sm text-white/40">
+          <p className="text-sm text-fg/60">
             Every task is done, dropped, or not there yet.{" "}
             <Link href={withAsOf("/board", asOf)} className="underline">
               The board
@@ -118,8 +118,8 @@ export default async function BriefPage({
         </div>
       )}
 
-      <nav className="mt-10 text-xs text-white/35">
-        <Link href={withAsOf("/board", asOf)} className="hover:text-white/70">
+      <nav className="mt-10 text-xs text-fg/55">
+        <Link href={withAsOf("/board", asOf)} className="hover:text-fg/70">
           ← Board
         </Link>
       </nav>
@@ -148,7 +148,7 @@ function TopicSection({
       <header className="mb-3 flex items-center gap-2">
         {/* Module-level map of Lucide components; see `workspace/topic-card.tsx`. */}
         {/* eslint-disable-next-line react-hooks/static-components */}
-        <Icon size={15} aria-hidden className="shrink-0 text-white/40" />
+        <Icon size={15} aria-hidden className="shrink-0 text-fg/60" />
         <h2 className="min-w-0 truncate font-medium">{topic.topic.title}</h2>
       </header>
 
@@ -165,7 +165,7 @@ function TopicSection({
       {finished.length > 0 && (
         /* Named but not briefed: a finished task is context for the ones that
            are not, and its quotes would push the live work off the screen. */
-        <p className="mt-4 text-[11px] text-white/25">
+        <p className="mt-4 text-xs text-fg/45">
           Also on this topic: {finishedLabel(finished)} — on{" "}
           <Link href={withAsOf("/board", asOf)} className="underline">
             the board
@@ -205,7 +205,7 @@ function CardSection({
     .filter((u): u is TimelineUtterance => u !== undefined);
 
   return (
-    <article className="rounded-xl border border-line bg-ink-soft/40 p-4">
+    <article className="rounded-xl border border-line bg-surface/40 p-4">
       <Link
         href={cardHref(card.cardId, asOf)}
         /* The label is the task's own words, and PostHog autocapture sends the
@@ -215,7 +215,7 @@ function CardSection({
         {card.block.text}
       </Link>
 
-      <p className="mt-1 font-mono text-[10px] text-white/30">
+      <p className="mt-1 font-mono text-xs text-fg/50">
         {card.state}
         {marker && <> · {marker}</>}
       </p>
@@ -228,7 +228,7 @@ function CardSection({
           "what is on me" is answered by the task and the quote, and "how did
           this get here" is asked of one card at a time. */}
       <details className="mt-3">
-        <summary className="cursor-pointer list-none text-[10px] text-white/25 hover:text-white/60">
+        <summary className="cursor-pointer list-none text-xs text-fg/45 hover:text-fg/60">
           {brief.steps.length} step{brief.steps.length === 1 ? "" : "s"}
         </summary>
         <div className="mt-2">

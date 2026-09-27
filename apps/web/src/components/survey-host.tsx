@@ -89,7 +89,7 @@ export function SurveyHost({
     // would be the one thing on screen a participant cannot dismiss by
     // starting to drive.
     <div className="fixed right-4 bottom-36 z-30 w-[min(22rem,calc(100vw-2rem))]">
-      <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-ink-soft)] p-4 shadow-2xl shadow-black/40">
+      <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4 shadow-2xl shadow-black/40">
         {submitted ? (
           <p className="text-sm text-emerald-300">Thank you — that helps.</p>
         ) : (
@@ -102,7 +102,7 @@ export function SurveyHost({
                 type="button"
                 onClick={dismiss}
                 aria-label="Dismiss"
-                className="shrink-0 text-white/30 hover:text-white/70"
+                className="shrink-0 text-fg/50 hover:text-fg/70"
               >
                 ✕
               </button>
@@ -178,8 +178,8 @@ function QuestionField({
               className={[
                 "h-9 flex-1 rounded-lg border text-sm transition-colors",
                 value === score
-                  ? "border-[var(--color-accent)] bg-[var(--color-accent)]/20 text-white"
-                  : "border-[var(--color-line)] text-white/50 hover:text-white/80",
+                  ? "border-[var(--color-accent)] bg-[var(--color-accent)]/20 text-fg"
+                  : "border-[var(--color-line)] text-fg/65 hover:text-fg/80",
               ].join(" ")}
             >
               {score}
@@ -203,8 +203,8 @@ function QuestionField({
               className={[
                 "rounded-full border px-3 py-1.5 text-xs transition-colors",
                 value === choice
-                  ? "border-[var(--color-accent)] bg-[var(--color-accent)]/20 text-white"
-                  : "border-[var(--color-line)] text-white/50 hover:text-white/80",
+                  ? "border-[var(--color-accent)] bg-[var(--color-accent)]/20 text-fg"
+                  : "border-[var(--color-line)] text-fg/65 hover:text-fg/80",
               ].join(" ")}
             >
               {choice}
@@ -222,7 +222,7 @@ function QuestionField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         rows={3}
-        className="w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-ink)] p-2 text-sm text-white/90 outline-none focus:border-white/30"
+        className="w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] p-2 text-sm text-fg/90 outline-none focus:border-fg/30"
       />
     </div>
   );

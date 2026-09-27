@@ -41,25 +41,25 @@ export function CapabilityCard({ capability }: { capability: CapabilityView }) {
   return (
     <article
       className={[
-        "rounded-xl border border-[var(--color-line)] bg-[var(--color-ink-soft)]/40 p-4",
+        "rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)]/40 p-4",
         retired ? "opacity-45" : "",
       ].join(" ")}
     >
       <header className="mb-1 flex items-baseline gap-2">
         <h3 className={`font-medium ${retired ? "line-through" : ""}`}>{capability.name}</h3>
         {capability.version > 1 && (
-          <span className="font-mono text-[10px] text-white/25">v{capability.version}</span>
+          <span className="font-mono text-xs text-fg/45">v{capability.version}</span>
         )}
-        <span className="ml-auto shrink-0 font-mono text-xs text-white/30">
+        <span className="ml-auto shrink-0 font-mono text-xs text-fg/50">
           {capability.fires === 0 ? "never used" : `${capability.fires}×`}
         </span>
       </header>
 
       {capability.restatement && (
-        <p className="text-sm leading-snug text-white/60">{capability.restatement}</p>
+        <p className="text-sm leading-snug text-fg/60">{capability.restatement}</p>
       )}
 
-      <footer className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-white/25">
+      <footer className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-fg/45">
         {origin && OriginIcon && (
           <span className="flex items-center gap-1">
             <OriginIcon size={11} aria-hidden />
@@ -85,13 +85,13 @@ export function CapabilityCard({ capability }: { capability: CapabilityView }) {
 
       {capability.history.length > 1 && (
         <details className="mt-2">
-          <summary className="cursor-pointer list-none text-[10px] text-white/20 hover:text-white/50">
+          <summary className="cursor-pointer list-none text-xs text-fg/35 hover:text-fg/65">
             edited · {capability.history.length - 1} earlier version
             {capability.history.length === 2 ? "" : "s"}
           </summary>
           <ol className="mt-1 space-y-1 border-l border-[var(--color-line)] pl-2.5">
             {capability.history.slice(1).map((version) => (
-              <li key={version.version} className="text-xs text-white/25">
+              <li key={version.version} className="text-xs text-fg/45">
                 <span className="font-mono">v{version.version}</span>{" "}
                 {version.restatement ?? "—"}
               </li>

@@ -67,20 +67,20 @@ function DraftCard({ draft }: { draft: DraftCue }) {
   };
 
   return (
-    <article className="rounded-xl border border-[var(--color-line)] bg-[var(--color-ink-soft)]/40 p-3">
+    <article className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)]/40 p-3">
       <header className="mb-1.5 flex items-baseline gap-2">
-        <h3 className="min-w-0 flex-1 truncate text-[11px] tracking-wide text-white/40 uppercase">
+        <h3 className="min-w-0 flex-1 truncate text-xs tracking-wide text-fg/60 uppercase">
           {draft.title || "Draft"}
         </h3>
         {/* `v2.1 · 14:32`. Tabular so the number does not shift the Copy button
             around as versions accumulate. */}
-        <span className="shrink-0 font-mono text-[10px] text-white/25 tabular-nums">
+        <span className="shrink-0 font-mono text-xs text-fg/45 tabular-nums">
           {draft.version} · {formatTime(draft.at)}
         </span>
         <button
           type="button"
           onClick={() => void copy()}
-          className="flex shrink-0 items-center gap-1 rounded border border-[var(--color-line)] px-2 py-1 text-[11px] text-white/50 hover:border-white/30 hover:text-white/90"
+          className="flex shrink-0 items-center gap-1 rounded border border-[var(--color-line)] px-2 py-1 text-xs text-fg/65 hover:border-fg/30 hover:text-fg/90"
         >
           {copied ? (
             <>
@@ -102,7 +102,7 @@ function DraftCard({ draft }: { draft: DraftCue }) {
         make an email or a list arrive as one paragraph. Scrolls rather than
         growing, so a long draft cannot push the record button off screen.
       */}
-      <p className="max-h-56 overflow-y-auto whitespace-pre-wrap text-[13px] leading-snug text-white/85">
+      <p className="max-h-56 overflow-y-auto whitespace-pre-wrap text-[0.8125rem] leading-snug text-fg/85">
         {draft.text}
       </p>
     </article>

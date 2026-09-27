@@ -45,7 +45,7 @@ export function LoadMoreSentinel({ nextCount }: { nextCount: number }) {
   }, [nextCount, params, router]);
 
   return (
-    <div ref={sentinel} className="flex justify-center py-10 text-white/25">
+    <div ref={sentinel} className="flex justify-center py-10 text-fg/45">
       <Loader2 size={16} className="animate-spin" aria-label="Loading earlier drives" />
     </div>
   );

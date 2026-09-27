@@ -42,7 +42,7 @@ export default async function BoardPage({
   if (!user) {
     return (
       <main className="mx-auto max-w-lg px-6 py-16 text-center">
-        <p className="text-white/60">
+        <p className="text-fg/60">
           <Link href="/" className="underline">
             Sign in
           </Link>{" "}
@@ -89,7 +89,7 @@ export default async function BoardPage({
       <header className="mb-8 flex flex-wrap items-baseline justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Board</h1>
-          <p className="mt-1 text-sm text-white/40">
+          <p className="mt-1 text-sm text-fg/60">
             {board.cards.length} task{board.cards.length === 1 ? "" : "s"} ·{" "}
             {board.transitions.length} move{board.transitions.length === 1 ? "" : "s"}
             {awaitingReview > 0 && ` · ${awaitingReview} moved by speech, not yet reviewed`}
@@ -104,13 +104,13 @@ export default async function BoardPage({
               was said about it, rather than a column of sentences. */}
           <Link
             href={withAsOf("/board/brief", asOf)}
-            className="text-xs text-white/40 hover:text-white/80"
+            className="text-xs text-fg/60 hover:text-fg/80"
           >
             Brief
           </Link>
           {/* Offered on every visit, not only on an empty board: people import
               one list, then remember the other one. */}
-          <Link href="/board/import" className="text-xs text-white/40 hover:text-white/80">
+          <Link href="/board/import" className="text-xs text-fg/60 hover:text-fg/80">
             Import
           </Link>
           <NavMenu />
@@ -145,14 +145,14 @@ function EmptyState({ hasOps }: { hasOps: boolean }) {
   return (
     <div className="rounded-xl border border-dashed border-line p-10 text-center">
       <p className="mb-1 font-medium">Nothing on the board yet</p>
-      <p className="text-sm text-white/40">
+      <p className="text-sm text-fg/60">
         {hasOps
           ? "Tasks appear here when you say you will do something — \"I need to email William tomorrow\" — and move when you say how it went."
           : "The board is derived from what you say. Record something first."}
       </p>
       {/* The empty board is exactly where someone realises their work is
           somewhere else. Say so here rather than making them find the link. */}
-      <p className="mt-3 text-sm text-white/40">
+      <p className="mt-3 text-sm text-fg/60">
         Already keep a board somewhere?{" "}
         <Link href="/board/import" className="underline underline-offset-4">
           Bring it in

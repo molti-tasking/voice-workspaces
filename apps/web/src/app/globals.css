@@ -1,22 +1,107 @@
 @import "tailwindcss";
 
+/* --- Theme ----------------------------------------------------------------
+   Light by default, dark when the system asks for it. Every colour a
+   component uses is one of these tokens, so a component never knows which
+   theme it is in:
+
+     canvas   the page            surface  a raised card / sheet
+     fg       text and icons —    line     hairlines
+              used at an opacity   accent   the recording red
+              (`text-fg/60`) as
+              the neutral scale
+
+   `fg` replaced the old `white`: the UI was drawn as "white at some opacity
+   on near-black", and swapping that one colour for a theme-aware one keeps
+   every opacity step meaning the same thing in both themes. */
 @theme {
-  --color-ink: #0f1115;
-  --color-ink-soft: #1a1d24;
-  --color-line: #2a2f3a;
-  --color-paper: #f7f7f5;
-  --color-accent: #e5484d;
-  --color-accent-soft: #3b1d20;
+  --color-canvas: var(--vm-canvas);
+  --color-surface: var(--vm-surface);
+  --color-line: var(--vm-line);
+  --color-fg: var(--vm-fg);
+  --color-accent: var(--vm-accent);
+  --color-accent-soft: var(--vm-accent-soft);
 }
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
+  --vm-canvas: #fbfbfa;
+  --vm-surface: #ffffff;
+  --vm-line: #d9dbe0;
+  --vm-fg: #111318;
+  --vm-accent: #d92d33;
+  --vm-accent-soft: #fde4e4;
+  /* The glass and scrim treatments below read these rather than a colour. */
+  --vm-glass-edge: rgb(0 0 0 / 0.08);
+  --vm-glass-highlight: rgb(255 255 255 / 0.7);
+  --vm-shadow: rgb(15 17 21 / 0.18);
+
+  /* Status text was written as pale tints (`text-amber-300`) that only read
+     on a dark page. In the light theme the same class names resolve to the
+     deep end of the same hue, so no component needs a light-mode variant. */
+  --color-amber-100: oklch(41.4% 0.112 45.904);
+  --color-amber-200: oklch(47.3% 0.137 46.201);
+  --color-amber-300: oklch(47.3% 0.137 46.201);
+  --color-amber-400: oklch(55.5% 0.163 48.998);
+  --color-emerald-100: oklch(37.8% 0.077 168.94);
+  --color-emerald-200: oklch(43.2% 0.095 166.913);
+  --color-emerald-300: oklch(50.8% 0.118 165.612);
+  --color-emerald-400: oklch(50.8% 0.118 165.612);
+  --color-red-100: oklch(39.6% 0.141 25.723);
+  --color-red-200: oklch(44.4% 0.177 26.899);
+  --color-red-300: oklch(50.5% 0.213 27.518);
+  --color-red-400: oklch(50.5% 0.213 27.518);
+  --color-rose-300: oklch(51.4% 0.222 16.935);
+  --color-sky-50: oklch(29.3% 0.066 243.157);
+  --color-sky-100: oklch(39.1% 0.09 240.876);
+  --color-sky-300: oklch(50% 0.134 242.749);
+  --color-sky-400: oklch(50% 0.134 242.749);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --vm-canvas: #0f1115;
+    --vm-surface: #1a1d24;
+    --vm-line: #2a2f3a;
+    --vm-fg: #f7f7f5;
+    --vm-accent: #e5484d;
+    --vm-accent-soft: #3b1d20;
+    --vm-glass-edge: rgb(255 255 255 / 0.1);
+    --vm-glass-highlight: rgb(255 255 255 / 0.14);
+    --vm-shadow: rgb(0 0 0 / 0.75);
+
+    /* Back to Tailwind's own tints. */
+    --color-amber-100: oklch(96.2% 0.059 95.617);
+    --color-amber-200: oklch(92.4% 0.12 95.746);
+    --color-amber-300: oklch(87.9% 0.169 91.605);
+    --color-amber-400: oklch(82.8% 0.189 84.429);
+    --color-emerald-100: oklch(95% 0.052 163.051);
+    --color-emerald-200: oklch(90.5% 0.093 164.15);
+    --color-emerald-300: oklch(84.5% 0.143 164.978);
+    --color-emerald-400: oklch(76.5% 0.177 163.223);
+    --color-red-100: oklch(93.6% 0.032 17.717);
+    --color-red-200: oklch(88.5% 0.062 18.334);
+    --color-red-300: oklch(80.8% 0.114 19.571);
+    --color-red-400: oklch(70.4% 0.191 22.216);
+    --color-rose-300: oklch(81% 0.117 11.638);
+    --color-sky-50: oklch(97.7% 0.013 236.62);
+    --color-sky-100: oklch(95.1% 0.026 236.824);
+    --color-sky-300: oklch(82.8% 0.111 230.318);
+    --color-sky-400: oklch(74.6% 0.16 232.661);
+  }
+}
+
+html {
+  /* 17px rather than the browser's 16: the pilot's reader is 60+ and reads
+     at 125%. Everything in rem scales with it. */
+  font-size: 106.25%;
 }
 
 html,
 body {
-  background: var(--color-ink);
-  color: var(--color-paper);
+  background: var(--color-canvas);
+  color: var(--color-fg);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -68,7 +153,7 @@ body {
 @keyframes vm-sheet-rise {
   from {
     transform: translateY(100%);
-    box-shadow: 0 -30px 60px rgb(0 0 0 / 0.6);
+    box-shadow: 0 -30px 60px var(--vm-shadow);
   }
 }
 @keyframes vm-sheet-recede {
@@ -81,7 +166,7 @@ body {
 @keyframes vm-sheet-drop {
   to {
     transform: translateY(100%);
-    box-shadow: 0 -30px 60px rgb(0 0 0 / 0.6);
+    box-shadow: 0 -30px 60px var(--vm-shadow);
   }
 }
 @keyframes vm-sheet-return {
@@ -206,21 +291,21 @@ body {
    iOS is the platform this is imitating. Browsers without backdrop-filter at
    all fall back to the flat tint, which is legible — just not glass. */
 .vm-glass {
-  background: color-mix(in srgb, var(--color-ink-soft) 72%, transparent);
+  background: color-mix(in srgb, var(--color-surface) 72%, transparent);
   -webkit-backdrop-filter: blur(28px) saturate(180%);
   backdrop-filter: blur(28px) saturate(180%);
-  border: 1px solid rgb(255 255 255 / 0.1);
+  border: 1px solid var(--vm-glass-edge);
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.14),
-    inset 0 -1px 0 rgb(0 0 0 / 0.25),
-    0 18px 45px -12px rgb(0 0 0 / 0.75);
+    inset 0 1px 0 var(--vm-glass-highlight),
+    inset 0 -1px 0 rgb(0 0 0 / 0.08),
+    0 18px 45px -12px var(--vm-shadow);
 }
 
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
   /* Only once the blur is real: at 55% over an unblurred page the text
      underneath shows through the dock and nothing is readable. */
   .vm-glass {
-    background: color-mix(in srgb, var(--color-ink-soft) 55%, transparent);
+    background: color-mix(in srgb, var(--color-surface) 55%, transparent);
   }
 }
 

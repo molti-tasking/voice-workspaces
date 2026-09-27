@@ -105,7 +105,7 @@ export function Stream({
       {/* The scrubber. Every bucket is a link, and both bounds live in the URL,
           so "the workspace as it stood after Tuesday, and what that recording
           changed" is a thing you can send someone. */}
-      <ol className="mt-2 flex min-w-[640px] justify-between text-[11px] text-white/30">
+      <ol className="mt-2 flex min-w-[640px] justify-between text-xs text-fg/50">
         {buckets.map((at, i) => {
           const since = buckets[i - 1];
           const params = new URLSearchParams({ asOf: at.toISOString() });
@@ -118,7 +118,7 @@ export function Stream({
                 href={`/workspace?${params.toString()}`}
                 className={[
                   "block rounded px-1 py-0.5 tabular-nums underline-offset-4 hover:underline",
-                  selected ? "bg-white/10 text-white/70" : "hover:text-white/60",
+                  selected ? "bg-fg/10 text-fg/70" : "hover:text-fg/60",
                 ].join(" ")}
               >
                 {at.toLocaleDateString(undefined, { day: "numeric", month: "short" })}

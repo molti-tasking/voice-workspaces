@@ -44,12 +44,18 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     title: SITE.name,
-    statusBarStyle: "black-translucent",
+    // "default" rather than "black-translucent": translucent always draws
+    // white status-bar text, which vanishes over the light theme.
+    statusBarStyle: "default",
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0f1115",
+  // Mirrors --vm-canvas in globals.css for each system theme.
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#fbfbfa" },
+    { media: "(prefers-color-scheme: dark)", color: "#0f1115" },
+  ],
   width: "device-width",
   initialScale: 1,
   // The recorder is operated at a glance in a car; accidental pinch-zoom on a

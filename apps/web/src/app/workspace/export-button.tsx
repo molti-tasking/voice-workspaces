@@ -53,7 +53,7 @@ export function ExportButton({
       }}
       className={[
         "shrink-0 rounded p-1 transition-colors",
-        done ? "text-emerald-400" : "text-white/20 hover:text-white/70",
+        done ? "text-emerald-400" : "text-fg/35 hover:text-fg/70",
       ].join(" ")}
     >
       <Download size={14} aria-hidden />

@@ -34,7 +34,7 @@ export default async function WorkspacePage({
   if (!user) {
     return (
       <main className="mx-auto max-w-lg px-6 py-16 text-center">
-        <p className="text-white/60">
+        <p className="text-fg/60">
           <Link href="/" className="underline">
             Sign in
           </Link>{" "}
@@ -108,7 +108,7 @@ export default async function WorkspacePage({
       <header className="mb-8 flex flex-wrap items-baseline justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Workspace</h1>
-          <p className="mt-1 text-sm text-white/40">
+          <p className="mt-1 text-sm text-fg/60">
             {state.topics.length} topic{state.topics.length === 1 ? "" : "s"} ·{" "}
             {blockCount} block{blockCount === 1 ? "" : "s"} · folded from{" "}
             {state.opCount} change{state.opCount === 1 ? "" : "s"}
@@ -134,7 +134,7 @@ export default async function WorkspacePage({
         <div className="mb-8 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/[0.07] px-4 py-3 text-sm">
           <p className="text-emerald-100">
             <span className="font-medium">Highlighting what changed</span>
-            <span className="text-white/50">
+            <span className="text-fg/65">
               {" "}
               · {diff.addedBlocks.length} added
               {diff.revisedBlocks.length > 0 &&
@@ -149,7 +149,7 @@ export default async function WorkspacePage({
                 ? `/workspace?asOf=${encodeURIComponent(validAsOf.toISOString())}`
                 : "/workspace"
             }
-            className="flex items-center gap-1 text-white/40 hover:text-white/70"
+            className="flex items-center gap-1 text-fg/60 hover:text-fg/70"
           >
             <X size={13} aria-hidden />
             Show everything
@@ -190,7 +190,7 @@ function EmptyState({
   return (
     <div className="rounded-xl border border-dashed border-[var(--color-line)] p-10 text-center">
       <p className="mb-1 font-medium">Nothing here yet</p>
-      <p className="text-sm text-white/40">
+      <p className="text-sm text-fg/60">
         {!hasSessions ? (
           <>
             Record something first — the workspace is derived from what you say.{" "}

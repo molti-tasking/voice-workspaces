@@ -232,12 +232,12 @@ function Column({
         "min-w-0 rounded-xl border border-dashed p-1 transition-colors",
         // Only ever a border and a wash: the column must not change size when a
         // card is over it, or every other column shifts under the cursor.
-        over ? "border-white/25 bg-white/3" : "border-transparent",
+        over ? "border-fg/25 bg-fg/3" : "border-transparent",
       ].join(" ")}
     >
-      <h2 className="mb-2 flex items-baseline gap-2 px-1 text-[11px] tracking-wide text-white/30 uppercase">
+      <h2 className="mb-2 flex items-baseline gap-2 px-1 text-xs tracking-wide text-fg/50 uppercase">
         {state}
-        <span className="font-mono text-[10px] text-white/20">
+        <span className="font-mono text-xs text-fg/35">
           {cards.length}
         </span>
       </h2>

@@ -26,21 +26,21 @@ export default function OfflinePage() {
       <h1 className="mb-3 text-2xl font-semibold">
         Can&rsquo;t reach VoiceMural
       </h1>
-      <p className="mb-4 text-white/60">
+      <p className="mb-4 text-fg/60">
         The app could not be loaded just now. Usually that is signal — tunnels,
         car parks and most of the countryside — but it can also be a problem at
         our end, or something on this network blocking the site.
       </p>
-      <p className="mb-8 text-white/60">
+      <p className="mb-8 text-fg/60">
         If you were recording, keep going.{" "}
-        <strong className="font-medium text-white">
+        <strong className="font-medium text-fg">
           Nothing has been lost.
         </strong>{" "}
         Audio is held on the phone and uploads itself once the app can reach the
         server again.
       </p>
       <OfflineStatus />
-      <p className="text-sm text-white/40">
+      <p className="text-sm text-fg/60">
         Once you have parked, reopen the app to check everything has gone up.
       </p>
     </main>
