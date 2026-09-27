@@ -9,7 +9,8 @@ import {
 } from "@voicemural/db/repertoire";
 import { resolveSpokenAnswer, type SpokenAnswer } from "@voicemural/shared";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
-import { buildTurnContext } from "@voicemural/talkback";
+import { currentScreen } from "@voicemural/db/display";
+import { buildTurnContext, renderScreen } from "@voicemural/talkback";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -112,9 +113,12 @@ export async function POST(req: Request) {
   // board on mid-drive should not have to wait for the next one, and it is a
   // primary-key read.
   const boardOn = (await boardEnabledAt(payload.userId).catch(() => null)) !== null;
-  const [{ passages, threads, board, drafts }, { settled, pending }] = await Promise.all([
+  const [{ passages, threads, board, drafts }, { settled, pending }, screen] = await Promise.all([
     buildTurnContext(payload.userId, payload.captureSessionId, parsed.data.said, { board: boardOn }),
     settleThenReadPending(payload.captureSessionId, parsed.data.said, parsed.data.answering),
+    // Fails open to "not known", which is itself an instruction not to
+    // describe the screen.
+    currentScreen(payload.captureSessionId).catch(() => null),
   ]);
 
   return NextResponse.json(
@@ -129,7 +133,18 @@ export async function POST(req: Request) {
     // Both `board` and `drafts` are PRE-RENDERED here rather than assembled in
     // Python: the ordering, the budget and the wording are one decision, and
     // splitting it across two languages is how the two would drift.
-    { passages, threads, board: board.text, drafts: drafts.text, pending, settled },
+    //
+    // `screen` is one pre-rendered line (`renderScreen`): which screen they
+    // have open and what it can do, so directions about the app are grounded.
+    {
+      passages,
+      threads,
+      board: board.text,
+      drafts: drafts.text,
+      pending,
+      settled,
+      screen: renderScreen(screen),
+    },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

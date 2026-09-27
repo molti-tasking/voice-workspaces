@@ -103,8 +103,15 @@ describe("composeSystemPrompt", () => {
 
   it("says the screen exists but is not being looked at", () => {
     const { prompt } = composeSystemPrompt();
-    expect(prompt).toContain("on the screen");
+    expect(prompt).toContain("kept in their workspace");
     expect(prompt).toContain("assume they are not looking at the screen");
+  });
+
+  it("grounds UI directions in the screen it was told about", () => {
+    expect(SYSTEM_PROMPT).toContain("You cannot see their screen");
+    expect(SYSTEM_PROMPT).toMatch(/Never say something is "on your screen" unless/);
+    // No gesture named that only one screen has.
+    expect(SYSTEM_PROMPT).not.toMatch(/drag the card/);
   });
 });
 

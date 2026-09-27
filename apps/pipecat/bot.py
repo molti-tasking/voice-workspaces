@@ -1327,6 +1327,11 @@ class Recall(FrameProcessor):
         # ONE message, reused. See the note in process_frame — this reference is
         # the whole mechanism that stops the prompt growing without bound.
         self._message: dict | None = None
+        # Which screen they have open, as the line `/context` renders it
+        # (`renderScreen` in screen.ts). Held here rather than widening the
+        # `_fetch` tuple; None until the first fetch, and from an older web
+        # deploy that sends no such field.
+        self._screen: str | None = None
 
     def _fetch(
         self, said: str, answering: str | None = None
@@ -1349,6 +1354,7 @@ class Recall(FrameProcessor):
         )
         with urllib.request.urlopen(req, timeout=5) as res:
             body = json.loads(res.read())
+            self._screen = body.get("screen")
             return (
                 body.get("passages") or [],
                 body.get("threads") or [],
@@ -1376,6 +1382,12 @@ class Recall(FrameProcessor):
         drafts: str | None = None,
     ) -> str | None:
         sections: list[str] = []
+        # Which screen they have open, first and in one line: it is not
+        # background about their work but a fact about right now, and it is
+        # what grounds any direction about the app. Mirrored in
+        # packages/talkback/src/eval/messages.ts — change one, change both.
+        if self._screen:
+            sections.append(self._screen)
         # THE BOARD FIRST, ahead even of where things stand. It is the most
         # concrete thing in the turn — what they committed to, and which column
         # each of those sits in — and it is the only section that can answer

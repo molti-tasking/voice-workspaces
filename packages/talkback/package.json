@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./profile": "./src/profile.ts",
     "./voice": "./src/voice.ts",
-    "./language": "./src/language.ts"
+    "./language": "./src/language.ts",
+    "./screen": "./src/screen.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

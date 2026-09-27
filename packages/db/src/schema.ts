@@ -1348,6 +1348,34 @@ export const agentDraft = pgTable(
 );
 
 /**
+ * Which screen the person had open during a drive, one row per change.
+ *
+ * WHY. The agent described screens it could not see: it praised "the board
+ * view" while the pilot was on the workspace, told her to drag cards there
+ * (not possible), and said a list was "on your screen" when it was not. The
+ * recorder now reports each navigation during a drive, and
+ * `/api/realtime/context` hands the latest to the model, which is told to give
+ * UI directions only for that screen.
+ *
+ * Append-only, like everything else about a drive: the latest row is the
+ * current screen, and the sequence is itself data — how often a driver looks
+ * at the phone, and at what.
+ */
+export const captureScreen = pgTable(
+  "capture_screen",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    captureSessionId: uuid("capture_session_id")
+      .notNull()
+      .references(() => captureSession.id, { onDelete: "cascade" }),
+    /** A coarse name from `SCREENS` in the web app, never a raw URL. */
+    screen: text("screen").notNull(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("capture_screen_session_idx").on(t.captureSessionId, t.at)],
+);
+
+/**
  * The person archiving a draft in the workspace, or bringing it back.
  *
  * Its own append-only table rather than a column on `agent_draft`, because

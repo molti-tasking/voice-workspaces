@@ -1,6 +1,9 @@
 "use client";
 
-import { createContext, useCallback, useContext, useMemo } from "react";
+import { usePathname } from "next/navigation";
+import { createContext, useCallback, useContext, useEffect, useMemo } from "react";
+// The `/screen` subpath, not the package index — see capture-settings.tsx.
+import { screenFor } from "@voicemural/talkback/screen";
 import {
   useConditionOverride,
   type ConditionOverride,
@@ -101,6 +104,23 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     captureSessionId: recorder.currentSessionId,
     enabled: TALKBACK_ENABLED && isRecording,
   });
+
+  // Which screen they have open, reported on every navigation during a drive
+  // so the agent can stop describing screens it cannot see. Fire and forget:
+  // a missed report means the agent is told the screen is not known, which is
+  // what it was before this existed.
+  const pathname = usePathname();
+  const screen = screenFor(pathname);
+  const sessionId = recorder.currentSessionId;
+  useEffect(() => {
+    if (!isRecording || !sessionId) return;
+    void fetch("/api/realtime/screen", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ captureSessionId: sessionId, screen }),
+      keepalive: true,
+    }).catch(() => undefined);
+  }, [isRecording, sessionId, screen]);
 
   const { start, stop, finishDebrief: endDebrief } = recorder;
 
