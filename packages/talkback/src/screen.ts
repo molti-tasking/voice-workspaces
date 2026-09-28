@@ -33,7 +33,7 @@ const DESCRIPTIONS: Record<Screen, string> = {
   conversation:
     "the conversation view: the current subject, short cues, the drafts you have written on this drive, and a link to this drive's transcript. It shows nothing from earlier drives",
   workspace:
-    "the workspace: their topics as cards, each with its open questions, tasks, notes and the drafts filed on it. They can archive an item or change a task's state there; nothing is dragged",
+    "the workspace: the topics touched in the last two weeks as cards, older ones folded into one closed section below, each with its open questions, tasks, notes and the drafts filed on it. They can archive an item or change a task's state there; nothing is dragged",
   board:
     "the task board: their tasks in the columns open, next, doing, done and dropped. Cards are dragged between columns",
   timeline:

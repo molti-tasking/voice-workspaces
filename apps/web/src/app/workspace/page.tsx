@@ -97,6 +97,22 @@ export default async function WorkspacePage({
         ...diff.revisedBlocks.map((r) => r.to.id),
       ])
     : undefined;
+  /* WHAT IS BEING WORKED ON, FIRST. Every topic ever mentioned was an equal
+   * card, and on 28 Sep 2026 the person read eleven of them out and said "all
+   * of it is too much for me". Topics touched recently stay as cards; the rest
+   * fold into one closed section. Nothing is archived or hidden for good —
+   * new talk about an older topic brings it straight back up. Measured from
+   * the view's own moment, so `?asOf=` folds as it would have then. */
+  const now = validAsOf?.getTime() ?? Date.now();
+  const isRecent = (t: { lastTouchedAt: Date }) =>
+    now - t.lastTouchedAt.getTime() <= RECENT_DAYS * 24 * 60 * 60 * 1000;
+  const recentTopics = state.topics.filter(isRecent);
+  const olderTopics = state.topics.filter((t) => !isRecent(t));
+  // Every card up front when nothing is recent — a workspace that is only a
+  // closed section reads as empty.
+  const [shownTopics, foldedTopics] =
+    recentTopics.length > 0 ? [recentTopics, olderTopics] : [olderTopics, []];
+
   const blockCount = [...state.blocksByTopic.values()].reduce(
     (n, b) => n + b.length,
     0,
@@ -194,7 +210,11 @@ export default async function WorkspacePage({
           live view and the drive's own page. */}
       {unfiledDrafts.length > 0 && (
         <section className="mb-6 rounded-xl border border-[var(--color-line)] p-4">
-          <h2 className="mb-3 text-sm font-medium text-fg/75">From your drives</h2>
+          {/* Named for what they are. "From your drives" read as a category
+              of its own, next to the topics, that nobody could place. */}
+          <h2 className="mb-3 text-sm font-medium text-fg/75">
+            Drafts not filed on a topic
+          </h2>
           <ul className="space-y-1.5">
             {unfiledDrafts.slice(0, 8).map((d) => (
               <DraftItem key={d.id} draft={d} editable={!validAsOf} />
@@ -206,27 +226,72 @@ export default async function WorkspacePage({
       {state.topics.length === 0 && unfiledDrafts.length === 0 ? (
         <EmptyState hasSessions={sessions.length > 0} hasOps={ops.length > 0} />
       ) : state.topics.length === 0 ? null : (
-        // Masonry via CSS columns: cards are wildly uneven in height, and a grid
-        // would leave a ragged gap under every short one.
-        <div className="columns-1 gap-4 md:columns-2 lg:columns-3 [&>*]:mb-4 [&>*]:break-inside-avoid">
-          {state.topics.map((topic) => (
-            <TopicCard
-              key={topic.id}
-              topic={topic}
-              blocks={state.blocksByTopic.get(topic.id) ?? []}
-              drafts={draftsByTopic.get(topic.id)}
-              allBlocks={state.allBlocks}
-              highlight={changedBlockIds}
-              editable={!validAsOf}
-            />
-          ))}
-        </div>
+        <>
+          <TopicColumns>
+            {shownTopics.map((topic) => (
+              <TopicCard
+                key={topic.id}
+                topic={topic}
+                blocks={state.blocksByTopic.get(topic.id) ?? []}
+                drafts={draftsByTopic.get(topic.id)}
+                allBlocks={state.allBlocks}
+                highlight={changedBlockIds}
+                editable={!validAsOf}
+              />
+            ))}
+          </TopicColumns>
+          {foldedTopics.length > 0 && (
+            // Open when a diff highlights something in here, so a marker
+            // followed from the timeline never lands on a closed section.
+            <details
+              className="mt-2 mb-6"
+              open={foldedTopics.some((t) =>
+                (state.blocksByTopic.get(t.id) ?? []).some((b) => changedBlockIds?.has(b.id)),
+              )}
+            >
+              <summary className="cursor-pointer text-sm text-fg/60 hover:text-fg/80">
+                {foldedTopics.length} older topic{foldedTopics.length === 1 ? "" : "s"} · not
+                touched in {RECENT_DAYS} days
+              </summary>
+              <div className="mt-4">
+                <TopicColumns>
+                  {foldedTopics.map((topic) => (
+                    <TopicCard
+                      key={topic.id}
+                      topic={topic}
+                      blocks={state.blocksByTopic.get(topic.id) ?? []}
+                      drafts={draftsByTopic.get(topic.id)}
+                      allBlocks={state.allBlocks}
+                      highlight={changedBlockIds}
+                      editable={!validAsOf}
+                    />
+                  ))}
+                </TopicColumns>
+              </div>
+            </details>
+          )}
+        </>
       )}
 
       {!validAsOf && <Archived state={state} drafts={drafts.filter((d) => d.archived)} />}
       </CurationProvider>
 
       <AppDock />
+    </div>
+  );
+}
+
+/** How recently a topic must have been touched to stay a card up front. */
+const RECENT_DAYS = 14;
+
+/**
+ * Masonry via CSS columns: cards are wildly uneven in height, and a grid would
+ * leave a ragged gap under every short one.
+ */
+function TopicColumns({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="columns-1 gap-4 md:columns-2 lg:columns-3 [&>*]:mb-4 [&>*]:break-inside-avoid">
+      {children}
     </div>
   );
 }
