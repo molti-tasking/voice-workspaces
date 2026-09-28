@@ -226,6 +226,17 @@ export function RecorderClient() {
           </div>
         )}
 
+        {/* "How can I see my last discussion?" (28 Sep 2026): this screen
+            shows the subject, never the words, so say where the words are. */}
+        {isRecording && rec.currentSessionId && (
+          <Link
+            href={`/sessions/${rec.currentSessionId}`}
+            className="-mt-4 text-sm text-fg/55 underline-offset-4 hover:text-fg/80 hover:underline"
+          >
+            This drive&rsquo;s transcript →
+          </Link>
+        )}
+
         {isRecording && <CuePanel cues={cues} />}
 
         {/* Below the cue panel, because a draft is read deliberately and the

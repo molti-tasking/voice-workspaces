@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { useEffect, useRef } from "react";
 import { useCapture } from "./capture-provider";
 import { Link } from "./nav-link";
 
@@ -19,13 +20,34 @@ import { Link } from "./nav-link";
 export function LiveDriveBar() {
   const { isRecording, talkback, cues } = useCapture();
   const pathname = usePathname();
+  const shown = isRecording && !pathname.startsWith("/record");
+  const bar = useRef<HTMLDivElement>(null);
 
-  if (!isRecording || pathname.startsWith("/record")) return null;
+  /* Its height, published for the page's own sticky headers to sit under.
+   * Without it the timeline's date headers stuck at the very top too, behind
+   * this bar, and the two overlapped: "some problem with the headers of this
+   * page" (28 Sep 2026). */
+  useEffect(() => {
+    const el = bar.current;
+    const root = document.documentElement;
+    if (!shown || !el) return;
+    const publish = () => root.style.setProperty("--vm-live-bar", `${el.offsetHeight}px`);
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--vm-live-bar");
+    };
+  }, [shown]);
+
+  if (!shown) return null;
 
   const drafts = cues.drafts.length;
 
   return (
     <div
+      ref={bar}
       className="sticky top-0 z-40 border-b border-line bg-canvas/90 backdrop-blur"
       style={{ paddingTop: "env(safe-area-inset-top)" }}
       aria-live="off"
