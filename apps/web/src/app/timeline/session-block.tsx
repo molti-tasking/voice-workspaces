@@ -7,6 +7,7 @@ import type {
 } from "@voicemural/db/workspace";
 import { formatOffset } from "@voicemural/shared";
 import { AgentTurnBubble } from "@/components/agent-turn-bubble";
+import { Link } from "@/components/nav-link";
 import { MarkerLink } from "./marker-link";
 
 /**
@@ -32,9 +33,13 @@ export function SessionBlock({
   const items = interleave(utterances, markers, agentTurns);
 
   return (
-    <section id={`session-${session.id}`} className="scroll-mt-20">
-      <header className="sticky top-0 z-10 -mx-4 mb-3 bg-[var(--color-canvas)]/85 px-4 py-2 backdrop-blur">
-        <h2 className="text-sm font-medium">
+    <section
+      id={`session-${session.id}`}
+      className="scroll-mt-[calc(5rem+var(--vm-live-bar,0px))]"
+    >
+      {/* Under the live drive bar when there is one; see `LiveDriveBar`. */}
+      <header className="sticky top-[var(--vm-live-bar,0px)] z-10 -mx-4 mb-3 flex items-baseline justify-between gap-3 bg-[var(--color-canvas)]/85 px-4 py-2 backdrop-blur">
+        <h2 className="min-w-0 text-sm font-medium">
           {session.startedAt.toLocaleDateString(undefined, {
             weekday: "long",
             day: "numeric",
@@ -52,6 +57,16 @@ export function SessionBlock({
             {session.utteranceCount === 1 ? "" : "s"}
           </span>
         </h2>
+        {/* The drive's own page — its drafts, failed audio and retry — from
+            the one list of drives there now is. The separate session list was
+            a second copy of this page's headings. */}
+        <Link
+          href={`/sessions/${session.id}`}
+          className="flex shrink-0 items-center gap-0.5 text-xs text-fg/55 hover:text-fg/80"
+        >
+          Details
+          <ArrowUpRight size={12} aria-hidden />
+        </Link>
       </header>
 
       <ol className="space-y-1 border-l border-[var(--color-line)] pl-4">
