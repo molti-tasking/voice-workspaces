@@ -58,3 +58,33 @@ nothing was written down.
 - **Pre-existing test failure:** `test_a_degraded_drive_says_so_and_a_missing_version_does_not_vanish`
   in `test_bot.py` expects an `unknown` Langfuse tag. It fails the same way
   without these changes.
+
+---
+
+# Evaluation drive 02, 28 September 2026
+
+5:48 recorded, 18 agent turns, 1 draft. Transcription worked (40 utterances).
+The draft the person asked for was a prompt for the coding agent: *consolidate
+the screens and increase focus*.
+
+| What happened | Fix |
+|---|---|
+| "How can I see my last discussion?" got "in the conversation view", which shows nothing from earlier drives | The screen line now carries WHERE THINGS ARE (`APP_MAP`, screen.ts). The record screen links to this drive's transcript, and each timeline drive links to its page |
+| The drive bar and the timeline's sticky date headers overlapped | The bar publishes `--vm-live-bar`, and the headers stick below it |
+| "Show me the list … put it on the screen" got one spoken task | Showing and putting on the screen now mean a draft (talkback-17) |
+| The same sentence twice for two fragments; then four questions in a row to someone saying it was too much | No repeating the last turn, and no asking two turns running |
+| "heard in -148ms" | A negative STT time to first byte is left out |
+| A session list, a timeline, a workspace — "too many different screens" | The session list is folded into the timeline. Signed-in `/` goes to the timeline, except for a sign-in error or a guest banner |
+| A workspace of eleven equal topics: "all of it is too much for me" | Topics untouched for 14 days fold into one closed section. "From your drives" is now "Drafts not filed on a topic" |
+
+## Not settled
+
+- **Which screen the agent was told at 0:54.** It said "the workspace" after
+  the person had said they were on the conversation view. Check
+  `capture_screen` for that drive. If the rows are out of order, the browser's
+  keepalive POSTs arrived out of order and need a client sequence number.
+- **"There's nothing going on" on the record screen after coming back.** Cues
+  and drafts now survive navigation. If the title itself is still empty, the
+  container's title push is the next place to look.
+- **Further consolidation.** Trajectory and Repertoire remain in the menu, and
+  the board remains a desktop dock tab. Whether they stay is a product call.
