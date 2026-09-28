@@ -2652,3 +2652,21 @@ def test_the_answer_guard_does_not_re_run_a_moment_that_has_settled():
     pushed, messages = asyncio.run(run())
     assert pushed == []
     assert messages == []
+
+
+def test_a_negative_asr_time_is_left_out_rather_than_recorded():
+    # "heard in -148ms" on the transcript page, 28 Sep 2026.
+    recorder = FakeRecorder()
+    gate = bot.SilenceGate(recorder=recorder, llm_name="llm", stt_name="stt")
+
+    async def run():
+        gate.push_frame = _swallow
+        await gate.process_frame(
+            MetricsFrame(data=[TTFBMetricsData(processor="stt", value=-0.148, model="whisper")]),
+            FrameDirection.DOWNSTREAM,
+        )
+        for frame in reply("Fine."):
+            await gate.process_frame(frame, FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert "asrMs" not in recorder.calls[0]["metrics"]

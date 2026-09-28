@@ -3309,7 +3309,11 @@ class SilenceGate(FrameProcessor):
         for data in frame.data:
             if self._stt_name and data.processor == self._stt_name:
                 if isinstance(data, TTFBMetricsData):
-                    self._asr_ms = int(data.value * 1000)
+                    # A negative time to first byte is a clock artefact, not a
+                    # measurement: "heard in -148ms" was on the transcript
+                    # page on 28 Sep 2026. No number beats a wrong one.
+                    measured_ms = int(data.value * 1000)
+                    self._asr_ms = measured_ms if measured_ms >= 0 else None
                 continue
             if self._llm_name and data.processor != self._llm_name:
                 continue
