@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { listSessionsWithStats } from "@voicemural/db/sessions";
 import { formatOffset } from "@voicemural/shared";
 import { AppDock } from "@/components/app-dock";
@@ -38,6 +39,12 @@ export default async function HomePage({
     (user as { isAnonymous?: boolean | null }).isAnonymous === true;
   const providers = configuredProviders();
   const canUpgrade = isGuest && providers.length > 0;
+
+  // Signed in, this page was a second list of the drives the timeline already
+  // shows (28 Sep 2026: "too many different screens"). It stays only where it
+  // has something the timeline does not: a failed sign-in to explain, or a
+  // guest's recordings to keep by signing in.
+  if (!error && !canUpgrade) redirect("/timeline");
 
   const sessions = await listSessionsWithStats(user.id);
 

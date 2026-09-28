@@ -131,8 +131,11 @@ export default async function SessionPage({
         }}
       />
 
-      <Link href="/" className="text-sm text-fg/60 underline-offset-4 hover:underline">
-        ← Sessions
+      <Link
+        href={`/timeline#session-${id}`}
+        className="text-sm text-fg/60 underline-offset-4 hover:underline"
+      >
+        ← Timeline
       </Link>
 
       <header className="mt-4 mb-8">

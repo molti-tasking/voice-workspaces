@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  BookOpenCheck,
   ListTree,
   LogOut,
   Sparkles,
@@ -20,13 +19,16 @@ import { Link } from "./nav-link";
  * Everything that is not one of the dock's two surfaces.
  *
  * Three readings of the whole corpus — the ledger end to end, topics over
- * time, what the system has learned to do — plus the session list and the
- * study sheet. None of them is somewhere a participant goes mid-task, which is
- * exactly why they are here and not in the dock.
+ * time, what the system has learned to do — plus the study sheet. None of them
+ * is somewhere a participant goes mid-task, which is exactly why they are here
+ * and not in the dock.
+ *
+ * NO SESSION LIST. It was a second list of the same drives the timeline shows,
+ * and on 28 Sep 2026 it was the first thing named among "too many different
+ * screens". The timeline links each drive to its own page instead.
  */
 const LINKS: { href: string; label: string; hint: string; Icon: LucideIcon }[] = [
-  { href: "/", label: "Sessions", hint: "Every drive, newest first", Icon: BookOpenCheck },
-  { href: "/timeline", label: "Timeline", hint: "The ledger, read end to end", Icon: ListTree },
+  { href: "/timeline", label: "Timeline", hint: "Every drive, read end to end", Icon: ListTree },
   { href: "/trajectory", label: "Trajectory", hint: "Topics over time", Icon: Waypoints },
   { href: "/repertoire", label: "Repertoire", hint: "What it has learned to do", Icon: Sparkles },
 ];
