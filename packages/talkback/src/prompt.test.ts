@@ -230,6 +230,21 @@ describe("the evaluation drive of 27 Sep 2026", () => {
   });
 });
 
+describe("the drive of 28 Sep 2026", () => {
+  it("treats 'put it on the screen' as asking for a draft", () => {
+    expect(OUTPUT_CONTRACT).toMatch(/"put on the screen"/);
+  });
+
+  it("does not repeat itself, or ask question after question", () => {
+    expect(SYSTEM_PROMPT).toMatch(/Never say again what you have just said/);
+    expect(SYSTEM_PROMPT).toMatch(/never ask a question two turns running/);
+  });
+
+  it("answers where to find things from the map, not a guess", () => {
+    expect(SYSTEM_PROMPT).toMatch(/answer from WHERE THINGS ARE/);
+  });
+});
+
 describe("the keep-alive said while a tool runs, which bot.py mirrors", () => {
   it("runs out rather than nagging", () => {
     const de = SEARCH_WAIT_PHRASES.de!;

@@ -16,6 +16,13 @@ describe("screen", () => {
     for (const s of SCREENS) expect(renderScreen(s)).toMatch(/^WHICH SCREEN: they have /);
   });
 
+  it("always says where past transcripts are, so it never guesses", () => {
+    // "You can see the transcript of our last session in the conversation
+    // view" — which shows nothing from earlier drives (28 Sep 2026).
+    for (const s of [...SCREENS, null]) expect(renderScreen(s)).toMatch(/Timeline \(every past recording's transcript/);
+    expect(renderScreen("conversation")).toMatch(/nothing from earlier drives/);
+  });
+
   it("says it does not know rather than guessing", () => {
     expect(renderScreen(null)).toMatch(/not known/);
     expect(renderScreen("../../etc")).toMatch(/not known/);
