@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { ViewTransitions } from "next-view-transitions";
+import { NavHistoryTracker } from "@/components/back-link";
 import { CaptureProvider } from "@/components/capture-provider";
 import { LiveDriveBar } from "@/components/live-drive-bar";
 import { NavDirectionTracker } from "@/components/nav-link";
@@ -78,6 +79,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <html lang="en" data-nav="forward">
       <body className="min-h-dvh antialiased">
         <NavDirectionTracker />
+        <NavHistoryTracker />
         <ServiceWorker />
         <PostHogIdentity />
         <PostHogPageview />
