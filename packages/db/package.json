@@ -31,14 +31,14 @@
   },
   "dependencies": {
     "@voicemural/shared": "workspace:*",
-    "drizzle-orm": "0.45.2",
-    "postgres": "3.4.9",
-    "@voicemural/workspace": "workspace:*"
+    "@voicemural/workspace": "workspace:*",
+    "drizzle-orm": "0.45.3",
+    "postgres": "3.4.9"
   },
   "devDependencies": {
     "@types/node": "24.10.1",
     "dotenv": "^17.4.2",
-    "drizzle-kit": "0.31.10",
+    "drizzle-kit": "0.31.11",
     "tsx": "4.20.6",
     "typescript": "5.9.3",
     "vitest": "4.1.10"

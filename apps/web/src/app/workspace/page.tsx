@@ -103,15 +103,7 @@ export default async function WorkspacePage({
    * fold into one closed section. Nothing is archived or hidden for good —
    * new talk about an older topic brings it straight back up. Measured from
    * the view's own moment, so `?asOf=` folds as it would have then. */
-  const now = validAsOf?.getTime() ?? Date.now();
-  const isRecent = (t: { lastTouchedAt: Date }) =>
-    now - t.lastTouchedAt.getTime() <= RECENT_DAYS * 24 * 60 * 60 * 1000;
-  const recentTopics = state.topics.filter(isRecent);
-  const olderTopics = state.topics.filter((t) => !isRecent(t));
-  // Every card up front when nothing is recent — a workspace that is only a
-  // closed section reads as empty.
-  const [shownTopics, foldedTopics] =
-    recentTopics.length > 0 ? [recentTopics, olderTopics] : [olderTopics, []];
+  const [shownTopics, foldedTopics] = splitByRecency(state.topics, validAsOf);
 
   const blockCount = [...state.blocksByTopic.values()].reduce(
     (n, b) => n + b.length,
@@ -283,6 +275,22 @@ export default async function WorkspacePage({
 
 /** How recently a topic must have been touched to stay a card up front. */
 const RECENT_DAYS = 14;
+
+/**
+ * Topics to show as cards, and topics to fold away, as of `asOf` or now.
+ *
+ * Reads the clock, which is right here — the page is rendered per request
+ * (`force-dynamic`) — and is why it is not written inline in the component.
+ * Every card goes up front when nothing is recent: a workspace that is only a
+ * closed section reads as empty.
+ */
+function splitByRecency<T extends { lastTouchedAt: Date }>(topics: T[], asOf: Date | undefined): [T[], T[]] {
+  const now = asOf?.getTime() ?? Date.now();
+  const isRecent = (t: T) => now - t.lastTouchedAt.getTime() <= RECENT_DAYS * 24 * 60 * 60 * 1000;
+  const recent = topics.filter(isRecent);
+  const older = topics.filter((t) => !isRecent(t));
+  return recent.length > 0 ? [recent, older] : [older, []];
+}
 
 /**
  * Masonry via CSS columns: cards are wildly uneven in height, and a grid would
