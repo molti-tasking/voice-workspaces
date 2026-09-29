@@ -26,7 +26,12 @@ import { z } from "zod";
  * Length caps are generous; they are there against a paste, not a person.
  */
 
-export const SURVEY_VERSION = "initial-1";
+/**
+ * initial-2 adds the thinking-partner ratings (`partner`), 29 Sep 2026.
+ * Nothing in initial-1 was reworded or removed, so its answers still read
+ * alongside; the version says which documents could have the new items.
+ */
+export const SURVEY_VERSION = "initial-2";
 
 export const SURVEY_KEYS = ["initial"] as const;
 export const SurveyKey = z.enum(SURVEY_KEYS);
@@ -80,8 +85,41 @@ export const SurveyMoment = z.object({
 });
 export type SurveyMoment = z.infer<typeof SurveyMoment>;
 
+/**
+ * VoiceMural as a thinking partner, rated once over the whole of their use,
+ * 1–7. The keys are the construct each item measures; the questions, and the
+ * words at each end of the scale, are on the page (`PARTNER_ITEMS` there).
+ */
+export const PARTNER_KEYS = [
+  /** Faithful understanding: how accurately it understood the idea. */
+  "understanding",
+  /** Selective challenge: whether it pointed at a question that mattered. */
+  "challenge",
+  /** Respect for unfinished thought: room to finish before it stepped in. */
+  "space",
+  /** Preservation of agency: whether they reached their own conclusions. */
+  "agency",
+  /** Honest calibration: whether it said when it was unsure of its reading. */
+  "calibration",
+  /** Felt progress: whether they came away clearer. */
+  "progress",
+] as const;
+export type PartnerKey = (typeof PARTNER_KEYS)[number];
+
+const Rating = z.number().int().min(1).max(7);
+export const PartnerRatings = z.object({
+  understanding: Rating.optional(),
+  challenge: Rating.optional(),
+  space: Rating.optional(),
+  agency: Rating.optional(),
+  calibration: Rating.optional(),
+  progress: Rating.optional(),
+}) satisfies z.ZodType<Partial<Record<PartnerKey, number>>>;
+export type PartnerRatings = z.infer<typeof PartnerRatings>;
+
 export const SurveyAnswers = z.object({
   moments: z.array(SurveyMoment).max(20).default([]),
+  partner: PartnerRatings.optional(),
   /** "If you told a friend what this thing is, what would you say?" */
   describe: Text.optional(),
   /** "What would make you pick it up again tomorrow?" */

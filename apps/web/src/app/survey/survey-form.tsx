@@ -11,6 +11,7 @@ import {
   type Afterwards,
   type MomentAttention,
   type MomentPlace,
+  type PartnerKey,
   type SurveyAnswers,
   type SurveyMoment,
   type SurveyResponseView,
@@ -172,6 +173,31 @@ export function SurveyForm() {
           <Plus size={15} aria-hidden />
           {answers.moments.length === 0 ? "Add the first moment" : "Add another moment"}
         </button>
+      </section>
+
+      {/* The thinking-partner ratings: once, over all of their use, because
+          each asks about the experience as a whole rather than one moment. */}
+      <section aria-labelledby="partner" className="space-y-6">
+        <div>
+          <h2 id="partner" className="text-sm font-medium tracking-wide text-fg/60 uppercase">
+            Thinking with it
+          </h2>
+          <p className="mt-1 text-sm text-fg/60">
+            Across the times you used it. Skip any that did not come up.
+          </p>
+        </div>
+        {PARTNER_ITEMS.map((item) => (
+          <Scale
+            key={item.key}
+            label={item.question}
+            low={item.low}
+            high={item.high}
+            value={answers.partner?.[item.key] ?? null}
+            onPick={(rating) =>
+              update((p) => ({ ...p, partner: { ...p.partner, [item.key]: rating } }))
+            }
+          />
+        ))}
       </section>
 
       <section aria-labelledby="overall" className="space-y-5">
@@ -447,6 +473,50 @@ function MultiChips<T extends string>({
 }
 
 /** One 1–7 item as a row of targets, the same shape the recorder's ratings use. */
+/**
+ * The wording for each `PARTNER_KEYS` item. Stored answers carry only the key,
+ * so rewording one here is a change to `SURVEY_VERSION` if it changes what is
+ * being asked.
+ */
+const PARTNER_ITEMS: { key: PartnerKey; question: string; low: string; high: string }[] = [
+  {
+    key: "understanding",
+    question: "How accurately did VoiceMural understand the idea you were trying to work through?",
+    low: "Not at all",
+    high: "Completely",
+  },
+  {
+    key: "challenge",
+    question: "To what extent did VoiceMural direct your attention to a question that mattered to your reasoning?",
+    low: "Not at all",
+    high: "Very much",
+  },
+  {
+    key: "space",
+    question: "To what extent did VoiceMural give you the space to finish developing a thought before intervening?",
+    low: "Not at all",
+    high: "Very much",
+  },
+  {
+    key: "agency",
+    question: "To what extent did VoiceMural help you reach your own conclusions?",
+    low: "Not at all",
+    high: "Very much",
+  },
+  {
+    key: "calibration",
+    question: "How clearly did VoiceMural communicate when its interpretation of your reasoning was uncertain?",
+    low: "Not at all clearly",
+    high: "Very clearly",
+  },
+  {
+    key: "progress",
+    question: "To what extent did using VoiceMural leave you clearer about the issue you were working through?",
+    low: "Not at all",
+    high: "Much clearer",
+  },
+];
+
 function Scale({
   label,
   low,

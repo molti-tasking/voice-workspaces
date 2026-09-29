@@ -107,6 +107,18 @@ describeIfDb("/api/survey", () => {
     expect(view.answers.again).toBe("If it remembered Tuesday.");
   });
 
+  it("keeps the thinking-partner ratings, and only on the 1–7 scale", async () => {
+    const partner = { understanding: 6, challenge: 3, space: 7, agency: 5, calibration: 2, progress: 4 };
+    const saved = await put({ survey: "initial", version: "initial-2", answers: { moments: [MOMENT], partner } });
+    expect(saved.status).toBe(200);
+    expect((await (await get()).json()).answers.partner).toEqual(partner);
+
+    for (const bad of [{ space: 0 }, { space: 8 }, { space: 2.5 }]) {
+      const res = await put({ survey: "initial", version: "initial-2", answers: { moments: [], partner: bad } });
+      expect(res.status).toBe(400);
+    }
+  });
+
   it("rejects a body the contract does not know", async () => {
     expect((await put({ survey: "initial", version: "initial-1", answers: { moments: "no" } })).status).toBe(400);
     expect((await put({ survey: "exit", version: "initial-1", answers: { moments: [] } })).status).toBe(400);
