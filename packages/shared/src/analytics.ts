@@ -88,6 +88,14 @@ export interface AnalyticsEventMap {
    * queue exists for — before this was fixed those drives were lost whole.
    */
   upload_session_reregistered: { capture_session_id: string };
+  /**
+   * The durable queue re-opened its database after a forced close. Mobile
+   * Safari force-closes IndexedDB when it freezes or backgrounds a tab, which
+   * used to strand the queue for the rest of the page. This is the recovery
+   * signal: its rate is the only read on how often that force-close happens,
+   * since the failure it now survives left no other trace.
+   */
+  upload_queue_reopened: Record<string, never>;
 
   // --- capture session lifecycle, server-side (authoritative) --------------
   capture_session_opened: {

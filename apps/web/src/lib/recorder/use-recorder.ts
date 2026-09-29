@@ -258,12 +258,18 @@ export function useRecorder() {
 
   /* --- Recovery ----------------------------------------------------------- */
   useEffect(() => {
-    void findOpenSession().then((open) => {
-      if (!open) return;
-      resumableRef.current = open;
-      patch({ resumable: open });
-      capture("unfinished_session_detected", { capture_session_id: open.captureSessionId });
-    });
+    findOpenSession()
+      .then((open) => {
+        if (!open) return;
+        resumableRef.current = open;
+        patch({ resumable: open });
+        capture("unfinished_session_detected", { capture_session_id: open.captureSessionId });
+      })
+      .catch(() => {
+        // A force-closed IndexedDB throws here. The queue re-opens itself on the
+        // next call, so swallow it rather than let it surface as an unhandled
+        // rejection — the recovery is measured by `upload_queue_reopened`.
+      });
   }, [patch]);
 
   /* --- Chunk loop --------------------------------------------------------- */
