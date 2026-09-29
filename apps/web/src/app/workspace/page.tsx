@@ -2,6 +2,7 @@ import { X } from "lucide-react";
 import type { Metadata } from "next";
 import { loadUserDrafts, type WorkspaceDraft } from "@voicemural/db/drafts";
 import { listSessionsWithStats } from "@voicemural/db/sessions";
+import { boardVersionOf } from "@voicemural/db/board";
 import { loadOps } from "@voicemural/db/workspace";
 import {
   diffWorkspace,
@@ -11,6 +12,7 @@ import {
   type WorkspaceState,
 } from "@voicemural/workspace";
 import { AppDock } from "@/components/app-dock";
+import { OpLogLive } from "@/components/op-log-live";
 import { Link } from "@/components/nav-link";
 import { NavMenu } from "@/components/nav-menu";
 import { SurveyHost } from "@/components/survey-host";
@@ -266,6 +268,13 @@ export default async function WorkspacePage({
       )}
 
       {!validAsOf && <Archived state={state} drafts={drafts.filter((d) => d.archived)} />}
+
+      {/* Live only when showing now and not a diff: a past moment is a record,
+          and a diff is the answer to "what did that batch change", which a
+          redraw would move out from under the reader. */}
+      {!validAsOf && !diff && (
+        <OpLogLive version={boardVersionOf(ops.at(-1)?.seq ?? 0, ops.length)} />
+      )}
       </CurationProvider>
 
       <AppDock />

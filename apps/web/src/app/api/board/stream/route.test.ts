@@ -58,10 +58,13 @@ describeIfDb("GET /api/board/stream", () => {
     expect(after).not.toBe(before);
   });
 
-  it("is not found while the board is switched off", async () => {
-    // The column defaults to `now()` since the peer week, so this has to be
-    // said deliberately rather than assumed of a fresh account.
+  it("still answers while the board is switched off, for the workspace", async () => {
+    // The workspace redraws from the same fingerprint and is always on. The
+    // column defaults to `now()` since the peer week, so switching the board
+    // off has to be done deliberately rather than assumed of a fresh account.
     await getDb().update(user).set({ boardEnabledAt: null }).where(eq(user.id, USER_ID));
-    expect((await version()).status).toBe(404);
+    const res = await version();
+    expect(res.status).toBe(200);
+    expect(typeof (await res.json()).version).toBe("string");
   });
 });

@@ -245,6 +245,16 @@ describe("the drive of 28 Sep 2026", () => {
   });
 });
 
+describe("the drive of 29 Sep 2026", () => {
+  it("does not send them to fix the screen by hand after a tool changed it", () => {
+    expect(SYSTEM_PROMPT).toMatch(/shows on their screen by itself/);
+  });
+
+  it("never leaves a placeholder in a draft", () => {
+    expect(OUTPUT_CONTRACT).toMatch(/Never a placeholder/);
+  });
+});
+
 describe("the keep-alive said while a tool runs, which bot.py mirrors", () => {
   it("runs out rather than nagging", () => {
     const de = SEARCH_WAIT_PHRASES.de!;
