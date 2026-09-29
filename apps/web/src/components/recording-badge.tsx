@@ -41,7 +41,7 @@ export function RecordingBadge({
       role="status"
       aria-live="polite"
       className={[
-        "flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium",
+        "flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium",
         debriefing
           ? "bg-amber-500/15 text-amber-100 ring-1 ring-amber-400/40"
           : "bg-red-500/15 text-red-100 ring-1 ring-red-400/40",
