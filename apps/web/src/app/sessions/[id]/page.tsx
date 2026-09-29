@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, asc, eq, getDb } from "@voicemural/db";
 import { loadSessionDraftHistory } from "@voicemural/db/drafts";
 import { agentTurn, audioChunk, captureSession, utterance } from "@voicemural/db/schema";
 import { findCoverageGaps, formatOffset } from "@voicemural/shared";
 import { AppDock } from "@/components/app-dock";
+import { BackLink } from "@/components/back-link";
 import { ViewEvent } from "@/lib/analytics/view-event";
 import { currentUser } from "@/lib/session";
 import { AutoRefresh } from "./auto-refresh";
@@ -131,12 +131,7 @@ export default async function SessionPage({
         }}
       />
 
-      <Link
-        href={`/timeline#session-${id}`}
-        className="text-sm text-fg/60 underline-offset-4 hover:underline"
-      >
-        ← Timeline
-      </Link>
+      <BackLink fallback={{ href: `/timeline#session-${id}`, name: "Timeline" }} />
 
       <header className="mt-4 mb-8">
         <h1 className="text-2xl font-semibold">

@@ -9,7 +9,15 @@ const STREAM_ERRORS_BEFORE_POLLING = 2;
 const POLL_INTERVAL_MS = 5_000;
 
 /**
- * Redraw the board when its op log changes underneath it.
+ * Redraw a screen folded from the op log — the board, the workspace — when the
+ * log changes underneath it.
+ *
+ * The workspace had no such thing: the agent dropped a task by voice, and the
+ * workspace on screen kept showing it until a reload, while the agent told the
+ * person to remove it themselves (29 Sep 2026). This is the app's cache
+ * invalidation: the pages are server components, so "invalidate" is a
+ * `router.refresh()` when the log's fingerprint moves, which refetches exactly
+ * what that page renders.
  *
  * `version` is the fingerprint of the ops this render was folded from. The
  * stream (`/api/board/stream`) sends the current one on connect and whenever
@@ -28,7 +36,7 @@ const POLL_INTERVAL_MS = 5_000;
  * Degrades like the cue panel: EventSource first, which reconnects itself,
  * then plain polling if the stream will not hold.
  */
-export function BoardLive({ version }: { version: string }) {
+export function OpLogLive({ version }: { version: string }) {
   const router = useRouter();
   const rendered = useRef(version);
   const requested = useRef(version);

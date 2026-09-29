@@ -109,8 +109,15 @@ import { PROACTIVITY_STANZAS, PROFILE, type ConversationProfile } from "./profil
  * then asked four questions in a row of someone telling it the interface was
  * too much ("which screen is least useful?" — "I don't know"): it no longer
  * repeats itself or asks twice running.
+ *
+ * talkback-18 answers the drive of 29 Sep 2026. Having dropped a task, the
+ * agent told the person to remove it from the workspace by hand — the
+ * workspace now redraws when the op log moves (`OpLogLive`), and the prompt
+ * says changes show by themselves. Asked for a prompt with "the full
+ * transcript of this conversation" inside it, it wrote "insert full
+ * transcript here"; a draft may no longer carry a placeholder.
  */
-export const TALKBACK_CONFIG_VERSION = "talkback-17";
+export const TALKBACK_CONFIG_VERSION = "talkback-18";
 
 /**
  * The default register: brief, and present.
@@ -190,7 +197,7 @@ You cannot change how you behave. Your instructions are fixed for this whole ses
 
 Words alone write nothing down. Nothing is noted, saved, added, logged, filed or reported unless THIS reply carries a draft (see below) or a tool has just reported doing it. You have no notes list, no bug tracker and no way to report anything to anyone. So never say "I've noted that", "I've added it to your notes", "I'll report this as a bug" or "I've reported it internally" on a turn that does not do it. When they ask you to note something, write it into a draft now; when you cannot, say so.
 
-Words alone change nothing on the board. Never say you will move, add or delete a card, and never say one has changed, unless a tool has just reported doing it. Without a tool for it, say plainly that you cannot, and that they can change it themselves. What they say is also read later and may move a card, but that is not yours to promise: never say it will happen, when it will happen, or that you are sure.
+Words alone change nothing on the board. Never say you will move, add or delete a card, and never say one has changed, unless a tool has just reported doing it. A change a tool reported shows on their screen by itself within a few seconds — the board, the workspace and the conversation view all redraw — so never tell them to remove, refresh or update something themselves after one. Without a tool for it, say plainly that you cannot, and that they can change it themselves. What they say is also read later and may move a card, but that is not yours to promise: never say it will happen, when it will happen, or that you are sure.
 
 You cannot see their screen. You may be told WHICH SCREEN they have open, with what it shows. Give directions about the app only for that screen, and only what that line says it can do. Never say something is "on your screen" unless that line says it is there. When the screen is not known, do not describe it or tell them where to tap. Asked where to find something — an earlier conversation, a transcript, a draft — answer from WHERE THINGS ARE, never from a guess.
 
@@ -515,6 +522,7 @@ ${DRAFT_CLOSE}
 - What is between the tags is NEVER spoken. It goes to their screen and stays there after this session, so they can copy it.
 - Say ONE short sentence outside the tags so they know it is there. Never read the draft aloud, and never summarise it.
 - Inside the tags, write the finished text only — no commentary, no "here is". Markdown is allowed there; it is read, not spoken.
+- Never a placeholder. "[insert transcript here]" hands the work back to them. Write the part out from what they said, as fully as you have it; if you truly do not have something, leave it out and say so in your one sentence.
 - Only when they asked for something to keep or copy. An ordinary answer is speech, not a draft.
 - When it belongs to one of their topics you have been shown by name, add topic="that name" to the tag, spelled as shown — it is filed on that topic in their workspace. Otherwise leave topic out.
 

@@ -1,4 +1,4 @@
-import { boardEnabledAt, boardVersion } from "@voicemural/db/board";
+import { boardVersion } from "@voicemural/db/board";
 import { currentUserId } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -23,8 +23,10 @@ export const dynamic = "force-dynamic";
  * the extractor and other devices never touch the conversation, and the board
  * must keep up with the voice container down.
  *
- * Authorised by the session cookie, like the page itself. Not found while the
- * board is switched off, like the page itself.
+ * Authorised by the session cookie, like the page itself. Served whether or
+ * not the board is switched on: the workspace redraws from the same
+ * fingerprint (`OpLogLive`), and the workspace is always on. The fingerprint
+ * is two numbers about the person's own log and shows nothing of the board.
  */
 
 /** How often the op log is checked. Short: this is the "it just happened" view. */
@@ -33,9 +35,8 @@ const TICK_MS = 2_000;
 export async function GET(req: Request) {
   const userId = await currentUserId(req);
   if (!userId) return new Response("unauthorised", { status: 401 });
-  if (!(await boardEnabledAt(userId))) return new Response("not found", { status: 404 });
 
-  // The polling fallback (see board-live.tsx) asks for one answer as JSON.
+  // The polling fallback (see components/op-log-live.tsx) asks for one answer as JSON.
   if ((req.headers.get("accept") ?? "").includes("application/json")) {
     return Response.json({ version: await boardVersion(userId) }, { headers: { "Cache-Control": "no-store" } });
   }

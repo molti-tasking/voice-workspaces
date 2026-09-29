@@ -112,14 +112,14 @@ export function RecorderClient() {
             ) : (
               <span />
             )}
-            <div className="flex items-center gap-3">
+            <div className="flex min-w-0 items-center gap-2">
               {isRecording && cues.drafts.length > 0 && (
                 // Where the drafts are, from anywhere on this screen: they sit
                 // at its foot, and the pilot scrolled past the title and the
                 // cues without finding them.
                 <a
                   href="#drafts"
-                  className="rounded-full bg-fg/10 px-2.5 py-1 text-xs text-fg/80 tabular-nums hover:bg-fg/20"
+                  className="shrink-0 whitespace-nowrap rounded-full bg-fg/10 px-2.5 py-1 text-xs text-fg/80 tabular-nums hover:bg-fg/20"
                 >
                   {cues.drafts.length} draft{cues.drafts.length === 1 ? "" : "s"} ↓
                 </a>
@@ -152,8 +152,19 @@ export function RecorderClient() {
               )}
             </div>
           </div>
-          {TALKBACK_ENABLED && isRecording && titleDocked && talk.title && (
-            <p className="truncate text-base font-semibold tracking-tight text-fg">
+          {/* ALWAYS HERE AT ITS FULL HEIGHT, and only faded in and out. It used
+              to be added when the big title scrolled away, which made this strip
+              a line taller, which pushed the big title back into view, which
+              took the line away again — the screen flickered about once a
+              second, the whole cue panel jumping with it (29 Sep 2026). */}
+          {TALKBACK_ENABLED && isRecording && (
+            <p
+              aria-hidden={!titleDocked}
+              className={[
+                "h-6 truncate text-base font-semibold tracking-tight text-fg transition-opacity duration-150",
+                titleDocked && talk.title ? "opacity-100" : "opacity-0",
+              ].join(" ")}
+            >
               {talk.title}
             </p>
           )}
@@ -428,7 +439,7 @@ function Pill({ label, tone }: { label: string; tone: "ok" | "warn" }) {
   return (
     <span
       className={[
-        "rounded-full px-2 py-0.5 font-mono",
+        "shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 font-mono",
         tone === "ok"
           ? "bg-emerald-500/15 text-emerald-300"
           : "bg-amber-500/15 text-amber-300",
