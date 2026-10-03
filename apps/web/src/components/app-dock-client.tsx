@@ -209,11 +209,16 @@ function DockTab({ tab, active, className = "flex" }: { tab: Tab; active: boolea
 /**
  * The record button and the chevron that tunes it.
  *
- * Round, accent-filled, and the only saturated thing in the dock: it is the
- * one control the whole app is arranged around. It changes rather than moves
- * between states — idle shows a microphone, a running drive shows a stop glyph
- * inside a breathing halo with the elapsed time where the label was — so the
- * thing under your thumb never relocates mid-drive.
+ * Round, and the only saturated thing in the dock: it is the one control the
+ * whole app is arranged around. It changes rather than moves between states —
+ * idle shows a microphone, a running drive shows a stop glyph inside a
+ * breathing halo with the elapsed time where the label was — so the thing
+ * under your thumb never relocates mid-drive.
+ *
+ * BLUE AT REST, RED WHILE LISTENING. It used to be red in both states, so the
+ * only difference between "the microphone is open" and "it is not" was a
+ * glyph and a halo — and a participant glancing down could not tell which it
+ * was. The fill is now the state: red means it is listening, nothing else.
  *
  * The chevron is a second, smaller target sitting inside the circle, below
  * the glyph. It opens the setting/voice/language sheet, which is what
@@ -265,8 +270,8 @@ function RecordControl({
         aria-pressed={isRecording}
         className={[
           "relative flex size-[4.5rem] cursor-pointer items-start justify-center rounded-full pt-[0.875rem] text-white",
-          "transition-transform active:scale-95 disabled:cursor-default disabled:opacity-50",
-          "bg-[var(--color-accent)]",
+          "transition-[transform,background-color] active:scale-95 disabled:cursor-default disabled:opacity-50",
+          isRecording ? "bg-[var(--color-accent)]" : "bg-[var(--color-idle)]",
           isRecording && !armed ? "vm-recording" : "",
           armed ? "ring-2 ring-fg ring-offset-2 ring-offset-transparent" : "",
         ].join(" ")}
