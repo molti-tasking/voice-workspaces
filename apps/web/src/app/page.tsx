@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 // never what a crawler is shown.
 export const metadata: Metadata = {
   // Absolute, so the one page that carries the pitch is not titled
-  // "VoiceMural — VoiceMural" by the layout's template.
+  // "Souffleur — Souffleur" by the layout's template.
   title: { absolute: SITE.title },
   alternates: { canonical: "/" },
 };
@@ -52,7 +52,7 @@ export default async function HomePage({
     <div className="mx-auto max-w-3xl vm-page-top px-6 pb-40">
       <header className="mb-10 flex items-baseline justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">VoiceMural</h1>
+          <h1 className="text-2xl font-semibold">Souffleur</h1>
         </div>
         <NavMenu />
       </header>
@@ -140,7 +140,7 @@ function SignInProblem({ code }: { code?: string }) {
 
   const explanations: Record<string, string> = {
     account_already_linked_to_different_user:
-      "That account is already attached to a different VoiceMural user. Sign in with the provider you used the first time.",
+      "That account is already attached to a different Souffleur user. Sign in with the provider you used the first time.",
     "email_doesn't_match":
       "The email on that account does not match the one we were linking to.",
     email_not_found:
@@ -214,10 +214,10 @@ function Landing({ error }: { error?: string }) {
     <main className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center px-6">
       <StructuredData />
       <SignInProblem code={error} />
-      <h1 className="mb-3 text-3xl font-semibold">VoiceMural</h1>
+      <h1 className="mb-3 text-3xl font-semibold">Souffleur</h1>
       <p className="mb-8 text-fg/60">
         Speech is a good medium for formulating difficult problems and a poor
-        medium for operating software. VoiceMural listens while you are
+        medium for operating software. Souffleur listens while you are
         eyes-busy and treats everything as content by default.
       </p>
 

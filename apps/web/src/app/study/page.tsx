@@ -33,7 +33,7 @@ import { DEBRIEF_QUESTIONS } from "@/lib/study/debrief";
  */
 
 export const metadata: Metadata = {
-  // The root layout's template appends " — VoiceMural".
+  // The root layout's template appends " — Souffleur".
   title: "Taking part",
   // A participant information sheet has an audience of about nine people.
   robots: { index: false, follow: false },
@@ -81,7 +81,7 @@ export default function StudyPage() {
         </h1>
         <p className="text-lg leading-relaxed text-fg/60">
           You already do some of your best thinking in the car, where you cannot
-          write any of it down. For {STUDY.days} days, VoiceMural listens while
+          write any of it down. For {STUDY.days} days, Souffleur listens while
           you drive and keeps what you said. We want to find out whether that
           turns out to be worth anything.
         </p>

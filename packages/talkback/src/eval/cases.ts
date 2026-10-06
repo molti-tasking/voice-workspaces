@@ -274,7 +274,7 @@ export const CASES: EvalCase[] = [
     context: {
       threads: [
         {
-          text: "Topic: VoiceMural paper\n- Claim: a voice interface for thinking must be generated from a repertoire the user grows.\n- Open: how to evaluate the growth curve.\n- Next: write the method section",
+          text: "Topic: Souffleur paper\n- Claim: a voice interface for thinking must be generated from a repertoire the user grows.\n- Open: how to evaluate the growth curve.\n- Next: write the method section",
         },
       ],
     },

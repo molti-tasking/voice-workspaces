@@ -34,7 +34,7 @@
  * below then purges.
  */
 const VERSION = new URL(self.location.href).searchParams.get("v") || "dev";
-const CACHE = `voicemural-static-${VERSION}`;
+const CACHE = `souffleur-static-${VERSION}`;
 
 /** The offline fallback and the assets it needs to render without a network. */
 const PRECACHE = ["/offline", "/icons/icon-192.png"];

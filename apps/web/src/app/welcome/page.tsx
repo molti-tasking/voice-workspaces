@@ -50,7 +50,7 @@ export const dynamic = "force-dynamic";
  */
 
 export const metadata: Metadata = {
-  // The root layout's template appends " — VoiceMural".
+  // The root layout's template appends " — Souffleur".
   title: "Welcome",
   // An invitation with an audience of about five people.
   robots: { index: false, follow: false },
@@ -92,9 +92,9 @@ export default async function WelcomePage() {
   return (
     <div className="mx-auto max-w-2xl vm-page-top px-6 pb-40">
       <header className="mb-8">
-        <h1 className="text-2xl font-semibold">Welcome to VoiceMural</h1>
+        <h1 className="text-2xl font-semibold">Welcome to Souffleur</h1>
         <p className="mt-2 leading-relaxed text-fg/60">
-          VoiceMural listens while you think out loud, keeps everything you
+          Souffleur listens while you think out loud, keeps everything you
           said, and helps you make something of it: an answer when you ask, a
           draft you can paste, a task board that fills in from what you decide.
           It is yours to use for whatever you are actually working on. We built

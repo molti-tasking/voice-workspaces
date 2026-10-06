@@ -19,7 +19,7 @@ export const metadata: Metadata = {
   metadataBase: siteUrl(),
   title: {
     default: SITE.name,
-    // Pages set a bare title ("Workspace") and get "Workspace — VoiceMural".
+    // Pages set a bare title ("Workspace") and get "Workspace — Souffleur".
     template: `%s — ${SITE.name}`,
   },
   description: SITE.description,

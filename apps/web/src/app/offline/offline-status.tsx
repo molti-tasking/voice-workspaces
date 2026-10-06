@@ -65,7 +65,7 @@ export function OfflineStatus() {
             <>
               Your phone{" "}
               <strong className="font-medium text-fg">does</strong> have a
-              connection, so this is not the signal. Either VoiceMural is down
+              connection, so this is not the signal. Either Souffleur is down
               for a moment, or something on this network or browser is blocking
               the site.
             </>

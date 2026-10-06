@@ -117,7 +117,7 @@ export function workspaceToMarkdown(
     topicToMarkdown(topic, blocksByTopic.get(topic.id) ?? []),
   );
   const header = options.asOf
-    ? `<!-- VoiceMural workspace as of ${options.asOf.toISOString()} -->\n\n`
+    ? `<!-- Souffleur workspace as of ${options.asOf.toISOString()} -->\n\n`
     : "";
   return header + parts.join("\n");
 }

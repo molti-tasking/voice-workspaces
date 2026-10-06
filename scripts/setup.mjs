@@ -26,7 +26,7 @@ import {
   waitForPostgres,
 } from "./preflight.mjs";
 
-console.log(`\n${c.bold("VoiceMural — local setup")}\n`);
+console.log(`\n${c.bold("Souffleur — local setup")}\n`);
 
 /* 1 ── .env ---------------------------------------------------------------- */
 if (existsSync(ENV_PATH)) {

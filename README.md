@@ -1,4 +1,4 @@
-# VoiceMural
+# Souffleur
 
 A voice interface for thinking, with a repertoire that grows through use.
 
