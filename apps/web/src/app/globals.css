@@ -8,8 +8,9 @@
      canvas   the page            surface  a raised card / sheet
      fg       text and icons —    line     hairlines
               used at an opacity   accent   the recording red
-              (`text-fg/60`) as
-              the neutral scale
+              (`text-fg/60`) as    idle     the record button at rest —
+              the neutral scale             blue, so red only ever means
+                                            "the microphone is open"
 
    `fg` replaced the old `white`: the UI was drawn as "white at some opacity
    on near-black", and swapping that one colour for a theme-aware one keeps
@@ -21,6 +22,7 @@
   --color-fg: var(--vm-fg);
   --color-accent: var(--vm-accent);
   --color-accent-soft: var(--vm-accent-soft);
+  --color-idle: var(--vm-idle);
 }
 
 :root {
@@ -31,6 +33,7 @@
   --vm-fg: #111318;
   --vm-accent: #d92d33;
   --vm-accent-soft: #fde4e4;
+  --vm-idle: #2563eb;
   /* The glass and scrim treatments below read these rather than a colour. */
   --vm-glass-edge: rgb(0 0 0 / 0.08);
   --vm-glass-highlight: rgb(255 255 255 / 0.7);
@@ -67,6 +70,7 @@
     --vm-fg: #f7f7f5;
     --vm-accent: #e5484d;
     --vm-accent-soft: #3b1d20;
+    --vm-idle: #3b82f6;
     --vm-glass-edge: rgb(255 255 255 / 0.1);
     --vm-glass-highlight: rgb(255 255 255 / 0.14);
     --vm-shadow: rgb(0 0 0 / 0.75);
