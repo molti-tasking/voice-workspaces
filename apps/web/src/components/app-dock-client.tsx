@@ -15,7 +15,7 @@ import { formatOffset } from "@voicemural/shared";
 import { TALKBACK_ENABLED, useCapture } from "./capture-provider";
 import { LanguagePicker, LockedSummary, VoicePicker } from "./capture-settings";
 import { MicLevel } from "./mic-level";
-import { Link } from "./nav-link";
+import { Link, useDirectedPush } from "./nav-link";
 
 /**
  * How long an armed stop stays armed, in ms.
@@ -63,11 +63,13 @@ const TIMELINE: Tab = { href: "/timeline", label: "Timeline", Icon: ListTree };
  */
 export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
   const pathname = usePathname();
+  const push = useDirectedPush();
   const {
     isRecording,
     isDebriefing,
     isBusy,
     recorder,
+    conversationId,
     startRecording,
     stopRecording,
     finishDebrief,
@@ -93,7 +95,13 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
   // transport, and a second one in the dock would be two controls for one
   // action. The tabs stay, because leaving the recorder mid-drive is the
   // whole point of hoisting capture out of the page.
+  //
+  // EXCEPT ONCE A DRIVE HAS ENDED. The screen then keeps the finished
+  // conversation instead of putting its big button back, so it has no start
+  // control of its own, and this one — with its chevron for voice and
+  // language — is how the next drive begins, in one tap (6 Oct 2026).
   const onRecorder = pathname.startsWith("/record");
+  const showRecord = !onRecorder || (!capturing && conversationId !== null);
 
   // An armed stop is a promise about the next few seconds, so it has to expire
   // on its own — otherwise a dock armed an hour ago stops the drive on the
@@ -138,7 +146,7 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
         >
           <DockTab tab={WORKSPACE} active={pathname.startsWith(WORKSPACE.href)} />
 
-          {!onRecorder && (
+          {showRecord && (
             <RecordControl
               isRecording={capturing}
               isBusy={isBusy}
@@ -149,6 +157,12 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
               onPress={() => {
                 if (!capturing) {
                   startRecording();
+                  // A new drive opens in the conversation view, wherever it
+                  // was started: starting one from the workspace used to leave
+                  // the person there, not seeing that anything had begun.
+                  // Straight away rather than once the microphone is open, so
+                  // the second that takes is spent on the right screen.
+                  if (!onRecorder) push("/record");
                   return;
                 }
                 if (!armed) {
@@ -329,7 +343,10 @@ function RecordControl({
  * thing — see `capture-settings.tsx`.
  */
 function CaptureSheet({ onClose }: { onClose: () => void }) {
-  const { isRecording, talkback } = useCapture();
+  const { isRecording, isDebriefing, talkback } = useCapture();
+  // The debrief included: the microphone is still open, the drive's settings
+  // are still fixed, and its questions are on the conversation view.
+  const capturing = isRecording || isDebriefing;
 
   return (
     <div
@@ -337,7 +354,7 @@ function CaptureSheet({ onClose }: { onClose: () => void }) {
       aria-label="Recording settings"
       className="vm-glass vm-rise mb-3 flex w-[min(22rem,calc(100vw-2rem))] flex-col items-center gap-4 rounded-3xl p-5"
     >
-      {isRecording ? (
+      {capturing ? (
         <>
           <p className="text-center text-sm text-fg/70">
             Voice and language for this recording

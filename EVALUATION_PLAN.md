@@ -644,8 +644,9 @@ seconds of agent silence, *n* configurable, default 5 s); repeat-request rate; c
 reported apart and pooled); intent throughput (directions that reached the board); and
 **unanswered answers, whose target is 0**.
 
-**Tier 3 — relief: did it take the holding off them?** Mental load before and after the same
-drive (a negative delta is the good direction); whether they could tell it was working; whether
+**Tier 3 — relief: did it take the holding off them?** Mental load after the drive, read within
+a participant across their drives (lower is the good direction; the before-the-drive rating was
+dropped on 6 Oct 2026, see §9.3); whether they could tell it was working; whether
 they could correct it; revisit rate by *calendar day* in `STUDY_TIME_ZONE`; and the day-7
 verdict per item — done / still open / **lost**. `lostRate` is the primary failure measure for
 offloading: an item the participant put on the board, never came back to, and no longer counts
@@ -658,8 +659,12 @@ and how long they speak without the agent taking a turn.
 
 ### 9.3 The study flow the system now supports
 
-- **Day 1.** Pre item on the recorder → drive → Stop opens the debrief (microphone still open,
+- **Day 1.** Drive → Stop opens the debrief (microphone still open,
   the three questions `/study` promises, two post items under them) → done ends the session.
+  There is no pre item any more (dropped 6 Oct 2026). It sat on the recorder's setup screen,
+  which a drive started from the dock never passes through, and every drive now opens straight
+  into the conversation view. Pilot sessions keep their `pre` rows and their
+  `mentalLoadDelta`; later sessions report `mentalLoadPost` alone.
 - **Days 2–6.** Ordinary use. Counts only: `study_event` records board and card opens;
   dictations and edits come from `workspace_op`, which already had them.
 - **Day 7.** `pnpm study:review --user <id>` lists the cards awaiting a verdict, oldest first;

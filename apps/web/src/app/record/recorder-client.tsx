@@ -18,7 +18,7 @@ import { RecordingBadge } from "@/components/recording-badge";
 import { DEBRIEF_MAX_MS, DEBRIEF_QUESTIONS } from "@/lib/study/debrief";
 import { CuePanel } from "./cue-panel";
 import { DraftPanel } from "./draft-panel";
-import { PostDriveItems, PreDriveItem, recordStudyResponse } from "./study-items";
+import { PostDriveItems } from "./study-items";
 import { TopicTitle } from "./topic-title";
 
 /**
@@ -34,6 +34,14 @@ import { TopicTitle } from "./topic-title";
  * half of the screen to do it. Stopping is now a small control in the header
  * and the dock's armed two-tap; the space goes to what the drive is ABOUT —
  * the current subject, the trail of earlier ones, then the cue panel.
+ *
+ * THE CONVERSATION OUTLIVES THE DRIVE. Stop used to take the subject, the cues
+ * and the drafts off the screen at once, and Done put the big button back — the
+ * drafts the agent had just written were gone at the moment there was time to
+ * read them. Once a drive has started, this screen is the conversation view
+ * until the next one replaces it: live, then the debrief over a frozen copy,
+ * then the same copy marked ended. The next drive starts from the dock's record
+ * button, which comes back on this screen once nothing is running (6 Oct 2026).
  */
 export function RecorderClient() {
   // The recorder itself lives above the router now (see capture-provider.tsx),
@@ -42,6 +50,8 @@ export function RecorderClient() {
   const {
     recorder: rec,
     talkback: talk,
+    conversationId,
+    title,
     trail,
     cues,
     isRecording,
@@ -51,25 +61,12 @@ export function RecorderClient() {
     stopRecording,
     finishDebrief,
   } = useCapture();
-
-  /* The pre item's answer, held until a drive exists to attach it to.
-   *
-   * A rating is about a session and the session id is generated at the moment
-   * of starting, so the answer cannot be posted when it is given. Answering is
-   * never a precondition for recording: a participant who taps record straight
-   * away simply has no pre value, which is a missing cell rather than a lost
-   * drive. */
-  const pendingPre = useRef<Record<string, number>>({});
-  useEffect(() => {
-    const sessionId = rec.currentSessionId;
-    if (!sessionId) return;
-    const held = pendingPre.current;
-    pendingPre.current = {};
-    for (const [item, value] of Object.entries(held)) {
-      recordStudyResponse(sessionId, "pre", item, value);
-    }
-  }, [rec.currentSessionId]);
   const hearing = talk.status === "speaking";
+
+  // Setup until the first drive of this page load; the conversation from then
+  // on. `ended` is that conversation once nothing is capturing any more.
+  const hasConversation = conversationId !== null;
+  const ended = hasConversation && !isRecording && !isDebriefing;
 
   // Whether the big subject has scrolled out from under the sticky header.
   const titleRef = useRef<HTMLDivElement>(null);
@@ -87,7 +84,7 @@ export function RecorderClient() {
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [isRecording]);
+  }, [hasConversation]);
 
   return (
     // `pb-40` clears the dock: leaving mid-drive is the point of hoisting the
@@ -109,11 +106,21 @@ export function RecorderClient() {
                 See `RecordingBadge`. */}
             {isRecording || isDebriefing ? (
               <RecordingBadge elapsedMs={rec.elapsedMs} debriefing={isDebriefing} />
+            ) : ended ? (
+              // Words, not a muted badge: the badge is present or absent, and
+              // its absence alone does not say the conversation below is over.
+              <span className="text-fg/60">
+                {rec.status === "requesting"
+                  ? "Opening the microphone…"
+                  : rec.status === "stopping"
+                    ? "Saving…"
+                    : "Ended"}
+              </span>
             ) : (
               <span />
             )}
             <div className="flex min-w-0 items-center gap-2">
-              {isRecording && cues.drafts.length > 0 && (
+              {hasConversation && cues.drafts.length > 0 && (
                 // Where the drafts are, from anywhere on this screen: they sit
                 // at its foot, and the pilot scrolled past the title and the
                 // cues without finding them.
@@ -157,22 +164,22 @@ export function RecorderClient() {
               a line taller, which pushed the big title back into view, which
               took the line away again — the screen flickered about once a
               second, the whole cue panel jumping with it (29 Sep 2026). */}
-          {TALKBACK_ENABLED && isRecording && (
+          {TALKBACK_ENABLED && hasConversation && (
             <p
               aria-hidden={!titleDocked}
               className={[
                 "h-6 truncate text-base font-semibold tracking-tight text-fg transition-opacity duration-150",
-                titleDocked && talk.title ? "opacity-100" : "opacity-0",
+                titleDocked && title ? "opacity-100" : "opacity-0",
               ].join(" ")}
             >
-              {talk.title}
+              {title}
             </p>
           )}
         </header>
       </div>
 
       <div className="flex w-full flex-col items-center gap-8">
-        {!isRecording && !isDebriefing && (
+        {!hasConversation && (
           <>
             <button
               type="button"
@@ -211,35 +218,31 @@ export function RecorderClient() {
           />
         )}
 
-        {!isRecording && !isDebriefing && <VoicePicker />}
+        {!hasConversation && <VoicePicker />}
 
-        {!isRecording && !isDebriefing && <LanguagePicker />}
+        {!hasConversation && <LanguagePicker />}
 
         {/* Pilot builds only, and pilot accounts only. See `ConditionToggles`. */}
-        {!isRecording && !isDebriefing && <ConditionToggles />}
+        {!hasConversation && <ConditionToggles />}
 
-        {/* Before the drive: the item is about what they are carrying now. */}
-        {!isRecording && !isDebriefing && (
-          <PreDriveItem
-            onAnswer={(item, value) => {
-              pendingPre.current[item] = value;
-            }}
-          />
-        )}
-
-        {TALKBACK_ENABLED && isRecording && (
+        {TALKBACK_ENABLED && hasConversation && (
           <div ref={titleRef} className="w-full max-w-md">
             <TopicTitle
-              title={talk.title}
+              // Keyed by the drive: the next one starts from nothing, rather
+              // than blurring the last drive's subject away.
+              key={conversationId}
+              title={title}
               trail={trail}
-              placeholder={PROFILE.hint}
+              // "It is listening" is true only while it is.
+              placeholder={isRecording ? PROFILE.hint : undefined}
             />
           </div>
         )}
 
         {/* "How can I see my last discussion?" (28 Sep 2026): this screen
-            shows the subject, never the words, so say where the words are. */}
-        {isRecording && rec.currentSessionId && (
+            shows the subject, never the words, so say where the words are.
+            Once it has ended, the Saved card below says it instead. */}
+        {(isRecording || isDebriefing) && rec.currentSessionId && (
           <Link
             href={`/sessions/${rec.currentSessionId}`}
             className="-mt-4 text-sm text-fg/55 underline-offset-4 hover:text-fg/80 hover:underline"
@@ -248,11 +251,11 @@ export function RecorderClient() {
           </Link>
         )}
 
-        {isRecording && <CuePanel cues={cues} />}
+        {hasConversation && <CuePanel cues={cues} />}
 
         {/* Below the cue panel, because a draft is read deliberately and the
             glanceable lane must keep the position it has trained. */}
-        {isRecording && <DraftPanel drafts={cues.drafts} />}
+        {hasConversation && <DraftPanel drafts={cues.drafts} />}
       </div>
 
       <footer className="w-full max-w-md space-y-3 text-sm">

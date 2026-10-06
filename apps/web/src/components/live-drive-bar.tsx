@@ -20,9 +20,12 @@ import { Link } from "./nav-link";
  * who asked for reduced motion.
  */
 export function LiveDriveBar() {
-  const { isRecording, talkback, cues } = useCapture();
+  const { isRecording, isDebriefing, title, cues } = useCapture();
   const pathname = usePathname();
-  const shown = isRecording && !pathname.startsWith("/record");
+  // Through the debrief too: the microphone is still open and its questions
+  // are on the conversation view, and without the bar there was no way back
+  // to them from anywhere else.
+  const shown = (isRecording || isDebriefing) && !pathname.startsWith("/record");
   const bar = useRef<HTMLDivElement>(null);
 
   /* Its height, published for the page's own sticky headers to sit under.
@@ -68,7 +71,7 @@ export function LiveDriveBar() {
           Conversation
         </Link>
         <span className="min-w-0 flex-1 truncate text-center font-medium text-fg">
-          {talkback.title ?? ""}
+          {title ?? ""}
         </span>
         <span className="flex shrink-0 items-center gap-2 text-xs text-fg/60">
           {drafts > 0 && (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { BlockKind, TaskState } from "@voicemural/workspace";
 import {
   DISPLAY_RULES,
@@ -123,6 +123,15 @@ export function useCues({
   enabled: boolean;
 }): CueState {
   const [state, setState] = useState<CueState>(IDLE);
+
+  // Which drive `state` belongs to. A new drive starts from nothing; it used to
+  // render the previous drive's panel until its own first payload arrived.
+  // Adjusted during render, like `useTitleTrail`, so no frame shows it.
+  const [stateFor, setStateFor] = useState(captureSessionId);
+  if (stateFor !== captureSessionId) {
+    setStateFor(captureSessionId);
+    setState(IDLE);
+  }
 
   const lastAppliedAt = useRef(0);
   const heldPayload = useRef<CuePayload | null>(null);
@@ -256,8 +265,11 @@ export function useCues({
     };
   }, [captureSessionId, active, contentBudget, directionBudget]);
 
-  // Derived, not stored: a disabled hook has nothing to show, and computing
-  // that here rather than writing IDLE into state from an effect avoids a
-  // render whose only purpose is to undo the previous one.
-  return active ? state : IDLE;
+  /* HELD, NOT BLANKED, once the stream stops. It stops at Stop, and the panel
+   * and the drafts the agent had just written used to vanish with it; the
+   * conversation view now stays on screen after the drive, showing what it
+   * captured (6 Oct 2026). Nothing is on its way any more, so `pending` stops
+   * saying "Listening…" and a dead stream is no longer worth reporting. */
+  const held = useMemo(() => ({ ...state, pending: 0, degraded: false }), [state]);
+  return active ? state : held;
 }

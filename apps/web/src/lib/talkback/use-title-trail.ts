@@ -6,15 +6,23 @@ import { useState } from "react";
 const KEPT = 8;
 
 /**
- * The subjects this drive has moved on from, newest first.
+ * The drive's current subject, and the ones it has moved on from, newest first.
  *
  * Held with the recorder, above the router, rather than in the component that
  * shows it. It used to live in `TopicTitle`'s own state, so walking over to the
  * timeline and back — while the drive went on — came back to a record screen
  * with no trail at all: "and then I come back, then it's suddenly empty" (27
  * Sep 2026). Cleared when the drive changes.
+ *
+ * A NULL TITLE IS NOT A NEW SUBJECT. Talk-back goes off at Stop and reports no
+ * title from then on, which used to blank the conversation the moment it
+ * ended. The last real title is kept as `title` until the next drive, so the
+ * conversation view can stay on screen after it is over (6 Oct 2026).
  */
-export function useTitleTrail(title: string | null, sessionId: string | null): string[] {
+export function useTitleTrail(
+  title: string | null,
+  sessionId: string | null,
+): { title: string | null; trail: string[] } {
   const [trail, setTrail] = useState<string[]>([]);
   const [trailFor, setTrailFor] = useState(sessionId);
   const [previous, setPrevious] = useState(title);
@@ -25,12 +33,12 @@ export function useTitleTrail(title: string | null, sessionId: string | null): s
     setTrailFor(sessionId);
     setTrail([]);
     setPrevious(title);
-  } else if (previous !== title) {
+  } else if (title && previous !== title) {
     setPrevious(title);
-    if (previous && title) {
+    if (previous) {
       setTrail((t) => [previous, ...t.filter((x) => x !== previous && x !== title)].slice(0, KEPT));
     }
   }
 
-  return trail;
+  return { title: previous, trail };
 }
