@@ -47,7 +47,7 @@ export function GuestButton({
           router.push(next);
           router.refresh();
         }}
-        className="w-full rounded-lg bg-accent px-5 py-3 font-medium text-white hover:opacity-90 disabled:opacity-60"
+        className="w-full rounded-lg bg-accent px-5 py-3 font-medium text-white hover:opacity-90 disabled:opacity-60 cursor-pointer"
       >
         {pending ? "Starting…" : label}
       </button>
