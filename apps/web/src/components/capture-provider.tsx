@@ -31,11 +31,25 @@ export const TALKBACK_ENABLED =
 export interface CaptureContextValue {
   recorder: ReturnType<typeof useRecorder>;
   talkback: TalkbackState;
+  /**
+   * The drive the conversation view is showing: the running one, or the one
+   * that just ended. Null only before the first drive of this page load.
+   *
+   * The conversation stays on screen after Stop and after Done — the subject,
+   * the cues and the drafts used to vanish at the moment a person most wants to
+   * look at them (6 Oct 2026). It is replaced when the next drive starts.
+   */
+  conversationId: string | null;
+  /**
+   * What the conversation is about, kept after the drive ends. `talkback.title`
+   * goes null at Stop, when talk-back does; this does not. See `useTitleTrail`.
+   */
+  title: string | null;
   /** Earlier subjects of this drive, newest first. See `useTitleTrail`. */
   trail: string[];
   /**
    * What the record screen shows under the title: cues and the drafts written
-   * on this drive.
+   * on this drive. Frozen at Stop and kept, like the title.
    *
    * Held here, not on `/record`, for the reason the recorder is: state that
    * belongs to the drive must not belong to a route. On the page it was
@@ -123,12 +137,17 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     enabled: TALKBACK_ENABLED && isRecording,
   });
 
-  const trail = useTitleTrail(talkback.title, recorder.currentSessionId);
+  // Both ids are set in the one patch that ends a drive, so this never goes
+  // null between Stop and the next drive: see `finish` in use-recorder.ts.
+  const conversationId = recorder.currentSessionId ?? recorder.lastSessionId;
+
+  const { title, trail } = useTitleTrail(talkback.title, conversationId);
 
   // Reads Postgres, never the voice container: the panel keeps filling with
   // talk-back dead, and survives a reload mid-recording. See the route comment.
+  // The stream runs only while recording; what it showed is kept afterwards.
   const cues = useCues({
-    captureSessionId: recorder.currentSessionId,
+    captureSessionId: conversationId,
     budgets: {
       content: PROFILE.maxContentCues,
       directions: PROFILE.maxDirectionCues,
@@ -171,6 +190,8 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     () => ({
       recorder,
       talkback,
+      conversationId,
+      title,
       trail,
       cues,
       isRecording,
@@ -189,6 +210,8 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     [
       recorder,
       talkback,
+      conversationId,
+      title,
       trail,
       cues,
       isRecording,

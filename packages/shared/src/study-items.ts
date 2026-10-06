@@ -60,7 +60,7 @@ export interface StudyItem {
   question: string;
   /** The ends of the scale, low first. Spoken aloud nowhere; read on screen. */
   anchors: [low: string, high: string];
-  /** When it is asked. `mental_load` is the only one asked twice. */
+  /** When it is asked. */
   phases: readonly StudyResponsePhase[];
   /**
    * WHICH END IS THE GOOD END.
@@ -75,18 +75,23 @@ export interface StudyItem {
 }
 
 /**
- * Mental load, asked before and after the same drive.
+ * Mental load, asked after the drive.
  *
- * The primary relief measure that a person can report. Pre/post rather than
- * post alone because the absolute number says almost nothing — people differ
- * enormously in what they call "a lot" — while the CHANGE across one session
- * is the offloading claim stated as an observable.
+ * The primary relief measure that a person can report. It was asked before the
+ * drive too, because the absolute number says little — people differ
+ * enormously in what they call "a lot" — while the change across one session
+ * is the offloading claim stated as an observable. The pre half was dropped on
+ * 6 Oct 2026: it sat on the record screen's setup, which a drive started from
+ * the dock never passes through, and every drive now opens straight into the
+ * conversation. Read it within a participant, across their drives, not as an
+ * absolute. Pilot rows with a `pre` answer stay valid; `pre` is kept in
+ * `StudyResponsePhase` for them.
  */
 export const MENTAL_LOAD: StudyItem = {
   key: "mental_load",
   question: "How much are you currently holding in your head?",
   anchors: ["Almost nothing", "More than I can keep track of"],
-  phases: ["pre", "post"],
+  phases: ["post"],
   higherIsBetter: false,
 };
 

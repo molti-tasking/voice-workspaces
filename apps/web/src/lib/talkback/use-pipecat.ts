@@ -98,6 +98,17 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
   const { captureSessionId, enabled } = options;
   const [state, setState] = useState<TalkbackState>(OFF);
 
+  // A new drive starts from nothing. The state used to outlive its drive, so
+  // the next one rendered the previous subject until the container's first
+  // push — and the conversation view now keeps the last title it was given,
+  // which made that stale title stick (6 Oct 2026). Adjusted during render,
+  // like `useTitleTrail`, so no frame shows it.
+  const [stateFor, setStateFor] = useState(captureSessionId);
+  if (stateFor !== captureSessionId) {
+    setStateFor(captureSessionId);
+    setState(OFF);
+  }
+
   useEffect(() => {
     if (!enabled || !captureSessionId) return;
 

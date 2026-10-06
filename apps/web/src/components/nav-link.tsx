@@ -1,8 +1,8 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { Link as TransitionLink } from "next-view-transitions";
-import { useEffect, type ComponentProps } from "react";
+import { Link as TransitionLink, useTransitionRouter } from "next-view-transitions";
+import { useCallback, useEffect, type ComponentProps } from "react";
 import { directionBetween, type NavDirection } from "./nav-direction";
 
 function setDirection(direction: NavDirection) {
@@ -33,6 +33,23 @@ export function Link({
       }}
       {...rest}
     />
+  );
+}
+
+/**
+ * `Link`'s navigation, for code that moves somewhere without a link to click —
+ * the dock's record button taking a new drive to the conversation view. Same
+ * direction, same transition.
+ */
+export function useDirectedPush(): (href: string) => void {
+  const pathname = usePathname();
+  const router = useTransitionRouter();
+  return useCallback(
+    (href: string) => {
+      setDirection(directionBetween(pathname, href));
+      router.push(href);
+    },
+    [pathname, router],
   );
 }
 
