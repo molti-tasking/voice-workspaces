@@ -1,4 +1,4 @@
-# VoiceMural: An End-User Programmable Voice Interface with a Growing Repertoire
+# Souffleur: An End-User Programmable Voice Interface with a Growing Repertoire
 
 ## Research paper proposal, draft v1
 
@@ -6,7 +6,7 @@
 
 Speech is a good medium for formulating difficult problems and a poor medium for operating software. The first fact is old: Kleist argued in 1805 that thought is not transmitted by speech but formed in it, and programmers rediscovered the point as rubber-duck debugging. The second fact is why voice assistants stalled. They ask users to speak in a fixed grammar authored by someone else, and they discover a fresh utterance is a command only after acting on it.
 
-VoiceMural takes the opposite position on both. It listens while the user is eyes-busy, typically driving, and treats everything as content by default. Its interface is generated from a repertoire: a personal, accumulated set of capabilities that the user authors in situ, by voice, as needs surface. The design comes from watching physicians dictate patient records to secretaries who transcribed the content, obeyed the instructions, and filled in the forms correctly.
+Souffleur takes the opposite position on both. It listens while the user is eyes-busy, typically driving, and treats everything as content by default. Its interface is generated from a repertoire: a personal, accumulated set of capabilities that the user authors in situ, by voice, as needs surface. The design comes from watching physicians dictate patient records to secretaries who transcribed the content, obeyed the instructions, and filled in the forms correctly.
 
 ## *Claim*
 
@@ -31,7 +31,7 @@ Each capability is a parameterised Markdown file. The repertoire is a folder. Th
 
 # Direction versus content
 
-The central interaction problem is the Midas touch: some speech is destined for the record, some directs the machine that keeps it. VoiceMural handles this with an asymmetry rather than a classifier arms race. The captured stream is verbatim and append-only; the artefact is derived from it. Misclassification therefore blemishes but never destroys. Additive and reversible actions such as mark may over-trigger at no cost; anything irreversible or outbound confirms before firing, and confirmation can be deferred to a pause or to the end of the drive.
+The central interaction problem is the Midas touch: some speech is destined for the record, some directs the machine that keeps it. Souffleur handles this with an asymmetry rather than a classifier arms race. The captured stream is verbatim and append-only; the artefact is derived from it. Misclassification therefore blemishes but never destroys. Additive and reversible actions such as mark may over-trigger at no cost; anything irreversible or outbound confirms before firing, and confirmation can be deferred to a pause or to the end of the drive.
 
 # Authoring without a screen
 

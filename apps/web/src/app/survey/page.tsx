@@ -37,7 +37,7 @@ export const dynamic = "force-dynamic";
  */
 
 export const metadata: Metadata = {
-  // The root layout's template appends " — VoiceMural".
+  // The root layout's template appends " — Souffleur".
   title: "Survey",
   // Sent to the people it is for, not found.
   robots: { index: false, follow: false },
@@ -54,7 +54,7 @@ export default async function SurveyPage() {
         </p>
         <h1 className="text-2xl font-semibold">Where and when did you use it?</h1>
         <p className="mt-2 leading-relaxed text-fg/60">
-          Think back to the moments you actually had VoiceMural on. Add each
+          Think back to the moments you actually had Souffleur on. Add each
           one you can remember, and tell us a little about it. Half-sentences
           are fine, and you can skip anything. It saves as you go, so you can
           stop and come back.

@@ -1,5 +1,5 @@
 /**
- * Draws the VoiceMural mark and writes every raster the browser, the OS and the
+ * Draws the Souffleur mark and writes every raster the browser, the OS and the
  * install prompt each want a different file for.
  *
  * Run with `pnpm icons` after changing anything in GEOMETRY below.

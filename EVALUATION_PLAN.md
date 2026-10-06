@@ -1,4 +1,4 @@
-# Research plan: make VoiceMural ready for the field study
+# Research plan: make Souffleur ready for the field study
 
 A work plan for a coding agent that has **only this repository**. Everything you need from the
 research side is summarised here; do not go looking for the paper or the cited literature.
@@ -10,7 +10,7 @@ line numbers drift, so re-check each "current state" claim before you build on i
 
 ## 1. Goal
 
-VoiceMural is going into a **longitudinal field deployment**. Each participant records about 10
+Souffleur is going into a **longitudinal field deployment**. Each participant records about 10
 days of ordinary commutes. Postgres is the measurement record for that study. Anything not
 written there during a drive cannot be recovered afterwards.
 
@@ -18,7 +18,7 @@ This plan makes the system able to measure three research threads, and to vary s
 between participants or study phases:
 
 - **A. Human-AI interaction guidelines specific to voice.** An established set of 18 guidelines
-  (§3.1) was written for products with screens. Voice assistants fit them worst. VoiceMural works
+  (§3.1) was written for products with screens. Voice assistants fit them worst. Souffleur works
   with no screen and with the user's attention on another task, so it can show what each
   guideline means in that situation.
 - **B. Metacognitive support.** The system helps the user plan, check their own thinking, and

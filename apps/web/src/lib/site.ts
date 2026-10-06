@@ -6,11 +6,11 @@
  */
 
 export const SITE = {
-  name: "VoiceMural",
+  name: "Souffleur",
   /** Used as the <title> of the landing page and as the social card heading. */
-  title: "VoiceMural — think out loud while you drive",
+  title: "Souffleur — think out loud while you drive",
   description:
-    "A voice interface for thinking. VoiceMural listens while you are eyes-busy, keeps everything you said, and grows a repertoire of the things you ask it for.",
+    "A voice interface for thinking. Souffleur listens while you are eyes-busy, keeps everything you said, and grows a repertoire of the things you ask it for.",
   /** One line, for the card and the manifest, where the long one will clip. */
   summary: "Capture thinking aloud; the repertoire grows through use.",
   locale: "en",

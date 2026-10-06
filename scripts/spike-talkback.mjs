@@ -940,7 +940,7 @@ async function probeTtsCandidates() {
 
 /* ------------------------------------------------------------------------ */
 
-console.log(`\n${c.bold("VoiceMural talk-back spike")}  ${c.dim(BASE_URL)}`);
+console.log(`\n${c.bold("Souffleur talk-back spike")}  ${c.dim(BASE_URL)}`);
 console.log(c.dim(`runs=${RUNS} contention=${CONTENTION}`));
 
 const available = await listModels();
