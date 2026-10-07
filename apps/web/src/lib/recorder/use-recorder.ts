@@ -29,6 +29,14 @@ const CHUNK_MS = 10_000;
 /** ~32 kbps Opus is comfortably enough for speech: about 14 MB per hour. */
 const AUDIO_BITS_PER_SECOND = 32_000;
 
+/**
+ * How long ending a drive waits for its last chunk to be written and queued.
+ * The recorder's final blob normally lands within a few hundred ms of
+ * `stop()`; this only bounds a recorder that never fires `onstop`, so Done can
+ * never hang on it.
+ */
+const FINAL_CHUNK_WAIT_MS = 3_000;
+
 const MIME_CANDIDATES = [
   "audio/webm;codecs=opus", // Chrome, Edge, Android
   "audio/webm",
@@ -183,6 +191,8 @@ export function useRecorder() {
   const streamRef = useRef<MediaStream | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const stopChunkRef = useRef<(() => void) | null>(null);
+  /** The running chunk loop, so ending a drive can wait for its last chunk. */
+  const loopRef = useRef<Promise<void> | null>(null);
   const metaRef = useRef<OpenSessionMeta | null>(null);
 
   /* Mirrors of state for the analytics events in start()/stop(). Those
@@ -482,7 +492,7 @@ export function useRecorder() {
      * recording it announces. */
     earcon("started");
     await acquireWakeLock();
-    void runLoop(stream, meta);
+    loopRef.current = runLoop(stream, meta);
   }, [acquireWakeLock, patch, runLoop]);
 
   /**
@@ -508,6 +518,28 @@ export function useRecorder() {
     // End the in-flight chunk so its audio is kept rather than discarded.
     stopChunkRef.current?.();
     stopChunkRef.current = null;
+
+    /* AND WAIT FOR IT, before the microphone goes. `stop()` only asks the
+     * recorder to finish: the last blob arrives afterwards, in `onstop`, and
+     * the loop then queues it and saves the session marker. This used to stop
+     * the tracks straight after asking, which raced both:
+     *
+     * - The final chunk was finalised against a track already ending under it.
+     *   A drive on 7 Oct 2026 (iPhone, audio/mp4) lost a chunk to `415 Failed
+     *   to decode audio` two minutes after it ended — the shape a truncated
+     *   last file would have.
+     * - The loop's last `saveOpenSession` could land after `clearOpenSession`
+     *   below, leaving a finished drive to come back as "resumable".
+     *
+     * Bounded, so a recorder that never fires `onstop` cannot hang Done. */
+    const loop = loopRef.current;
+    loopRef.current = null;
+    if (loop) {
+      await Promise.race([
+        loop.catch(() => undefined),
+        new Promise((resolve) => setTimeout(resolve, FINAL_CHUNK_WAIT_MS)),
+      ]);
+    }
 
     // Before stopping the tracks, so talk-back tears its tap down against a
     // stream that is still live rather than one already ending under it.

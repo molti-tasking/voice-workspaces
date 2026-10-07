@@ -388,6 +388,13 @@ export interface AnalyticsEventMap {
     capture_session_id: string;
     retryable: boolean;
     reason: string;
+    chunk_seq: number;
+    mime_type: string;
+    byte_size: number;
+    duration_ms: number;
+    /** Null when the lookup itself failed. A decode failure on the last chunk
+     * points at how the drive was ended, not at the recording. */
+    last_of_session: boolean | null;
   };
 }
 
