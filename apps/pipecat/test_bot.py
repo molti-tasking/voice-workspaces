@@ -2167,6 +2167,43 @@ def test_a_failed_search_is_told_to_the_model_in_words_and_the_cue_stops():
     assert sound.events == ["begin", "end"]
 
 
+def test_a_moment_gets_two_searches_and_the_third_is_refused_without_a_word():
+    # 7 Oct 2026: one question, four searches, five spoken "I'm searching…"
+    # lines. The third call must neither speak nor reach the web app.
+    recorder = FakeRecorder(bot.Cue("user_turn", None, 1_000, opportunity=7))
+    recorder.record_announcement = lambda spoken: None
+    sound = RecordingSound()
+    search = bot.WebSearch("ticket", sound, recorder)
+    posted = []
+    search._post = lambda payload: posted.append(payload) or {"ok": True, "results": []}
+
+    first = run_search(search, {"query": "research through design", "announcement": "Looking."})
+    second = run_search(search, {"query": "research design", "announcement": "Again."})
+    spoken, (refused,) = run_search(search, {"query": "RtD", "announcement": "Once more."})
+
+    assert first[0] == ["Looking."] and second[0] == ["Again."]
+    assert spoken == []
+    assert refused == {"ok": False, "error": bot.WebSearch.OVER_LIMIT_ERROR}
+    assert len(posted) == 2
+    assert sound.events == ["begin", "end", "begin", "end"]
+    assert recorder.tool_calls == ["search_web", "search_web", "search_web"]
+
+
+def test_the_driver_speaking_again_gives_the_next_moment_its_own_searches():
+    recorder = FakeRecorder(bot.Cue("user_turn", None, 1_000, opportunity=1))
+    recorder.record_announcement = lambda spoken: None
+    search = bot.WebSearch("ticket", None, recorder)
+    search._post = lambda payload: {"ok": True, "results": []}
+
+    run_search(search, {"query": "a", "announcement": "One."})
+    run_search(search, {"query": "b", "announcement": "Two."})
+    recorder.current = bot.Cue("user_turn", None, 2_000, opportunity=2)
+    spoken, (result,) = run_search(search, {"query": "c", "announcement": "Three."})
+
+    assert spoken == ["Three."]
+    assert result == {"ok": True, "results": []}
+
+
 def test_a_search_the_driver_talks_over_stops_the_cue_and_answers_nothing():
     sound = RecordingSound()
     search = bot.WebSearch("ticket", sound)
