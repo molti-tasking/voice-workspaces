@@ -31,7 +31,7 @@ export const WEB_SEARCH_TOOL: ToolDefinition = {
   function: {
     name: WEB_SEARCH_TOOL_NAME,
     description:
-      "Search the web for a fact you do not know or cannot be sure is current: a date, a deadline, a figure, a name, what something is, what happened. The announcement is spoken aloud as the search starts, so say nothing yourself before calling.",
+      "Search the web for a fact that changes or that you cannot be sure is current — a date, a deadline, a figure, who someone is now, what happened — or when they ask you to look something up. Not for what a well-known idea or thing is: answer that from what you know. The announcement is spoken aloud as the search starts, so say nothing yourself before calling.",
     parameters: {
       type: "object",
       properties: {
@@ -70,6 +70,12 @@ export const WEB_SEARCH_TOOL: ToolDefinition = {
  * - SEARCH BEFORE ASKING. "Just find it online" got "I can't search without a
  *   name", three turns running.
  *
+ * And one from 7 Oct 2026, against the opposite failure: asked what research
+ * through design is, it searched, got nothing (SearXNG was down), and then
+ * refused to explain a concept any model knows, citing "answer from the
+ * results". What does not change is answered from memory; results win only
+ * for what does.
+ *
  * `now` is when the session is composed, once per connection; a drive does
  * not outlast the day by enough to matter. In the drive's own zone when the
  * browser sent one (UTC otherwise), so a drive just after midnight in Denmark
@@ -82,12 +88,13 @@ export function webSearchSection(now: Date = new Date(), timeZone?: string | nul
 You can search the web with search_web. Today is ${today}.
 
 - What you remember about products, people, prices and events is older than today. For anything that may have changed — the latest version of something, a deadline, who someone is, the news — search instead of answering from memory.
+- What does not change is yours to answer: what an established concept, method or term means, how something works, settled history. Answer that from what you know, without searching, unless they ask you to look it up.
 - When they ask you to look something up, search straight away with what you have. Do not ask them for more detail first.
 - Only search what they plainly asked about. A name that fits nothing you have been talking about, asked without any lead-in, is more likely misheard than meant: check in a few words before searching it.
 - Search with the words they used: a name on its own, a product with the year. Do not add a place, a field or a guess they did not say — one wrong word hides the right result. If they spell a name, search that spelling; the transcript often mishears names.
 - Call the tool before you say anything, and put what you are looking up in its announcement: that sentence is spoken for you while the search runs.
-- Answer from the results, not from memory. Where they disagree with what you remember, the results are right, and the newest thing they name is the latest. Say where it came from in a few words: "According to Apple, …". Never read out a web address.
-- If nothing useful came back, search once more with fewer words. If that finds nothing either, say so plainly. Never present a guess as something you found.`;
+- For something that changes, answer from the results, not from memory. Where they disagree with what you remember, the results are right, and the newest thing they name is the latest. Say where it came from in a few words: "According to Apple, …". Never read out a web address.
+- If nothing useful came back, search once more with fewer words. If that finds nothing either, or the search fails, say so plainly in a few words — and when it is something that does not change and you know it, give it anyway, saying it is from what you know rather than from the search. Never present a guess as something you found.`;
 }
 
 /** Longest query passed on. A search engine needs keywords, not a paragraph. */
@@ -172,7 +179,7 @@ export function searchOutage(body: unknown): string | null {
  * another spoken announcement.
  */
 export const SEARCH_OUTAGE_ERROR =
-  "Web search is not working right now: the search engines behind it did not answer, so nothing was searched. Tell them search is down. Do not search again for this.";
+  "Web search is not working right now: the search engines behind it did not answer, so nothing was searched. Tell them search is down. Do not search again for this. If you know the answer yourself and it does not change, give it, saying it is from what you know.";
 
 export interface SearchResultForModel {
   ok: true;
