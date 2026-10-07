@@ -237,7 +237,25 @@ export async function handleTranscribeChunk(chunkId: string, attempt = 1): Promi
       })
       .where(eq(audioChunk.id, chunk.id));
 
-    log.error("transcription failed", { chunkId, retryable, reason });
+    /* What the file WAS, so a decode failure can be read from the log alone.
+     * A 415 says only "the file type is not supported"; whether it was the
+     * last chunk of a drive, what container, and how long, is what tells a
+     * truncated final chunk from a browser recording something unreadable —
+     * and the 7 Oct 2026 failure could not be told apart without the database. */
+    const [last] = await db
+      .select({ seq: sql<number>`max(${audioChunk.seq})::int` })
+      .from(audioChunk)
+      .where(eq(audioChunk.captureSessionId, chunk.captureSessionId))
+      .catch(() => [undefined]);
+    const file = {
+      seq: chunk.seq,
+      mimeType: chunk.mimeType,
+      byteSize: chunk.byteSize,
+      durationMs: chunk.durationMs,
+      lastOfSession: last?.seq === undefined ? null : last.seq === chunk.seq,
+    };
+
+    log.error("transcription failed", { chunkId, retryable, reason, ...file });
     capture(
       // The chunk's owner is not always resolvable on this path — the failure
       // may be the lookup itself — so fall back to the session id and drop the
@@ -249,6 +267,11 @@ export async function handleTranscribeChunk(chunkId: string, attempt = 1): Promi
         capture_session_id: chunk.captureSessionId,
         retryable,
         reason: reason.slice(0, 200),
+        chunk_seq: file.seq,
+        mime_type: file.mimeType,
+        byte_size: file.byteSize,
+        duration_ms: file.durationMs,
+        last_of_session: file.lastOfSession,
       },
       { processPerson: false },
     );
