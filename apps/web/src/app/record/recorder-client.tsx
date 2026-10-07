@@ -1,6 +1,6 @@
 "use client";
 
-import { Square } from "lucide-react";
+import { FileText, Square } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { formatOffset } from "@voicemural/shared";
@@ -105,7 +105,10 @@ export function RecorderClient() {
                 and a first-time participant has nothing to compare it against.
                 See `RecordingBadge`. */}
             {isRecording || isDebriefing ? (
-              <RecordingBadge elapsedMs={rec.elapsedMs} debriefing={isDebriefing} />
+              <RecordingBadge
+                elapsedMs={rec.elapsedMs}
+                debriefing={isDebriefing}
+              />
             ) : ended ? (
               // Words, not a muted badge: the badge is present or absent, and
               // its absence alone does not say the conversation below is over.
@@ -119,22 +122,29 @@ export function RecorderClient() {
             ) : (
               <span />
             )}
-            <div className="flex min-w-0 items-center gap-2">
+            {/* THE STOP MUST FIT. On a 390px phone this row overflowed and
+                pushed the stop button off the right edge (7 Oct 2026) — and
+                during a drive it is the only stop on this screen, because the
+                dock hides its own. So the drafts link is an icon and a count,
+                the status pills may wrap onto a second line, and only the
+                badge and the stop refuse to shrink. */}
+            <div className="flex min-w-0 items-center justify-end gap-2">
               {hasConversation && cues.drafts.length > 0 && (
                 // Where the drafts are, from anywhere on this screen: they sit
                 // at its foot, and the pilot scrolled past the title and the
                 // cues without finding them.
                 <a
                   href="#drafts"
-                  className="shrink-0 whitespace-nowrap rounded-full bg-fg/10 px-2.5 py-1 text-xs text-fg/80 tabular-nums hover:bg-fg/20"
+                  aria-label={`${cues.drafts.length} draft${cues.drafts.length === 1 ? "" : "s"}, below`}
+                  className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-fg/10 px-2.5 py-1 text-xs text-fg/80 tabular-nums hover:bg-fg/20"
                 >
-                  {cues.drafts.length} draft{cues.drafts.length === 1 ? "" : "s"} ↓
+                  <FileText size={12} aria-hidden />
+                  {cues.drafts.length} ↓
                 </a>
               )}
               <StatusPills
                 pending={rec.pendingUploads}
                 uploading={rec.uploading}
-                wakeLock={rec.wakeLockActive}
                 recording={isRecording}
                 talkback={TALKBACK_ENABLED && isRecording ? talk.status : null}
                 memory={TALKBACK_ENABLED && isRecording ? talk.memory : null}
@@ -199,7 +209,9 @@ export function RecorderClient() {
                 // now that second showed an ellipsis on a disabled button — which
                 // reads as "it did not hear me" and invites a second tap.
                 <span className="text-fg/60">
-                  {rec.status === "requesting" ? "Opening the microphone…" : "Saving…"}
+                  {rec.status === "requesting"
+                    ? "Opening the microphone…"
+                    : "Saving…"}
                 </span>
               ) : (
                 "Tap to start. Say whatever you are working on."
@@ -369,7 +381,9 @@ function DebriefPanel({
       <ol className="space-y-2.5 text-sm leading-relaxed text-fg/80">
         {DEBRIEF_QUESTIONS.map((question, i) => (
           <li key={question} className="flex gap-3">
-            <span className="shrink-0 font-mono text-xs text-fg/50">{i + 1}</span>
+            <span className="shrink-0 font-mono text-xs text-fg/50">
+              {i + 1}
+            </span>
             {question}
           </li>
         ))}
@@ -402,21 +416,19 @@ function DebriefPanel({
 function StatusPills({
   pending,
   uploading,
-  wakeLock,
   recording,
   talkback,
   memory,
 }: {
   pending: number;
   uploading: boolean;
-  wakeLock: boolean;
   recording: boolean;
   talkback: string | null;
   memory: "ready" | "unavailable" | null;
 }) {
   return (
-    <div className="flex items-center gap-2 text-xs">
-      {recording && wakeLock && <Pill label="awake" tone="ok" />}
+    // Shrinks and wraps, so a warning never pushes the stop off the screen.
+    <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 text-xs">
       {/* Only worth showing when it is NOT working. A healthy socket needs no
           pill: the topic title naming what is being talked about is the
           evidence, and a car dashboard should not carry an indicator for every
