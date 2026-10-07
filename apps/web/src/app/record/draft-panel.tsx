@@ -2,7 +2,7 @@
 
 import { Check, Copy } from "lucide-react";
 import { useState } from "react";
-import type { DraftCue } from "@/lib/display/use-cues";
+import type { DraftCue, DraftVersionCue } from "@/lib/display/use-cues";
 
 /**
  * Text the agent was asked to write, with a button that copies it.
@@ -33,9 +33,18 @@ import type { DraftCue } from "@/lib/display/use-cues";
  * text changes inside the card the person is looking at. Without the label the
  * only evidence of that would be the words themselves being different, which is
  * exactly the kind of thing a screen in the corner of someone's eye cannot
- * report. So the label and the time are shown, and nothing more: editing,
- * history and Restore live on `/sessions/[id]`, because this panel only exists
- * in settings where the person's hands are somewhere else.
+ * report. So the label and the time are shown; editing and Restore live on
+ * `/sessions/[id]`, because this panel only exists in settings where the
+ * person's hands are somewhere else.
+ *
+ * ## Why the label becomes a picker once there are two
+ *
+ * On 7 Oct 2026 the person saw a draft's two versions and wanted to look back
+ * at the first from here, not from the transcript page. So a card with more
+ * than one version turns its label into a native select: reading an earlier
+ * version, and copying it, is one tap, and nothing is changed by it. A new
+ * version arriving snaps the card back to the newest, because that is the
+ * text the agent just said is there.
  */
 export function DraftPanel({ drafts }: { drafts: DraftCue[] }) {
   if (drafts.length === 0) return null;
@@ -58,10 +67,23 @@ export function DraftPanel({ drafts }: { drafts: DraftCue[] }) {
 
 function DraftCard({ draft }: { draft: DraftCue }) {
   const [copied, setCopied] = useState(false);
+  // The version being read, or null for the newest. Reset when the head moves,
+  // during render rather than in an effect, so the new text is never one frame
+  // behind its label.
+  const [picked, setPicked] = useState<string | null>(null);
+  const [head, setHead] = useState(draft.version);
+  if (head !== draft.version) {
+    setHead(draft.version);
+    setPicked(null);
+  }
+
+  const versions = draft.versions ?? [];
+  const shown: Pick<DraftVersionCue, "title" | "text" | "version" | "at"> =
+    versions.find((v) => v.id === picked) ?? draft;
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(draft.text);
+      await navigator.clipboard.writeText(shown.text);
       setCopied(true);
       // Long enough to be seen without looking for it, short enough that the
       // button is ready again if the paste did not land where they meant.
@@ -77,13 +99,29 @@ function DraftCard({ draft }: { draft: DraftCue }) {
     <article className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)]/40 p-3">
       <header className="mb-1.5 flex items-baseline gap-2">
         <h3 className="min-w-0 flex-1 truncate text-xs tracking-wide text-fg/60 uppercase">
-          {draft.title || "Draft"}
+          {shown.title || draft.title || "Draft"}
         </h3>
         {/* `v2.1 · 14:32`. Tabular so the number does not shift the Copy button
             around as versions accumulate. */}
-        <span className="shrink-0 font-mono text-xs text-fg/45 tabular-nums">
-          {draft.version} · {formatTime(draft.at)}
-        </span>
+        {versions.length > 1 ? (
+          <select
+            aria-label="Version"
+            value={picked ?? versions[0]!.id}
+            onChange={(e) => setPicked(e.target.value === versions[0]!.id ? null : e.target.value)}
+            className="shrink-0 cursor-pointer rounded border border-[var(--color-line)] bg-transparent px-1 py-0.5 font-mono text-xs text-fg/60 tabular-nums hover:border-fg/30"
+          >
+            {versions.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.version} · {formatTime(v.at)}
+                {v.author === "user" ? " · yours" : ""}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="shrink-0 font-mono text-xs text-fg/45 tabular-nums">
+            {draft.version} · {formatTime(draft.at)}
+          </span>
+        )}
         <button
           type="button"
           onClick={() => void copy()}
@@ -112,7 +150,7 @@ function DraftCard({ draft }: { draft: DraftCue }) {
       {/* `select-text` because `main` turns selection off for the rest of the
           screen, which made the fallback promised in `copy` above untrue. */}
       <p className="max-h-56 select-text overflow-y-auto whitespace-pre-wrap text-[0.8125rem] leading-snug text-fg/85">
-        {draft.text}
+        {shown.text}
       </p>
     </article>
   );

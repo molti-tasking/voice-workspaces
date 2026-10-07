@@ -4,7 +4,7 @@ import {
   loadLiveSession,
   loadSessionDirections,
 } from "@voicemural/db/display";
-import { loadSessionDrafts } from "@voicemural/db/drafts";
+import { loadSessionDraftHistory } from "@voicemural/db/drafts";
 import { loadOps } from "@voicemural/db/workspace";
 import { PROFILE } from "@voicemural/talkback";
 import { diffWorkspace, foldWorkspace } from "@voicemural/workspace";
@@ -207,17 +207,29 @@ async function buildCues(
    * — it is something the person requested out loud and is now waiting to copy.
    * So it is never truncated to a cue budget and never ages out: all of them,
    * in the order they were asked for. */
-  const drafts = (await loadSessionDrafts(captureSessionId)).map((d) => ({
+  const drafts = (await loadSessionDraftHistory(captureSessionId)).map((d) => ({
     // The LINEAGE id: an agent rewrite is a new VERSION of this draft, so the
     // panel must replace the card rather than grow a second one claiming to be
     // just as current.
     id: d.id,
-    title: d.title,
-    text: d.text,
-    version: d.version,
+    title: d.current.title,
+    text: d.current.text,
+    version: d.current.version,
     // The current version's time, not the lineage's. "14:32" next to text that
     // was rewritten at 14:40 is worse than no time at all.
-    at: d.updatedAt.toISOString(),
+    at: d.current.createdAt.toISOString(),
+    // Every version, newest first, so the card can show an earlier one
+    // (7 Oct 2026: "we would want a select to also check different
+    // versions"). A drive has a handful of drafts with a handful of versions,
+    // so carrying the text of each on every frame is cheap.
+    versions: [d.current, ...d.earlier].map((v) => ({
+      id: v.id,
+      version: v.version,
+      author: v.author,
+      title: v.title,
+      text: v.text,
+      at: v.createdAt.toISOString(),
+    })),
   }));
 
   return {
