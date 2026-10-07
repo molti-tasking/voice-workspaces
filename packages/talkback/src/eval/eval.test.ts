@@ -222,6 +222,16 @@ describe("the turn messages, which mirror bot.py", () => {
     expect(block.endsWith("That is background. Answer what was just said to you, and use it to say which thing you mean.")).toBe(true);
   });
 
+  it("put the local time first, ahead of the screen, as Recall._compose does", () => {
+    const block = composeContextBlock({
+      now: "LOCAL TIME: Wednesday, 7 October 2026, 10:00 (Europe/Copenhagen).",
+      screen: "WHICH SCREEN: they have the workspace open.",
+      board: "Their task board right now:\n- [doing] ethics form",
+    })!;
+    expect(block.indexOf("LOCAL TIME:")).toBe(0);
+    expect(block.indexOf("WHICH SCREEN")).toBeLessThan(block.indexOf("Their task board right now:"));
+  });
+
   it("put the board ahead of everything, as Recall._compose does", () => {
     const block = composeContextBlock({
       board: "Their task board right now:\n- [doing] ethics form",

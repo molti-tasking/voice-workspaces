@@ -21,6 +21,7 @@ service's own variables serve. Anywhere else, the four below are enough.
 """
 
 import asyncio
+import json
 import os
 import time
 import urllib.error
@@ -2287,6 +2288,42 @@ def test_compose_leads_with_the_screen_they_have_open():
     recall._screen = "WHICH SCREEN: they have the workspace open."
     block = recall._compose([], None, [], "Their task board right now:\n- [doing] X", None)
     assert block.index("WHICH SCREEN") < block.index("Their task board right now:")
+
+
+def test_compose_leads_with_the_local_time_then_the_screen():
+    # 7 Oct 2026: with no clock, "what time is it?" got "It's 10:14 AM",
+    # twice, at ten. The line the route renders goes first.
+    recall = a_recall()
+    recall._now = "LOCAL TIME: Wednesday, 7 October 2026, 10:00 (Europe/Copenhagen)."
+    recall._screen = "WHICH SCREEN: they have the conversation view open."
+    block = recall._compose([], None, [], None, None)
+    assert block.index("LOCAL TIME:") == 0
+    assert block.index("LOCAL TIME:") < block.index("WHICH SCREEN")
+
+
+def test_recall_takes_the_local_time_from_the_route(monkeypatch):
+    recall = a_recall()
+
+    class Response:
+        def __init__(self, body):
+            self._body = json.dumps(body).encode()
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(
+        bot.urllib.request,
+        "urlopen",
+        lambda req, timeout=None: Response({"passages": [], "now": "LOCAL TIME: x (UTC)."}),
+    )
+    recall._fetch("what time is it")
+    assert recall._now == "LOCAL TIME: x (UTC)."
 
 
 def test_compose_says_nothing_when_there_is_nothing_to_say():

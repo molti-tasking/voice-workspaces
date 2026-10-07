@@ -446,7 +446,11 @@ export function useRecorder() {
     const registration = {
       id: meta.captureSessionId,
       startedAt: new Date(meta.startedAt).toISOString(),
-      deviceInfo: { userAgent: navigator.userAgent, mimeType },
+      deviceInfo: {
+        userAgent: navigator.userAgent,
+        mimeType,
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      },
       voiceId,
       // Null is normal (auto-detect); undefined on the wire keeps zod happy.
       sttLanguage: sttLanguage ?? undefined,

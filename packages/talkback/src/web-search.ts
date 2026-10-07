@@ -22,6 +22,7 @@
  * Pure: schemas, a parser, a request builder and a result shaper. No I/O.
  */
 import type { ToolDefinition } from "./board-tools";
+import { localDate } from "./clock";
 
 export const WEB_SEARCH_TOOL_NAME = "search_web";
 
@@ -70,17 +71,13 @@ export const WEB_SEARCH_TOOL: ToolDefinition = {
  *   name", three turns running.
  *
  * `now` is when the session is composed, once per connection; a drive does
- * not outlast the day by enough to matter. UTC, so a drive just after
- * midnight in Denmark reads as the day before.
+ * not outlast the day by enough to matter. In the drive's own zone when the
+ * browser sent one (UTC otherwise), so a drive just after midnight in Denmark
+ * no longer reads as the day before. The time of day is per turn, in the turn
+ * context (clock.ts).
  */
-export function webSearchSection(now: Date = new Date()): string {
-  const today = now.toLocaleDateString("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  });
+export function webSearchSection(now: Date = new Date(), timeZone?: string | null): string {
+  const today = localDate(now, timeZone);
   return `SEARCHING THE WEB
 You can search the web with search_web. Today is ${today}.
 

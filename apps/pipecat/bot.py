@@ -1332,6 +1332,9 @@ class Recall(FrameProcessor):
         # `_fetch` tuple; None until the first fetch, and from an older web
         # deploy that sends no such field.
         self._screen: str | None = None
+        # The date and time where they are, as of their words (`renderLocalTime`
+        # in clock.ts). Held the same way, for the same reasons.
+        self._now: str | None = None
 
     def _fetch(
         self, said: str, answering: str | None = None
@@ -1355,6 +1358,7 @@ class Recall(FrameProcessor):
         with urllib.request.urlopen(req, timeout=5) as res:
             body = json.loads(res.read())
             self._screen = body.get("screen")
+            self._now = body.get("now")
             return (
                 body.get("passages") or [],
                 body.get("threads") or [],
@@ -1382,6 +1386,11 @@ class Recall(FrameProcessor):
         drafts: str | None = None,
     ) -> str | None:
         sections: list[str] = []
+        # The time where they are, ahead even of the screen: the agent has no
+        # clock of its own, and on 7 Oct 2026 it made one up ("It's 10:14 AM",
+        # twice, at ten). Mirrored in packages/talkback/src/eval/messages.ts.
+        if self._now:
+            sections.append(self._now)
         # Which screen they have open, first and in one line: it is not
         # background about their work but a fact about right now, and it is
         # what grounds any direction about the app. Mirrored in

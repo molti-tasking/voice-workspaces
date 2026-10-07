@@ -19,6 +19,11 @@ describe("webSearchSection", () => {
     const section = webSearchSection(new Date("2026-09-16T12:46:00Z"));
     expect(section).toContain("Today is Wednesday, 16 September 2026.");
   });
+
+  it("dates it in their own zone, so just after midnight is not yesterday", () => {
+    const section = webSearchSection(new Date("2026-09-16T22:30:00Z"), "Europe/Copenhagen");
+    expect(section).toContain("Today is Thursday, 17 September 2026.");
+  });
 });
 
 describe("webSearchFromToolCall", () => {
