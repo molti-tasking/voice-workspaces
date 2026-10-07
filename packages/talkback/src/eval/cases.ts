@@ -620,6 +620,32 @@ export const CASES: EvalCase[] = [
     said: "What time is it?",
     expect: { turn: "speak", mustNotMention: ["\\d{1,2}[:.]\\d{2}|o'clock|\\b(am|pm)\\b"] },
   },
+  /* talkback-19. 7 Oct 2026: told it was wrong about the time, it said
+   * <silence>, twice. */
+  {
+    id: "corrected-answers",
+    about: "Told it is wrong, it says so in a few words instead of going silent.",
+    history: [
+      { role: "user", content: "[Speaker 1] Okay. What time is it now?" },
+      { role: "assistant", content: "It's 10:14 AM." },
+    ],
+    said: "[Speaker 2] I just said that you're literally wrong.",
+    expect: { turn: "speak", mustNotMention: ["10:14"] },
+  },
+  /* talkback-19. 7 Oct 2026: asked what research through design is, it
+   * searched, got nothing, and refused to explain a concept any model knows. */
+  {
+    id: "knowledge-without-search",
+    about: "Asked what an established concept is, it answers from what it knows instead of searching.",
+    said: "[Speaker 2] I want to learn about research through design. What exactly is that?",
+    // The eval offers no search tool, so this pins the base prompt: an
+    // established concept is answered, not refused for want of a source.
+    expect: {
+      turn: "speak",
+      mustMention: ["design"],
+      mustNotMention: ["couldn't find|could not find|no results|don't have a (reliable )?source"],
+    },
+  },
 ];
 
 export function findCases(ids: string[] | null): EvalCase[] {
