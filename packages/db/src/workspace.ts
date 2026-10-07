@@ -590,6 +590,8 @@ export interface TimelineSession {
   id: string;
   startedAt: Date;
   endedAt: Date | null;
+  /** What the drive was about, when talk-back named it. */
+  title: string | null;
   utteranceCount: number;
   recordedMs: number;
 }
@@ -639,6 +641,7 @@ export async function loadTimelineSessions(
       id: s.id,
       startedAt: s.startedAt,
       endedAt: s.endedAt,
+      title: s.title,
       utteranceCount: s.utteranceCount,
       recordedMs: s.recordedMs,
     }))

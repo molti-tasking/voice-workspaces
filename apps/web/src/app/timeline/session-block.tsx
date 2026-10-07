@@ -40,6 +40,9 @@ export function SessionBlock({
       {/* Under the live drive bar when there is one; see `LiveDriveBar`. */}
       <header className="sticky top-[var(--vm-live-bar,0px)] z-10 -mx-4 mb-3 flex items-baseline justify-between gap-3 bg-[var(--color-canvas)]/85 px-4 py-2 backdrop-blur">
         <h2 className="min-w-0 text-sm font-medium">
+          {/* Its name first, when it has one: a column of dates says when
+              each drive was, never which one you are looking for. */}
+          {session.title && <span className="mr-2">{session.title} ·</span>}
           {session.startedAt.toLocaleDateString(undefined, {
             weekday: "long",
             day: "numeric",

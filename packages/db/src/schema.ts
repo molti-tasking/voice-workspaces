@@ -224,6 +224,16 @@ export const captureSession = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
     endedAt: timestamp("ended_at", { withTimezone: true }),
     /**
+     * What the drive was about, in a few words: the last live topic title the
+     * voice container named (`TopicTitle` in bot.py, via `/api/realtime/title`).
+     *
+     * Kept because a drive had no name anywhere. "I can not view my past
+     * transcripts easily" (7 Oct 2026): every list of drives was a column of
+     * dates. Null for a drive without talk-back, and for every drive before
+     * this; the lists fall back to its first words.
+     */
+    title: text("title"),
+    /**
      * Which path closed the session.
      *
      * A drive usually ends by arriving somewhere rather than by deciding to

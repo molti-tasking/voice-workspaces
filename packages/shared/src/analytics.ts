@@ -183,6 +183,8 @@ export interface AnalyticsEventMap {
   // clicks (an <a> and a <summary>), which autocapture already records. Naming
   // them here would add a second, redundant event for the same interaction.
   timeline_viewed: { session_count: number; marker_count: number };
+  /** The Conversations page: the list, or a search over what was said. */
+  conversations_viewed: { searched: boolean; result_count: number; page: number };
   timeline_page_loaded: { sessions_shown: number };
   /**
    * The join between a user action and an `$ai_generation`: `extraction_id` is

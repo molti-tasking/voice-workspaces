@@ -3,6 +3,7 @@
 import {
   ListTree,
   LogOut,
+  MessagesSquare,
   Sparkles,
   UserRound,
   Waypoints,
@@ -23,11 +24,15 @@ import { Link } from "./nav-link";
  * is somewhere a participant goes mid-task, which is exactly why they are here
  * and not in the dock.
  *
- * NO SESSION LIST. It was a second list of the same drives the timeline shows,
- * and on 28 Sep 2026 it was the first thing named among "too many different
- * screens". The timeline links each drive to its own page instead.
+ * NO SESSION LIST of dates and counts. It was a second list of the same drives
+ * the timeline shows, and on 28 Sep 2026 it was the first thing named among
+ * "too many different screens". Conversations is not that: drives there are
+ * named and searchable (7 Oct 2026), and it took Timeline's place in the dock
+ * rather than adding one. It is here too for wide screens, where the board
+ * holds that dock slot.
  */
 const LINKS: { href: string; label: string; hint: string; Icon: LucideIcon }[] = [
+  { href: "/conversations", label: "Conversations", hint: "Find a past conversation", Icon: MessagesSquare },
   { href: "/timeline", label: "Timeline", hint: "Every drive, read end to end", Icon: ListTree },
   { href: "/trajectory", label: "Trajectory", hint: "Topics over time", Icon: Waypoints },
   { href: "/repertoire", label: "Repertoire", hint: "What it has learned to do", Icon: Sparkles },

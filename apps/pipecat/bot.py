@@ -1178,6 +1178,13 @@ class TopicTitle(FrameProcessor):
     degraded connection has no session at all. Then this makes no calls and
     pushes nothing, and the browser simply never shows a board — which is the
     right failure for a decorative surface on a study rig.
+
+    AND KEPT, as the drive's name. Each new title is also posted to
+    `/api/realtime/title`, which stores it on `capture_session.title`, so the
+    drive is listed by what it was about rather than only by its date ("I can
+    not view my past transcripts easily", 7 Oct 2026). After the push, off the
+    event loop, and never awaited by a turn; a 409 means the drive has ended,
+    and stops it.
     """
 
     # How much recent speech the model is shown. Enough for a subject to be
@@ -1190,10 +1197,18 @@ class TopicTitle(FrameProcessor):
     # A slow talker still gets a title: any new speech at all, after this long.
     CALL_AFTER_SECONDS = 30
 
-    def __init__(self, title_prompt: str | None, metadata: dict | None = None):
+    def __init__(
+        self,
+        title_prompt: str | None,
+        metadata: dict | None = None,
+        ticket: str | None = None,
+    ):
         super().__init__()
         self._prompt = (title_prompt or "").strip()
         self._metadata = metadata or {}
+        self._ticket = ticket
+        # Set once the web app refuses a title because the drive is over.
+        self._drive_ended = False
         self._title: str | None = None
         self._window = ""
         self._new_chars = 0
@@ -1288,6 +1303,27 @@ class TopicTitle(FrameProcessor):
         self._title = title
         logger.info(f"[title] {title}")
         await self.push_frame(RTVIServerMessageFrame(data={"type": "title", "title": title}))
+        if self._ticket and not self._drive_ended:
+            await asyncio.to_thread(self._save, title)
+
+    def _save(self, title: str) -> None:
+        """Keep `title` as the drive's name. Logged and dropped on failure: the
+        next title will try again, and a name is not worth a drive."""
+        req = urllib.request.Request(
+            f"{WEB_URL}/api/realtime/title",
+            method="POST",
+            data=json.dumps({"ticket": self._ticket, "title": title}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5):
+                pass
+        except urllib.error.HTTPError as err:
+            if err.code == 409:
+                self._drive_ended = True
+            logger.warning(f"[title] not saved ({err.code})")
+        except Exception as err:
+            logger.warning(f"[title] not saved: {err}")
 
 
 class Recall(FrameProcessor):
@@ -3867,6 +3903,7 @@ def build_pipeline(
     title = TopicTitle(
         session.get("titlePrompt"),
         metadata=litellm_metadata("talkback.title", session, capture_session_id),
+        ticket=ticket,
     )
     # Offsets are measured against the drive's own start, the same clock
     # `utterance` uses — which is what lets the two tables be read as one

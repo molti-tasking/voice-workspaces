@@ -16,7 +16,7 @@ import { Transcript, type AgentTurnRow, type TranscriptRow } from "./transcript"
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Session",
+  title: "Conversation",
   robots: { index: false, follow: false },
 };
 
@@ -131,15 +131,23 @@ export default async function SessionPage({
         }}
       />
 
-      <BackLink fallback={{ href: `/timeline#session-${id}`, name: "Timeline" }} />
+      <BackLink fallback={{ href: "/conversations", name: "Conversations" }} />
 
       <header className="mt-4 mb-8">
+        {/* Named by what it was about when talk-back named it, with the date
+            beneath; a date alone when it did not. */}
         <h1 className="text-2xl font-semibold">
-          {meta.startedAt.toLocaleString(undefined, {
-            dateStyle: "full",
-            timeStyle: "short",
-          })}
+          {meta.title ??
+            meta.startedAt.toLocaleString(undefined, {
+              dateStyle: "full",
+              timeStyle: "short",
+            })}
         </h1>
+        {meta.title && (
+          <p className="mt-1 text-sm text-fg/70">
+            {meta.startedAt.toLocaleString(undefined, { dateStyle: "full", timeStyle: "short" })}
+          </p>
+        )}
         <p className="mt-1 text-sm text-fg/60">
           {formatOffset(recordedMs)} recorded · {chunks.length} chunks ·{" "}
           {rows.length} utterances

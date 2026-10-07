@@ -12,7 +12,7 @@ config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true }
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { audioChunk, captureSession, user, utterance } from "./schema";
-import { listSessionsWithStats } from "./sessions";
+import { listSessionsWithStats, setSessionTitle } from "./sessions";
 import { isDatabaseReachable } from "./testing";
 import { loadTimelineSessions, loadUtterancesByIds } from "./workspace";
 import { closeDb, getDb } from "./index";
@@ -170,6 +170,32 @@ describeIfDb("listSessionsWithStats", () => {
   it("returns an empty list for a user with no sessions", async () => {
     await makeUser(USER_ID);
     expect(await listSessionsWithStats(USER_ID)).toEqual([]);
+  });
+
+  it("names a drive by its saved title, and gives its first line for one without", async () => {
+    // 7 Oct 2026: every list of drives was a column of dates.
+    await makeUser(USER_ID);
+    await makeSession(S1, USER_ID, 2, 2);
+    await makeSession(S2, USER_ID, 1, 1);
+    expect(await setSessionTitle(S1, "  Research   through design ")).toBe(true);
+
+    const byId = new Map((await listSessionsWithStats(USER_ID)).map((s) => [s.id, s]));
+
+    expect(byId.get(S1)?.title).toBe("Research through design");
+    expect(byId.get(S1)?.firstWords).toBe("utterance 0-0");
+    expect(byId.get(S2)?.title).toBeNull();
+    expect(byId.get(S2)?.firstWords).toBe("utterance 0-0");
+  });
+
+  it("refuses an empty title and pages by offset", async () => {
+    await makeUser(USER_ID);
+    await makeSession(S1, USER_ID, 1, 1);
+    await makeSession(S2, USER_ID, 1, 1);
+    expect(await setSessionTitle(S1, "   ")).toBe(false);
+
+    const all = await listSessionsWithStats(USER_ID, 10);
+    const second = await listSessionsWithStats(USER_ID, 1, 1);
+    expect(second.map((s) => s.id)).toEqual([all[1]!.id]);
   });
 });
 
