@@ -3,7 +3,9 @@ import { z } from "zod";
 import { captureSession, eq, getDb } from "@voicemural/db";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import {
+  SEARCH_OUTAGE_ERROR,
   asSttLanguage,
+  searchOutage,
   searchResultForModel,
   searxngRequest,
   webSearchFromToolCall,
@@ -98,6 +100,14 @@ export async function POST(req: Request) {
       { ok: false, error: timedOut ? "The search took too long and was abandoned." : "The search engine could not be reached." },
       noStore,
     );
+  }
+
+  const outage = searchOutage(body);
+  if (outage) {
+    // The engines, never the query. Worth a line every time: nothing else
+    // shows that the instance has stopped answering.
+    console.warn(`[search] SearXNG engines unresponsive: ${outage}`);
+    return NextResponse.json({ ok: false, error: SEARCH_OUTAGE_ERROR }, noStore);
   }
 
   return NextResponse.json(searchResultForModel(call.query, body), noStore);
