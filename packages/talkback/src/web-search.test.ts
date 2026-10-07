@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   WEB_SEARCH_TOOL,
+  searchOutage,
   searchResultForModel,
   searxngRequest,
   webSearchFromToolCall,
@@ -94,5 +95,44 @@ describe("searchResultForModel", () => {
   it("says plainly that nothing came back, so the model does not fill the gap", () => {
     expect(searchResultForModel("q", { results: [] }).note).toMatch(/nothing useful/);
     expect(searchResultForModel("q", "not json at all").note).toMatch(/nothing useful/);
+  });
+});
+
+describe("searchOutage", () => {
+  // The body searx.seedlabs.tech returned for "cat" on 7 Oct 2026.
+  const suspended = {
+    results: [],
+    answers: [],
+    unresponsive_engines: [
+      ["brave", "too many requests"],
+      ["duckduckgo", "CAPTCHA"],
+      ["google cse", "too many requests"],
+      ["startpage", "Suspended: CAPTCHA"],
+    ],
+  };
+
+  it("names the engines when every one of them failed, so it is not read as 'nothing found'", () => {
+    expect(searchOutage(suspended)).toBe(
+      "brave (too many requests), duckduckgo (CAPTCHA), google cse (too many requests), startpage (Suspended: CAPTCHA)",
+    );
+  });
+
+  it("is not an outage when anything came back, even with some engines down", () => {
+    const partial = {
+      ...suspended,
+      results: [{ title: "Cat", url: "https://en.wikipedia.org/wiki/Cat", content: "…" }],
+    };
+    expect(searchOutage(partial)).toBeNull();
+    expect(searchOutage({ ...suspended, answers: ["A small domesticated carnivore."] })).toBeNull();
+  });
+
+  it("leaves a genuinely empty search to searchResultForModel", () => {
+    expect(searchOutage({ results: [], unresponsive_engines: [] })).toBeNull();
+    expect(searchOutage({ results: [] })).toBeNull();
+    expect(searchOutage("not json at all")).toBeNull();
+  });
+
+  it("keeps an engine whose reason is missing, and skips malformed entries", () => {
+    expect(searchOutage({ results: [], unresponsive_engines: [["brave"], "junk", [42, "x"]] })).toBe("brave");
   });
 });

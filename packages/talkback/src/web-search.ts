@@ -138,7 +138,44 @@ export function searxngRequest(
 interface SearxngBody {
   answers?: unknown[];
   results?: { title?: unknown; url?: unknown; content?: unknown; publishedDate?: unknown }[];
+  unresponsive_engines?: unknown[];
 }
+
+/**
+ * Why SearXNG came back empty, when the reason is its engines and not the
+ * query: e.g. `brave (too many requests), duckduckgo (CAPTCHA)`. Null when
+ * anything came back, or when no engine reported a failure.
+ *
+ * SearXNG answers 200 with an empty `results` when every engine behind it has
+ * been rate-limited or CAPTCHA'd, and says so only in `unresponsive_engines`.
+ * Shaped as "found nothing", that outage reached the model as a fact about the
+ * query: on 7 Oct 2026 it told a driver that a search for "cat" had no
+ * results, and then defended the search as working while all four engines were
+ * suspended. An outage has to reach the model as a failure, not as an answer.
+ */
+export function searchOutage(body: unknown): string | null {
+  const data = (body && typeof body === "object" ? body : {}) as SearxngBody;
+  const hasResults = Array.isArray(data.results) && data.results.length > 0;
+  const hasAnswers = Array.isArray(data.answers) && data.answers.length > 0;
+  if (hasResults || hasAnswers || !Array.isArray(data.unresponsive_engines)) return null;
+
+  const engines = data.unresponsive_engines
+    .map((entry) => {
+      if (!Array.isArray(entry) || typeof entry[0] !== "string") return null;
+      return typeof entry[1] === "string" && entry[1] ? `${entry[0]} (${entry[1]})` : entry[0];
+    })
+    .filter((engine): engine is string => engine !== null);
+  return engines.length > 0 ? engines.join(", ") : null;
+}
+
+/**
+ * What the model is told during an outage. It says that nothing was searched,
+ * because "found nothing" is a claim about the web that the outage cannot
+ * support, and it says not to retry, because a retry in an outage only adds
+ * another spoken announcement.
+ */
+export const SEARCH_OUTAGE_ERROR =
+  "Web search is not working right now: the search engines behind it did not answer, so nothing was searched. Tell them search is down. Do not search again for this.";
 
 export interface SearchResultForModel {
   ok: true;

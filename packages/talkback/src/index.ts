@@ -96,8 +96,10 @@ export {
   type ToolDefinition,
 } from "./board-tools";
 export {
+  SEARCH_OUTAGE_ERROR,
   WEB_SEARCH_TOOL,
   WEB_SEARCH_TOOL_NAME,
+  searchOutage,
   searchResultForModel,
   searxngRequest,
   webSearchFromToolCall,
