@@ -41,6 +41,19 @@ export const dynamic = "force-dynamic";
  * version number; guessing wrong overwrites text the person may have spent the
  * drive on.
  *
+ * ## The same title is the same draft
+ *
+ * Without a handle that resolves, a draft whose title matches exactly one
+ * draft already on this drive — case and spacing aside — is filed as that
+ * draft's next version. On 7 Oct 2026 the agent was asked to sharpen "the
+ * critical analysis" and wrote a second "Critical Analysis of Thinking
+ * Partner Capabilities" instead of revising the first, and the person saw
+ * two cards and took them for two versions of one. A title is the model
+ * naming what it is writing; within one drive, the same name is the same
+ * thing. Nothing is lost either way, because the earlier text stays in the
+ * version history — which is also why an ambiguous title (two drafts already
+ * share it) still writes a new draft rather than picking one.
+ *
  * ## Both deploy orders work
  *
  * A container older than this route never sends `revises` and gets the old
@@ -104,7 +117,9 @@ export async function POST(req: Request) {
   const clippedTitle = title.slice(0, MAX_DRAFT_TITLE_CHARS);
   const clippedText = text.slice(0, MAX_DRAFT_CHARS);
 
-  const revised = revises ? await resolveHandle(payload.captureSessionId, revises) : null;
+  const revised =
+    (revises ? await resolveHandle(payload.captureSessionId, revises) : null) ??
+    (await resolveSameTitle(payload.captureSessionId, clippedTitle));
 
   if (revised) {
     const result = await appendDraftVersion({
@@ -174,6 +189,26 @@ async function resolveHandle(
 
   const drafts = await loadSessionDrafts(captureSessionId).catch(() => []);
   const matches = drafts.filter((d) => draftHandle(d.id) === wanted);
+  return matches.length === 1 ? matches[0]!.id : null;
+}
+
+/** A title as compared for "the same draft": case and spacing do not count. */
+function normaliseTitle(title: string): string {
+  return title.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/**
+ * The one draft on this drive already carrying `title`, or null — for a
+ * model that rewrote a draft without naming its handle. Null for an empty
+ * title, and for a title two drafts already share: picking one would be the
+ * guess `resolveHandle` refuses to make.
+ */
+async function resolveSameTitle(captureSessionId: string, title: string): Promise<string | null> {
+  const wanted = normaliseTitle(title);
+  if (!wanted) return null;
+
+  const drafts = await loadSessionDrafts(captureSessionId).catch(() => []);
+  const matches = drafts.filter((d) => normaliseTitle(d.title) === wanted);
   return matches.length === 1 ? matches[0]!.id : null;
 }
 
