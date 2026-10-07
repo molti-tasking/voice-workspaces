@@ -7,6 +7,7 @@ describe("screen", () => {
     expect(screenFor("/workspace?since=2026-09-01")).toBe("workspace");
     expect(screenFor("/board/brief")).toBe("board");
     expect(screenFor("/sessions/abc")).toBe("session");
+    expect(screenFor("/conversations?q=deadline")).toBe("conversations");
     expect(screenFor("/survey")).toBe("other");
   });
 
@@ -19,7 +20,8 @@ describe("screen", () => {
   it("always says where past transcripts are, so it never guesses", () => {
     // "You can see the transcript of our last session in the conversation
     // view" — which shows nothing from earlier drives (28 Sep 2026).
-    for (const s of [...SCREENS, null]) expect(renderScreen(s)).toMatch(/Timeline \(every past recording's transcript/);
+    // Conversations since 7 Oct 2026, where drives are named and searchable.
+    for (const s of [...SCREENS, null]) expect(renderScreen(s)).toMatch(/Conversations \(every past recording/);
     expect(renderScreen("conversation")).toMatch(/nothing from earlier drives/);
   });
 

@@ -129,6 +129,8 @@ import { PROACTIVITY_STANZAS, PROFILE, type ConversationProfile } from "./profil
  * search is for what changes (web-search.ts), and a failed search no longer
  * leaves the person with nothing. The conversation view's description
  * (screen.ts) follows its new order: no empty cue box, transcript link last.
+ * And WHERE THINGS ARE now sends people looking for a past drive to
+ * Conversations, where drives are named and searchable, instead of Timeline.
  */
 export const TALKBACK_CONFIG_VERSION = "talkback-19";
 

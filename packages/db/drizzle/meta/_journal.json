@@ -155,6 +155,13 @@
       "when": 1790522231762,
       "tag": "0021_capture_screen",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791362874797,
+      "tag": "0022_capture_session_title",
+      "breakpoints": true
     }
   ]
 }

@@ -119,7 +119,9 @@ export {
   contentWords,
   describeWhen,
   loadDriveSoFar,
+  searchConversations,
   searchTranscripts,
   type Passage,
+  type TranscriptHit,
 } from "./retrieval";
 export { containment, isEcho, keptIndices, withoutEcho } from "./echo";

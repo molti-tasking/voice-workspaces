@@ -1859,6 +1859,45 @@ def test_a_failed_call_is_logged_and_the_next_trigger_retries(monkeypatch):
     assert processor.title is None
 
 
+def test_each_new_title_is_kept_as_the_drives_name_until_the_drive_ends(monkeypatch):
+    # 7 Oct 2026: drives had no names anywhere. Each title is posted to
+    # /api/realtime/title; a 409 means the drive is over, and stops it.
+    processor = titler(monkeypatch, replies=["AI weaknesses", "Search results"])
+    processor._ticket = "ticket"
+    saved = []
+
+    def save(title):
+        saved.append(title)
+        processor._drive_ended = True  # as a 409 would leave it
+
+    processor._save = save
+
+    async def run():
+        for words in ("x" * 200, "y" * 200):
+            processor._last_call -= bot.TopicTitle.CALL_AFTER_SECONDS + 1
+            await processor.process_frame(heard(words), FrameDirection.DOWNSTREAM)
+            await settled(processor)
+
+    asyncio.run(run())
+    assert processor.title == "Search results"
+    assert saved == ["AI weaknesses"]
+
+
+def test_a_title_is_saved_through_the_web_app_and_a_409_stops_it(monkeypatch):
+    processor = bot.TopicTitle("name it", ticket="ticket")
+    posted = []
+
+    def refuse(req, timeout=None):
+        posted.append(json.loads(req.data))
+        raise urllib.error.HTTPError(req.full_url, 409, "ended", {}, None)
+
+    monkeypatch.setattr(bot.urllib.request, "urlopen", refuse)
+    processor._save("AI weaknesses")
+
+    assert posted == [{"ticket": "ticket", "title": "AI weaknesses"}]
+    assert processor._drive_ended is True
+
+
 def test_a_container_with_no_title_prompt_never_calls(monkeypatch):
     """An older web app sends no `titlePrompt`. Then the board simply never runs."""
     processor = titler(monkeypatch, prompt="", reply="Funding round")

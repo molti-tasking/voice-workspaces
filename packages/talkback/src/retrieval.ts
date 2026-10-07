@@ -203,6 +203,10 @@ export async function loadDriveSoFar(
  * Matches are widened into a surrounding window before being returned: a single
  * `utterance` is one Whisper segment, often three or four words, and quoting
  * that back is useless. The window is what makes a hit readable.
+ *
+ * The AGENT'S search: any content word may match (`or`), because a spoken
+ * question rarely repeats the words that were said. The person's own search
+ * box is `searchConversations`, below.
  */
 export async function searchTranscripts(
   userId: string,
@@ -212,87 +216,13 @@ export async function searchTranscripts(
   const words = contentWords(query);
   if (words.length === 0) return [];
 
-  const limit = options.limit ?? 4;
-  const windowMs = options.windowMs ?? 20_000;
-  const tsquery = words.join(" or ");
-
   try {
-    const db = getDb();
-
-    // Rank by lexical match, then prefer recency. `simple` rather than a
-    // language configuration: the corpus is mixed German/English.
-    const hits = await db.execute<{
-      capture_session_id: string;
-      start_offset_ms: number;
-    }>(sql`
-      select u.capture_session_id, u.start_offset_ms
-      from utterance u
-      join capture_session cs on cs.id = u.capture_session_id
-      where cs.user_id = ${userId}
-        ${options.excludeSessionId ? sql`and u.capture_session_id <> ${options.excludeSessionId}` : sql``}
-        and to_tsvector('simple', u.text) @@ websearch_to_tsquery('simple', ${tsquery})
-      order by
-        ts_rank_cd(to_tsvector('simple', u.text), websearch_to_tsquery('simple', ${tsquery})) desc,
-        cs.started_at desc
-      limit ${limit}
-    `);
-
-    // Everything below used to run inside a `for` loop, one window query and
-    // one spoken-turns query per hit — up to 1 + 4x2 = 9 strictly sequential
-    // round trips before the first token of a reply, on the one code path whose
-    // whole design rationale is latency. The hits are independent, so they are
-    // fetched together, and the spoken turns for every hit drive come back in a
-    // single query rather than one per hit.
-    const sessionIds = [...new Set(hits.map((hit) => hit.capture_session_id))];
-    const [spokenPerSession, windows] = await Promise.all([
-      spokenByAgentPerSession(sessionIds),
-      Promise.all(
-        hits.map((hit) =>
-          db.execute<{ text: string; start_offset_ms: number; started_at: Date }>(sql`
-            select u.text, u.start_offset_ms, cs.started_at
-            from utterance u
-            join capture_session cs on cs.id = u.capture_session_id
-            where u.capture_session_id = ${hit.capture_session_id}
-              and u.start_offset_ms between ${hit.start_offset_ms - windowMs} and ${hit.start_offset_ms + windowMs}
-            order by u.start_offset_ms
-          `),
-        ),
-      ),
-    ]);
-
-    const passages: Passage[] = [];
-    for (const [index, hit] of hits.entries()) {
-      const window = windows[index] ?? [];
-
-      const first = window[0];
-      if (!first) continue;
-
-      // Past drives carry the same contamination, so a passage must be cleaned
-      // before it is quoted back — otherwise a reply invented three drives ago
-      // returns as established fact about the driver's own thinking.
-      const spoken = spokenPerSession.get(hit.capture_session_id) ?? [];
-      const text = withoutEcho(
-        // Whisper's invented sign-offs go too, for the same reason and by the
-        // same rule: the ledger is verbatim, a read is allowed to know better.
-        window.map((row) => withoutHallucinatedSentences(row.text.trim())).filter(Boolean),
-        spoken,
-      ).join(" ");
-      if (!text.trim()) continue;
-
-      passages.push({
-        occurredAt: new Date(new Date(first.started_at).getTime() + first.start_offset_ms),
-        text,
-      });
-    }
-
-    // Two hits inside one window produce the same passage twice.
-    const seen = new Set<string>();
-    return passages.filter((passage) => {
-      const key = passage.text.slice(0, 80);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
+    const hits = await findHits(userId, words.join(" or "), {
+      limit: options.limit ?? 4,
+      excludeSessionId: options.excludeSessionId,
+      windowMs: options.windowMs ?? 20_000,
     });
+    return hits.map(({ occurredAt, text }) => ({ occurredAt, text }));
   } catch (err) {
     // Retrieval failing degrades the answer; it must not fail the turn.
     log.error("transcript search failed", {
@@ -301,6 +231,129 @@ export async function searchTranscripts(
     });
     return [];
   }
+}
+
+/** One place a search matched, with what a link to the line needs. */
+export interface TranscriptHit {
+  captureSessionId: string;
+  /** The matching line, so a result can link to `/sessions/{id}#u-{utteranceId}`. */
+  utteranceId: string;
+  /** Absolute wall-clock of the window's first line. */
+  occurredAt: Date;
+  /** The hit widened into its window, with echoes and Whisper inventions removed. */
+  text: string;
+}
+
+/**
+ * The person's own search over their drives, for the Conversations page.
+ *
+ * EVERY content word must match: someone typing "research design" into a box
+ * means both words, unlike the agent's `searchTranscripts`, which casts wide
+ * because a spoken question rarely repeats what was said. Same index, same
+ * ranking, same cleaning, so what is found is what the agent could find.
+ *
+ * Throws on a database failure: a search page that says "nothing found" when
+ * the database is down is the empty-result mistake web search made.
+ */
+export async function searchConversations(
+  userId: string,
+  query: string,
+  options: { limit?: number } = {},
+): Promise<TranscriptHit[]> {
+  const words = contentWords(query);
+  if (words.length === 0) return [];
+  return findHits(userId, words.join(" "), { limit: options.limit ?? 30, windowMs: 8_000 });
+}
+
+/**
+ * The shared half of both searches: rank the matching lines, widen each into
+ * its window, clean it. `tsquery` is in `websearch_to_tsquery` syntax.
+ */
+async function findHits(
+  userId: string,
+  tsquery: string,
+  options: { limit: number; excludeSessionId?: string; windowMs: number },
+): Promise<TranscriptHit[]> {
+  const { limit, windowMs } = options;
+  const db = getDb();
+
+  // Rank by lexical match, then prefer recency. `simple` rather than a
+  // language configuration: the corpus is mixed German/English.
+  const hits = await db.execute<{
+    id: string;
+    capture_session_id: string;
+    start_offset_ms: number;
+  }>(sql`
+    select u.id, u.capture_session_id, u.start_offset_ms
+    from utterance u
+    join capture_session cs on cs.id = u.capture_session_id
+    where cs.user_id = ${userId}
+      ${options.excludeSessionId ? sql`and u.capture_session_id <> ${options.excludeSessionId}` : sql``}
+      and to_tsvector('simple', u.text) @@ websearch_to_tsquery('simple', ${tsquery})
+    order by
+      ts_rank_cd(to_tsvector('simple', u.text), websearch_to_tsquery('simple', ${tsquery})) desc,
+      cs.started_at desc
+    limit ${limit}
+  `);
+
+  // Everything below used to run inside a `for` loop, one window query and
+  // one spoken-turns query per hit — up to 1 + 4x2 = 9 strictly sequential
+  // round trips before the first token of a reply, on the one code path whose
+  // whole design rationale is latency. The hits are independent, so they are
+  // fetched together, and the spoken turns for every hit drive come back in a
+  // single query rather than one per hit.
+  const sessionIds = [...new Set(hits.map((hit) => hit.capture_session_id))];
+  const [spokenPerSession, windows] = await Promise.all([
+    spokenByAgentPerSession(sessionIds),
+    Promise.all(
+      hits.map((hit) =>
+        db.execute<{ text: string; start_offset_ms: number; started_at: Date }>(sql`
+          select u.text, u.start_offset_ms, cs.started_at
+          from utterance u
+          join capture_session cs on cs.id = u.capture_session_id
+          where u.capture_session_id = ${hit.capture_session_id}
+            and u.start_offset_ms between ${hit.start_offset_ms - windowMs} and ${hit.start_offset_ms + windowMs}
+          order by u.start_offset_ms
+        `),
+      ),
+    ),
+  ]);
+
+  const found: TranscriptHit[] = [];
+  for (const [index, hit] of hits.entries()) {
+    const window = windows[index] ?? [];
+
+    const first = window[0];
+    if (!first) continue;
+
+    // Past drives carry the same contamination, so a passage must be cleaned
+    // before it is quoted back — otherwise a reply invented three drives ago
+    // returns as established fact about the driver's own thinking.
+    const spoken = spokenPerSession.get(hit.capture_session_id) ?? [];
+    const text = withoutEcho(
+      // Whisper's invented sign-offs go too, for the same reason and by the
+      // same rule: the ledger is verbatim, a read is allowed to know better.
+      window.map((row) => withoutHallucinatedSentences(row.text.trim())).filter(Boolean),
+      spoken,
+    ).join(" ");
+    if (!text.trim()) continue;
+
+    found.push({
+      captureSessionId: hit.capture_session_id,
+      utteranceId: hit.id,
+      occurredAt: new Date(new Date(first.started_at).getTime() + first.start_offset_ms),
+      text,
+    });
+  }
+
+  // Two hits inside one window produce the same passage twice.
+  const seen = new Set<string>();
+  return found.filter((hit) => {
+    const key = hit.text.slice(0, 80);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /** "yesterday", "last Tuesday", "3 weeks ago" — how a person refers to a drive. */

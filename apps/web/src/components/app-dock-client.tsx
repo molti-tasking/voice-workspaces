@@ -3,7 +3,7 @@
 import {
   ChevronUp,
   LayoutGrid,
-  ListTree,
+  MessagesSquare,
   Mic,
   Square,
   SquareKanban,
@@ -37,7 +37,11 @@ interface Tab {
 
 const WORKSPACE: Tab = { href: "/workspace", label: "Workspace", Icon: LayoutGrid };
 const BOARD: Tab = { href: "/board", label: "Board", Icon: SquareKanban };
-const TIMELINE: Tab = { href: "/timeline", label: "Timeline", Icon: ListTree };
+/* Conversations, not Timeline, since 7 Oct 2026: "the tool does not allow me
+ * to view my past transcripts easily". Timeline reads every drive end to end;
+ * Conversations is where a past one is FOUND — named and searchable — and
+ * finding one is what this slot is for. Timeline stays in the menu. */
+const CONVERSATIONS: Tab = { href: "/conversations", label: "Conversations", Icon: MessagesSquare };
 
 /**
  * The dock: two surfaces and the record button, on every signed-in page.
@@ -128,7 +132,7 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
     };
   }, [sheetOpen]);
 
-  const right = boardEnabled ? BOARD : TIMELINE;
+  const right = boardEnabled ? BOARD : CONVERSATIONS;
 
   return (
     <div
@@ -189,7 +193,7 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
           {right === BOARD ? (
             <>
               <DockTab tab={BOARD} active={pathname.startsWith(BOARD.href)} className="hidden md:flex" />
-              <DockTab tab={TIMELINE} active={pathname.startsWith(TIMELINE.href)} className="md:hidden" />
+              <DockTab tab={CONVERSATIONS} active={pathname.startsWith(CONVERSATIONS.href)} className="md:hidden" />
             </>
           ) : (
             <DockTab tab={right} active={pathname.startsWith(right.href)} />
