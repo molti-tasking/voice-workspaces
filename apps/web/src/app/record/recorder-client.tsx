@@ -251,23 +251,25 @@ export function RecorderClient() {
           </div>
         )}
 
-        {/* "How can I see my last discussion?" (28 Sep 2026): this screen
-            shows the subject, never the words, so say where the words are.
-            Once it has ended, the Saved card below says it instead. */}
-        {(isRecording || isDebriefing) && rec.currentSessionId && (
-          <Link
-            href={`/sessions/${rec.currentSessionId}`}
-            className="-mt-4 text-sm text-fg/55 underline-offset-4 hover:text-fg/80 hover:underline"
-          >
-            This drive&rsquo;s transcript →
-          </Link>
-        )}
-
         {hasConversation && <CuePanel cues={cues} />}
 
         {/* Below the cue panel, because a draft is read deliberately and the
             glanceable lane must keep the position it has trained. */}
         {hasConversation && <DraftPanel drafts={cues.drafts} />}
+
+        {/* "How can I see my last discussion?" (28 Sep 2026): this screen
+            shows the subject, never the words, so say where the words are.
+            Last, below the drafts: it is a way out of this screen, and it sat
+            between the subject and the drafts it was in the way of (7 Oct
+            2026). Once the drive has ended, the Saved card says it instead. */}
+        {(isRecording || isDebriefing) && rec.currentSessionId && (
+          <Link
+            href={`/sessions/${rec.currentSessionId}`}
+            className="text-sm text-fg/55 underline-offset-4 hover:text-fg/80 hover:underline"
+          >
+            This drive&rsquo;s transcript →
+          </Link>
+        )}
       </div>
 
       <footer className="w-full max-w-md space-y-3 text-sm">

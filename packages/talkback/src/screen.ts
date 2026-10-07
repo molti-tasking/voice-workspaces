@@ -31,7 +31,7 @@ export function screenFor(pathname: string): Screen {
 
 const DESCRIPTIONS: Record<Screen, string> = {
   conversation:
-    "the conversation view: the current subject, short cues, the drafts you have written on this drive, and a link to this drive's transcript. It shows nothing from earlier drives",
+    "the conversation view: the current subject, the tasks and questions captured from this drive once there are any, the drafts you have written on this drive, and below them a link to this drive's transcript. It shows nothing from earlier drives",
   workspace:
     "the workspace: the topics touched in the last two weeks as cards, older ones folded into one closed section below, each with its open questions, tasks, notes and the drafts filed on it. It redraws by itself within seconds when a tool changes something. They can archive an item or change a task's state there; nothing is dragged",
   board:
