@@ -67,6 +67,23 @@ export interface DraftCue {
   version: string;
   /** When the CURRENT version was written, not when the draft was first asked for. */
   at: string;
+  /**
+   * Every version, NEWEST first, the current one included. Optional because a
+   * frame from a server older than this field has none; the card then shows
+   * the current version only, as it always did.
+   */
+  versions?: DraftVersionCue[];
+}
+
+/** One version of a draft, for the card's version picker. */
+export interface DraftVersionCue {
+  id: string;
+  /** `v2.1`. */
+  version: string;
+  author: "agent" | "user";
+  title: string;
+  text: string;
+  at: string;
 }
 
 export interface CueState {
