@@ -65,8 +65,9 @@ services:
       # `setup_langfuse_tracing` in apps/pipecat/bot.py.
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
-      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
-      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-}
+      # BASE_URL is the v4 name; an older .env that only sets LANGFUSE_HOST
+      # still reaches it through the nested default.
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-${LANGFUSE_HOST:-https://cloud.langfuse.com}}
       - LANGFUSE_TRACING_ENVIRONMENT=${LANGFUSE_TRACING_ENVIRONMENT:-}
     ports:
       - "7860:7860"

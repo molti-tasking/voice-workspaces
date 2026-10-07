@@ -172,7 +172,7 @@ export function traceTurn(langfuse: Langfuse, trace: TraceRecord): string {
         (root) => {
           // Overall input/output belongs on the ROOT OBSERVATION. The trace's
           // own input/output fields are the deprecated v3 shape and are
-          // deliberately not written — `setTraceIO` stays unused.
+          // deliberately not written — `setActiveTraceIO` stays unused.
           root.update({
             input: trace.input,
             output: trace.output,

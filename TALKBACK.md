@@ -742,9 +742,10 @@ turns up a behaviour worth keeping or losing, put the actual words in
 
 **3. Langfuse, over live turns.** With `LANGFUSE_PUBLIC_KEY` and
 `LANGFUSE_SECRET_KEY` set, `bot.py` exports Pipecat's OpenTelemetry spans to
-Langfuse (`setup_langfuse_tracing`): one trace per drive, named by setting,
-with `session.id` = the capture session, `langfuse.version` = the prompt
-version, and the LLM span of every turn carrying the serialised messages — the
+Langfuse (`setup_langfuse_tracing`): one trace per drive, named `drive` and
+tagged `full` or `degraded`, with `session.id` = the capture session,
+`langfuse.version` = the prompt version, and the LLM span of every turn
+carrying the serialised messages — the
 composed prompt, the context block, what was said — and the completion. That
 is exactly what a judge needs to see. The attributes are built in one place,
 `drive_span_attributes`, and tested there.
@@ -754,20 +755,22 @@ The host is `LANGFUSE_BASE_URL`, with the older `LANGFUSE_HOST` still accepted.
 is unset by default — set it for both the container and the harness, or not at
 all, because a drive and an eval run in different environments cannot be
 compared. `session.id` is the current spelling of the session key and rides on
-every span, so a session's cost is the sum of the generations under it;
+every span — Pipecat sets the drive's attributes on the root only, and
+`drive_attributes_processor` copies them onto each span as it starts — so a
+session's cost is the sum of the generations under it;
 `langfuse.session.id`, the older spelling, is sent alongside it for a
 self-hosted server that has not been upgraded yet and can be dropped once
 every target host is on v4.
 
 Separately, every LiteLLM request from the container carries `metadata`
-(`session_id`, `tags` with the `configVersion` and `setting:<s>`, `version`),
+(`session_id`, `tags` with the `configVersion`, `version`),
 so the proxy's own request log attributes spend per drive and per prompt
 version, and any callback the proxy is configured with sees the same keys.
 
 *Is an LLM-as-judge in Langfuse reasonable?* Yes, with a clear view of what it
 can and cannot see. Set up an evaluator on the container's LLM
-generations (filter by tag `talkback-4`, by `langfuse.version`, or by trace
-name) with `JUDGE_PROMPT`
+generations (filter by `langfuse.version`, which every span carries, or by
+trace name) with `JUDGE_PROMPT`
 from `judge.ts` as the template — one copy of the rubric, pasted — mapping
 `{{input}}` to the generation's messages and `{{output}}` to its completion.
 The judge can then score grounding against exactly what the model saw, and it
@@ -857,7 +860,7 @@ that route cannot be reached.
 **What passes through it.** Only the calls that could not find a direct path —
 the candidate pair still prefers a direct one, so a drive on home Wi-Fi is
 unaffected. It runs on this host, so relayed audio reaches no third party, which
-is the same line `STT_PROVIDER` and `LANGFUSE_HOST` are drawn on.
+is the same line `STT_PROVIDER` and `LANGFUSE_BASE_URL` are drawn on.
 
 **What it is not.** coturn is a packet forwarder running inside your network, so
 the `--denied-peer-ip` flags in the compose file are load-bearing: without them

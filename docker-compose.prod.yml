@@ -219,8 +219,9 @@ services:
       # avoided.
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
-      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
-      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-}
+      # BASE_URL is the v4 name; an older .env that only sets LANGFUSE_HOST
+      # still reaches it through the nested default.
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-${LANGFUSE_HOST:-https://cloud.langfuse.com}}
       - LANGFUSE_TRACING_ENVIRONMENT=${LANGFUSE_TRACING_ENVIRONMENT:-}
       # Live transcription. Default keeps audio at AU; deepgram/assemblyai do
       # not — see .env.example. Speaker labels need one of the hosted providers.
@@ -317,7 +318,7 @@ services:
   # would, and only for the calls that could not find a direct one — the ICE
   # candidate pair still prefers a direct path when there is one. It runs on
   # this host, so no third party sees the audio, which is the same line
-  # STT_PROVIDER and LANGFUSE_HOST are drawn on.
+  # STT_PROVIDER and LANGFUSE_BASE_URL are drawn on.
   coturn:
     image: coturn/coturn:4.7-alpine
     network_mode: host
