@@ -320,11 +320,20 @@ def setup_langfuse_tracing() -> bool:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from pipecat.utils.tracing.setup import setup_tracing
 
+        from opentelemetry import trace
+
         # Langfuse authenticates OTLP with HTTP Basic over the key pair, not a
         # bearer token — the same credentials as its SDKs, encoded per RFC 7617.
         auth = base64.b64encode(
             f"{LANGFUSE_PUBLIC_KEY}:{LANGFUSE_SECRET_KEY}".encode()
         ).decode()
+
+        # Pipecat stamps `deployment.environment` on the resource from
+        # ENVIRONMENT, defaulting to "development" — which nothing here sets, so
+        # every drive was labelled development whatever Langfuse was told. Keep
+        # it in step with the Langfuse environment (or Langfuse's own
+        # `default`); an ENVIRONMENT set deliberately still wins.
+        os.environ.setdefault("ENVIRONMENT", LANGFUSE_ENVIRONMENT or "default")
 
         setup_tracing(
             service_name=os.getenv("LANGFUSE_SERVICE_NAME", "voicemural-talkback"),
@@ -333,6 +342,10 @@ def setup_langfuse_tracing() -> bool:
                 headers={"Authorization": f"Basic {auth}"},
             ),
         )
+        # After `setup_tracing`, which is what installs the provider. Its
+        # exporter only reads spans when they END, so attributes this sets at
+        # START are on everything exported.
+        trace.get_tracer_provider().add_span_processor(drive_attributes_processor())
         TRACING_ENABLED = True
         logger.info(
             f"[tracing] exporting to Langfuse at {LANGFUSE_BASE_URL}"
@@ -342,6 +355,70 @@ def setup_langfuse_tracing() -> bool:
         logger.warning(f"[tracing] disabled, could not reach OpenTelemetry: {exc}")
 
     return TRACING_ENABLED
+
+
+# The drive attributes every span needs, not just the trace: what Langfuse
+# filters and aggregates observations by. Trace-level keys (name, tags) stay on
+# the root, where they mean something.
+PROPAGATED_SPAN_KEYS = (
+    "session.id",
+    "langfuse.session.id",
+    "langfuse.version",
+    "langfuse.environment",
+    "voicemural.degraded",
+)
+
+
+def drive_attributes_processor():
+    """A span processor that copies a drive's attributes onto every span in it.
+
+    WHY. Pipecat 1.7.0 puts `additional_span_attributes` on the root
+    `conversation` span ONLY (`TurnTraceObserver.start_conversation_tracing`),
+    so the `llm` generations — the spans that carry cost — had no `session.id`,
+    no version and no environment: a session's cost did not add up, and an
+    evaluator pointed at generations could not filter by prompt version.
+    Pipecat builds its parent contexts by hand, so attribute propagation from
+    the outside cannot reach them; a processor sees every span start.
+
+    HOW. Several drives share one tracer provider (one container, many
+    connections), so nothing here is per process. Each `conversation` span is
+    remembered by its trace id when it starts; its attributes are set just
+    after, so they are read when a CHILD starts — always later — and copied
+    across. Forgotten when the conversation ends.
+
+    Built by a function so the OpenTelemetry import stays deferred, like the
+    rest of tracing.
+    """
+    from opentelemetry.sdk.trace import SpanProcessor
+
+    class DriveAttributes(SpanProcessor):
+        def __init__(self) -> None:
+            self._roots: dict[int, object] = {}
+
+        def on_start(self, span, parent_context=None) -> None:
+            trace_id = span.get_span_context().trace_id
+            if span.name == "conversation":
+                self._roots[trace_id] = span
+                return
+            root = self._roots.get(trace_id)
+            if root is None:
+                return
+            attributes = root.attributes or {}
+            for key in PROPAGATED_SPAN_KEYS:
+                if key in attributes:
+                    span.set_attribute(key, attributes[key])
+
+        def on_end(self, span) -> None:
+            if span.name == "conversation":
+                self._roots.pop(span.get_span_context().trace_id, None)
+
+        def shutdown(self) -> None:
+            self._roots.clear()
+
+        def force_flush(self, timeout_millis: int = 30000) -> bool:
+            return True
+
+    return DriveAttributes()
 
 
 def drive_span_attributes(session: dict, capture_session_id: str | None) -> dict:
@@ -376,8 +453,9 @@ def drive_span_attributes(session: dict, capture_session_id: str | None) -> dict
         # attribute with a null value and the field would silently vanish.
         #
         # `session.id` is the v4 spelling and it is on EVERY span, not just
-        # the root, which is what makes a session's cost the sum of the
-        # generations that incurred it.
+        # the root — copied there by `drive_attributes_processor`, because
+        # Pipecat sets these on the root alone — which is what makes a
+        # session's cost the sum of the generations that incurred it.
         "session.id": capture_session_id or "",
         # The v3 spelling of the same thing. Langfuse still accepts it
         # (`TRACE_COMPAT_SESSION_ID` in the SDKs) and a self-hosted server

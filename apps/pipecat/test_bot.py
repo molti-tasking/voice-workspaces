@@ -2527,11 +2527,46 @@ def test_a_degraded_drive_says_so_and_a_missing_version_does_not_vanish():
     attributes = bot.drive_span_attributes({"degraded": True}, None)
 
     assert attributes["voicemural.degraded"] is True
-    assert attributes["langfuse.trace.tags"] == ["unknown", "degraded"]
+    assert attributes["langfuse.trace.tags"] == ["degraded"]
     assert attributes["langfuse.version"] == "fallback"
     # Empty string rather than absent: OTel drops a null and the field would
     # silently disappear from every span of an unticketed drive.
     assert attributes["session.id"] == ""
+
+
+def test_every_span_of_a_drive_carries_its_session_not_just_the_root():
+    # Pipecat 1.7.0 sets the drive's attributes on the `conversation` span
+    # only, so the `llm` generations that carry cost had no session.id.
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from opentelemetry.trace import set_span_in_context
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(bot.drive_attributes_processor())
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("test")
+
+    def drive(session_id):
+        # As Pipecat does it: the attributes go on AFTER the root has started.
+        root = tracer.start_span("conversation")
+        for key, value in bot.drive_span_attributes({"configVersion": "talkback-19"}, session_id).items():
+            root.set_attribute(key, value)
+        return root
+
+    one, two = drive("drive-1"), drive("drive-2")
+    with tracer.start_as_current_span("turn", context=set_span_in_context(one)):
+        tracer.start_span("llm").end()
+    tracer.start_span("llm", context=set_span_in_context(two)).end()
+    one.end()
+    two.end()
+
+    llm = [s for s in exporter.get_finished_spans() if s.name == "llm"]
+    assert [s.attributes["session.id"] for s in llm] == ["drive-1", "drive-2"]
+    assert all(s.attributes["langfuse.version"] == "talkback-19" for s in llm)
+    # Trace-level keys stay on the root.
+    assert all("langfuse.trace.name" not in s.attributes for s in llm)
 
 
 def test_the_environment_attribute_is_set_only_when_configured(monkeypatch):
