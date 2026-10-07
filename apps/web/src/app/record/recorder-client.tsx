@@ -98,7 +98,7 @@ export function RecorderClient() {
           always says what is happening and what it is about. */}
       <div className="vm-safe-top sticky top-0 z-30 -mx-6 flex w-[calc(100%+3rem)] justify-center bg-canvas/90 px-6 pb-3 backdrop-blur">
         <header className="flex w-full max-w-md flex-col gap-1 text-sm text-fg/65">
-          <div className="flex w-full items-center justify-between gap-3">
+          <div className="flex w-full items-center justify-between gap-2">
             {/* PRESENT OR ABSENT, never a shade of something. Everything else that
                 said "recording" was a modifier of a control that is always there —
                 a colour, a meter inside the button, a timer that starts counting —
@@ -454,9 +454,13 @@ function StatusPills({
 
 function Pill({ label, tone }: { label: string; tone: "ok" | "warn" }) {
   return (
+    // Shrinks to an ellipsis rather than overflowing: wrapping only helps
+    // when there are several pills, and one pill wider than the space left
+    // beside the stop spilled over the drafts link (390px, "talk…").
     <span
+      title={label}
       className={[
-        "shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 font-mono",
+        "min-w-0 max-w-full truncate whitespace-nowrap rounded-full px-2 py-0.5 font-mono",
         tone === "ok"
           ? "bg-emerald-500/15 text-emerald-300"
           : "bg-amber-500/15 text-amber-300",
