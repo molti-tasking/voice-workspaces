@@ -30,7 +30,8 @@ export interface DisplayRules {
    * Rows the panel reserves whether or not it is full.
    *
    * Layout shift is what makes someone look — the eye finds motion long before
-   * it finds text — so the height is held from the first render. It matters
+   * it finds text — so the height is held from the first cue. (Not from the
+   * first render: an empty panel is not shown at all — see `CuePanel`.) It matters
    * most at a glance and is worth keeping at a desk, where a list that grows
    * under the cursor is merely annoying rather than dangerous.
    */

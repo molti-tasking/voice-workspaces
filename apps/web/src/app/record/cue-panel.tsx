@@ -29,8 +29,12 @@ import type { Cue, CueState } from "@/lib/display/use-cues";
  *
  * Shared by both, and not negotiable at either density:
  *
- * - **Reserved height.** Nothing on `/record` moves when a cue lands. Motion is
- *   what makes someone look up.
+ * - **Reserved height, once there is something to hold.** Nothing on `/record`
+ *   moves when a later cue lands. Motion is what makes someone look up. But an
+ *   empty panel is not rendered at all: on 7 Oct 2026 a nine-minute drive
+ *   showed a tall box saying "Nothing captured yet." the whole way through,
+ *   and the person asked why it was there and what it was for. The one shift
+ *   when the first cue arrives is the price of not showing an empty box.
  * - **No reordering.** `settle` in the hook holds each item's slot for as long
  *   as it is shown; a re-sorted list has to be re-read from the top.
  * - **One animation.** A 400ms opacity ramp, on the arriving item only.
@@ -46,8 +50,12 @@ import type { Cue, CueState } from "@/lib/display/use-cues";
 export function CuePanel({ cues }: { cues: CueState }) {
   if (!cues.displayAllowed) return null;
 
+  // Hidden while empty, whatever is still pending: utterances wait for the
+  // classifier all through a drive, so keying on `pending` would make the box
+  // flicker in and out. Once something has been captured it stays.
+  if (cues.content.length + cues.directions.length === 0) return null;
+
   const rules = DISPLAY_RULES[cues.density];
-  const empty = cues.content.length + cues.directions.length === 0;
 
   return (
     <section
@@ -58,15 +66,11 @@ export function CuePanel({ cues }: { cues: CueState }) {
     >
       <div
         className="flex flex-col justify-end gap-1.5 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)]/30 px-3 py-2.5"
-        // Height reserved from the first render, so a cue arriving never
-        // reflows the record button above it.
+        // Height reserved from the first cue, so later ones never reflow
+        // what is below.
         style={{ minHeight: `${rules.minRows * 1.65}rem` }}
       >
-        {empty ? (
-          <p className="text-center text-[0.8125rem] text-fg/45">
-            {cues.pending > 0 ? "Listening…" : "Nothing captured yet."}
-          </p>
-        ) : cues.density === "read" ? (
+        {cues.density === "read" ? (
           <ReadView cues={cues} />
         ) : (
           <GlanceView cues={cues} />

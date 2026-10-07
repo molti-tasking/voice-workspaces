@@ -127,7 +127,8 @@ import { PROACTIVITY_STANZAS, PROFILE, type ConversationProfile } from "./profil
  * because the search came back empty — while SearXNG was down and any model
  * knows the answer. Established knowledge is now answered from what it knows;
  * search is for what changes (web-search.ts), and a failed search no longer
- * leaves the person with nothing.
+ * leaves the person with nothing. The conversation view's description
+ * (screen.ts) follows its new order: no empty cue box, transcript link last.
  */
 export const TALKBACK_CONFIG_VERSION = "talkback-19";
 
