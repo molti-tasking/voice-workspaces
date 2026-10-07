@@ -210,6 +210,52 @@ describeIfDb("POST /api/realtime/draft", () => {
     expect((await res.json()).revised).toBe(true);
   });
 
+  it("revises the draft with the same title when the model forgot the handle", async () => {
+    // 7 Oct 2026: asked to sharpen "the critical analysis", the agent wrote a
+    // second card with the same title instead of revising the first.
+    const res = await post({
+      seq: 1,
+      startOffsetMs: 2_000,
+      title: "  email to   WILLIAM ",
+      text: "William — pilot Monday, form Friday.",
+    });
+
+    expect(await res.json()).toEqual({ ok: true, draftId, version: "v2.0", revised: true });
+    const drafts = await loadSessionDrafts(SESSION_ID);
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0]!.text).toBe("William — pilot Monday, form Friday.");
+  });
+
+  it("does not merge on a title from another drive", async () => {
+    await recordDraft({
+      captureSessionId: OTHER_SESSION_ID,
+      seq: 0,
+      startOffsetMs: 0,
+      title: "Reading list",
+      text: "Their list.",
+    });
+
+    const res = await post({ seq: 1, startOffsetMs: 2_000, title: "Reading list", text: "Mine." });
+
+    expect((await res.json()).revised).toBe(false);
+    expect(await loadSessionDrafts(SESSION_ID)).toHaveLength(2);
+  });
+
+  it("writes a new draft when two drafts already share the title, rather than pick one", async () => {
+    await recordDraft({
+      captureSessionId: SESSION_ID,
+      seq: 5,
+      startOffsetMs: 5_000,
+      title: "Email to William",
+      text: "A second email, written before this rule existed.",
+    });
+
+    const res = await post({ seq: 6, startOffsetMs: 6_000, title: "Email to William", text: "Third." });
+
+    expect((await res.json()).revised).toBe(false);
+    expect(await loadSessionDrafts(SESSION_ID)).toHaveLength(3);
+  });
+
   it("still writes a plain draft when no handle is sent at all", async () => {
     const res = await post({
       seq: 1,
