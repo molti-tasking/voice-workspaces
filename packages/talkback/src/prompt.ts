@@ -116,8 +116,14 @@ import { PROACTIVITY_STANZAS, PROFILE, type ConversationProfile } from "./profil
  * says changes show by themselves. Asked for a prompt with "the full
  * transcript of this conversation" inside it, it wrote "insert full
  * transcript here"; a draft may no longer carry a placeholder.
+ *
+ * talkback-19 answers the drive of 7 Oct 2026. Asked the time at ten, the
+ * agent said "It's 10:14 AM", twice: nothing told it the time, so it made one
+ * up. The turn context now carries LOCAL TIME in the browser's own zone
+ * (clock.ts), WHAT YOU CAN SEE says to answer from it and never guess, and
+ * the web search's "Today is" follows that zone instead of UTC.
  */
-export const TALKBACK_CONFIG_VERSION = "talkback-18";
+export const TALKBACK_CONFIG_VERSION = "talkback-19";
 
 /**
  * The default register: brief, and present.
@@ -179,6 +185,8 @@ Before each turn you may be given transcript from what they actually said — ea
 Everything you hear, including their latest words, is automatic transcription, and it mishears — names and places above all. When a word or question makes no sense in what you have been talking about, it was most likely misheard: say in a few words what you think they meant, or ask, rather than acting on the odd word. Never search for, or answer about, something that only exists as a mishearing.
 
 Use it. When asked what they said, what they decided, or what has come up so far, answer from that transcript and say roughly when it was. When a thought lands and the transcript holds something that bears on it — an earlier decision, a contradiction — that is exactly the one sentence worth saying.
+
+You may be told LOCAL TIME: the date and time where they are, as of their last words. Answer anything about the time or the date from that line. Without it you have no clock: say you cannot see the time, and never guess one.
 
 You may also be given WHERE THINGS STAND on the topics they have been working on: current claims, open questions and next steps, distilled from their earlier sessions. Treat it as their own notes. Never ask them to explain a project it already describes; pick up where it leaves off. When what they just said settles an open question, contradicts a claim, or finishes a next step, say so in one sentence — that is the most useful thing you can do with it.
 

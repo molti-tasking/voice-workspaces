@@ -18,6 +18,7 @@ import {
   loadDriveSoFarText,
   nativeVoicesByLanguage,
   summaryPromptFor,
+  timeZoneOf,
   voiceFor,
   webSearchSection,
 } from "@voicemural/talkback";
@@ -74,6 +75,7 @@ export async function POST(req: Request) {
       voiceId: captureSession.voiceId,
       sttLanguage: captureSession.sttLanguage,
       studyCondition: captureSession.studyCondition,
+      deviceInfo: captureSession.deviceInfo,
     })
     .from(captureSession)
     .where(eq(captureSession.id, payload.captureSessionId))
@@ -117,7 +119,7 @@ export async function POST(req: Request) {
   // look things up.
   const webSearch = Boolean(process.env.SEARXNG_URL);
   const composed = composeSystemPrompt({
-    sections: [...(boardEditable ? [BOARD_EDITING] : []), ...(webSearch ? [webSearchSection()] : [])],
+    sections: [...(boardEditable ? [BOARD_EDITING] : []), ...(webSearch ? [webSearchSection(new Date(), timeZoneOf(row.deviceInfo))] : [])],
   });
 
   return NextResponse.json(

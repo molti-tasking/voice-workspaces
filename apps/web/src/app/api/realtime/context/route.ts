@@ -10,7 +10,7 @@ import {
 import { resolveSpokenAnswer, type SpokenAnswer } from "@voicemural/shared";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import { currentScreen } from "@voicemural/db/display";
-import { buildTurnContext, renderScreen } from "@voicemural/talkback";
+import { buildTurnContext, renderLocalTime, renderScreen, timeZoneOf } from "@voicemural/talkback";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -92,7 +92,7 @@ export async function POST(req: Request) {
   }
 
   const rows = await getDb()
-    .select({ userId: captureSession.userId })
+    .select({ userId: captureSession.userId, deviceInfo: captureSession.deviceInfo })
     .from(captureSession)
     .where(eq(captureSession.id, payload.captureSessionId))
     .limit(1);
@@ -144,6 +144,10 @@ export async function POST(req: Request) {
       pending,
       settled,
       screen: renderScreen(screen),
+      // `now` is the date and time where they are, rendered as their words
+      // arrive (`renderLocalTime`). The agent had no clock at all and guessed
+      // one — see clock.ts.
+      now: renderLocalTime(new Date(), timeZoneOf(rows[0]?.deviceInfo)),
     },
     { headers: { "Cache-Control": "no-store" } },
   );

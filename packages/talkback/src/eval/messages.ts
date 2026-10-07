@@ -15,6 +15,8 @@ import type { ChatMessage } from "@voicemural/llm";
 import { composeSystemPrompt, type ComposeInputs, type ComposedPrompt } from "../prompt";
 
 export interface EvalContext {
+  /** The date and time where they are, the one line `renderLocalTime` produces. */
+  now?: string;
   /** Which screen they have open, the one line `renderScreen` produces. */
   screen?: string;
   /**
@@ -47,6 +49,7 @@ export interface EvalContext {
 export function composeContextBlock(context: EvalContext | undefined): string | null {
   if (!context) return null;
   const sections: string[] = [];
+  if (context.now) sections.push(context.now);
   if (context.screen) sections.push(context.screen);
   if (context.board) sections.push(context.board);
   if (context.threads?.length) {

@@ -175,6 +175,10 @@ export const CaptureSessionCreate = z.object({
       userAgent: z.string().max(512).optional(),
       mimeType: z.string().max(128).optional(),
       platform: z.string().max(128).optional(),
+      /** The browser's IANA zone, so the agent can tell them the time where
+       * they are. Validated where it is read (`timeZoneOf`), not here: a zone
+       * this server cannot format is simply not known. */
+      timeZone: z.string().max(64).optional(),
     })
     .default({}),
 });

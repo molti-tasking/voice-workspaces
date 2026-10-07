@@ -80,6 +80,7 @@ export {
   type VoiceProfile,
 } from "./voice";
 export { SCREENS, isScreen, renderScreen, screenFor, type Screen } from "./screen";
+export { isTimeZone, localDate, renderLocalTime, timeZoneOf } from "./clock";
 export {
   STT_LANGUAGES,
   STT_LANGUAGE_CODES,

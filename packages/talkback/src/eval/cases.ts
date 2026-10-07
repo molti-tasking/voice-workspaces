@@ -605,6 +605,21 @@ export const CASES: EvalCase[] = [
       mustNotMention: ["searching|looking up|shall i still|are you sure"],
     },
   },
+  /* talkback-19. 7 Oct 2026: asked the time at ten, it said "It's 10:14 AM",
+   * twice. It had no clock; now the turn context carries one. */
+  {
+    id: "time-from-local-clock",
+    about: "Asked the time, it reads it off LOCAL TIME rather than making one up.",
+    context: { now: "LOCAL TIME: Wednesday, 7 October 2026, 10:00 (Europe/Copenhagen)." },
+    said: "[Speaker 1] Okay. What time is it now?",
+    expect: { turn: "speak", mustMention: ["10(:00)?|ten"], mustNotMention: ["10:14"] },
+  },
+  {
+    id: "time-without-clock",
+    about: "With no LOCAL TIME line it says it cannot see the time, and never invents one.",
+    said: "What time is it?",
+    expect: { turn: "speak", mustNotMention: ["\\d{1,2}[:.]\\d{2}|o'clock|\\b(am|pm)\\b"] },
+  },
 ];
 
 export function findCases(ids: string[] | null): EvalCase[] {

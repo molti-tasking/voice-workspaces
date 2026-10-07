@@ -167,7 +167,7 @@ export interface StoredSessionRegistration {
   setting?: string;
   voiceId?: string;
   sttLanguage?: string;
-  deviceInfo: { userAgent?: string; mimeType?: string; platform?: string };
+  deviceInfo: { userAgent?: string; mimeType?: string; platform?: string; timeZone?: string };
 }
 
 export async function saveRegistration(body: StoredSessionRegistration): Promise<void> {
