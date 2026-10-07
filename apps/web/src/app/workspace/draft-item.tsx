@@ -1,4 +1,5 @@
 import type { WorkspaceDraft } from "@voicemural/db/drafts";
+import { DraftMarkdown } from "@/components/draft-markdown";
 import { Link } from "@/components/nav-link";
 import { When } from "@/components/when";
 import { ArchiveDraftButton } from "./curation";
@@ -25,7 +26,7 @@ export function DraftItem({
           <span className="min-w-0 flex-1 truncate font-medium">{draft.title || "Draft"}</span>
           <When date={draft.updatedAt} className="shrink-0 text-xs text-fg/55" />
         </summary>
-        <p className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-fg/80">{draft.text}</p>
+        <DraftMarkdown text={draft.text} className="mt-2 text-sm leading-relaxed text-fg/80" />
         <Link
           href={`/sessions/${draft.captureSessionId}`}
           className="mt-2 inline-block text-xs text-fg/55 underline hover:text-fg/80"

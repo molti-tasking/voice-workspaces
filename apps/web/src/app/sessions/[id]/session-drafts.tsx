@@ -3,6 +3,7 @@
 import { Check, Copy, Pencil, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { DraftMarkdown } from "@/components/draft-markdown";
 import { MAX_DRAFT_CHARS, MAX_DRAFT_TITLE_CHARS } from "@/lib/drafts";
 
 /**
@@ -143,7 +144,7 @@ function DraftView({ draft, onEdit }: { draft: SessionDraft; onEdit: () => void 
         </p>
       )}
 
-      <p className="whitespace-pre-wrap text-sm leading-relaxed text-fg/85">{current.text}</p>
+      <DraftMarkdown text={current.text} className="text-sm leading-relaxed text-fg/85" />
 
       <DraftHistory draft={draft} />
     </>
@@ -290,9 +291,7 @@ function DraftHistory({ draft }: { draft: SessionDraft }) {
               </div>
               <RestoreButton draftId={draft.id} base={draft.current.id} versionId={version.id} />
             </div>
-            <p className="whitespace-pre-wrap text-xs leading-relaxed text-fg/60">
-              {version.text}
-            </p>
+            <DraftMarkdown text={version.text} className="text-xs leading-relaxed text-fg/60" />
           </li>
         ))}
       </ol>

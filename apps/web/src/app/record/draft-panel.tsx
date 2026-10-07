@@ -2,6 +2,7 @@
 
 import { Check, Copy } from "lucide-react";
 import { useState } from "react";
+import { DraftMarkdown } from "@/components/draft-markdown";
 import type { DraftCue, DraftVersionCue } from "@/lib/display/use-cues";
 
 /**
@@ -142,16 +143,17 @@ function DraftCard({ draft }: { draft: DraftCue }) {
       </header>
 
       {/*
-        `whitespace-pre-wrap` because a draft is written to be pasted: the model
-        was told markdown is allowed here, and collapsing its line breaks would
-        make an email or a list arrive as one paragraph. Scrolls rather than
-        growing, so a long draft cannot push the record button off screen.
+        Rendered from its markdown (`DraftMarkdown`), keeping its line breaks,
+        so an email or a list arrives as one; Copy still takes the raw text.
+        Scrolls rather than growing, so a long draft cannot push the record
+        button off screen.
       */}
       {/* `select-text` because `main` turns selection off for the rest of the
           screen, which made the fallback promised in `copy` above untrue. */}
-      <p className="max-h-56 select-text overflow-y-auto whitespace-pre-wrap text-[0.8125rem] leading-snug text-fg/85">
-        {shown.text}
-      </p>
+      <DraftMarkdown
+        text={shown.text}
+        className="max-h-56 select-text overflow-y-auto text-[0.8125rem] leading-snug text-fg/85"
+      />
     </article>
   );
 }

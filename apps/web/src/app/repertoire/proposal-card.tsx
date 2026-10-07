@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { DraftMarkdown } from "@/components/draft-markdown";
 import { capture } from "@/lib/analytics/client";
 
 export interface Proposal {
@@ -79,9 +80,7 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
           <p className="mb-1.5 text-xs text-fg/50">
             What it would have produced, from your own words:
           </p>
-          <pre className="text-[0.8125rem] leading-snug whitespace-pre-wrap text-fg/70">
-            {proposal.replay.body}
-          </pre>
+          <DraftMarkdown text={proposal.replay.body} className="text-[0.8125rem] leading-snug text-fg/70" />
         </div>
       )}
 
