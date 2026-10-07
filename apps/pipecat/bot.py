@@ -2990,6 +2990,17 @@ class WebSearch:
     # why — arrives before this gives up on it.
     TIMEOUT_SECS = 7
     MAX_ANNOUNCEMENT_CHARS = 160
+    # Searches one moment may run. The prompt allows one retry with fewer
+    # words and then a plain "found nothing", and the model does not keep to
+    # it: on 7 Oct 2026 one question ("Through design again.") ran four
+    # searches back to back, each announced aloud, and the driver sat through
+    # five "I'm searching…" lines in ten seconds. A rule the model can ignore
+    # is enforced here, where it cannot.
+    MAX_PER_MOMENT = 2
+    OVER_LIMIT_ERROR = (
+        "Not searched: you have already searched twice for this. Answer from what "
+        "those searches returned, or say plainly that they did not find it."
+    )
 
     def __init__(
         self,
@@ -3002,6 +3013,11 @@ class WebSearch:
         self._sound = sound
         self._recorder = recorder
         self._keepalive = keepalive
+        # The moment the searches below were counted in, and how many it has
+        # run. Keyed on the recorder's opportunity number, which moves on with
+        # the driver's next words or an offer — never with the tool loop.
+        self._moment: int | None = None
+        self._searches = 0
 
     @classmethod
     def announcement(cls, arguments: dict) -> str:
@@ -3012,10 +3028,33 @@ class WebSearch:
         query = " ".join(str(arguments.get("query") or "").split())
         return f"Searching the web for {query}." if query and len(query) <= 60 else "Let me look that up."
 
+    def _over_limit(self) -> bool:
+        """Count this search against its moment; True once the moment is spent.
+
+        Without a recorder there is no moment to count in, so nothing is
+        limited — the tests that build a bare `WebSearch` rely on that.
+        """
+        if self._recorder is None:
+            return False
+        moment = self._recorder.cue().opportunity
+        if moment != self._moment:
+            self._moment, self._searches = moment, 0
+        self._searches += 1
+        return self._searches > self.MAX_PER_MOMENT
+
     async def handle(self, params: FunctionCallParams) -> None:
         started = time.monotonic()
         name = params.function_name
         arguments = dict(params.arguments or {})
+
+        if self._over_limit():
+            # Silently, and before anything is spoken: the announcement is the
+            # part of a runaway search loop the driver actually hears.
+            logger.info(f"[search] declined: over {self.MAX_PER_MOMENT} searches this moment")
+            if self._recorder is not None:
+                self._recorder.note_tool_call(name, 0, "over the per-moment limit")
+            await params.result_callback({"ok": False, "error": self.OVER_LIMIT_ERROR})
+            return
 
         announcement = self.announcement(arguments)
         # Not appended to the context: the model did not generate it as a
