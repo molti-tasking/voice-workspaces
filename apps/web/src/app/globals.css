@@ -23,6 +23,9 @@
   --color-accent: var(--vm-accent);
   --color-accent-soft: var(--vm-accent-soft);
   --color-idle: var(--vm-idle);
+  --color-viz-1: var(--vm-viz-1);
+  --color-viz-2: var(--vm-viz-2);
+  --color-viz-neutral: var(--vm-viz-neutral);
 }
 
 :root {
@@ -38,6 +41,16 @@
   --vm-glass-edge: rgb(0 0 0 / 0.08);
   --vm-glass-highlight: rgb(255 255 255 / 0.7);
   --vm-shadow: rgb(15 17 21 / 0.18);
+
+  /* Chart marks, for the researcher pages. Validated as a pair against these
+     surfaces (dataviz palette checks: CVD ΔE ≥ 24, contrast ≥ 3:1); the
+     neutral is the "no opinion" midpoint of an ordered scale and is meant to
+     recede, so it carries no meaning a label or table does not also carry.
+     Blue and orange rather than the usual blue and red: red here only ever
+     means the microphone is open. */
+  --vm-viz-1: #2a78d6;
+  --vm-viz-2: #eb6834;
+  --vm-viz-neutral: #c9c8c1;
 
   /* Status text was written as pale tints (`text-amber-300`) that only read
      on a dark page. In the light theme the same class names resolve to the
@@ -74,6 +87,9 @@
     --vm-glass-edge: rgb(255 255 255 / 0.1);
     --vm-glass-highlight: rgb(255 255 255 / 0.14);
     --vm-shadow: rgb(0 0 0 / 0.75);
+    --vm-viz-1: #3987e5;
+    --vm-viz-2: #d95926;
+    --vm-viz-neutral: #52535a;
 
     /* Back to Tailwind's own tints. */
     --color-amber-100: oklch(96.2% 0.059 95.617);
