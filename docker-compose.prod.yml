@@ -101,6 +101,9 @@ services:
       - TURN_URLS=${TURN_URLS:-}
       - TURN_SECRET=${TURN_SECRET:-}
       - TURN_TTL_SECONDS=${TURN_TTL_SECONDS:-43200}
+      # Who may open researcher-only pages (the findings survey's results).
+      # Comma-separated user ids; unset, those pages are a 404 for everyone.
+      - RESEARCHER_USER_IDS=${RESEARCHER_USER_IDS:-}
     volumes:
       - audio-data:/data/storage
     depends_on:
