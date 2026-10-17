@@ -9,6 +9,7 @@ import {
   BOARD_EDITING,
   BOARD_TOOLS,
   RECENT_DRIVES_SHOWN,
+  SETTLED_PROMPT,
   TALKBACK_CONFIG_VERSION,
   TITLE_PROMPT,
   WEB_SEARCH_TOOL,
@@ -156,6 +157,10 @@ export async function POST(req: Request) {
       // An older web app that does not send this leaves the container's
       // `TopicTitle` inert, which is the right failure — no board, no calls.
       titlePrompt: TITLE_PROMPT,
+      // Whether a subject the talk has just left was settled, judged in the
+      // container when it is left and pushed to the recorder like the title.
+      // Absent, the container makes no such call (`TopicTitle._judge`).
+      settledPrompt: SETTLED_PROMPT,
       // The profile's proactivity level, so the container's proactive engine
       // (Offers) times its unprompted turns by the same value that governs how
       // forthcoming the prompt tells the model to be — one source of truth,

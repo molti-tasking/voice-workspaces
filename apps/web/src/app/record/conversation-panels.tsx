@@ -11,6 +11,7 @@ import {
   useSyncExternalStore,
   type RefObject,
 } from "react";
+import { stripFillers } from "@voicemural/shared";
 import type { Floor } from "@/lib/recorder/floor-store";
 import {
   EMPTY_CONVERSATION,
@@ -353,7 +354,9 @@ function Panel({
                         isCurrent ? "text-fg/90" : "text-fg/55",
                       ].join(" ")}
                     >
-                      {turn.text}
+                      {/* Their fillers are counted (`signals.ts`), not shown:
+                          "um" on a screen reads as a transcription fault. */}
+                      {who === "user" ? stripFillers(turn.text) : turn.text}
                       {/* Cut off — by them talking, or by a Lock. Said, because
                           a reply that stops mid-sentence otherwise reads as a
                           rendering fault rather than as a turn taken back. */}

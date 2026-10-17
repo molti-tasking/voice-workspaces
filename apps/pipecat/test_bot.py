@@ -3879,3 +3879,115 @@ def test_each_turn_of_the_talk_is_kept_as_a_visit_and_logged_by_number_only(monk
     assert [(v["ordinal"], v["startOffsetMs"]) for v in closed] == [(1, opened[0]["startOffsetMs"])]
     assert closed[0]["endOffsetMs"] == opened[1]["startOffsetMs"]
     assert not any("Car inspection" in m or "Paper intro" in m for m in logged)
+
+
+def test_a_pause_is_counted_on_the_turn_it_falls_in(monkeypatch):
+    marker, clock = pause_marker(monkeypatch)
+    feed = bot.TurnFeed()
+    marker._feed = feed
+
+    async def run():
+        down = FrameDirection.DOWNSTREAM
+        await marker.process_frame(bot.VADUserStartedSpeakingFrame(), down)
+        feed.user("so the tone of voice")
+        await marker.process_frame(bot.VADUserStoppedSpeakingFrame(), down)
+        clock["now"] += 4.2
+        await marker.process_frame(bot.VADUserStartedSpeakingFrame(), down)
+
+    asyncio.run(run())
+    assert feed.user("and the breaks")["pauses"] == 1
+
+
+def test_a_pause_before_a_turn_is_counted_on_it_and_sent_apart():
+    feed = bot.TurnFeed()
+    feed.user("the intro")
+    feed.end_user()
+    feed.note_pause(3.0)
+    message = feed.user("and then the method")
+    assert (message["pauses"], message["pausesBefore"]) == (1, 1)
+    feed.note_pause(2.5)
+    message = feed.user("section")
+    assert (message["pauses"], message["pausesBefore"]) == (2, 1)
+
+
+def test_the_quiet_after_a_reply_is_not_counted_as_their_pause():
+    feed = bot.TurnFeed()
+    feed.note_pause(3.0)
+    feed.agent("Noted.")
+    feed.end_agent()
+    assert "pauses" not in feed.user("okay")
+
+
+def test_a_turn_without_pauses_carries_no_count():
+    feed = bot.TurnFeed()
+    assert set(feed.user("hello")) == {"type", "id", "text"}
+
+
+def test_the_settled_answer_is_read_however_it_is_dressed():
+    assert bot.parse_settled("SETTLED") is True
+    assert bot.parse_settled(" open.") is False
+    assert bot.parse_settled("**Settled**") is True
+    for raw in (None, "", "maybe", "NOT SETTLED"):
+        assert bot.parse_settled(raw) is None
+
+
+def test_a_subject_left_is_judged_on_its_own_speech_and_the_recorder_is_told(monkeypatch):
+    asked = []
+    replies = ["Car inspection", "Paper intro"]
+
+    def chat(messages, *, max_tokens, metadata):
+        asked.append((messages, max_tokens))
+        if messages[0]["content"] == "judge it":
+            return "SETTLED"
+        return replies.pop(0)
+
+    monkeypatch.setattr(bot, "_litellm_chat", chat)
+    processor = bot.TopicTitle("name it", settled_prompt="judge it")
+    processor.pushed = []
+
+    async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+        processor.pushed.append(frame)
+
+    processor.push_frame = capture
+    processor.create_task = _plain_task
+
+    async def run():
+        for said in ("book the car inspection for Tuesday", "anyway the paper intro"):
+            processor._last_call -= bot.TopicTitle.CALL_AFTER_SECONDS + 1
+            await processor.process_frame(heard(said), FrameDirection.DOWNSTREAM)
+            await settled(processor)
+        for _ in range(10):
+            await asyncio.sleep(0.01)
+
+    asyncio.run(run())
+    judged = [(m, t) for m, t in asked if m[0]["content"] == "judge it"]
+    assert len(judged) == 1
+    messages, max_tokens = judged[0]
+    assert max_tokens == 4
+    assert "Subject: Car inspection" in messages[1]["content"]
+    assert "book the car inspection for Tuesday" in messages[1]["content"]
+    states = [m.data for m in messages_pushed(processor) if m.data["type"] == "state"]
+    assert states == [{"type": "state", "ordinal": 1, "settled": True}]
+
+
+def test_no_settled_check_without_its_prompt(monkeypatch):
+    processor = titler(monkeypatch, replies=["Car inspection", "Paper intro"])
+
+    async def run():
+        for said in ("book the car inspection", "anyway the paper intro"):
+            processor._last_call -= bot.TopicTitle.CALL_AFTER_SECONDS + 1
+            await processor.process_frame(heard(said), FrameDirection.DOWNSTREAM)
+            await settled(processor)
+
+    asyncio.run(run())
+    assert len(processor.asked) == 2
+    assert not [m for m in messages_pushed(processor) if m.data["type"] == "state"]
+
+
+def test_deepgram_keeps_fillers_only_when_asked(monkeypatch):
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "test")
+    monkeypatch.setenv("STT_PROVIDER", "deepgram")
+    monkeypatch.setattr(bot, "STT_FILLER_WORDS", False)
+    assert not bot.build_stt()._settings.extra.get("filler_words")
+    monkeypatch.setattr(bot, "STT_FILLER_WORDS", True)
+    assert bot.build_stt()._settings.extra.get("filler_words") == "true"

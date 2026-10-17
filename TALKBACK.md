@@ -370,6 +370,24 @@ on the one it left (`drive_subject`, `drive_subject_segment`). The drive's last
 visit stays open — Stop ends the session before the container hears of it —
 and a reader closes it at the drive's end.
 
+**Speech cues.** Hesitation per subject is pauses + fillers + self-repairs +
+hedges per 100 of their words, against their own median for the drive. The
+**pauses** come from `PauseMarker`, which tells the `TurnFeed` every gap of 2 s
+or more; the count rides on the user message as `pauses` (and `pausesBefore`
+for the thinking before a turn started). The rest is counted in the browser
+from the words (`@voicemural/shared` `speech-cues.ts`, shared with the worker's
+self-repair metric). **Fillers** exist only when `STT_FILLER_WORDS=true` on a
+Deepgram deployment — off by default, an open study decision — and then reach
+the model too, which the prompt tells to read them as hesitation; the recorder
+counts them and leaves them out of the text it shows. Recreate the container
+after changing it.
+
+**Settled.** When the talk leaves a subject, `TopicTitle` asks
+`SETTLED_PROMPT` (sent by the web app as `settledPrompt`) over that visit's own
+speech — `SUMMARISE_MODEL`, four tokens, temperature 0 — and pushes
+`{"type": "state", "ordinal": n, "settled": bool}`. The drive's last subject is
+never left, so it is never judged.
+
 ### Which voice
 
 Three ElevenLabs voices are offered on the recorder, from the catalogue in

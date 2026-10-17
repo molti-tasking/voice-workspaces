@@ -52,3 +52,31 @@ You may also be given the earlier titles of this conversation. If the speech has
 This is automatic transcription of unrehearsed speech, so it contains mistakes and half-finished sentences. If the speech is too fragmentary to name anything, return the current title unchanged, or NONE if there is no current title.
 
 Return only the title, on one line, and nothing else.`;
+
+/**
+ * Whether a subject the conversation has just LEFT was settled: did the person
+ * state a decision, a conclusion or a next step on it?
+ *
+ * One answer per subject left (`TopicTitle` in bot.py), on that subject's own
+ * stretch of speech, and the recorder shows it as "settled" or "open" under the
+ * subject (apps/web/src/lib/talkback/signals.ts). An open subject they have
+ * talked through is what the `decide` spark is for.
+ *
+ * THEIRS, NOT THE AGENT'S. The window carries the agent's lines marked
+ * "(you said)", and an agent that proposed a plan has not settled anything for
+ * them: the question is whether THEY landed. Coarse on purpose, and lopsided
+ * the safe way — when unsure, OPEN, because a spark offered on a subject that
+ * was in fact settled costs a tap, and a subject wrongly marked settled is
+ * never offered at all.
+ *
+ * Sent to the container in the `/api/realtime/session` response, like
+ * `TITLE_PROMPT`: one copy of this text. Without it the container makes no
+ * call and the browser never shows a mark.
+ */
+export const SETTLED_PROMPT = `You judge one subject of a live spoken conversation that has just moved on to something else.
+
+You are given the subject's title and what was said about it. Lines starting "(you said)" are the assistant's; everything else is the person thinking aloud.
+
+Answer SETTLED if the PERSON stated a decision, a conclusion or a concrete next step on this subject in their own words. A proposal from the assistant that they did not take up in their own words is not settled. Answer OPEN otherwise, and whenever you are unsure.
+
+This is automatic transcription of unrehearsed speech, in any language. Return exactly one word: SETTLED or OPEN.`;
