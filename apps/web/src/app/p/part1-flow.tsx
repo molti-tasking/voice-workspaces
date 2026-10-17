@@ -357,15 +357,18 @@ function Brief({
       <div className="space-y-2 text-[0.95rem] text-fg/80">
         <p className="font-medium text-fg">How it works</p>
         <ul className="list-disc space-y-1.5 pl-5">
-          <li>Talk out loud. The assistant listens and answers when you pause.</li>
+          <li>
+            Talk out loud. The assistant, called Souffleur, listens and answers when you pause. The screen shows
+            the topics you have talked about, not the words.
+          </li>
           <li>
             <strong>Lock</strong> keeps the assistant quiet until you switch back to <strong>Normal</strong>.{" "}
             <strong>Poke</strong> asks it to say something now.
           </li>
           {sparks && (
             <li>
-              Now and then, question cards appear at the bottom of the screen. Tap one whenever you want the
-              assistant to ask you that question.
+              Now and then, question cards appear at the bottom of your side of the screen. Tap one whenever
+              you want the assistant to ask you that question.
             </li>
           )}
           <li>
@@ -415,7 +418,6 @@ function Talk({
     isBusy,
     stopRecording,
   } = useCapture();
-  const [showTask, setShowTask] = useState(false);
   const [stopping, setStopping] = useState(false);
 
   const hearing = talk.status === "speaking";
@@ -464,16 +466,7 @@ function Talk({
   return (
     <main className="no-touch-fuss mx-auto flex h-dvh w-full max-w-5xl flex-col gap-3 overflow-hidden px-4 pt-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate font-semibold">{task.title}</p>
-          <button
-            type="button"
-            onClick={() => setShowTask((v) => !v)}
-            className="cursor-pointer text-sm text-fg/60 underline"
-          >
-            {showTask ? "Hide the task" : "Show the task"}
-          </button>
-        </div>
+        <p className="min-w-0 truncate font-semibold">{task.title}</p>
         <div className="flex items-center gap-3">
           <span className="font-mono text-sm text-fg/70" aria-live="off">
             {isRecording ? `${minutes} min` : "Starting…"}
@@ -492,16 +485,19 @@ function Talk({
         </div>
       </header>
 
-      {showTask && (
-        <div className="shrink-0 rounded-2xl border border-line bg-surface p-4 text-sm">
-          <p className="mb-2">{task.brief}</p>
-          <ul className="list-disc space-y-0.5 pl-5 text-fg/75">
-            {task.prompts.map((p) => (
-              <li key={p}>{p}</li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {/* Always in view: the task is what they are talking about, and a
+          toggle to find it again is one more thing to look for mid-thought. */}
+      <div className="shrink-0 rounded-2xl border border-line bg-surface px-4 py-3 text-sm">
+        <p className="mb-1.5 text-fg/85">{task.brief}</p>
+        <ul className="grid gap-x-6 gap-y-0.5 text-fg/70 sm:grid-cols-2">
+          {task.prompts.map((p) => (
+            <li key={p} className="flex gap-1.5">
+              <span aria-hidden>·</span>
+              {p}
+            </li>
+          ))}
+        </ul>
+      </div>
 
       <p className="shrink-0 text-sm text-fg/60">
         {!isRecording
@@ -523,12 +519,25 @@ function Talk({
         floor={isRecording ? (talk.floor ?? floor) : null}
         speaker={!isRecording ? null : hearing ? "agent" : talk.userSpeaking ? "user" : null}
         placeholder={isRecording ? "Start talking whenever you are ready." : undefined}
+        // The study's variant: them first, subjects without the words under
+        // them (a transcript on screen is something to reread), and the
+        // sparks inside their panel, beside the subjects they are about.
+        order="user-first"
+        titlesOnly
+        userFooter={
+          isRecording && rec.sparksArm ? (
+            <SparkChips
+              store={conversation}
+              ledger={sparks}
+              connected={connected}
+              speaking={hearing}
+              onPull={poke}
+              layout="stack"
+            />
+          ) : null
+        }
         className="min-h-0 flex-1"
       />
-
-      {isRecording && rec.sparksArm && (
-        <SparkChips store={conversation} ledger={sparks} connected={connected} speaking={hearing} onPull={poke} />
-      )}
 
       {isRecording && (
         <FloorControls

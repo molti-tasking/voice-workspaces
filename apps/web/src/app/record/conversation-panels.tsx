@@ -64,6 +64,15 @@ import { SAY_BACK_SHARE, allSignals, type SubjectSignal } from "@/lib/talkback/s
  * is tapped, and these are their words.
  */
 
+/**
+ * THE STUDY'S VARIANT (`/p`, PROLIFIC.md) is the same component with three
+ * switches: the person's panel first (`order`), subjects without the words
+ * under them (`titlesOnly` — a transcript on screen is a record to reread,
+ * which would be rehearsal), and something drawn at the foot of the person's
+ * panel (`userFooter`: the sparks, beside the subjects they are about).
+ * `/record` sets none of them and is unchanged.
+ */
+
 /** How long after their last scroll the panels go back to following. */
 const RESUME_AFTER_MS = 8000;
 
@@ -73,6 +82,9 @@ export function ConversationPanels({
   floor,
   speaker,
   placeholder,
+  order = "agent-first",
+  titlesOnly = false,
+  userFooter,
   className = "",
 }: {
   store: ConversationStore;
@@ -84,6 +96,12 @@ export function ConversationPanels({
   speaker: Speaker | null;
   /** Shown in their panel until anything has been said. */
   placeholder?: string;
+  /** Which panel comes first: left in landscape, top in portrait. */
+  order?: "agent-first" | "user-first";
+  /** Subjects only, no turns under them. */
+  titlesOnly?: boolean;
+  /** Drawn at the foot of their panel, outside its scroller. */
+  userFooter?: React.ReactNode;
   className?: string;
 }) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, () => EMPTY_CONVERSATION);
@@ -189,50 +207,70 @@ export function ConversationPanels({
     );
   }
 
+  // Built once, placed in either order (see `order`).
+  const agentPanelEl = (
+    <Panel
+      who="agent"
+      label="Agent"
+      panelRef={agentPanel}
+      sections={state.sections}
+      current={state.current}
+      returns={state.returns}
+      speaker={speaker}
+      onTouched={touched}
+      onScrolled={scrolled}
+      titlesOnly={titlesOnly}
+      badge={
+        floor === "locked" ? (
+          <span className="flex items-center gap-1 normal-case tracking-normal text-amber-700 dark:text-amber-300">
+            <Lock size={12} aria-hidden />
+            locked
+          </span>
+        ) : null
+      }
+      emptyText={
+        empty
+          ? floor === "locked"
+            ? "Locked: it listens, and talks only when you poke it."
+            : "It answers when it has something to say."
+          : null
+      }
+    />
+  );
+  const userPanelEl = (
+    <Panel
+      who="user"
+      label="You"
+      panelRef={userPanel}
+      sections={state.sections}
+      current={state.current}
+      returns={state.returns}
+      speaker={speaker}
+      onTouched={touched}
+      onScrolled={scrolled}
+      signals={signals}
+      titlesOnly={titlesOnly}
+      footer={userFooter}
+      emptyText={empty ? (placeholder ?? null) : null}
+    />
+  );
+
   return (
     <div
       className={`ph-no-capture relative flex gap-3 portrait:flex-col landscape:flex-row ${className}`}
       aria-live="off"
     >
-      <Panel
-        who="agent"
-        label="Agent"
-        panelRef={agentPanel}
-        sections={state.sections}
-        current={state.current}
-        returns={state.returns}
-        speaker={speaker}
-        onTouched={touched}
-        onScrolled={scrolled}
-        badge={
-          floor === "locked" ? (
-            <span className="flex items-center gap-1 normal-case tracking-normal text-amber-300">
-              <Lock size={12} aria-hidden />
-              locked
-            </span>
-          ) : null
-        }
-        emptyText={
-          empty
-            ? floor === "locked"
-              ? "Locked: it listens, and talks only when you poke it."
-              : "It answers when it has something to say."
-            : null
-        }
-      />
-      <Panel
-        who="user"
-        label="You"
-        panelRef={userPanel}
-        sections={state.sections}
-        current={state.current}
-        returns={state.returns}
-        speaker={speaker}
-        onTouched={touched}
-        onScrolled={scrolled}
-        signals={signals}
-        emptyText={empty ? (placeholder ?? null) : null}
-      />
+      {order === "user-first" ? (
+        <>
+          {userPanelEl}
+          {agentPanelEl}
+        </>
+      ) : (
+        <>
+          {agentPanelEl}
+          {userPanelEl}
+        </>
+      )}
 
       {live && !following && current && (
         // The way back to now, naming where now is — after a return to an
@@ -261,6 +299,8 @@ function Panel({
   onScrolled,
   badge,
   signals,
+  titlesOnly = false,
+  footer,
   emptyText,
 }: {
   who: Speaker;
@@ -275,6 +315,10 @@ function Panel({
   badge?: React.ReactNode;
   /** Each subject's signals, drawn under its heading. Their panel only. */
   signals?: Map<string, SubjectSignal>;
+  /** Subjects only: no turns under the headings. */
+  titlesOnly?: boolean;
+  /** Below the scroller, always in view: the study's sparks. */
+  footer?: React.ReactNode;
   emptyText: string | null;
 }) {
   const touch = () => onTouched(panelRef.current);
@@ -299,7 +343,7 @@ function Panel({
       <header
         className={[
           "flex h-8 shrink-0 items-center justify-between gap-2 px-3 text-xs font-medium tracking-wide uppercase transition-colors",
-          talking ? (who === "agent" ? "text-sky-300" : "text-fg") : "text-fg/60",
+          talking ? (who === "agent" ? "text-sky-700 dark:text-sky-300" : "text-fg") : "text-fg/60",
         ].join(" ")}
       >
         <span className="flex items-center gap-2">
@@ -343,7 +387,7 @@ function Panel({
                   <SubjectMarks signal={signals.get(section.key)!} current={isCurrent} />
                 )}
               </h3>
-              {turns.length > 0 && (
+              {!titlesOnly && turns.length > 0 && (
                 <ol className="space-y-2">
                   {turns.map((turn) => (
                     <li
@@ -361,7 +405,7 @@ function Panel({
                           a reply that stops mid-sentence otherwise reads as a
                           rendering fault rather than as a turn taken back. */}
                       {turn.interrupted && (
-                        <span className="ml-1.5 text-xs text-amber-300/80">cut off</span>
+                        <span className="ml-1.5 text-xs text-amber-700 dark:text-amber-300/80">cut off</span>
                       )}
                     </li>
                   ))}
@@ -371,6 +415,7 @@ function Panel({
           );
         })}
       </div>
+      {footer && <div className="shrink-0">{footer}</div>}
     </section>
   );
 }
@@ -407,7 +452,9 @@ function SubjectMarks({ signal, current }: { signal: SubjectSignal; current: boo
           <span
             className={[
               "text-[0.7rem] font-medium tracking-wide uppercase",
-              signal.settled ? "text-emerald-300/80" : "text-amber-300/80",
+              signal.settled
+                ? "text-emerald-700 dark:text-emerald-300/80"
+                : "text-amber-700 dark:text-amber-300/80",
             ].join(" ")}
           >
             {signal.settled ? "settled" : "open"}
