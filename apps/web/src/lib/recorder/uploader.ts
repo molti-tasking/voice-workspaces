@@ -249,6 +249,12 @@ async function drain(): Promise<void> {
         if (!progressed) break;
       }
     } while (queuedKick);
+  } catch (err) {
+    // A queue read or write can throw — most likely a force-closed IndexedDB.
+    // Record it and let the finally close out cleanly; kickUploader runs this
+    // as `void drain()`, so without this catch the throw would surface as an
+    // unhandled rejection. The next kick retries against a re-opened queue.
+    status.lastError = err instanceof Error ? err.message : String(err);
   } finally {
     draining = false;
     status.uploading = false;
