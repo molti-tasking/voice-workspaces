@@ -131,7 +131,28 @@ export function parseCostHeader(raw: string | null): number | undefined {
  * Deliberately narrow — the cost of a false positive is abandoning a chunk of
  * somebody's drive, which is worse than retrying a few extra times.
  */
-const PERMANENT_UPSTREAM = /failed to decode audio|unsupported (audio )?format|invalid file format/i;
+const PERMANENT_UPSTREAM =
+  /failed to decode audio|unsupported (audio )?format|invalid file format|file type is not supported/i;
+
+/**
+ * Raised locally when a payload is too small to be a decodable audio file.
+ *
+ * A chunk of a few bytes has no container header, let alone a frame. The proxy
+ * answers every one with a permanent decode error, so this stops the doomed
+ * call before it spends a GPU slot. Separate from `LiteLLMError` because no
+ * request was made — there is no HTTP status to carry. Carries `retryable` so
+ * the transcribe job classifies it exactly as it classifies a `LiteLLMError`,
+ * with no branch of its own.
+ */
+export class UndecodableAudioError extends Error {
+  /** A payload too small now will be exactly as small on every retry. */
+  readonly retryable = false;
+
+  constructor(readonly bytes: number) {
+    super(`audio payload too small to decode: ${bytes} bytes`);
+    this.name = "UndecodableAudioError";
+  }
+}
 
 export class LiteLLMError extends Error {
   constructor(
@@ -157,9 +178,13 @@ export class LiteLLMError extends Error {
    * will not decode on the tenth attempt, so it is marked failed and left
    * alone. Matched narrowly, on the upstream text rather than on the status,
    * because a genuine 500 from an overloaded server must still be retried.
+   *
+   * The cause is read BEFORE the status, not only for a 5xx: the same decode
+   * failure has arrived dressed as a 500 and, later, as a 415, and a retry
+   * cannot fix it whatever number rides in front of it.
    */
   get retryable(): boolean {
-    if (this.status >= 500 && PERMANENT_UPSTREAM.test(this.body)) return false;
+    if (PERMANENT_UPSTREAM.test(this.body)) return false;
     return this.status === 429 || this.status >= 500;
   }
 }

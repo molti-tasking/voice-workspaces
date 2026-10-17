@@ -1,6 +1,12 @@
 import { and, asc, desc, eq, getDb, lt, sql } from "@voicemural/db";
 import { audioChunk, captureSession, utterance } from "@voicemural/db/schema";
-import { LiteLLMError, collapseRepeats, isDegenerate, transcribeChunk } from "@voicemural/llm";
+import {
+  LiteLLMError,
+  UndecodableAudioError,
+  collapseRepeats,
+  isDegenerate,
+  transcribeChunk,
+} from "@voicemural/llm";
 import { extensionForMime, toAbsoluteSegments } from "@voicemural/shared";
 import { getStorage } from "@voicemural/shared/storage";
 import { capture, log } from "@voicemural/telemetry";
@@ -215,7 +221,13 @@ export async function handleTranscribeChunk(chunkId: string, attempt = 1): Promi
       audioDiscarded: discarded,
     });
   } catch (err) {
-    const retryable = err instanceof LiteLLMError ? err.retryable : true;
+    // Both an undecodable payload and a non-retryable proxy error carry their
+    // own verdict; anything else (a proxy blip, a dropped connection) is
+    // assumed transient and handed back to pg-boss.
+    const retryable =
+      err instanceof LiteLLMError || err instanceof UndecodableAudioError
+        ? err.retryable
+        : true;
     const reason = err instanceof Error ? err.message : String(err);
 
     await db
