@@ -2357,6 +2357,17 @@ _TAG_PREFIXES = (SILENCE_TOKEN, DRAFT_OPEN, DRAFT_CLOSE)
 PROACTIVE_OFFERS = os.getenv("PROACTIVE_OFFERS", "true").lower() in ("1", "true", "yes")
 
 
+def sparks_enabled(session: dict) -> bool:
+    """Whether this drive's condition offers sparks (`studyCondition.sparks`).
+
+    Off unless the drive says on: a degraded connection, or a web app from
+    before the arm existed, is the control arm. The browser already hides the
+    chips then; this is what makes the arm hold if it did not.
+    """
+    condition = (session or {}).get("studyCondition")
+    return isinstance(condition, dict) and condition.get("sparks") is True
+
+
 def offers_enabled(session: dict) -> bool:
     """Whether this drive's condition runs the proactive engine."""
     condition = session.get("studyCondition")
@@ -2986,12 +2997,15 @@ class Floor(FrameProcessor):
         *,
         locked: bool = False,
         subject_title: Callable[[int], str | None] | None = None,
+        sparks: bool = True,
     ):
         super().__init__()
         self._context = context
         self._recorder = recorder
-        # What a spark's ordinal names: `TopicTitle.title_for`.
-        self._subject_title = subject_title
+        # What a spark's ordinal names: `TopicTitle.title_for`. None when the
+        # drive's arm offers no sparks: every spark is then a plain poke, and
+        # nothing is listed to the model.
+        self._subject_title = subject_title if sparks else None
         # The mode the device remembered, applied before the first word so the
         # opening offer cannot race it. Written as `at_connect` on StartFrame.
         self._locked = locked
@@ -5386,7 +5400,13 @@ def build_pipeline(
     )
     # Who may talk. Built before the engine, which must not offer a turn into a
     # Lock. See `Floor`.
-    floor = Floor(context, recorder, locked=locked, subject_title=title.title_for)
+    floor = Floor(
+        context,
+        recorder,
+        locked=locked,
+        subject_title=title.title_for,
+        sparks=sparks_enabled(session),
+    )
     # Says something while a turn that has already announced itself runs long.
     # Its own processor because it needs a position in the pipeline (it speaks)
     # and a task to count on; it sits between the gate and the TTS, so the

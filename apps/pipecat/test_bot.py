@@ -4054,3 +4054,25 @@ def test_recall_lists_the_sparks_on_offer_right_after_the_screen():
 def test_recall_lists_nothing_when_nothing_is_on_offer():
     recall = bot.Recall(FakeLLMContext(), FakeSummary(None), "ticket", sparks=lambda: None)
     assert recall._compose([], None) is None
+
+
+def test_only_a_drive_in_the_sparks_arm_offers_them():
+    assert bot.sparks_enabled({"studyCondition": {"sparks": True}}) is True
+    for session in ({}, {"studyCondition": {"sparks": False}}, {"studyCondition": None}, {"degraded": True}):
+        assert bot.sparks_enabled(session) is False
+
+
+def test_in_the_control_arm_a_spark_is_a_plain_poke_and_nothing_is_listed(monkeypatch):
+    floor = floor_with(monkeypatch, subjects={1: "Intro"})
+    floor._subject_title = None  # as `sparks=False` leaves it
+
+    async def run():
+        await floor.process_frame(request("sparks", {"sparks": [{"kind": "decide", "ordinal": 1}]}), FrameDirection.DOWNSTREAM)
+        await floor.process_frame(
+            request("poke", {"spark": {"kind": "decide", "ordinal": 1}}), FrameDirection.DOWNSTREAM
+        )
+        await settle_tasks()
+
+    asyncio.run(run())
+    assert nudges(floor) == [bot.POKE_NUDGE]
+    assert floor.sparks_on_offer() is None

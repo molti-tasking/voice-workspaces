@@ -39,7 +39,11 @@ export async function POST(req: Request) {
   const sttLanguage = asSttLanguage(parsed.data.sttLanguage);
 
   const existing = await db
-    .select({ id: captureSession.id, userId: captureSession.userId })
+    .select({
+      id: captureSession.id,
+      userId: captureSession.userId,
+      studyCondition: captureSession.studyCondition,
+    })
     .from(captureSession)
     .where(eq(captureSession.id, id))
     .limit(1);
@@ -58,7 +62,13 @@ export async function POST(req: Request) {
       { capture_session_id: id, resumed: true },
       { sessionId: sessionIdFrom(req) },
     );
-    return NextResponse.json({ id, resumed: true });
+    // The condition the drive started under, which the recorder needs to
+    // know whether to offer sparks — the same one the container is sent.
+    return NextResponse.json({
+      id,
+      resumed: true,
+      studyCondition: resolveStudyCondition(existing[0].studyCondition).condition,
+    });
   }
 
   // The study condition, frozen onto the drive here and nowhere else — the
@@ -148,7 +158,7 @@ export async function POST(req: Request) {
     // path above, including the ownership refusal if the id is somehow
     // someone else's.
     const [row] = await db
-      .select({ userId: captureSession.userId })
+      .select({ userId: captureSession.userId, studyCondition: captureSession.studyCondition })
       .from(captureSession)
       .where(eq(captureSession.id, id))
       .limit(1);
@@ -163,7 +173,11 @@ export async function POST(req: Request) {
       { capture_session_id: id, resumed: true },
       { sessionId: sessionIdFrom(req) },
     );
-    return NextResponse.json({ id, resumed: true });
+    return NextResponse.json({
+      id,
+      resumed: true,
+      studyCondition: resolveStudyCondition(row.studyCondition).condition,
+    });
   }
 
   // Best-effort by nature: when a drive starts in a dead zone this route is
@@ -186,7 +200,10 @@ export async function POST(req: Request) {
     { sessionId: sessionIdFrom(req) },
   );
 
-  return NextResponse.json({ id, resumed: false }, { status: 201 });
+  // The condition as frozen, so the recorder can follow the arm the drive is
+  // in (the sparks chips are on or off with it). Nothing on the phone reads
+  // the participant's condition from anywhere else.
+  return NextResponse.json({ id, resumed: false, studyCondition: condition }, { status: 201 });
 }
 
 /** Recent sessions for the signed-in user. */

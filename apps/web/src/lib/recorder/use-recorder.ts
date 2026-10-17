@@ -84,6 +84,13 @@ export interface RecorderState {
   lastSessionId: string | null;
   /** Recorded length of that session, for the confirmation line. */
   lastSessionMs: number;
+  /**
+   * Whether the running drive's study arm offers sparks, as the server froze
+   * it (`capture_session.study_condition.sparks`). False until the server has
+   * answered, and for a drive whose registration has not reached it — the
+   * control arm is the safe thing to show while nobody knows.
+   */
+  sparksArm: boolean;
 }
 
 /**
@@ -167,6 +174,7 @@ export function useRecorder() {
     currentSessionId: null,
     lastSessionId: null,
     lastSessionMs: 0,
+    sparksArm: false,
   });
 
   const runningRef = useRef(false);
@@ -435,6 +443,8 @@ export function useRecorder() {
     };
     await saveRegistration(registration);
 
+    // Not the last drive's arm while this one's is on its way.
+    patch({ sparksArm: false });
     try {
       const res = await fetch("/api/capture-sessions", {
         method: "POST",
@@ -443,7 +453,13 @@ export function useRecorder() {
       });
       meta.serverAcked = res.ok;
       await saveOpenSession(meta);
-      if (res.ok) await deleteRegistration(meta.captureSessionId);
+      if (res.ok) {
+        await deleteRegistration(meta.captureSessionId);
+        const body = (await res.json().catch(() => null)) as {
+          studyCondition?: { sparks?: unknown };
+        } | null;
+        patch({ sparksArm: body?.studyCondition?.sparks === true });
+      }
     } catch {
       meta.serverAcked = false;
     }

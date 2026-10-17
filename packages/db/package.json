@@ -16,7 +16,8 @@
     "./board": "./src/board.ts",
     "./drafts": "./src/drafts.ts",
     "./memory": "./src/memory.ts",
-    "./subjects": "./src/subjects.ts"
+    "./subjects": "./src/subjects.ts",
+    "./recall": "./src/recall.ts"
   },
   "scripts": {
     "generate": "drizzle-kit generate",

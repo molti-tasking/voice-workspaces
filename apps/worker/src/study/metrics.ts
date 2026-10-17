@@ -49,13 +49,19 @@
 import {
   agentDecision,
   agentTurn,
+  and,
   asc,
   captureSession,
   directive,
+  driveSubject,
   eq,
   getDb,
   inArray,
   invocation,
+  isNotNull,
+  recallProbe,
+  sql,
+  subjectSignal,
   studyEvent,
   studyItemReview,
   studyResponse,
@@ -68,7 +74,11 @@ import { isEcho } from "@voicemural/talkback";
 import { KEPT_AFTER_SESSIONS, foldBoard, judge } from "@voicemural/workspace";
 import { isCorrection, isRepeatRequest, isSelfRepair, normalise } from "./steerability";
 
-export const METRICS_VERSION = 1;
+/**
+ * 2 adds the `sparks` group (talkback-21). It should have gone to 2 when
+ * `floorControl` was added to Tier 3 and did not; this bump covers both.
+ */
+export const METRICS_VERSION = 2;
 
 export interface MetricsOptions {
   /**
@@ -334,6 +344,36 @@ export interface Tier3Session {
   debriefMs: number | null;
 }
 
+/**
+ * Sparks (talkback-21): what the recorder offered about each subject, what was
+ * pulled, and how the recall probe days later came out. From `subject_signal`,
+ * the spark pokes in `agent_decision` and `recall_probe`; counts, means and
+ * shares only.
+ */
+export interface Sparks {
+  /** Subjects the drive had, and those with a signal kept at all. */
+  subjects: number;
+  withSignal: number;
+  /** Spark pokes that ran, one per moment, by kind. */
+  pulled: number;
+  pulledByKind: Record<SparkKind, number>;
+  /** Subject-sparks offered on screen. */
+  shown: number;
+  /** Of the subjects judged, the share they settled. */
+  settledShare: number | null;
+  /** The agent's share of the words, over all subjects, pooled. */
+  agentShare: number | null;
+  /** Their cues (pauses, fillers, self-repairs, hedges) per 100 of their words, pooled. */
+  hesitationPer100: number | null;
+  /** Recall probes answered, and confidence minus self-rated accuracy, averaged. */
+  recallAnswered: number;
+  recallBias: number | null;
+  provenance: Record<RecallProvenance, number>;
+}
+
+type SparkKind = "say_back" | "decide" | "unsure" | "revisit";
+type RecallProvenance = "mine" | "souffleur" | "both" | "unsure";
+
 export interface SessionMetrics {
   sessionId: string;
   startedAt: string | null;
@@ -347,6 +387,7 @@ export interface SessionMetrics {
   tier2: Tier2;
   thinking: Thinking;
   tier3: Tier3Session;
+  sparks: Sparks;
 }
 
 export interface Tier3Participant {
@@ -384,6 +425,8 @@ export interface ParticipantMetrics {
   tier2: Tier2;
   thinking: Thinking;
   tier3: Tier3Participant;
+  /** Pooled across drives; `pulled / drives` is pulled per drive. */
+  sparks: Sparks & { drives: number };
 }
 
 /* --- the computation -------------------------------------------------------- */
@@ -739,6 +782,8 @@ export async function participantMetrics(
         tier1,
         tier2,
         thinking,
+        // Filled in below, from the subject tables, once for every drive.
+        sparks: emptySparks(),
         tier3: {
           floorControl: answer("post", "floor_control"),
           mentalLoadPre,
@@ -757,6 +802,9 @@ export async function participantMetrics(
       });
     }
   }
+
+  const sparksOf = await sparksBySession(sessionIds);
+  for (const s of perSession) s.sparks = sparksOf.get(s.sessionId) ?? emptySparks();
 
   const tier1 = poolTier1(perSession.map((s) => s.tier1));
   const tier2 = poolTier2(perSession.map((s) => s.tier2));
@@ -781,7 +829,127 @@ export async function participantMetrics(
       utterances: tier2.userUtterances,
     }),
     tier3: await participantTier3(userId, now, options.timeZone ?? defaultTimeZone()),
+    sparks: { drives: perSession.length, ...(await sparksBySession(sessionIds, true)).get("*")! },
   };
+}
+
+function emptySparks(): Sparks {
+  return {
+    subjects: 0,
+    withSignal: 0,
+    pulled: 0,
+    pulledByKind: { say_back: 0, decide: 0, unsure: 0, revisit: 0 },
+    shown: 0,
+    settledShare: null,
+    agentShare: null,
+    hesitationPer100: null,
+    recallAnswered: 0,
+    recallBias: null,
+    provenance: { mine: 0, souffleur: 0, both: 0, unsure: 0 },
+  };
+}
+
+/**
+ * The sparks group per drive — or, with `pooled`, for all of them under "*".
+ * Pooled the way everything here is: sums of counts and words, never a mean
+ * of per-drive rates.
+ */
+async function sparksBySession(
+  sessionIds: string[],
+  pooled = false,
+): Promise<Map<string, Sparks>> {
+  const out = new Map<string, Sparks>();
+  if (pooled) out.set("*", emptySparks());
+  if (sessionIds.length === 0) return out;
+  const db = getDb();
+  const [subjects, signals, pokes, probes] = await Promise.all([
+    db
+      .select({ sessionId: driveSubject.captureSessionId })
+      .from(driveSubject)
+      .where(inArray(driveSubject.captureSessionId, sessionIds)),
+    db
+      .select({
+        sessionId: driveSubject.captureSessionId,
+        userWords: subjectSignal.userWords,
+        agentWords: subjectSignal.agentWords,
+        cues: sql<number>`(${subjectSignal.pauses} + ${subjectSignal.fillers} + ${subjectSignal.selfRepairs} + ${subjectSignal.hedges})::int`,
+        settled: subjectSignal.settled,
+        shown: sql<number>`coalesce(array_length(${subjectSignal.sparksShown}, 1), 0)::int`,
+      })
+      .from(subjectSignal)
+      .innerJoin(driveSubject, eq(driveSubject.id, subjectSignal.driveSubjectId))
+      .where(inArray(driveSubject.captureSessionId, sessionIds)),
+    db
+      .selectDistinct({
+        sessionId: agentDecision.captureSessionId,
+        opportunitySeq: agentDecision.opportunitySeq,
+        offsetMs: agentDecision.offsetMs,
+        sparkKind: agentDecision.sparkKind,
+      })
+      .from(agentDecision)
+      .where(
+        and(
+          inArray(agentDecision.captureSessionId, sessionIds),
+          isNotNull(agentDecision.sparkKind),
+        ),
+      ),
+    db
+      .select({
+        sessionId: driveSubject.captureSessionId,
+        confidence: recallProbe.confidence,
+        selfAccuracy: recallProbe.selfAccuracy,
+        provenance: recallProbe.provenance,
+      })
+      .from(recallProbe)
+      .innerJoin(driveSubject, eq(driveSubject.id, recallProbe.driveSubjectId))
+      .where(
+        and(inArray(driveSubject.captureSessionId, sessionIds), isNotNull(recallProbe.answeredAt)),
+      ),
+  ]);
+
+  const totals = new Map<
+    string,
+    { judged: number; settled: number; user: number; agent: number; cues: number; bias: number }
+  >();
+  const bucket = (sessionId: string) => {
+    const key = pooled ? "*" : sessionId;
+    if (!out.has(key)) out.set(key, emptySparks());
+    if (!totals.has(key)) totals.set(key, { judged: 0, settled: 0, user: 0, agent: 0, cues: 0, bias: 0 });
+    return { sparks: out.get(key)!, total: totals.get(key)! };
+  };
+  for (const s of subjects) bucket(s.sessionId).sparks.subjects += 1;
+  for (const s of signals) {
+    const { sparks, total } = bucket(s.sessionId);
+    sparks.withSignal += 1;
+    sparks.shown += s.shown;
+    total.user += s.userWords;
+    total.agent += s.agentWords;
+    total.cues += s.cues;
+    if (s.settled !== null) {
+      total.judged += 1;
+      if (s.settled) total.settled += 1;
+    }
+  }
+  for (const p of pokes) {
+    const { sparks } = bucket(p.sessionId);
+    sparks.pulled += 1;
+    sparks.pulledByKind[p.sparkKind as SparkKind] += 1;
+  }
+  for (const p of probes) {
+    const { sparks, total } = bucket(p.sessionId);
+    sparks.recallAnswered += 1;
+    total.bias += (p.confidence ?? 0) - (p.selfAccuracy ?? 0);
+    if (p.provenance) sparks.provenance[p.provenance] += 1;
+  }
+  for (const [key, sparks] of out) {
+    const total = totals.get(key);
+    if (!total) continue;
+    sparks.settledShare = share(total.settled, total.judged);
+    sparks.agentShare = share(total.agent, total.user + total.agent);
+    sparks.hesitationPer100 = total.user > 0 ? (total.cues / total.user) * 100 : null;
+    sparks.recallBias = sparks.recallAnswered > 0 ? total.bias / sparks.recallAnswered : null;
+  }
+  return out;
 }
 
 

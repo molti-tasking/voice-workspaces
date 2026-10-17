@@ -33,7 +33,7 @@ const KEY = "voicemural.condition-override";
 export const STUDY_TOGGLES_ENABLED = process.env.NEXT_PUBLIC_STUDY_TOGGLES === "true";
 
 /** The flags a drive may override. The rest of a condition is not per-drive. */
-export const TOGGLEABLE = ["proactiveOffers", "agendaOffers", "voiceMacroOffers"] as const;
+export const TOGGLEABLE = ["proactiveOffers", "agendaOffers", "voiceMacroOffers", "sparks"] as const;
 export type ToggleableFlag = (typeof TOGGLEABLE)[number];
 
 export type ConditionOverride = Partial<Pick<StudyCondition, ToggleableFlag>>;

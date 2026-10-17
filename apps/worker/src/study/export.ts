@@ -32,12 +32,16 @@ import {
   capabilityVersion,
   captureSession,
   directive,
+  driveSubject,
+  driveSubjectSegment,
   floorEvent,
   invocation,
   macroProposal,
+  recallProbe,
   studyEvent,
   studyItemReview,
   studyResponse,
+  subjectSignal,
   user,
   utterance,
   workspaceOp,
@@ -53,8 +57,13 @@ import { KEPT_AFTER_SESSIONS, foldBoard, judge } from "@voicemural/workspace";
  * 3 adds who held the floor (talkback-20): `floor_event` records — each Lock,
  * Normal and Poke as the container applied it — and `forcedPoke` on a
  * decision, kept apart from `forcedAnswer`.
+ *
+ * 4 adds sparks (talkback-21): `drive_subject` records — a subject's ORDINAL
+ * and the offsets of its visits, never its title — `subject_signal` (counts,
+ * settled, fade, the sparks shown and pulled), `recall_probe` (confidence,
+ * self-rated accuracy, whose idea, the delay), and `sparkKind` on a decision.
  */
-export const EXPORT_VERSION = 3;
+export const EXPORT_VERSION = 4;
 
 export type ExportRecord = { type: string } & Record<string, unknown>;
 
@@ -279,6 +288,8 @@ export async function exportParticipant(
         // The same mark for a poke (trigger `poke`), on its own column so it
         // never counts as an unanswered answer.
         forcedPoke: agentDecision.forcedPoke,
+        // Which spark a poke carried; its subject is `subjectKey`, `s{ordinal}`.
+        sparkKind: agentDecision.sparkKind,
         agentTurnId: agentDecision.agentTurnId,
       })
       .from(agentDecision)
@@ -315,6 +326,71 @@ export async function exportParticipant(
 
     for (const f of floors) {
       out.push({ type: "floor_event", ...f });
+    }
+
+    // The subjects of each drive, by ordinal, with the offsets of every
+    // visit. `drive_subject.title` is content — the person's own name for
+    // what they talked about — and is never selected here, with or without
+    // `includeText`: nothing in the analysis needs it, and a title is the one
+    // field that would let a reader of the export know what a drive was about.
+    const subjects = await db
+      .select({
+        id: driveSubject.id,
+        sessionId: driveSubject.captureSessionId,
+        ordinal: driveSubject.ordinal,
+        firstOffsetMs: driveSubject.firstOffsetMs,
+      })
+      .from(driveSubject)
+      .where(inArray(driveSubject.captureSessionId, sessionIds))
+      .orderBy(asc(driveSubject.captureSessionId), asc(driveSubject.ordinal));
+    const subjectIds = subjects.map((s) => s.id);
+    const visits = subjectIds.length
+      ? await db
+          .select({
+            subjectId: driveSubjectSegment.driveSubjectId,
+            startOffsetMs: driveSubjectSegment.startOffsetMs,
+            endOffsetMs: driveSubjectSegment.endOffsetMs,
+          })
+          .from(driveSubjectSegment)
+          .where(inArray(driveSubjectSegment.driveSubjectId, subjectIds))
+          .orderBy(asc(driveSubjectSegment.startOffsetMs))
+      : [];
+    const signals = subjectIds.length
+      ? await db
+          .select({
+            subjectId: subjectSignal.driveSubjectId,
+            userWords: subjectSignal.userWords,
+            agentWords: subjectSignal.agentWords,
+            pauses: subjectSignal.pauses,
+            pausesBefore: subjectSignal.pausesBefore,
+            fillers: subjectSignal.fillers,
+            selfRepairs: subjectSignal.selfRepairs,
+            hedges: subjectSignal.hedges,
+            settled: subjectSignal.settled,
+            fade: subjectSignal.fade,
+            sparksShown: subjectSignal.sparksShown,
+            sparksPulled: subjectSignal.sparksPulled,
+            final: subjectSignal.final,
+            signalsVersion: subjectSignal.signalsVersion,
+          })
+          .from(subjectSignal)
+          .where(inArray(subjectSignal.driveSubjectId, subjectIds))
+      : [];
+    const subjectById = new Map(subjects.map((s) => [s.id, s]));
+    for (const s of subjects) {
+      out.push({
+        type: "drive_subject",
+        sessionId: s.sessionId,
+        ordinal: s.ordinal,
+        firstOffsetMs: s.firstOffsetMs,
+        visits: visits
+          .filter((v) => v.subjectId === s.id)
+          .map((v) => ({ startOffsetMs: v.startOffsetMs, endOffsetMs: v.endOffsetMs })),
+      });
+    }
+    for (const { subjectId, ...signal } of signals) {
+      const subject = subjectById.get(subjectId)!;
+      out.push({ type: "subject_signal", sessionId: subject.sessionId, ordinal: subject.ordinal, ...signal });
     }
 
     /* Directions and what they fired ----------------------------------------- */
@@ -408,6 +484,28 @@ export async function exportParticipant(
 
   for (const r of responses) {
     out.push({ type: "study_response", ...r, respondedAt: iso(r.respondedAt) });
+  }
+
+  // The recall probe: numbers and an enum, and the subject by its ordinal.
+  // The table has no text column — what they recalled was never stored.
+  const probes = await db
+    .select({
+      sessionId: driveSubject.captureSessionId,
+      ordinal: driveSubject.ordinal,
+      dueAt: recallProbe.dueAt,
+      answeredAt: recallProbe.answeredAt,
+      confidence: recallProbe.confidence,
+      selfAccuracy: recallProbe.selfAccuracy,
+      provenance: recallProbe.provenance,
+      delayDays: recallProbe.delayDays,
+    })
+    .from(recallProbe)
+    .innerJoin(driveSubject, eq(driveSubject.id, recallProbe.driveSubjectId))
+    .where(eq(recallProbe.userId, userId))
+    .orderBy(asc(recallProbe.dueAt), asc(driveSubject.ordinal));
+
+  for (const p of probes) {
+    out.push({ type: "recall_probe", ...p, dueAt: iso(p.dueAt), answeredAt: iso(p.answeredAt) });
   }
 
   const reviews = await db

@@ -157,6 +157,53 @@ async function seed() {
     { captureSessionId: SESSION, seq: 1, offsetMs: 120_000, kind: "poke" },
     { captureSessionId: SESSION, seq: 2, offsetMs: 300_000, kind: "open" },
   ]);
+  // Sparks (talkback-21): a subject whose TITLE carries the sentinel — the one
+  // field of the subject tables that is content — its visits, its signal, a
+  // spark poke on it, and an answered recall probe.
+  const [subject] = await db
+    .insert(schema.driveSubject)
+    .values({ captureSessionId: SESSION, ordinal: 1, title: `${SECRET} subject`, firstOffsetMs: 0 })
+    .returning({ id: schema.driveSubject.id });
+  await db.insert(schema.driveSubjectSegment).values([
+    { driveSubjectId: subject!.id, startOffsetMs: 0, endOffsetMs: 60_000 },
+    { driveSubjectId: subject!.id, startOffsetMs: 200_000 },
+  ]);
+  await db.insert(schema.subjectSignal).values({
+    driveSubjectId: subject!.id,
+    userWords: 120,
+    agentWords: 300,
+    pauses: 4,
+    pausesBefore: 1,
+    fillers: 2,
+    selfRepairs: 1,
+    hedges: 3,
+    settled: false,
+    fade: 0.6,
+    sparksShown: ["say_back"],
+    sparksPulled: ["say_back"],
+    final: true,
+    signalsVersion: "signals-1",
+  });
+  await db.insert(schema.agentDecision).values({
+    captureSessionId: SESSION,
+    seq: 2,
+    offsetMs: 120_000,
+    opportunitySeq: 2,
+    trigger: "poke",
+    outcome: "spoke",
+    subjectKey: "s1",
+    sparkKind: "say_back",
+  });
+  await db.insert(schema.recallProbe).values({
+    userId: USER_ID,
+    driveSubjectId: subject!.id,
+    dueAt: new Date("2026-09-12T07:30:00Z"),
+    answeredAt: new Date("2026-09-12T09:00:00Z"),
+    confidence: 6,
+    selfAccuracy: 4,
+    provenance: "souffleur",
+    delayDays: 2,
+  });
   await db.insert(schema.macroProposal).values({
     userId: USER_ID,
     canonicalForm: `send|${SECRET}`,
@@ -209,6 +256,49 @@ describeIfDb("study export", () => {
     expect(JSON.stringify(records)).not.toContain(SECRET);
   });
 
+  it("never carries a subject's title, even when the words are asked for", async () => {
+    const records = await exportParticipant(USER_ID, { includeText: true });
+    expect(JSON.stringify(records)).not.toContain(`${SECRET} subject`);
+  });
+
+  it("carries the sparks by ordinal: visits, signals, the spark a poke carried, and recall", async () => {
+    const records = await exportParticipant(USER_ID);
+    const of = (type: string) => records.filter((r) => r.type === type);
+    expect(records[0]).toMatchObject({ exportVersion: 4 });
+    expect(of("drive_subject")).toEqual([
+      {
+        type: "drive_subject",
+        sessionId: SESSION,
+        ordinal: 1,
+        firstOffsetMs: 0,
+        visits: [
+          { startOffsetMs: 0, endOffsetMs: 60_000 },
+          { startOffsetMs: 200_000, endOffsetMs: null },
+        ],
+      },
+    ]);
+    expect(of("subject_signal")[0]).toMatchObject({
+      ordinal: 1,
+      agentWords: 300,
+      pausesBefore: 1,
+      settled: false,
+      sparksPulled: ["say_back"],
+    });
+    expect(of("agent_decision").find((d) => d.trigger === "poke")).toMatchObject({
+      subjectKey: "s1",
+      sparkKind: "say_back",
+    });
+    expect(of("recall_probe")).toEqual([
+      expect.objectContaining({
+        ordinal: 1,
+        confidence: 6,
+        selfAccuracy: 4,
+        provenance: "souffleur",
+        delayDays: 2,
+      }),
+    ]);
+  });
+
   it("still carries what the analysis needs", async () => {
     const records = await exportParticipant(USER_ID, { now: new Date("2026-09-15T00:00:00Z") });
     const byType = (type: string) => records.filter((r) => r.type === type);
@@ -225,7 +315,8 @@ describeIfDb("study export", () => {
       hasError: true,
       ttftMs: 400,
     });
-    const decisions = byType("agent_decision");
+    // The moment under test; the spark poke seeded with the sparks is its own.
+    const decisions = byType("agent_decision").filter((d) => d.trigger !== "poke");
     // Both rows are exported — they are both real completions — and they carry
     // the moment they belong to, so 2 rows is 1 opportunity. Counted by row the
     // pilot's decline rate was 69%; counted by moment, 53%.

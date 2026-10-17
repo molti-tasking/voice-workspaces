@@ -3,8 +3,8 @@ config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true }
 
 import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { captureSession, driveSubject, driveSubjectSegment, user } from "./schema";
-import { recordSubjectVisit } from "./subjects";
+import { captureSession, driveSubject, driveSubjectSegment, subjectSignal, user } from "./schema";
+import { recordSubjectVisit, saveSubjectSignals } from "./subjects";
 import { isDatabaseReachable } from "./testing";
 import { closeDb, getDb } from "./index";
 
@@ -67,5 +67,34 @@ describeIfDb("recordSubjectVisit", () => {
     await recordSubjectVisit(visit);
     await recordSubjectVisit({ ...visit, endOffsetMs: 20_000 });
     expect(await segments()).toEqual([{ ordinal: 1, start: 5_000, end: 20_000 }]);
+  });
+
+  it("keeps the signals Stop wrote over a later best effort, and a judgement over a later blank", async () => {
+    await recordSubjectVisit({ captureSessionId: SESSION, ordinal: 1, title: "Budget", startOffsetMs: 0 });
+    const signal = {
+      ordinal: 1,
+      userWords: 80,
+      agentWords: 20,
+      pauses: 3,
+      pausesBefore: 1,
+      fillers: 0,
+      selfRepairs: 1,
+      hedges: 2,
+      settled: false as boolean | null,
+      fade: 0.4,
+      sparksShown: ["decide" as const],
+      sparksPulled: [],
+    };
+    expect(await saveSubjectSignals(SESSION, [signal, { ...signal, ordinal: 9 }], { final: false })).toEqual({
+      saved: 1,
+      skipped: 1,
+    });
+    await saveSubjectSignals(SESSION, [{ ...signal, userWords: 90, settled: null }], {
+      final: true,
+      signalsVersion: "signals-1",
+    });
+    await saveSubjectSignals(SESSION, [{ ...signal, userWords: 5 }], { final: false });
+    const [row] = await getDb().select().from(subjectSignal);
+    expect(row).toMatchObject({ userWords: 90, settled: false, final: true, signalsVersion: "signals-1" });
   });
 });

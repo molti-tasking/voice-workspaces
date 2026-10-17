@@ -1097,6 +1097,8 @@ export const subjectSignal = pgTable(
     userWords: integer("user_words").notNull(),
     agentWords: integer("agent_words").notNull(),
     pauses: integer("pauses").notNull(),
+    /** Of those, the ones before a turn began: thinking before speaking. */
+    pausesBefore: integer("pauses_before").notNull().default(0),
     fillers: integer("fillers").notNull(),
     selfRepairs: integer("self_repairs").notNull(),
     hedges: integer("hedges").notNull(),

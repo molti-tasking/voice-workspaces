@@ -4,6 +4,7 @@ import { NavHistoryTracker } from "@/components/back-link";
 import { CaptureProvider } from "@/components/capture-provider";
 import { LiveDriveBar } from "@/components/live-drive-bar";
 import { NavDirectionTracker } from "@/components/nav-link";
+import { RecallCard } from "@/components/recall-card";
 import { ServiceWorker } from "@/components/service-worker";
 import { PostHogIdentity } from "@/lib/analytics/identity";
 import { PostHogPageview } from "@/lib/analytics/pageview";
@@ -92,6 +93,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <CaptureProvider>
           <LiveDriveBar />
           {children}
+          {/* A recall question that is due, on screens that are not recording.
+              Client-side, after mount: the layout stays static. */}
+          <RecallCard />
         </CaptureProvider>
       </body>
     </html>

@@ -396,6 +396,17 @@ SPARKS ON OFFER. Asked out loud — "anything I should check?", "frag mich was" 
 the model asks the first; never otherwise. A spark asked this way is a
 `user_turn` decision, not a `poke`: the ledger has no mark for it.
 
+**The study arm.** `studyCondition.sparks` (default off). The recorder learns it
+from `POST /api/capture-sessions`, which now returns the drive's frozen
+condition, and the container from `/api/realtime/session`: in the control arm
+there are no chips, no offers sent, and a spark that arrives anyway is a plain
+poke. The signals are worked out and kept either way — `subject_signal`,
+posted at Stop and as a best effort when the page is hidden — because whether
+they predict recall is half the question. Stop also schedules the **recall
+probe** (`/recall`, `recall_probe`): 48 h later, up to three of the drive's
+subjects, every pulled one first. Numbers and an enum only; what they recall
+is never stored.
+
 ### Which voice
 
 Three ElevenLabs voices are offered on the recorder, from the catalogue in

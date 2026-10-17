@@ -1,5 +1,5 @@
 {
-  "id": "a403c310-ca09-40fa-8883-dbe00d6e31d1",
+  "id": "ae095e9c-a5f0-49a8-ae37-c0af35c03123",
   "prevId": "c21e396f-90f6-4225-98b7-042be7ae14e6",
   "version": "7",
   "dialect": "postgresql",
@@ -3874,6 +3874,13 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true
+        },
+        "pauses_before": {
+          "name": "pauses_before",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
         },
         "fillers": {
           "name": "fillers",

@@ -236,7 +236,7 @@ export function RecorderClient() {
         )}
       </div>
 
-      {TALKBACK_ENABLED && isRecording && (
+      {TALKBACK_ENABLED && isRecording && rec.sparksArm && (
         <SparkChips
           store={conversation}
           ledger={sparks}
