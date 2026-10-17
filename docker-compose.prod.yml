@@ -104,6 +104,14 @@ services:
       # Who may open researcher-only pages (the findings survey's results).
       # Comma-separated user ids; unset, those pages are a 404 for everyone.
       - RESEARCHER_USER_IDS=${RESEARCHER_USER_IDS:-}
+      # The Prolific recall study at /p (PROLIFIC.md). Without both completion
+      # codes the study pages say it is not open; everything else defaults.
+      - PROLIFIC_COMPLETION_CODE_PART1=${PROLIFIC_COMPLETION_CODE_PART1:-}
+      - PROLIFIC_COMPLETION_CODE_PART2=${PROLIFIC_COMPLETION_CODE_PART2:-}
+      - PROLIFIC_RECALL_DELAY_HOURS=${PROLIFIC_RECALL_DELAY_HOURS:-20}
+      - PROLIFIC_MIN_MINUTES=${PROLIFIC_MIN_MINUTES:-10}
+      - PROLIFIC_TARGET_MINUTES=${PROLIFIC_TARGET_MINUTES:-15}
+      - PROLIFIC_ALLOW_ARM_PARAM=${PROLIFIC_ALLOW_ARM_PARAM:-false}
     volumes:
       - audio-data:/data/storage
     depends_on:

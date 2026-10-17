@@ -39,6 +39,7 @@
     "study:condition": "pnpm --filter @voicemural/worker study condition",
     "study:metrics": "pnpm --filter @voicemural/worker study metrics",
     "study:review": "pnpm --filter @voicemural/worker study review",
+    "study:prolific": "pnpm --filter @voicemural/worker study prolific",
     "lint:fix": "turbo run lint -- --fix",
     "deadcode": "knip"
   },

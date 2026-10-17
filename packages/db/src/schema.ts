@@ -2064,3 +2064,70 @@ export const anonymousSurveyResponse = pgTable(
   },
   (t) => [index("anonymous_survey_response_survey_idx").on(t.survey)],
 );
+
+/* ---------------------------------------------------------------------------
+ * Prolific: the online recall study
+ * ------------------------------------------------------------------------- */
+
+/** Which arm a Prolific participant is in. Only the sparks differ. */
+export const prolificArmEnum = pgEnum("prolific_arm", ["control", "sparks"]);
+
+/**
+ * One Prolific participant, across both parts of the study (PROLIFIC.md).
+ *
+ * PART 1: consent, a microphone check, then one conversation about a fixed
+ * task, with the sparks on or off. PART 2, a day or so later and possibly in
+ * another browser: a free recall of the conversation, then the drive's recall
+ * probes (`recall_probe`), then a few questions.
+ *
+ * WHY A TABLE OF ITS OWN. A participant is a guest account (`user`), which is
+ * cookie-scoped, and Prolific's second part may open in a fresh browser. The
+ * Prolific ID is the one identity that survives the gap, so part 2 finds the
+ * participant — and through `userId`, the drive and its probes — by it.
+ *
+ * TEXT IS KEPT HERE, unlike `recall_probe`: the free recall is the study's
+ * primary measure, and the consent page says so. It is exported by
+ * `pnpm study:prolific` and never shown to anyone but the researchers.
+ */
+export const prolificParticipant = pgTable(
+  "prolific_participant",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** `PROLIFIC_PID`. The researchers need it to pay and to invite to part 2. */
+    prolificPid: text("prolific_pid").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    arm: prolificArmEnum("arm").notNull(),
+    /** Which task (`PROLIFIC_TASKS` in @voicemural/talkback). */
+    task: text("task").notNull(),
+    /** Hours from the end of the conversation until its probes are due. */
+    recallDelayHours: integer("recall_delay_hours").notNull(),
+    part1StudyId: text("part1_study_id"),
+    part1SessionId: text("part1_session_id"),
+    consentedAt: timestamp("consented_at", { withTimezone: true }).notNull(),
+    /** The conversation, once it started. */
+    captureSessionId: uuid("capture_session_id").references(() => captureSession.id, {
+      onDelete: "set null",
+    }),
+    part1CompletedAt: timestamp("part1_completed_at", { withTimezone: true }),
+    /** 1-7 at the end of part 1: how much they expect to remember tomorrow. */
+    judgmentOfLearning: integer("judgment_of_learning"),
+    part2StudyId: text("part2_study_id"),
+    part2SessionId: text("part2_session_id"),
+    part2StartedAt: timestamp("part2_started_at", { withTimezone: true }),
+    /** Everything they could write down from memory, before any cue. */
+    freeRecall: text("free_recall"),
+    freeRecallAt: timestamp("free_recall_at", { withTimezone: true }),
+    /** 1-7, given right after the free recall: how complete they think it was. */
+    freeRecallConfidence: integer("free_recall_confidence"),
+    /** The closing questions, validated by `ProlificClosing` in @voicemural/shared. */
+    closing: jsonb("closing").$type<Record<string, unknown>>(),
+    part2CompletedAt: timestamp("part2_completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("prolific_participant_pid_uq").on(t.prolificPid),
+    index("prolific_participant_user_idx").on(t.userId),
+  ],
+);

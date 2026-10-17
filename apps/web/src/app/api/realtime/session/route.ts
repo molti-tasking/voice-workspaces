@@ -3,6 +3,7 @@ import { z } from "zod";
 import { and, captureSession, desc, eq, getDb, lt } from "@voicemural/db";
 import { boardEnabledAt } from "@voicemural/db/board";
 import { nextDraftSeq } from "@voicemural/db/drafts";
+import { findParticipantByUser } from "@voicemural/db/prolific";
 import { resolveStudyCondition } from "@voicemural/shared";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import {
@@ -20,6 +21,7 @@ import {
   loadDriveSoFarText,
   nativeVoicesByLanguage,
   renderRecentDrives,
+  studyTaskFor,
   summaryPromptFor,
   timeZoneOf,
   voiceFor,
@@ -136,8 +138,14 @@ export async function POST(req: Request) {
     .limit(RECENT_DRIVES_SHOWN)
     .catch(() => []);
   const recentDrives = renderRecentDrives(earlier, new Date(), timeZoneOf(row.deviceInfo));
+  // A Prolific participant talks about the study's fixed task, in both arms
+  // alike (study-task.ts). Fails open to none: the conversation still works,
+  // and a missing task shows up in the export as an off-topic drive.
+  const participant = await findParticipantByUser(payload.userId).catch(() => null);
+  const studyTask = studyTaskFor(participant?.task);
   const composed = composeSystemPrompt({
     sections: [
+      ...(studyTask ? [studyTask.agentSection] : []),
       ...(boardEditable ? [BOARD_EDITING] : []),
       ...(webSearch ? [webSearchSection(new Date(), timeZoneOf(row.deviceInfo))] : []),
       ...(recentDrives ? [recentDrives] : []),
