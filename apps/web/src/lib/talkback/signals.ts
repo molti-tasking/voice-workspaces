@@ -26,15 +26,18 @@
  */
 
 import { countFillers, countHedges, countSelfRepairs } from "@voicemural/shared";
+// The prompt's own list (talkback-21), so a kind the container cannot ask is a
+// type error here. Type-only: nothing of the package reaches the browser.
+import type { SparkKind } from "@voicemural/talkback";
 import type { Conversation, Section, Turn } from "./conversation";
+
+export type { SparkKind };
 
 /**
  * Bump on any change to a threshold or a rule below. Stored with every
  * `subject_signal`, so the study can tell which rules a drive saw.
  */
 export const SIGNALS_VERSION = "signals-1";
-
-export type SparkKind = "say_back" | "decide" | "unsure" | "revisit";
 
 /** Below this many words in a subject, whose words they were is not shown. */
 export const MIN_WORDS_FOR_SHARE = 40;
@@ -255,7 +258,7 @@ export function allSignals(conversation: Conversation, now: number): SubjectSign
  * The sparks to offer now: at most `MAX_SPARKS`, the most faded first, one per
  * subject, none for a subject that has had one pulled this drive.
  *
- * `pulled` holds the keys of those subjects. The rules are tried in order and
+ * `pulled` holds the ordinals of those subjects. The rules are tried in order and
  * the first that matches is the subject's spark:
  *
  * - say_back: mostly the agent's words, and not said back since;
@@ -266,7 +269,7 @@ export function allSignals(conversation: Conversation, now: number): SubjectSign
 export function sparksFor(
   conversation: Conversation,
   now: number,
-  pulled: ReadonlySet<string> = new Set(),
+  pulled: ReadonlySet<number> = new Set(),
 ): Spark[] {
   const signals = allSignals(conversation, now);
   const topFaded = new Set(
@@ -279,7 +282,7 @@ export function sparksFor(
 
   const sparks: (Spark & { fade: number })[] = [];
   for (const signal of signals) {
-    if (pulled.has(signal.key) || signal.ordinal === null || signal.title === null) continue;
+    if (signal.ordinal === null || signal.title === null || pulled.has(signal.ordinal)) continue;
     const spark = (kind: SparkKind, reason: string) =>
       sparks.push({
         kind,

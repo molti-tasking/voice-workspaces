@@ -28,7 +28,7 @@ import type { PokeResult } from "@/lib/talkback/use-talkback";
 /** How long what became of a poke stays under the button. */
 const POKE_NOTE_MS = 2500;
 
-const POKE_NOTES: Record<PokeResult, string> = {
+export const POKE_NOTES: Record<PokeResult, string> = {
   fired: "Poked",
   // They were mid-sentence: the agent answers when they finish.
   armed: "After you finish",

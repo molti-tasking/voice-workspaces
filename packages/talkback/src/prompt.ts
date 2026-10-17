@@ -156,8 +156,19 @@ import { PROACTIVITY_STANZAS, PROFILE, type ConversationProfile } from "./profil
  * is not available. Asked "what did we discuss last time?", it said it could
  * not see a previous drive; the session now carries EARLIER DRIVES by name
  * (recent-drives.ts).
+ *
+ * talkback-21 adds SPARKS. The recorder now shows, per subject, whose words it
+ * is built on, whether it was settled, and how sure they sounded
+ * (apps/web/src/lib/talkback/signals.ts), and from that offers a few short
+ * questions they can pull: say it back in your own words, decide it, what
+ * makes you unsure, go back to it. A pulled spark is a poke that carries the
+ * question (`SPARK_NUDGES`): always answered, re-run once on a decline
+ * (`SPARK_RETRY_NUDGE`), and ending in the question itself, fixed
+ * (`SPARK_FALLBACKS`). WHEN THEY PULL A SPARK says the rest: ask it, never
+ * answer it, never summarise their position first — and never raise one
+ * unasked, which the eval holds it to. The point is that they do the thinking.
  */
-export const TALKBACK_CONFIG_VERSION = "talkback-20";
+export const TALKBACK_CONFIG_VERSION = "talkback-21";
 
 /**
  * The default register: brief, and present.
@@ -211,6 +222,9 @@ If your last turn went unanswered, they were not talking to you. Do not follow u
 
 WHEN THEY LOCK OR POKE YOU
 They decide when you may talk. They can LOCK you: their words still reach you, but you are not asked to reply — so a run of their lines with nothing from you in between is the lock, not you ignoring them. When they POKE you, they want to hear from you now: always say something. After they unlock you, reply only to what they say from then on; never work back through what they said while you were locked.
+
+WHEN THEY PULL A SPARK
+They can pull a short question about one of their subjects for you to ask them: to say it back in their own words, to decide it, to say what makes them unsure about it, or to go back to it. When they do, ask that question about that subject, in one or two short sentences. It is a question back to them, so they do the thinking: never answer it yourself, never summarise their position or what was said first, and add no view of your own. Never raise one of these questions on your own; they are theirs to pull.
 
 Never say again what you have just said. If their next words add nothing you have not already answered, say <silence>. And never ask a question two turns running: when they answered your question with "I don't know", or are telling you what is wrong, stop asking — propose something concrete, or offer to write it down as a draft. Question after question makes them do the thinking.
 
@@ -435,6 +449,94 @@ export const POKE_FALLBACKS: Readonly<Record<string, string>> = {
  * MIRRORED IN `bot.py` as `FLOOR_OPEN_NOTE`.
  */
 export const FLOOR_OPEN_NOTE = `(They have unlocked you: you may reply again from their next words. Do not work back through what they said while you were locked — respond only to what they say next, if it wants a reply.)`;
+
+/* ---------------------------------------------------------------------------
+ * Sparks: a question about one subject, pulled by the person
+ * ------------------------------------------------------------------------- */
+
+/** The four kinds of spark, in the order `signals.ts` tries their rules. */
+export const SPARK_KINDS = ["say_back", "decide", "unsure", "revisit"] as const;
+export type SparkKind = (typeof SPARK_KINDS)[number];
+
+const SPARK_TAIL = `${SILENCE_TOKEN} is not available on this turn. One or two short sentences with a single question back to them: do not answer it yourself, do not summarise their position or what was said first, and add no view of your own.)`;
+
+/**
+ * What `Floor` injects for a poke that carries a spark, in place of
+ * `POKE_NUDGE`. `{subject}` is the subject's title, filled in by the container
+ * from the ordinal the browser sent — the title never crosses the data channel
+ * from the browser, and never leaves the container except into the model.
+ *
+ * A POKE, NOT A NEW MOMENT KIND: the trigger stays `poke`, so the forced re-run,
+ * the fixed last line and `agent_decision.forced_poke` all work unchanged;
+ * `agent_decision.spark_kind` says which spark it was.
+ *
+ * MIRRORED IN `bot.py` as `SPARK_NUDGES`.
+ */
+export const SPARK_NUDGES: Readonly<Record<SparkKind, string>> = {
+  say_back: `(They pulled a spark about "{subject}": ask them to say, in their own words, where they landed on it. ${SPARK_TAIL}`,
+  decide: `(They pulled a spark about "{subject}": ask them what they would decide on it if they had to decide now. ${SPARK_TAIL}`,
+  unsure: `(They pulled a spark about "{subject}": ask them what is making them unsure about it. ${SPARK_TAIL}`,
+  revisit: `(They pulled a spark about "{subject}": ask, in one question, whether they want to go back to it and what was still open there. ${SPARK_TAIL}`,
+};
+
+/**
+ * The re-run, when the spark's completion declined anyway.
+ *
+ * MIRRORED IN `bot.py` as `SPARK_RETRY_NUDGE`.
+ */
+export const SPARK_RETRY_NUDGE = `(They pulled a spark about "{subject}" for you to ask them, and ${SILENCE_TOKEN} is not available. Ask its question now, in one short sentence, and do not answer it yourself.)`;
+
+/**
+ * The last resort when even a spark's re-run declines: the question itself.
+ *
+ * UNLIKE `POKE_FALLBACKS`, A QUESTION, on purpose. A spark is a question they
+ * pulled, so the fixed line asks it; and their reply is then an answer to the
+ * agent's own question, which `AnswerGuard` makes sure is never met with
+ * silence. Spoken with no completion behind it, so it is recorded to
+ * `agent_turn` like the others, and with the subject in it it always clears
+ * the echo filter's minimum (`echo.test.ts`).
+ *
+ * MIRRORED IN `bot.py` as `SPARK_FALLBACKS`.
+ */
+export const SPARK_FALLBACKS: Readonly<Record<SparkKind, Readonly<Record<string, string>>>> = {
+  say_back: {
+    en: "In your own words: where did you land on {subject}?",
+    de: "In deinen eigenen Worten: Wo bist du bei {subject} gelandet?",
+    da: "Med dine egne ord: hvor endte du med {subject}?",
+    es: "Con tus propias palabras: ¿dónde llegaste con {subject}?",
+  },
+  decide: {
+    en: "If you had to decide on {subject} now, what would it be?",
+    de: "Wenn du bei {subject} jetzt entscheiden müsstest, was wäre es?",
+    da: "Hvis du skulle beslutte {subject} nu, hvad ville det så være?",
+    es: "Si tuvieras que decidir {subject} ahora, ¿qué sería?",
+  },
+  unsure: {
+    en: "What is making you unsure about {subject}?",
+    de: "Was macht dich bei {subject} unsicher?",
+    da: "Hvad gør dig usikker på {subject}?",
+    es: "¿Qué te hace dudar sobre {subject}?",
+  },
+  revisit: {
+    en: "Back to {subject}: what was still open there?",
+    de: "Zurück zu {subject}: Was war da noch offen?",
+    da: "Tilbage til {subject}: hvad var stadig åbent der?",
+    es: "Volviendo a {subject}: ¿qué quedaba abierto?",
+  },
+};
+
+/** A spark's text with its subject filled in. */
+export function sparkText(template: string, subject: string): string {
+  return template.replaceAll("{subject}", subject);
+}
+
+export function sparkFallback(
+  kind: SparkKind,
+  subject: string,
+  language: string | null | undefined,
+): string {
+  return sparkText(phrasesFor(SPARK_FALLBACKS[kind], language), subject);
+}
 
 /** The language the container speaks its fixed phrases in. Null is auto-detect. */
 export const FALLBACK_PHRASE_LANGUAGE = "en";

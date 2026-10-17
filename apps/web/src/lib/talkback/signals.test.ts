@@ -192,7 +192,7 @@ describe("sparksFor", () => {
     const sparks = sparksFor(state, 10 * 60_000);
     expect(sparks).toHaveLength(3);
     expect(sparks.map((s) => s.title)).toEqual(["S0", "S1", "S2"]);
-    const pulled = sparksFor(state, 10 * 60_000, new Set(["s0"]));
+    const pulled = sparksFor(state, 10 * 60_000, new Set([1]));
     expect(pulled.map((s) => s.title)).toEqual(["S1", "S2", "S3"]);
   });
 

@@ -37,8 +37,11 @@ import {
   OPENING_NUDGE,
   POKE_NUDGE,
   POKE_RETRY_NUDGE,
+  SPARK_NUDGES,
+  SPARK_RETRY_NUDGE,
   TALKBACK_CONFIG_VERSION,
   renderSilenceNudge,
+  sparkText,
 } from "../prompt";
 import { findCases, type EvalCase } from "./cases";
 import { checkReply, type CheckResult } from "./checks";
@@ -168,11 +171,15 @@ async function runTurn(
   // instead of their words — same shape the container produces, so the model
   // is judged on the system it will actually run in.
   // A poke is the same shape: `POKE_NUDGE` in their slot, as `Floor` places
-  // it — or, for the re-run, the retry nudge after the declined poke.
+  // it — or, for the re-run, the retry nudge after the declined poke. A
+  // spark's poke carries its own nudge, with the subject filled in.
+  const spark = kase.poke?.spark;
   const nudge = kase.poke
-    ? kase.poke.retry
-      ? POKE_RETRY_NUDGE
-      : POKE_NUDGE
+    ? spark
+      ? sparkText(kase.poke.retry ? SPARK_RETRY_NUDGE : SPARK_NUDGES[spark.kind], spark.subject)
+      : kase.poke.retry
+        ? POKE_RETRY_NUDGE
+        : POKE_NUDGE
     : kase.offer
       ? kase.offer.quietSecs
         ? renderSilenceNudge(kase.offer.quietSecs)

@@ -9,6 +9,10 @@ import {
   POKE_FALLBACKS,
   POKE_NUDGE,
   POKE_RETRY_NUDGE,
+  SPARK_FALLBACKS,
+  SPARK_KINDS,
+  SPARK_NUDGES,
+  SPARK_RETRY_NUDGE,
   SEARCH_WAIT_PHRASES,
   SILENCE_NUDGE,
   SILENCE_TOKEN,
@@ -19,6 +23,8 @@ import {
   extractDrafts,
   isSilence,
   pokeFallback,
+  sparkFallback,
+  sparkText,
   renderSilenceNudge,
   searchWaitPhrase,
 } from "./prompt";
@@ -298,6 +304,54 @@ describe("the floor: Lock, Normal and Poke (talkback-20), which bot.py mirrors",
     expect(pokeFallback("da")).toBe(POKE_FALLBACKS.da);
     expect(pokeFallback(null)).toBe(POKE_FALLBACKS.en);
     expect(pokeFallback("fr")).toBe(POKE_FALLBACKS.en);
+  });
+});
+
+describe("sparks (talkback-21), which bot.py mirrors", () => {
+  it("tells the model to ask a pulled spark, never answer it, and never raise one unasked", () => {
+    expect(SYSTEM_PROMPT).toMatch(/WHEN THEY PULL A SPARK/);
+    expect(SYSTEM_PROMPT).toMatch(/never answer it yourself, never summarise their position/);
+    expect(SYSTEM_PROMPT).toMatch(/Never raise one of these questions on your own/);
+  });
+
+  it("has a nudge, a fallback per language, and the subject in each, for every kind", () => {
+    for (const kind of SPARK_KINDS) {
+      expect(SPARK_NUDGES[kind]).toContain("{subject}");
+      expect(SPARK_NUDGES[kind]).toContain(SILENCE_TOKEN);
+      expect(SPARK_NUDGES[kind]).toMatch(/do not answer it yourself/);
+      expect(Object.keys(SPARK_FALLBACKS[kind]).sort()).toEqual(
+        Object.keys(ANSWER_ACKNOWLEDGEMENTS).sort(),
+      );
+      for (const phrase of Object.values(SPARK_FALLBACKS[kind])) {
+        expect(phrase).toContain("{subject}");
+        // A question on purpose: their reply is then an answer AnswerGuard keeps.
+        expect(phrase.trim()).toMatch(/\?$/);
+        // One question, as the eval allows: the person answers one thing.
+        expect(phrase.match(/\?/g)).toHaveLength(1);
+        expect(phrase.split(/\s+/).length).toBeLessThanOrEqual(12);
+      }
+    }
+    expect(SPARK_RETRY_NUDGE).toContain("{subject}");
+    expect(SPARK_RETRY_NUDGE).toMatch(/not available/);
+  });
+
+  it("fills the subject in, in the drive's language, English on auto-detect", () => {
+    expect(sparkFallback("decide", "the budget", "de")).toBe(
+      "Wenn du bei the budget jetzt entscheiden müsstest, was wäre es?",
+    );
+    expect(sparkFallback("unsure", "the budget", null)).toBe(
+      "What is making you unsure about the budget?",
+    );
+    expect(sparkText(SPARK_NUDGES.revisit, "X")).not.toContain("{subject}");
+  });
+
+  it("pins the text bot.py mirrors", () => {
+    expect(SPARK_NUDGES.say_back).toBe(
+      `(They pulled a spark about "{subject}": ask them to say, in their own words, where they landed on it. ${SILENCE_TOKEN} is not available on this turn. One or two short sentences with a single question back to them: do not answer it yourself, do not summarise their position or what was said first, and add no view of your own.)`,
+    );
+    expect(SPARK_RETRY_NUDGE).toBe(
+      `(They pulled a spark about "{subject}" for you to ask them, and ${SILENCE_TOKEN} is not available. Ask its question now, in one short sentence, and do not answer it yourself.)`,
+    );
   });
 });
 

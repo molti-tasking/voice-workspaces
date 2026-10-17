@@ -336,6 +336,40 @@ and the agent answered fragment after fragment. Five changes, same version:
   the answer: "Sorry, I lost that. Say it again." The gate now remembers which
   moment called a tool (`_acted_opportunity`).
 
+### talkback-21: sparks
+
+Floor control lets the person decide *when* the agent speaks; sparks let them
+see *what they hold* of each subject and pull the right question at the right
+time. The recorder works out, per subject, whose words it is built on, whether
+it was settled, how sure they sounded and whether it is fading
+(`apps/web/src/lib/talkback/signals.ts`), and offers at most three **sparks**:
+say it back in your own words, decide it now, what makes you unsure, go back to
+it. The agent **never volunteers one**: a spark is shown, pulled, and only then
+asked.
+
+**A spark is a poke.** The chip sends the RTVI `poke` request with
+`{"spark": {"kind", "ordinal"}}` — never the title. `Floor` looks the title up
+from the ordinal (`TopicTitle.title_for`) and puts `SPARK_NUDGES[kind]` in
+their slot instead of `POKE_NUDGE`; everything else is the poke's: armed while
+they talk, forced and re-run on a decline (`SPARK_RETRY_NUDGE`), and ending in
+a fixed line (`SPARK_FALLBACKS`). Unlike the poke's, that line is the question
+itself, so their reply is an answer `AnswerGuard` keeps. An ordinal the drive
+never named is a plain poke.
+
+**Subjects have numbers.** `TopicTitle` gives each new subject an ordinal — 1,
+2, 3 in the order it first came up — carried on the title message, kept on a
+return and handed back by the browser on a reconnect (`titles` is now
+`[{title, ordinal}]`; bare strings still work). The ordinal is the only name
+for a subject that leaves the participant's account: the decision a spark
+becomes has `trigger = poke`, `spark_kind` set and `subject_key = s{ordinal}`.
+Log lines say `s3`, never the title.
+
+**And they are kept.** Each turn of the talk is posted to
+`/api/realtime/subject`: the visit opened on the subject it turned to, closed
+on the one it left (`drive_subject`, `drive_subject_segment`). The drive's last
+visit stays open — Stop ends the session before the container hears of it —
+and a reader closes it at the drive's end.
+
 ### Which voice
 
 Three ElevenLabs voices are offered on the recorder, from the catalogue in

@@ -11,7 +11,7 @@ import {
 } from "./conversation";
 
 function fold(...messages: ConversationMessage[]): Conversation {
-  return messages.reduce(applyMessage, EMPTY_CONVERSATION);
+  return messages.reduce((state, message) => applyMessage(state, message), EMPTY_CONVERSATION);
 }
 
 const user = (id: string, text: string): ConversationMessage => ({ type: "user", id, text });
@@ -93,9 +93,12 @@ describe("the conversation, by subject", () => {
     expect(state.sections[0]!.turns[0]!.interrupted).toBe(true);
   });
 
-  it("hands a reconnect the titles it has, the current one last", () => {
+  it("hands a reconnect the titles it has, with their ordinals, the current one last", () => {
     const state = fold(title("A"), user("c-1", "a"), title("B"), user("c-2", "b"), title("A"));
-    expect(titlesForReconnect(state)).toEqual(["B", "A"]);
+    expect(titlesForReconnect(state)).toEqual([
+      { title: "B", ordinal: 2 },
+      { title: "A", ordinal: 1 },
+    ]);
   });
 });
 

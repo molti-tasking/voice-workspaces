@@ -14,7 +14,7 @@
  * and appear as tags in Langfuse.
  */
 
-import { FLOOR_OPEN_NOTE, POKE_NUDGE } from "../prompt";
+import { FLOOR_OPEN_NOTE, POKE_NUDGE, type SparkKind } from "../prompt";
 import { renderRecentDrives } from "../recent-drives";
 import { renderScreen } from "../screen";
 import type { EvalContext } from "./messages";
@@ -56,8 +56,11 @@ export interface EvalCase {
    * `retry` is the re-run after the poked completion declined — the history
    * then ends on the nudge and that decline, and `POKE_RETRY_NUDGE` follows.
    * A poke case must set `expect.poked`.
+   *
+   * `spark` makes it a pulled spark (talkback-21): `SPARK_NUDGES[kind]` about
+   * `subject` in their slot instead, or `SPARK_RETRY_NUDGE` for the re-run.
    */
-  poke?: { retry?: true };
+  poke?: { retry?: true; spark?: { kind: SparkKind; subject: string } };
   /**
    * Sections composed into the system prompt for this case, as the session
    * route composes them (between the profile and the output contract) — the
@@ -754,6 +757,33 @@ export const CASES: EvalCase[] = [
       mustNotMention: ["flight|train|dentist|copenhagen|thursday"],
     },
   },
+  /* Sparks (talkback-21). The person pulls a short question about one of
+   * their subjects; the agent asks it and must not answer it — no decision of
+   * its own, no summary of their position. One case per kind in each language,
+   * and one where nobody pulled anything and the agent must not raise one. */
+  ...sparkCases(),
+  {
+    id: "spark-never-volunteered",
+    about: "With a subject mostly in its own words and nobody pulling a spark, it does not ask them to say it back.",
+    history: [
+      { role: "user", content: "The pilot date. Monday or next week?" },
+      {
+        role: "assistant",
+        content:
+          "Monday works if the consent forms are signed by Friday; next week gives William's cohort time to reply, and the room is free either way.",
+      },
+      { role: "user", content: "Anyway. The intro for the paper." },
+    ],
+    said: "I think it opens with how expensive switching between projects is.",
+    expect: {
+      turn: "either",
+      mustNotMention: [
+        "own words|where did you land|wo bist du (bei|da) gelandet",
+        "go back to the pilot|back to the pilot date|zurück zum pilot",
+        "if you had to decide",
+      ],
+    },
+  },
   /* 14 Oct 2026, on the conversation view with no dock: asked where the
    * workspace was, the agent placed it in "the menu at the top right", then at
    * "the icon next to the stop button", and was told four times it did not
@@ -835,4 +865,72 @@ export function findCases(ids: string[] | null): EvalCase[] {
   const missing = ids.filter((id) => !CASES.some((c) => c.id === id));
   if (missing.length) throw new Error(`unknown case id(s): ${missing.join(", ")}`);
   return found;
+}
+
+/**
+ * A spark case per kind, in English and in German: the agent asks the pulled
+ * question about that subject, as a question, and does not answer it itself.
+ *
+ * What "answering it" looks like is lexical and coarse, the safe way round: a
+ * reply that hands them a decision, a view, or a summary of their own
+ * position is the failure — the point of a spark is that they do the thinking.
+ */
+function sparkCases(): EvalCase[] {
+  const answering = [
+    "\\byou should\\b|\\bi'?d (go|pick|choose|say)\\b|\\bi would (go|pick|choose|say)\\b",
+    "\\bmy (take|view|suggestion|recommendation)\\b",
+    "\\bso far you('ve| have) (said|decided|landed)\\b|\\bto sum (it )?up\\b|\\byou said (that )?you\\b",
+    "\\bdu solltest\\b|\\bich würde\\b|\\bmeiner meinung\\b|\\bzusammengefasst\\b|\\bdu hast (gesagt|entschieden)\\b",
+  ];
+  const en: { role: "user" | "assistant"; content: string }[] = [
+    { role: "user", content: "The pilot date. I keep going back and forth between Monday and next week." },
+    {
+      role: "assistant",
+      content:
+        "Monday works if the consent forms are signed by Friday; next week gives William's cohort time to reply.",
+    },
+    { role: "user", content: "Maybe. I don't know. Probably Monday, I think, but the forms." },
+  ];
+  const de: { role: "user" | "assistant"; content: string }[] = [
+    { role: "user", content: "Der Ethikantrag. Ich weiß nicht, ob der Interviewteil einen eigenen Absatz braucht." },
+    {
+      role: "assistant",
+      content:
+        "Wenn die Interviews aufgezeichnet werden, braucht es meistens einen eigenen Absatz zur Einwilligung.",
+    },
+    { role: "user", content: "Vielleicht. Ich glaube schon, aber vielleicht reicht auch ein Satz." },
+  ];
+  const mention: Record<SparkKind, { en: string; de: string }> = {
+    say_back: { en: "own words|where.*land|in your words", de: "eigenen worten|gelandet|wie siehst du|wo stehst du" },
+    decide: { en: "decide|decision|choose|pick", de: "entscheid|entscheidung|wählen" },
+    unsure: { en: "unsure|uncertain|doubt|hesita|not sure|holding you back|what makes", de: "unsicher|zweifel|zögern|was hält|woran" },
+    revisit: { en: "back to|revisit|return|still open|open", de: "zurück|noch offen|offen|nochmal|noch einmal" },
+  };
+  const kinds: SparkKind[] = ["say_back", "decide", "unsure", "revisit"];
+  return kinds.flatMap((kind) => [
+    {
+      id: `spark-${kind.replace("_", "-")}-en`,
+      about: `A pulled ${kind} spark is asked as a question about its subject, never answered by the agent.`,
+      poke: { spark: { kind, subject: "Pilot date" } },
+      history: en,
+      expect: {
+        turn: "speak" as const,
+        poked: true as const,
+        mustMention: ["\\?", mention[kind].en],
+        mustNotMention: answering,
+      },
+    },
+    {
+      id: `spark-${kind.replace("_", "-")}-de`,
+      about: `The same ${kind} spark on a German drive: asked in German, about its subject, not answered.`,
+      poke: { spark: { kind, subject: "Ethikantrag" } },
+      history: de,
+      expect: {
+        turn: "speak" as const,
+        poked: true as const,
+        mustMention: ["\\?", mention[kind].de],
+        mustNotMention: answering,
+      },
+    },
+  ]);
 }

@@ -388,6 +388,9 @@ class FakeAnswers:
         self.retrying = False
         self.retry_started = False
 
+    def spark_fallback(self, kind, subject):
+        return bot.spark_fallback(kind, subject, "en")
+
 
 class FakeOffers:
     """Records what `SilenceGate` tells the proactive engine each turn became."""
@@ -1880,7 +1883,7 @@ def test_a_changed_title_is_pushed_to_the_browser_exactly_once(monkeypatch):
     asyncio.run(run())
     messages = messages_pushed(processor)
     assert len(messages) == 1
-    assert messages[0].data == {"type": "title", "title": "Funding round"}
+    assert messages[0].data == {"type": "title", "title": "Funding round", "ordinal": 1}
 
 
 def test_the_same_subject_named_again_pushes_nothing(monkeypatch):
@@ -2895,14 +2898,17 @@ class FloorRecorder:
     def record_floor(self, kind, at_connect=False):
         self.floors.append((kind, at_connect))
 
-    def note_offer(self, trigger):
+    def note_offer(self, trigger, subject_key=None, spark_kind=None, spark_subject=None):
         self.offers.append(trigger)
+        self.sparks = getattr(self, "sparks", [])
+        if spark_kind:
+            self.sparks.append((spark_kind, subject_key, spark_subject))
 
     def clear_question(self):
         self.questions_cleared += 1
 
 
-def floor_with(monkeypatch, *, locked=False, recorder=None):
+def floor_with(monkeypatch, *, locked=False, recorder=None, subjects=None):
     """A bare `Floor` whose pushes are collected and whose timers are logged.
 
     The poke's own push is a real task, so a test can await it; the armed
@@ -2910,7 +2916,12 @@ def floor_with(monkeypatch, *, locked=False, recorder=None):
     name instead of run — `_await_quiet` gets a test of its own.
     """
     context = FakeContext()
-    floor = bot.Floor(context, recorder or FloorRecorder(), locked=locked)
+    floor = bot.Floor(
+        context,
+        recorder or FloorRecorder(),
+        locked=locked,
+        subject_title=(subjects or {}).get,
+    )
     floor.pushed = []
     floor.timers = []
     floor.interruptions = 0
@@ -3476,7 +3487,7 @@ def test_a_new_title_says_which_turn_the_new_subject_began_at(monkeypatch):
     asyncio.run(run())
     (turn,) = [m.data for m in messages_pushed(processor) if m.data["type"] == "user"]
     (title,) = [m.data for m in messages_pushed(processor) if m.data["type"] == "title"]
-    assert title == {"type": "title", "title": "Funding round", "rehomeFrom": turn["id"]}
+    assert title == {"type": "title", "title": "Funding round", "ordinal": 1, "rehomeFrom": turn["id"]}
 
 
 def test_a_subject_come_back_is_named_with_its_earlier_title_exactly(monkeypatch):
@@ -3622,3 +3633,249 @@ def test_the_quiet_after_a_reply_is_not_their_pause(monkeypatch):
 
     asyncio.run(run())
     assert marker.out == ["right"]
+
+
+# --- Sparks (talkback-21) -----------------------------------------------------
+#
+# A spark is a poke that carries a question about one subject. It must ride the
+# poke's machinery unchanged — arming, the forced re-run, the fixed last line —
+# and differ only in what the model is told and what the decision is marked.
+
+
+def test_the_spark_phrases_match_the_typescript_they_mirror():
+    # Pinned on both sides, like the others: `prompt.test.ts` has the same text.
+    assert bot.SPARK_KINDS == ("say_back", "decide", "unsure", "revisit")
+    assert bot.SPARK_NUDGES["say_back"] == (
+        '(They pulled a spark about "{subject}": ask them to say, in their own words, '
+        "where they landed on it. <silence> is not available on this turn. One or two "
+        "short sentences with a single question back to them: do not answer it yourself, "
+        "do not summarise their position or what was said first, and add no view of your own.)"
+    )
+    assert bot.SPARK_RETRY_NUDGE == (
+        '(They pulled a spark about "{subject}" for you to ask them, and <silence> is '
+        "not available. Ask its question now, in one short sentence, and do not answer "
+        "it yourself.)"
+    )
+    assert bot.SPARK_FALLBACKS["decide"] == {
+        "en": "If you had to decide on {subject} now, what would it be?",
+        "de": "Wenn du bei {subject} jetzt entscheiden müsstest, was wäre es?",
+        "da": "Hvis du skulle beslutte {subject} nu, hvad ville det så være?",
+        "es": "Si tuvieras que decidir {subject} ahora, ¿qué sería?",
+    }
+    for kind in bot.SPARK_KINDS:
+        assert set(bot.SPARK_FALLBACKS[kind]) == set(bot.ANSWER_ACKNOWLEDGEMENTS)
+        assert "{subject}" in bot.SPARK_NUDGES[kind]
+
+
+def test_a_spark_s_last_line_is_its_question_about_its_subject():
+    line = bot.spark_fallback("unsure", "the budget", "de")
+    assert line == "Was macht dich bei the budget unsicher?"
+    # A question on purpose: their reply is then an answer AnswerGuard keeps.
+    assert bot._ends_in_question(line)
+    assert bot.spark_fallback("revisit", "X", "fr") == bot.spark_text(bot.SPARK_FALLBACKS["revisit"]["en"], "X")
+    # A brace in a title is not a placeholder.
+    assert bot.spark_text("about {subject}", "{odd}") == "about {odd}"
+
+
+def test_a_spark_is_read_off_the_poke_and_anything_malformed_is_a_plain_poke():
+    assert bot.parse_spark({"kind": "decide", "ordinal": 2}) == ("decide", 2)
+    for bad in (None, {}, {"kind": "decide"}, {"kind": "nope", "ordinal": 1},
+                {"kind": "decide", "ordinal": 0}, {"kind": "decide", "ordinal": True},
+                {"kind": "decide", "ordinal": "2"}):
+        assert bot.parse_spark(bad) is None
+
+
+def test_a_pulled_spark_runs_one_turn_asking_its_question_about_its_subject(monkeypatch):
+    recorder = FloorRecorder()
+    floor = floor_with(monkeypatch, recorder=recorder, subjects={2: "Budget"})
+
+    async def run():
+        await floor.process_frame(
+            request("poke", {"spark": {"kind": "decide", "ordinal": 2}}), FrameDirection.DOWNSTREAM
+        )
+        await settle_tasks()
+
+    asyncio.run(run())
+    assert answers_from(floor) == [{"poke": "fired", "floor": "open"}]
+    assert nudges(floor) == [bot.spark_text(bot.SPARK_NUDGES["decide"], "Budget")]
+    # Still a poke, so everything that reads pokes reads it; marked by id.
+    assert recorder.offers == ["poke"]
+    assert recorder.sparks == [("decide", "s2", "Budget")]
+    assert len(runs_from(floor)) == 1
+
+
+def test_a_spark_for_a_subject_the_drive_never_named_is_a_plain_poke(monkeypatch):
+    recorder = FloorRecorder()
+    floor = floor_with(monkeypatch, recorder=recorder, subjects={1: "Budget"})
+
+    async def run():
+        await floor.process_frame(
+            request("poke", {"spark": {"kind": "decide", "ordinal": 7}}), FrameDirection.DOWNSTREAM
+        )
+        await settle_tasks()
+
+    asyncio.run(run())
+    assert nudges(floor) == [bot.POKE_NUDGE]
+    assert recorder.sparks == []
+
+
+def test_a_spark_under_lock_is_asked_and_the_lock_stays(monkeypatch):
+    floor = floor_with(monkeypatch, locked=True, subjects={1: "Intro"})
+
+    async def run():
+        await floor.process_frame(
+            request("poke", {"spark": {"kind": "say_back", "ordinal": 1}}), FrameDirection.DOWNSTREAM
+        )
+        await settle_tasks()
+
+    asyncio.run(run())
+    assert answers_from(floor) == [{"poke": "fired", "floor": "locked"}]
+    assert nudges(floor) == [bot.spark_text(bot.SPARK_NUDGES["say_back"], "Intro")]
+    assert floor.locked
+
+
+def test_talking_over_a_spark_before_its_first_word_keeps_the_spark(monkeypatch):
+    floor = floor_with(monkeypatch, subjects={1: "Intro"})
+
+    async def run():
+        await floor.process_frame(
+            request("poke", {"spark": {"kind": "unsure", "ordinal": 1}}), FrameDirection.DOWNSTREAM
+        )
+        await settle_tasks()
+        floor.note_outcome("interrupted", spoke=False)
+
+    asyncio.run(run())
+    assert floor._poke == "armed"
+    assert floor._spark == ("unsure", 1, "Intro")
+
+
+def test_a_spark_is_gone_once_its_poke_is_answered(monkeypatch):
+    floor = floor_with(monkeypatch, subjects={1: "Intro"})
+
+    async def run():
+        await floor.process_frame(
+            request("poke", {"spark": {"kind": "unsure", "ordinal": 1}}), FrameDirection.DOWNSTREAM
+        )
+        await settle_tasks()
+        floor.note_outcome("spoke")
+        # A plain poke afterwards is a plain poke.
+        await floor.process_frame(request("poke"), FrameDirection.DOWNSTREAM)
+        await settle_tasks()
+
+    asyncio.run(run())
+    assert floor._spark is None
+    assert nudges(floor)[-1] == bot.POKE_NUDGE
+
+
+def spark_cue():
+    return bot.Cue("poke", "s2", 1_000, 3, spark_kind="decide", spark_subject="Budget")
+
+
+def test_a_declined_spark_is_re_run_with_its_own_question():
+    recorder = FakeRecorder(cue=spark_cue())
+    answers, offers = FakeAnswers(), FakeOffers()
+
+    assert drive_answers(reply("<silence>"), recorder, answers, offers) == []
+    assert answers.nudges == [bot.spark_text(bot.SPARK_RETRY_NUDGE, "Budget")]
+    assert recorder.forced_pokes == 1
+    assert recorder.forced == 0
+
+
+def test_a_spark_declined_twice_ends_in_its_question_not_the_poke_s_line():
+    recorder = FakeRecorder(cue=spark_cue())
+    answers = FakeAnswers()
+
+    frames = [*reply("<silence>"), *reply("<silence>")]
+    expected = bot.spark_fallback("decide", "Budget", "en")
+    assert drive_answers(frames, recorder, answers) == [expected]
+    assert [call["spoken"] for call in recorder.calls] == [expected]
+
+
+def test_a_spark_s_decision_carries_its_kind_and_subject_id_and_never_the_title():
+    def act(recorder):
+        recorder.note_offer("poke", subject_key="s2", spark_kind="decide", spark_subject="Budget")
+        recorder.record("If you had to decide now, what would it be?", "…")
+
+    posted = posted_by(act)
+    decision = only(posted, "decision")
+    assert decision["trigger"] == "poke"
+    assert decision["sparkKind"] == "decide"
+    assert decision["subjectKey"] == "s2"
+    assert "Budget" not in json.dumps(decision)
+
+
+def test_a_plain_poke_s_decision_has_no_spark():
+    def act(recorder):
+        recorder.note_offer("poke")
+        recorder.record("Lead with the cost.", "…")
+
+    decision = only(posted_by(act), "decision")
+    assert "sparkKind" not in decision and "subjectKey" not in decision
+
+
+def test_subjects_are_numbered_in_order_and_a_return_keeps_its_number(monkeypatch):
+    processor = titler(monkeypatch, replies=["Car inspection", "Paper intro", "Car inspection"])
+
+    async def run():
+        for said in ("the car inspection is due", "anyway the paper intro", "back to the car"):
+            processor._last_call -= bot.TopicTitle.CALL_AFTER_SECONDS + 1
+            await processor.process_frame(heard(said), FrameDirection.DOWNSTREAM)
+            await settled(processor)
+
+    asyncio.run(run())
+    titles = [(m.data["title"], m.data["ordinal"]) for m in messages_pushed(processor)]
+    assert titles == [("Car inspection", 1), ("Paper intro", 2), ("Car inspection", 1)]
+    assert processor.title_for(2) == "Paper intro"
+    assert processor.title_for(1) == "Car inspection"
+    assert processor.title_for(3) is None
+
+
+def test_a_reconnect_keeps_the_browser_s_ordinals():
+    processor = bot.TopicTitle(
+        "name it",
+        titles=[{"title": "Paper intro", "ordinal": 2}, "Old one", {"title": "Car", "ordinal": 1}],
+    )
+    assert processor.title == "Car"
+    assert processor.title_for(2) == "Paper intro"
+    assert processor.title_for(1) == "Car"
+    # A bare title from an older web app gets the next free number.
+    assert processor.ordinal_of("Old one") == 3
+
+
+def test_seeded_titles_are_checked():
+    assert bot.parse_seeded_titles(None) == []
+    assert bot.parse_seeded_titles(["  A ", 3, {"title": "B", "ordinal": -1}, {"ordinal": 2}]) == [
+        ("A", None),
+        ("B", None),
+    ]
+
+
+def test_each_turn_of_the_talk_is_kept_as_a_visit_and_logged_by_number_only(monkeypatch):
+    processor = titler(monkeypatch, replies=["Car inspection", "Paper intro"])
+    processor._ticket = "ticket"
+    processor._started_at_ms = 1_000
+    visits = []
+    monkeypatch.setattr(processor, "_save", lambda title: None)
+    monkeypatch.setattr(processor, "_post_visit", lambda visit: visits.append(visit))
+    clock = {"ms": 5_000}
+    monkeypatch.setattr(bot, "_now_ms", lambda: clock["ms"])
+    logged = []
+    monkeypatch.setattr(bot.logger, "info", lambda message: logged.append(message))
+
+    async def run():
+        for said in ("the car inspection is due", "anyway the paper intro"):
+            processor._last_call -= bot.TopicTitle.CALL_AFTER_SECONDS + 1
+            await processor.process_frame(heard(said), FrameDirection.DOWNSTREAM)
+            await settled(processor)
+            clock["ms"] += 10_000
+        # Let the closing post's thread land.
+        for _ in range(5):
+            await asyncio.sleep(0.01)
+
+    asyncio.run(run())
+    opened = [v for v in visits if "endOffsetMs" not in v]
+    closed = [v for v in visits if "endOffsetMs" in v]
+    assert [(v["ordinal"], v["title"]) for v in opened] == [(1, "Car inspection"), (2, "Paper intro")]
+    assert [(v["ordinal"], v["startOffsetMs"]) for v in closed] == [(1, opened[0]["startOffsetMs"])]
+    assert closed[0]["endOffsetMs"] == opened[1]["startOffsetMs"]
+    assert not any("Car inspection" in m or "Paper intro" in m for m in logged)

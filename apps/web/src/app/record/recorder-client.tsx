@@ -17,6 +17,7 @@ import {
 import { RecordingBadge } from "@/components/recording-badge";
 import { ConversationPanels } from "./conversation-panels";
 import { FloorControls } from "./floor-controls";
+import { SparkChips } from "./spark-chips";
 import { PostDriveItems } from "./study-items";
 
 /**
@@ -55,6 +56,7 @@ export function RecorderClient() {
     talkback: talk,
     conversationId,
     conversation,
+    sparks,
     floor,
     setFloor,
     poke,
@@ -233,6 +235,16 @@ export function RecorderClient() {
           </div>
         )}
       </div>
+
+      {TALKBACK_ENABLED && isRecording && (
+        <SparkChips
+          store={conversation}
+          ledger={sparks}
+          connected={connected}
+          speaking={hearing}
+          onPull={poke}
+        />
+      )}
 
       {TALKBACK_ENABLED && isRecording && (
         <FloorControls
