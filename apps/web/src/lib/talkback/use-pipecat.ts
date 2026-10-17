@@ -480,6 +480,28 @@ export function usePipecatTalkback(options: TalkbackOptions): Talkback {
     }
   }, []);
 
-  if (!enabled || !captureSessionId) return { state: OFF, poke };
-  return { state, poke };
+  /* THE SPARKS ON OFFER, kept in step with the screen like the floor: the
+   * latest list, sent whenever it changes and again on every connect, so the
+   * container can let them ask for one out loud (talkback-21). An older
+   * container answers with an error, which changes nothing here. */
+  const [offered, setOffered] = useState<readonly SparkRequest[]>([]);
+  const offerSparks = useCallback((sparks: readonly SparkRequest[]) => {
+    setOffered((prev) =>
+      prev.length === sparks.length &&
+      prev.every((s, i) => s.kind === sparks[i]!.kind && s.ordinal === sparks[i]!.ordinal)
+        ? prev
+        : [...sparks],
+    );
+  }, []);
+  useEffect(() => {
+    const client = live.current;
+    if (!connected || !client) return;
+    const sparks = offered.map((s) => ({ kind: s.kind, ordinal: s.ordinal }));
+    client.sendClientRequest("sparks", { sparks }, REQUEST_TIMEOUT_MS).catch((err) => {
+      console.warn(`[talkback:pipecat] sparks not offered — ${String(err)}`);
+    });
+  }, [connected, offered]);
+
+  if (!enabled || !captureSessionId) return { state: OFF, poke, offerSparks };
+  return { state, poke, offerSparks };
 }

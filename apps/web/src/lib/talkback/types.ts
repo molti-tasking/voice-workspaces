@@ -83,4 +83,9 @@ export interface Talkback {
    * Null when it could not be asked.
    */
   poke: (spark?: SparkRequest) => Promise<PokeResult | null>;
+  /**
+   * Tell the agent which sparks are on offer, so one can be asked for out
+   * loud. Kept and re-sent on every connect; the latest list wins.
+   */
+  offerSparks: (sparks: readonly SparkRequest[]) => void;
 }

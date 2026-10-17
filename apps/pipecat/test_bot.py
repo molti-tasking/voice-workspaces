@@ -3991,3 +3991,66 @@ def test_deepgram_keeps_fillers_only_when_asked(monkeypatch):
     assert not bot.build_stt()._settings.extra.get("filler_words")
     monkeypatch.setattr(bot, "STT_FILLER_WORDS", True)
     assert bot.build_stt()._settings.extra.get("filler_words") == "true"
+
+
+# --- Sparks by voice (talkback-21) ---------------------------------------------
+#
+# The driving case: nothing on the screen may be needed while moving, so the
+# sparks on their screen are also listed to the model, which asks the first
+# only when they ask for one out loud.
+
+
+def test_the_sparks_on_offer_render_as_the_typescript_does():
+    # `renderSparksOnOffer` in prompt.ts; `eval.test.ts` pins the same text.
+    assert bot.render_sparks_on_offer([("decide", "Budget"), ("revisit", "Pilot date")]) == (
+        "SPARKS ON OFFER — theirs to pull. Ask the first only if they ask you for one:\n"
+        '- "Budget": ask what they would decide on it if they had to decide now\n'
+        '- "Pilot date": ask whether they want to go back to it and what was still open there'
+    )
+    assert bot.render_sparks_on_offer([]) is None
+    assert set(bot.SPARK_OFFER_GISTS) == set(bot.SPARK_KINDS)
+
+
+def test_the_browser_s_sparks_are_kept_and_listed_by_title(monkeypatch):
+    floor = floor_with(monkeypatch, subjects={1: "Intro", 2: "Budget"})
+
+    async def run():
+        await floor.process_frame(
+            request(
+                "sparks",
+                {
+                    "sparks": [
+                        {"kind": "decide", "ordinal": 2},
+                        {"kind": "nope", "ordinal": 1},
+                        {"kind": "revisit", "ordinal": 9},
+                        {"kind": "say_back", "ordinal": 1},
+                    ]
+                },
+            ),
+            FrameDirection.DOWNSTREAM,
+        )
+
+    asyncio.run(run())
+    # The malformed one is dropped; the unnamed one is kept but not listed;
+    # only the first three are looked at, as the screen shows three.
+    assert answers_from(floor) == [{"sparks": 2}]
+    assert floor.sparks_on_offer() == bot.render_sparks_on_offer([("decide", "Budget")])
+    # Consumed, like the floor's own requests.
+    assert runs_from(floor) == []
+
+
+def test_recall_lists_the_sparks_on_offer_right_after_the_screen():
+    recall = bot.Recall(
+        FakeLLMContext(),
+        FakeSummary("- Decision: x"),
+        "ticket",
+        sparks=lambda: bot.render_sparks_on_offer([("unsure", "Budget")]),
+    )
+    recall._screen = "WHICH SCREEN: they have the recorder open."
+    block = recall._compose([], None, None, "Their task board right now:\n- [doing] ethics form")
+    assert block.index("WHICH SCREEN") < block.index("SPARKS ON OFFER") < block.index("Their task board")
+
+
+def test_recall_lists_nothing_when_nothing_is_on_offer():
+    recall = bot.Recall(FakeLLMContext(), FakeSummary(None), "ticket", sparks=lambda: None)
+    assert recall._compose([], None) is None

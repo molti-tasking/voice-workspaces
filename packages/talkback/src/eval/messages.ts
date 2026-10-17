@@ -12,13 +12,21 @@
  */
 
 import type { ChatMessage } from "@voicemural/llm";
-import { composeSystemPrompt, type ComposeInputs, type ComposedPrompt } from "../prompt";
+import {
+  composeSystemPrompt,
+  renderSparksOnOffer,
+  type ComposeInputs,
+  type ComposedPrompt,
+  type SparkKind,
+} from "../prompt";
 
 export interface EvalContext {
   /** The date and time where they are, the one line `renderLocalTime` produces. */
   now?: string;
   /** Which screen they have open, the one line `renderScreen` produces. */
   screen?: string;
+  /** The sparks on their screen, as `Floor` keeps them from the browser (talkback-21). */
+  sparks?: { kind: SparkKind; subject: string }[];
   /**
    * The rendered task board, as `/api/realtime/context` returns it
    * (`buildBoardContext`). Was missing from the port while `Recall._compose`
@@ -51,6 +59,8 @@ export function composeContextBlock(context: EvalContext | undefined): string | 
   const sections: string[] = [];
   if (context.now) sections.push(context.now);
   if (context.screen) sections.push(context.screen);
+  const sparks = renderSparksOnOffer(context.sparks ?? []);
+  if (sparks) sections.push(sparks);
   if (context.board) sections.push(context.board);
   if (context.threads?.length) {
     sections.push(

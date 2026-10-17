@@ -784,6 +784,71 @@ export const CASES: EvalCase[] = [
       ],
     },
   },
+  /* Sparks by voice: the phone untouched, the sparks on screen listed in the
+   * context, and the person asking for one out loud. The first one is asked;
+   * and with the list there and nobody asking, none is. */
+  {
+    id: "spark-asked-for-aloud-en",
+    about: "Asked out loud for something to check, it asks the first spark on offer, as a question.",
+    history: [
+      { role: "user", content: "The budget. I guess the hardware comes out of the travel money, maybe." },
+      { role: "assistant", content: "That leaves about four hundred for the second trip." },
+    ],
+    context: {
+      sparks: [
+        { kind: "decide", subject: "Budget" },
+        { kind: "revisit", subject: "Pilot date" },
+      ],
+    },
+    said: "Okay, anything I should check?",
+    expect: {
+      turn: "speak",
+      mustMention: ["\\?", "decide|decision|choose|pick"],
+      mustNotMention: ["pilot date"],
+    },
+  },
+  {
+    id: "spark-asked-for-aloud-de",
+    about: "On a German drive, \"frag mich was\" gets the first spark on offer, asked in German.",
+    history: [
+      { role: "user", content: "Der Ethikantrag. Vielleicht braucht der Interviewteil einen eigenen Absatz." },
+    ],
+    context: {
+      sparks: [{ kind: "say_back", subject: "Ethikantrag" }],
+    },
+    said: "Frag mich was.",
+    expect: {
+      turn: "speak",
+      mustMention: ["\\?", "eigenen worten|gelandet|wo stehst du|wie siehst du"],
+    },
+  },
+  {
+    id: "spark-on-offer-never-volunteered",
+    about: "With sparks on offer and nobody asking for one, it does not raise one.",
+    history: [
+      { role: "user", content: "The pilot date. Monday or next week?" },
+      {
+        role: "assistant",
+        content:
+          "Monday works if the consent forms are signed by Friday; next week gives William's cohort time to reply.",
+      },
+    ],
+    context: {
+      sparks: [
+        { kind: "say_back", subject: "Pilot date" },
+        { kind: "decide", subject: "Budget" },
+      ],
+    },
+    said: "Anyway. For the paper, I think the intro opens with how expensive switching between projects is.",
+    expect: {
+      turn: "either",
+      mustNotMention: [
+        "own words|where did you land",
+        "if you had to decide|budget",
+        "pilot date",
+      ],
+    },
+  },
   /* 14 Oct 2026, on the conversation view with no dock: asked where the
    * workspace was, the agent placed it in "the menu at the top right", then at
    * "the icon next to the stop button", and was told four times it did not
