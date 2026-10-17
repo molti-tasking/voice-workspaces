@@ -11,6 +11,8 @@ import {
   BOARD_TOOLS,
   RECENT_DRIVES_SHOWN,
   SETTLED_PROMPT,
+  STUDY_PROFILE,
+  STUDY_SYSTEM_PROMPT,
   TALKBACK_CONFIG_VERSION,
   TITLE_PROMPT,
   WEB_SEARCH_TOOL,
@@ -143,14 +145,24 @@ export async function POST(req: Request) {
   // and a missing task shows up in the export as an off-topic drive.
   const participant = await findParticipantByUser(payload.userId).catch(() => null);
   const studyTask = studyTaskFor(participant?.task);
-  const composed = composeSystemPrompt({
-    sections: [
-      ...(studyTask ? [studyTask.agentSection] : []),
-      ...(boardEditable ? [BOARD_EDITING] : []),
-      ...(webSearch ? [webSearchSection(new Date(), timeZoneOf(row.deviceInfo))] : []),
-      ...(recentDrives ? [recentDrives] : []),
-    ],
-  });
+  const searchSection = webSearch ? [webSearchSection(new Date(), timeZoneOf(row.deviceInfo))] : [];
+  // A participant talks to the study's own agent (study-agent.ts): a
+  // conversational assistant at a desk, the same in both arms, with the task
+  // on top. No board and no earlier drives — a participant has neither.
+  // Everyone else gets the field study's agent, unchanged.
+  const composed = studyTask
+    ? composeSystemPrompt({
+        base: STUDY_SYSTEM_PROMPT,
+        profile: STUDY_PROFILE,
+        sections: [studyTask.agentSection, ...searchSection],
+      })
+    : composeSystemPrompt({
+        sections: [
+          ...(boardEditable ? [BOARD_EDITING] : []),
+          ...searchSection,
+          ...(recentDrives ? [recentDrives] : []),
+        ],
+      });
 
   return NextResponse.json(
     {
@@ -219,7 +231,7 @@ export async function POST(req: Request) {
       // are. Board tools only when the board is on, and then the prompt says
       // nothing about editing it either; every call comes back to
       // /api/realtime/board.
-      tools: [...(boardEditable ? BOARD_TOOLS : []), ...(webSearch ? [WEB_SEARCH_TOOL] : [])],
+      tools: [...(boardEditable && !studyTask ? BOARD_TOOLS : []), ...(webSearch ? [WEB_SEARCH_TOOL] : [])],
       // Which of those is the search, so the container can route it to
       // /api/realtime/search, speak its announcement and play the cue —
       // without a tool name hard-coded in Python. Null when not offered.

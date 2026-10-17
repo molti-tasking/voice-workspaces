@@ -151,3 +151,4 @@ export {
   type StudyTask,
   type StudyTaskId,
 } from "./study-task";
+export { STUDY_PROFILE, STUDY_SYSTEM_PROMPT } from "./study-agent";
