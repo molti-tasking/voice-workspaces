@@ -70,20 +70,14 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
   const push = useDirectedPush();
   const {
     isRecording,
-    isDebriefing,
     isBusy,
     recorder,
     conversationId,
     startRecording,
     stopRecording,
-    finishDebrief,
   } = useCapture();
 
-  /* THE MICROPHONE IS OPEN IN BOTH STATES, and the dock has to treat them the
-   * same or it offers Record on top of a live recording — a second drive
-   * started while the first is still capturing. So the control is "active"
-   * through the debrief too; what an armed press does is the only difference. */
-  const capturing = isRecording || isDebriefing;
+  const capturing = isRecording;
 
   const [sheetOpen, setSheetOpen] = useState(false);
   const [armedAt, setArmedAt] = useState<number | null>(null);
@@ -134,6 +128,13 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
 
   const right = boardEnabled ? BOARD : CONVERSATIONS;
 
+  // NO DOCK ON THE RECORDER WHILE A DRIVE RUNS. That screen is the turns and
+  // who may take them — Lock, Normal, Poke and Stop — and its controls sit
+  // where the dock would. Every other control was a reason to look away from
+  // the conversation. Back once nothing is capturing, because that is how the
+  // next drive starts. After the hooks, which must run either way.
+  if (onRecorder && capturing) return null;
+
   return (
     <div
       className="vm-dock pointer-events-none fixed inset-x-0 bottom-0 z-40 flex flex-col items-center bg-gradient-to-t from-[var(--color-canvas)] via-[var(--color-canvas)]/55 to-transparent px-4 pt-14"
@@ -174,12 +175,7 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
                   return;
                 }
                 setArmedAt(null);
-                // Stop opens the debrief; a second press closes it. The three
-                // questions are on `/record`, which is where the participant
-                // has just come from — this is the escape hatch for somebody
-                // who wandered off mid-debrief, not the way it is meant to end.
-                if (isDebriefing) finishDebrief();
-                else stopRecording();
+                stopRecording();
               }}
             />
           )}
@@ -347,10 +343,8 @@ function RecordControl({
  * thing — see `capture-settings.tsx`.
  */
 function CaptureSheet({ onClose }: { onClose: () => void }) {
-  const { isRecording, isDebriefing, talkback } = useCapture();
-  // The debrief included: the microphone is still open, the drive's settings
-  // are still fixed, and its questions are on the conversation view.
-  const capturing = isRecording || isDebriefing;
+  const { isRecording, talkback } = useCapture();
+  const capturing = isRecording;
 
   return (
     <div

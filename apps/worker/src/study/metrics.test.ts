@@ -284,6 +284,7 @@ async function seed() {
     { userId: USER_ID, captureSessionId: SESSION, phase: "post", item: "mental_load", value: 4 },
     { userId: USER_ID, captureSessionId: SESSION, phase: "post", item: "liveness_perceived", value: 2 },
     { userId: USER_ID, captureSessionId: SESSION, phase: "post", item: "can_correct", value: 3 },
+    { userId: USER_ID, captureSessionId: SESSION, phase: "post", item: "floor_control", value: 6 },
   ]);
   await db.insert(schema.studyItemReview).values({
     userId: USER_ID,
@@ -437,6 +438,7 @@ describeIfDb("participantMetrics", () => {
     expect(session?.tier3.mentalLoadDelta).toBe(-2);
     expect(session?.tier3.livenessPerceived).toBe(2);
     expect(session?.tier3.canCorrect).toBe(3);
+    expect(session?.tier3.floorControl).toBe(6);
   });
 
   it("counts days where the participant is, not where the server is", async () => {

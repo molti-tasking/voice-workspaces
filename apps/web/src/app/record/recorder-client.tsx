@@ -1,8 +1,8 @@
 "use client";
 
-import { FileText, Square } from "lucide-react";
+import { Square } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { formatOffset } from "@voicemural/shared";
 // The `/profile` subpath, NOT the package index: the index re-exports
 // retrieval.ts, which imports @voicemural/db, and that drags the Postgres
@@ -15,265 +15,206 @@ import {
   VoicePicker,
 } from "@/components/capture-settings";
 import { RecordingBadge } from "@/components/recording-badge";
-import { DEBRIEF_MAX_MS, DEBRIEF_QUESTIONS } from "@/lib/study/debrief";
-import { CuePanel } from "./cue-panel";
-import { DraftPanel } from "./draft-panel";
+import { ConversationPanels } from "./conversation-panels";
+import { FloorControls } from "./floor-controls";
 import { PostDriveItems } from "./study-items";
-import { TopicTitle } from "./topic-title";
 
 /**
  * The recorder screen.
  *
- * Designed to be operated at a glance from a car cradle: one enormous target
- * to START, state legible in peripheral vision, and no interaction that
- * requires reading.
+ * Before a drive: one enormous target to START, and the voice and language to
+ * start with.
  *
- * WHILE RECORDING THERE IS NO BIG BUTTON. It used to stay on screen as a
- * 224px "Stop", and with the dock's own stop control under it that was two
- * ways to end a drive stacked on top of each other, taking the whole upper
- * half of the screen to do it. Stopping is now a small control in the header
- * and the dock's armed two-tap; the space goes to what the drive is ABOUT —
- * the current subject, the trail of earlier ones, then the cue panel.
+ * DURING ONE, TURN-TAKING AND NOTHING ELSE. The study has moved to who holds
+ * the floor, so the screen is the conversation — the agent's turns in one
+ * panel, the person's in the other, filed by subject — and exactly three
+ * things to do about it: Lock (only they speak), Normal (the agent may talk
+ * back) and Poke (one turn from the agent, now). Plus Stop, which has to be
+ * here. The cue panel, the drafts and the transcript link are gone from this
+ * screen, and the dock with them while a drive runs: every one of them was a
+ * reason to look away from the turns. Drafts are still written and kept; they
+ * are on `/sessions/[id]`.
  *
- * THE CONVERSATION OUTLIVES THE DRIVE. Stop used to take the subject, the cues
- * and the drafts off the screen at once, and Done put the big button back — the
- * drafts the agent had just written were gone at the moment there was time to
- * read them. Once a drive has started, this screen is the conversation view
- * until the next one replaces it: live, then the debrief over a frozen copy,
- * then the same copy marked ended. The next drive starts from the dock's record
- * button, which comes back on this screen once nothing is running (6 Oct 2026).
+ * THE WHOLE SCREEN, NOT A PAGE. While recording the layout is the height of
+ * the viewport, with the panels scrolling inside it, so the controls never
+ * scroll away from a thumb and the header never scrolls away from a glance.
+ *
+ * THE CONVERSATION OUTLIVES THE DRIVE. Stop used to take everything off the
+ * screen at once, at the moment there was time to read it. Once a drive has
+ * started, this screen is that conversation until the next one replaces it:
+ * live, then ended, with three ratings over it until they tap Done.
+ * The next drive starts from the dock's record button, which comes back on
+ * this screen once nothing is running (6 Oct 2026).
  */
 export function RecorderClient() {
-  // The recorder itself lives above the router now (see capture-provider.tsx),
-  // so a drive survives walking over to the board and back. This screen is the
-  // full view onto it, not its owner.
+  // The recorder itself lives above the router (see capture-provider.tsx), so a
+  // drive survives walking over to the board and back. This screen is the full
+  // view onto it, not its owner.
   const {
     recorder: rec,
     talkback: talk,
     conversationId,
-    title,
-    trail,
-    cues,
+    conversation,
+    floor,
+    setFloor,
+    poke,
     isRecording,
-    isDebriefing,
     isBusy,
     startRecording,
     stopRecording,
-    finishDebrief,
   } = useCapture();
   const hearing = talk.status === "speaking";
+  const connected = talk.status === "listening" || talk.status === "speaking";
 
   // Setup until the first drive of this page load; the conversation from then
   // on. `ended` is that conversation once nothing is capturing any more.
   const hasConversation = conversationId !== null;
-  const ended = hasConversation && !isRecording && !isDebriefing;
+  const ended = hasConversation && !isRecording;
 
-  // Whether the big subject has scrolled out from under the sticky header.
-  const titleRef = useRef<HTMLDivElement>(null);
-  const [titleDocked, setTitleDocked] = useState(false);
-  useEffect(() => {
-    const el = titleRef.current;
-    if (!el) {
-      setTitleDocked(false);
-      return;
-    }
-    const io = new IntersectionObserver(
-      ([entry]) => setTitleDocked(!!entry && !entry.isIntersecting),
-      // The header covers roughly the top 5rem, so "visible" means below it.
-      { rootMargin: "-80px 0px 0px 0px" },
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, [hasConversation]);
+  // The ratings, once per drive: shown over the finished conversation until
+  // Done, and not again for the same drive.
+  const [ratedFor, setRatedFor] = useState<string | null>(null);
+  const askRatings = ended && rec.lastSessionId !== null && ratedFor !== rec.lastSessionId;
 
-  return (
-    // `pb-40` clears the dock: leaving mid-drive is the point of hoisting the
-    // recorder, so the dock is on this screen too — with its own record button
-    // suppressed, because the header's stop is the transport here.
-    <main className="no-touch-fuss flex min-h-dvh flex-col items-center justify-between px-6 pb-40">
-      {/* STICKY, and clear of the status bar. The pilot lost "Recording", the
-          stop and the subject as soon as the drafts pushed them off the top,
-          and in a standalone PWA the stop sat under the clock. Once the big
-          subject has scrolled away its words dock in here, so the one strip
-          always says what is happening and what it is about. */}
-      <div className="vm-safe-top sticky top-0 z-30 -mx-6 flex w-[calc(100%+3rem)] justify-center bg-canvas/90 px-6 pb-3 backdrop-blur">
-        <header className="flex w-full max-w-md flex-col gap-1 text-sm text-fg/65">
-          <div className="flex w-full items-center justify-between gap-2">
-            {/* PRESENT OR ABSENT, never a shade of something. Everything else that
-                said "recording" was a modifier of a control that is always there —
-                a colour, a meter inside the button, a timer that starts counting —
-                and a first-time participant has nothing to compare it against.
-                See `RecordingBadge`. */}
-            {isRecording || isDebriefing ? (
-              <RecordingBadge
-                elapsedMs={rec.elapsedMs}
-                debriefing={isDebriefing}
-              />
-            ) : ended ? (
-              // Words, not a muted badge: the badge is present or absent, and
-              // its absence alone does not say the conversation below is over.
-              <span className="text-fg/60">
-                {rec.status === "requesting"
-                  ? "Opening the microphone…"
-                  : rec.status === "stopping"
-                    ? "Saving…"
-                    : "Ended"}
-              </span>
-            ) : (
-              <span />
-            )}
-            {/* THE STOP MUST FIT. On a 390px phone this row overflowed and
-                pushed the stop button off the right edge (7 Oct 2026) — and
-                during a drive it is the only stop on this screen, because the
-                dock hides its own. So the drafts link is an icon and a count,
-                the status pills may wrap onto a second line, and only the
-                badge and the stop refuse to shrink. */}
-            <div className="flex min-w-0 items-center justify-end gap-2">
-              {hasConversation && cues.drafts.length > 0 && (
-                // Where the drafts are, from anywhere on this screen: they sit
-                // at its foot, and the pilot scrolled past the title and the
-                // cues without finding them.
-                <a
-                  href="#drafts"
-                  aria-label={`${cues.drafts.length} draft${cues.drafts.length === 1 ? "" : "s"}, below`}
-                  className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-fg/10 px-2.5 py-1 text-xs text-fg/80 tabular-nums hover:bg-fg/20"
-                >
-                  <FileText size={12} aria-hidden />
-                  {cues.drafts.length} ↓
-                </a>
-              )}
-              <StatusPills
-                pending={rec.pendingUploads}
-                uploading={rec.uploading}
-                recording={isRecording}
-                talkback={TALKBACK_ENABLED && isRecording ? talk.status : null}
-                memory={TALKBACK_ENABLED && isRecording ? talk.memory : null}
-              />
-              {/* One tap, no confirmation, as the big button was — but small, so
-                  a stray hand in a cradle is unlikely to find it. The dock's stop
-                  is the deliberate one: it arms first (`STOP_ARM_MS` there). */}
-              {isRecording && (
-                <button
-                  type="button"
-                  onClick={stopRecording}
-                  disabled={isBusy}
-                  aria-label="Stop recording"
-                  className={[
-                    "grid size-11 shrink-0 cursor-pointer place-items-center rounded-full text-fg/80",
-                    "transition-colors hover:bg-fg/20 hover:text-fg disabled:opacity-50",
-                    hearing ? "bg-accent/40 ring-2 ring-accent/60" : "bg-fg/10",
-                  ].join(" ")}
-                >
-                  <Square size={16} fill="currentColor" aria-hidden />
-                </button>
-              )}
-            </div>
-          </div>
-          {/* ALWAYS HERE AT ITS FULL HEIGHT, and only faded in and out. It used
-              to be added when the big title scrolled away, which made this strip
-              a line taller, which pushed the big title back into view, which
-              took the line away again — the screen flickered about once a
-              second, the whole cue panel jumping with it (29 Sep 2026). */}
-          {TALKBACK_ENABLED && hasConversation && (
-            <p
-              aria-hidden={!titleDocked}
-              className={[
-                "h-6 truncate text-base font-semibold tracking-tight text-fg transition-opacity duration-150",
-                titleDocked && title ? "opacity-100" : "opacity-0",
-              ].join(" ")}
-            >
-              {title}
-            </p>
-          )}
-        </header>
-      </div>
-
-      <div className="flex w-full flex-col items-center gap-8">
-        {!hasConversation && (
-          <>
+  const topBar = (
+    // Clear of the status bar: in a standalone PWA the stop sat under the clock.
+    <div className="vm-safe-top flex w-full shrink-0 justify-center pb-2">
+      <header className="flex w-full items-center justify-between gap-2 text-sm text-fg/65">
+        {/* PRESENT OR ABSENT, never a shade of something. See `RecordingBadge`. */}
+        {isRecording ? (
+          <RecordingBadge elapsedMs={rec.elapsedMs} />
+        ) : ended ? (
+          // Words, not a muted badge: the badge is present or absent, and its
+          // absence alone does not say the conversation below is over.
+          <span className="text-fg/60">
+            {rec.status === "requesting"
+              ? "Opening the microphone…"
+              : rec.status === "stopping"
+                ? "Saving…"
+                : "Ended"}
+          </span>
+        ) : (
+          <span />
+        )}
+        {/* THE STOP MUST FIT. On a 390px phone this row once pushed the stop
+            off the right edge (7 Oct 2026), and during a drive it is the only
+            stop there is. So the pills may shrink and wrap, and only the badge
+            and the stop refuse to. */}
+        <div className="flex min-w-0 items-center justify-end gap-2">
+          <StatusPills
+            pending={rec.pendingUploads}
+            uploading={rec.uploading}
+            recording={isRecording}
+            talkback={TALKBACK_ENABLED && isRecording ? talk.status : null}
+            memory={TALKBACK_ENABLED && isRecording ? talk.memory : null}
+          />
+          {/* One tap, no confirmation, as the big button was — but small, so a
+              stray hand in a cradle is unlikely to find it. The ring says the
+              agent is talking, wherever the eye is. */}
+          {isRecording && (
             <button
               type="button"
-              onClick={startRecording}
+              onClick={stopRecording}
               disabled={isBusy}
+              aria-label="Stop recording"
               className={[
-                "relative flex size-56 cursor-pointer items-center justify-center rounded-full text-2xl font-medium",
-                "bg-surface text-fg ring-1 ring-line transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
+                "grid size-11 shrink-0 cursor-pointer place-items-center rounded-full text-fg/80",
+                "transition-colors hover:bg-fg/20 hover:text-fg disabled:opacity-50",
+                hearing ? "bg-accent/40 ring-2 ring-accent/60" : "bg-fg/10",
               ].join(" ")}
             >
-              {isBusy ? "…" : "Record"}
+              <Square size={16} fill="currentColor" aria-hidden />
             </button>
+          )}
+        </div>
+      </header>
+    </div>
+  );
 
-            <p className="h-5 text-center text-sm text-fg/60">
-              {isBusy ? (
-                // A tap that opens a microphone takes about a second, and until
-                // now that second showed an ellipsis on a disabled button — which
-                // reads as "it did not hear me" and invites a second tap.
-                <span className="text-fg/60">
-                  {rec.status === "requesting"
-                    ? "Opening the microphone…"
-                    : "Saving…"}
-                </span>
-              ) : (
-                "Tap to start. Say whatever you are working on."
-              )}
-            </p>
-          </>
-        )}
+  if (!hasConversation) {
+    return (
+      // `pb-40` clears the dock, which is on this screen before a drive.
+      <main className="no-touch-fuss flex min-h-dvh flex-col items-center justify-between px-6 pb-40">
+        <div className="w-full max-w-md">{topBar}</div>
 
-        {isDebriefing && (
-          <DebriefPanel
-            startedMs={rec.debriefStartedMs}
-            elapsedMs={rec.elapsedMs}
-            captureSessionId={rec.currentSessionId}
-            busy={isBusy}
-            onDone={finishDebrief}
-          />
-        )}
-
-        {!hasConversation && <VoicePicker />}
-
-        {!hasConversation && <LanguagePicker />}
-
-        {/* Pilot builds only, and pilot accounts only. See `ConditionToggles`. */}
-        {!hasConversation && <ConditionToggles />}
-
-        {TALKBACK_ENABLED && hasConversation && (
-          <div ref={titleRef} className="w-full max-w-md">
-            <TopicTitle
-              // Keyed by the drive: the next one starts from nothing, rather
-              // than blurring the last drive's subject away.
-              key={conversationId}
-              title={title}
-              trail={trail}
-              // "It is listening" is true only while it is.
-              placeholder={isRecording ? PROFILE.hint : undefined}
-            />
-          </div>
-        )}
-
-        {hasConversation && <CuePanel cues={cues} />}
-
-        {/* Below the cue panel, because a draft is read deliberately and the
-            glanceable lane must keep the position it has trained. */}
-        {hasConversation && <DraftPanel drafts={cues.drafts} />}
-
-        {/* "How can I see my last discussion?" (28 Sep 2026): this screen
-            shows the subject, never the words, so say where the words are.
-            Last, below the drafts: it is a way out of this screen, and it sat
-            between the subject and the drafts it was in the way of (7 Oct
-            2026). Once the drive has ended, the Saved card says it instead. */}
-        {(isRecording || isDebriefing) && rec.currentSessionId && (
-          <Link
-            href={`/sessions/${rec.currentSessionId}`}
-            className="text-sm text-fg/55 underline-offset-4 hover:text-fg/80 hover:underline"
+        <div className="flex w-full flex-col items-center gap-8">
+          <button
+            type="button"
+            onClick={startRecording}
+            disabled={isBusy}
+            className={[
+              "relative flex size-56 cursor-pointer items-center justify-center rounded-full text-2xl font-medium",
+              "bg-surface text-fg ring-1 ring-line transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
+            ].join(" ")}
           >
-            This drive&rsquo;s transcript →
-          </Link>
-        )}
-      </div>
+            {isBusy ? "…" : "Record"}
+          </button>
 
-      <footer className="w-full max-w-md space-y-3 text-sm">
-        {rec.lastSessionId && !isRecording && !isDebriefing && (
+          <p className="h-5 text-center text-sm text-fg/60">
+            {isBusy ? (
+              // A tap that opens a microphone takes about a second, and until
+              // now that second showed an ellipsis on a disabled button — which
+              // reads as "it did not hear me" and invites a second tap.
+              <span className="text-fg/60">
+                {rec.status === "requesting" ? "Opening the microphone…" : "Saving…"}
+              </span>
+            ) : (
+              "Tap to start. Say whatever you are working on."
+            )}
+          </p>
+
+          <VoicePicker />
+          <LanguagePicker />
+          {/* Pilot builds only, and pilot accounts only. See `ConditionToggles`. */}
+          <ConditionToggles />
+        </div>
+
+        <footer className="w-full max-w-md space-y-3 text-sm">
+          <Notices />
+        </footer>
+      </main>
+    );
+  }
+
+  return (
+    <main
+      className={[
+        "no-touch-fuss mx-auto flex w-full max-w-5xl flex-col gap-3 px-4",
+        // While recording: exactly the screen, panels scrolling inside it, and
+        // no dock (app-dock-client.tsx) — the controls sit where it was. After
+        // it, an ordinary page above the dock again.
+        isRecording
+          ? "h-dvh overflow-hidden pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+          : "min-h-dvh pb-40",
+      ].join(" ")}
+    >
+      {topBar}
+
+      {askRatings && (
+        <Ratings
+          captureSessionId={rec.lastSessionId}
+          onDone={() => setRatedFor(rec.lastSessionId)}
+        />
+      )}
+
+      <ConversationPanels
+        // Keyed by the drive: the next one starts from nothing, scrolled to
+        // its top, rather than inheriting the last one's scroll position.
+        key={conversationId}
+        store={conversation}
+        live={isRecording}
+        floor={TALKBACK_ENABLED && isRecording ? (talk.floor ?? floor) : null}
+        // The agent first: its own voice can reach the microphone, and their
+        // panel must not light up because the agent is talking.
+        speaker={!isRecording ? null : hearing ? "agent" : talk.userSpeaking ? "user" : null}
+        // "It is listening" is true only while it is.
+        placeholder={isRecording ? PROFILE.hint : undefined}
+        className={isRecording ? "min-h-0 flex-1" : "h-[65dvh] shrink-0"}
+      />
+
+      <div className="shrink-0 space-y-3 text-sm">
+        <Notices />
+        {ended && rec.lastSessionId && (
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
             <p className="mb-1 font-medium text-emerald-100">
               Saved {formatOffset(rec.lastSessionMs)}
@@ -291,125 +232,110 @@ export function RecorderClient() {
             </Link>
           </div>
         )}
+      </div>
 
-        {rec.error && (
-          <Notice tone="error" title="Recording stopped">
-            {rec.error}
-          </Notice>
-        )}
-
-        {rec.lastUploadError && rec.pendingUploads > 0 && (
-          <Notice tone="warn" title="Waiting for signal">
-            {rec.pendingUploads} chunk{rec.pendingUploads === 1 ? "" : "s"} held
-            on this device. They upload automatically — nothing is lost.
-          </Notice>
-        )}
-
-        {isRecording && !rec.wakeLockActive && (
-          <Notice tone="warn" title="Screen may sleep">
-            This browser would not hold a wake lock. If the screen locks,
-            recording stops — set the display timeout to Never.
-          </Notice>
-        )}
-
-        {rec.resumable && !isRecording && !isDebriefing && (
-          <Notice tone="warn" title="Unfinished session found">
-            <div className="space-y-2">
-              <p>
-                A session from{" "}
-                {new Date(rec.resumable.startedAt).toLocaleString(undefined, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                })}{" "}
-                was never closed. Its audio is queued and will still upload.
-              </p>
-              <button
-                type="button"
-                onClick={() => void rec.dismissResumable()}
-                className="rounded bg-fg/10 px-3 py-1.5 hover:bg-fg/20"
-              >
-                Close it out
-              </button>
-            </div>
-          </Notice>
-        )}
-      </footer>
+      {TALKBACK_ENABLED && isRecording && (
+        <FloorControls
+          floor={floor}
+          applied={talk.floor}
+          connected={connected}
+          speaking={hearing}
+          onFloor={setFloor}
+          onPoke={poke}
+        />
+      )}
     </main>
   );
 }
 
 /**
- * The three questions, asked while the microphone is still open.
- *
- * WHY THIS EXISTS AT ALL. The first formative pilot (19 Sep 2026) recorded
- * 5m44s and then stopped, and the most useful thing the participant said came
- * afterwards: that the agent mangled a place name, that she wanted it to say
- * "warte kurz, ich suche" before a lookup, and — watching it sit silent — "ist
- * jetzt die App ausgegangen?". None of it is in the ledger. It exists because
- * somebody happened to be filming.
- *
- * READ DELIBERATELY, unlike everything else on this screen. The cue panel is
- * glanceable because a driver cannot read; this appears only once the drive is
- * over and the phone is in a hand. The questions are still spoken aloud rather
- * than typed, and "nothing today" is a complete answer to all three.
+ * What can go wrong with capture itself, said where it is seen. The same on
+ * every phase of the screen, because none of it waits for a phase.
  */
-function DebriefPanel({
-  startedMs,
-  elapsedMs,
+function Notices() {
+  const { recorder: rec, isRecording } = useCapture();
+  return (
+    <>
+      {rec.error && (
+        <Notice tone="error" title="Recording stopped">
+          {rec.error}
+        </Notice>
+      )}
+
+      {rec.lastUploadError && rec.pendingUploads > 0 && (
+        <Notice tone="warn" title="Waiting for signal">
+          {rec.pendingUploads} chunk{rec.pendingUploads === 1 ? "" : "s"} held
+          on this device. They upload automatically — nothing is lost.
+        </Notice>
+      )}
+
+      {isRecording && !rec.wakeLockActive && (
+        <Notice tone="warn" title="Screen may sleep">
+          This browser would not hold a wake lock. If the screen locks,
+          recording stops — set the display timeout to Never.
+        </Notice>
+      )}
+
+      {rec.resumable && !isRecording && (
+        <Notice tone="warn" title="Unfinished session found">
+          <div className="space-y-2">
+            <p>
+              A session from{" "}
+              {new Date(rec.resumable.startedAt).toLocaleString(undefined, {
+                dateStyle: "medium",
+                timeStyle: "short",
+              })}{" "}
+              was never closed. Its audio is queued and will still upload.
+            </p>
+            <button
+              type="button"
+              onClick={() => void rec.dismissResumable()}
+              className="rounded bg-fg/10 px-3 py-1.5 hover:bg-fg/20"
+            >
+              Close it out
+            </button>
+          </div>
+        </Notice>
+      )}
+    </>
+  );
+}
+
+/**
+ * Three ratings after a drive, with the microphone already closed.
+ *
+ * THEY USED TO BE A DEBRIEF. Stop kept recording for a window in which the
+ * participant answered questions out loud — three, then one — with scales
+ * under them. It ran past the bottom of a phone, and on 14 Oct 2026 the person
+ * answered the scales aloud ("Give it a 4") into a recording that was waiting
+ * for something else. Taps need no microphone, so Stop now ends the recording
+ * and this asks over the finished conversation.
+ *
+ * Skippable by design: each tap is saved as it is made, Done only closes the
+ * card, and a drive left unrated is a missing cell, not a broken one.
+ */
+function Ratings({
   captureSessionId,
-  busy,
   onDone,
 }: {
-  startedMs: number | null;
-  elapsedMs: number;
   captureSessionId: string | null;
-  busy: boolean;
   onDone: () => void;
 }) {
-  // From the chunk clock, not a wall clock: it is the same clock the stored
-  // offsets are on, and it advances a chunk at a time, which is exactly the
-  // granularity worth showing.
-  const usedMs = startedMs === null ? 0 : Math.max(0, elapsedMs - startedMs);
-  const leftSecs = Math.max(0, Math.ceil((DEBRIEF_MAX_MS - usedMs) / 1000));
-
   return (
-    <section className="w-full max-w-md rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
-      <header className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 className="text-sm font-medium text-amber-100">Before you go</h2>
-        <span className="font-mono text-xs tabular-nums text-amber-200/60">
-          {leftSecs}s
-        </span>
+    <section className="mx-auto w-full max-w-2xl shrink-0 rounded-3xl border border-line bg-surface p-5 shadow-sm sm:p-6">
+      <header className="mb-4">
+        <h2 className="text-lg font-semibold tracking-tight text-fg">How did that go?</h2>
+        <p className="mt-0.5 text-sm text-fg/60">
+          The recording has stopped. One tap each, or skip any.
+        </p>
       </header>
-      <ol className="space-y-2.5 text-sm leading-relaxed text-fg/80">
-        {DEBRIEF_QUESTIONS.map((question, i) => (
-          <li key={question} className="flex gap-3">
-            <span className="shrink-0 font-mono text-xs text-fg/50">
-              {i + 1}
-            </span>
-            {question}
-          </li>
-        ))}
-      </ol>
-      <p className="mt-3 text-xs text-fg/60">
-        Say them out loud. These answers are the part of a drive the research
-        team reads — nothing else is. &ldquo;Nothing today&rdquo; is a fine
-        answer.
-      </p>
-      {/* Under the spoken questions, not over them: those are what the window
-          is for, and a row of number buttons above them would make the drive
-          end with a form. */}
       <PostDriveItems captureSessionId={captureSessionId} />
-      {/* Ends the debrief, and with it the recording. Amber like the panel,
-          not the drive's own colour: the channel changed and they were told
-          it would. Full width, because the phone is in a hand by now and a
-          thumb wants the bottom of the card. */}
       <button
         type="button"
         onClick={onDone}
-        disabled={busy}
-        className="mt-4 w-full cursor-pointer rounded-lg bg-amber-500/90 px-4 py-3 text-base font-medium text-white transition-transform active:scale-[0.98] disabled:opacity-50"
+        className="mt-5 w-full cursor-pointer rounded-2xl bg-fg px-4 py-3 text-base font-semibold text-canvas transition-transform active:scale-[0.98]"
       >
-        {busy ? "Saving…" : "Done"}
+        Done
       </button>
     </section>
   );
@@ -432,9 +358,9 @@ function StatusPills({
     // Shrinks and wraps, so a warning never pushes the stop off the screen.
     <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 text-xs">
       {/* Only worth showing when it is NOT working. A healthy socket needs no
-          pill: the topic title naming what is being talked about is the
-          evidence, and a car dashboard should not carry an indicator for every
-          subsystem that is fine. */}
+          pill: the panels filling with what is said is the evidence, and a car
+          dashboard should not carry an indicator for every subsystem that is
+          fine. */}
       {talkback === "degraded" && <Pill label="talk offline" tone="warn" />}
       {talkback === "connecting" && <Pill label="talk…" tone="warn" />}
       {/* Connected but amnesiac. Distinct from "talk offline" because the
@@ -456,7 +382,7 @@ function Pill({ label, tone }: { label: string; tone: "ok" | "warn" }) {
   return (
     // Shrinks to an ellipsis rather than overflowing: wrapping only helps
     // when there are several pills, and one pill wider than the space left
-    // beside the stop spilled over the drafts link (390px, "talk…").
+    // beside the stop spilled over what sat next to it (390px, "talk…").
     <span
       title={label}
       className={[

@@ -15,7 +15,7 @@ import {
  * - `quiet`   a stretch where it deliberately says nothing
  * - `later`   a break between two drives, for the example that needs two
  * - `board`   a card appearing on the task board, drawn as `board-card.tsx`
- * - `draft`   a draft appearing on the recorder, drawn as `draft-panel.tsx`
+ * - `draft`   a draft the agent wrote, drawn as a draft card
  */
 type Beat =
   | { kind: "you"; text: string }
@@ -273,8 +273,8 @@ function BeatView({ beat }: { beat: Beat }) {
       );
     case "draft":
       return (
-        // `draft-panel.tsx`, including the version label that is the only
-        // visible evidence a revision happened.
+        // A draft card, including the version label that is the only visible
+        // evidence a revision happened.
         <div className="flex flex-col items-end pl-10" aria-hidden>
           <span className="mb-0.5 text-xs font-medium tracking-wide text-fg/50 uppercase">
             on the screen

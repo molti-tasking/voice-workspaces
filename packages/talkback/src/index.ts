@@ -46,7 +46,11 @@ export {
   ANSWER_ACKNOWLEDGEMENTS,
   ANSWER_RETRY_NUDGE,
   BOARD_EDITING,
+  FLOOR_OPEN_NOTE,
   OUTPUT_CONTRACT,
+  POKE_FALLBACKS,
+  POKE_NUDGE,
+  POKE_RETRY_NUDGE,
   SEARCH_WAIT_PHRASES,
   SILENCE_TOKEN,
   SYSTEM_PROMPT,
@@ -55,6 +59,7 @@ export {
   cleanReply,
   composeSystemPrompt,
   isSilence,
+  pokeFallback,
   searchWaitPhrase,
   type ComposeInputs,
   type ComposedPrompt,
@@ -81,6 +86,7 @@ export {
 } from "./voice";
 export { SCREENS, isScreen, renderScreen, screenFor, type Screen } from "./screen";
 export { isTimeZone, localDate, renderLocalTime, timeZoneOf } from "./clock";
+export { RECENT_DRIVES_SHOWN, renderRecentDrives, type RecentDrive } from "./recent-drives";
 export {
   STT_LANGUAGES,
   STT_LANGUAGE_CODES,
@@ -110,10 +116,13 @@ export {
 export {
   recordAgentDecision,
   recordAgentTurn,
+  recordFloorEvent,
   type AgentDecisionOutcome,
   type AgentDecisionRecord,
   type AgentDecisionTrigger,
   type AgentTurnRecord,
+  type FloorEventKind,
+  type FloorEventRecord,
 } from "./agent-turns";
 export {
   contentWords,

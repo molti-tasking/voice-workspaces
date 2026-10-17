@@ -250,8 +250,11 @@ export const captureSession = pgTable(
      * THE PRIVACY BOUNDARY RUNS THROUGH THESE TWO COLUMNS. `/study` promises
      * that nobody on the research team listens to a drive or reads its
      * transcript; what researchers see is counts and timings. The debrief is
-     * the exception the participant is told about — three questions they answer
-     * aloud, knowing the answers are read. So the content channel is not a
+     * the exception the participant was told about — questions they answered
+     * aloud, knowing the answers were read. The recorder stopped opening this
+     * window on 14 Oct 2026 (Stop now ends the recording and the post-drive
+     * questions are taps), so both columns stay null from then on; they are
+     * kept for the drives that had one. So the content channel is not a
      * property of a session, it is a property of an INTERVAL inside one, and
      * an export that cannot name the interval cannot honour the promise.
      *
@@ -730,6 +733,11 @@ export const agentDecisionTriggerEnum = pgEnum("agent_decision_trigger", [
   "confirmation",
   "macro_offer",
   "agenda",
+  // The person tapped Poke: a turn they asked for without words. Its own
+  // trigger rather than `user_turn`, because the point of the study is who
+  // gave the agent the floor, and a poke after a locked monologue is the
+  // person handing it over on purpose. See `floorEvent`.
+  "poke",
 ]);
 
 /**
@@ -870,6 +878,17 @@ export const agentDecision = pgTable(
      * measure nothing. See `note_forced_answer` in bot.py.
      */
     forcedAnswer: boolean("forced_answer").notNull().default(false),
+    /**
+     * Whether a POKE had to be forced: its first completion declined, and the
+     * container refused that and re-ran it (see `Floor` in bot.py).
+     *
+     * Not `forcedAnswer`. That column feeds the study's unanswered-answer
+     * count, whose target is zero, and the metric reads it without looking at
+     * the trigger — a forced poke counted there would make the agent look like
+     * it ignored answers it had asked for. A poke is a different promise ("you
+     * asked to hear from me, so you will"), and it gets its own mark.
+     */
+    forcedPoke: boolean("forced_poke").notNull().default(false),
     agentTurnId: uuid("agent_turn_id").references(() => agentTurn.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -896,6 +915,67 @@ export const agentDecisionRelations = relations(agentDecision, ({ one }) => ({
   agentTurn: one(agentTurn, {
     fields: [agentDecision.agentTurnId],
     references: [agentTurn.id],
+  }),
+}));
+
+/**
+ * What the person did with the floor, as the container applied it.
+ */
+export const floorEventKindEnum = pgEnum("floor_event_kind", ["open", "locked", "poke"]);
+
+/**
+ * Who was allowed to talk, and when. Append-only.
+ *
+ * The recorder has three controls during a drive: Lock (only the person
+ * speaks — the agent is cut off and stays silent), Normal (the agent may talk
+ * back) and Poke (one turn from the agent now, whichever of the two is in
+ * force). Who holds the floor is the study's subject, so every change is a
+ * row, at an offset on the `utterance` clock — which is what lets an analysis
+ * place each line of the ledger inside a locked or an open stretch without
+ * any other table knowing the lock existed.
+ *
+ * WRITTEN BY THE CONTAINER, NOT THE BROWSER. A row says what was IN FORCE:
+ * the lock the agent actually obeyed. A browser write would record the tap,
+ * and a tap whose message never reached the container (a dropped data
+ * channel, a reconnect in progress) would read as a lock the agent ignored.
+ *
+ * NOT `agent_decision`. That table is the moments the agent was GIVEN; a user
+ * turn under Lock was withheld, and the honest record of it is the stretch it
+ * fell in, not a fabricated decision. A poke does get a decision of its own
+ * (trigger `poke`) once it runs — this row is the tap, that one is what the
+ * agent made of it, and a poke tapped while the agent was already speaking has
+ * only this one.
+ *
+ * `atConnect` marks the floor a connection STARTED with — the mode the device
+ * remembered, applied before the first word — so a reconnect mid-drive does
+ * not read as the person pressing the toggle.
+ *
+ * Counts and timings only, like everything researchers see.
+ */
+export const floorEvent = pgTable(
+  "floor_event",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    captureSessionId: uuid("capture_session_id")
+      .notNull()
+      .references(() => captureSession.id, { onDelete: "cascade" }),
+    /** Monotonic per connection, like `agent_decision.seq`. Order by `offsetMs`. */
+    seq: integer("seq").notNull(),
+    /** Ms into the drive, on the `utterance` clock. */
+    offsetMs: integer("offset_ms").notNull(),
+    kind: floorEventKindEnum("kind").notNull(),
+    atConnect: boolean("at_connect").notNull().default(false),
+    /** `TALKBACK_CONFIG_VERSION` of the container that applied it. */
+    configVersion: text("config_version"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("floor_event_session_offset_idx").on(t.captureSessionId, t.offsetMs)],
+);
+
+export const floorEventRelations = relations(floorEvent, ({ one }) => ({
+  captureSession: one(captureSession, {
+    fields: [floorEvent.captureSessionId],
+    references: [captureSession.id],
   }),
 }));
 

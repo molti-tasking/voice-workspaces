@@ -63,9 +63,6 @@ export const DISPLAY_RULES: Record<Density, DisplayRules> = {
   read: { minRows: 6, dwellMs: 2_500, maxWords: null, groupByTopic: true },
 };
 
-/** The only animation, at either density. No slide, no colour flash. */
-export const ENTER_MS = 400;
-
 /** Kept for the glance path and for tests that assert the cut length. */
 export const MAX_CUE_WORDS = DISPLAY_RULES.glance.maxWords ?? 8;
 

@@ -1,6 +1,6 @@
 "use client";
 
-import type { TalkbackOptions, TalkbackState } from "./types";
+import type { Talkback, TalkbackOptions } from "./types";
 import { usePipecatTalkback } from "./use-pipecat";
 
 /**
@@ -12,8 +12,8 @@ import { usePipecatTalkback } from "./use-pipecat";
  * unnecessary, and the indirection survives only so the recorder keeps
  * importing one stable name.
  */
-export function useTalkback(options: TalkbackOptions): TalkbackState {
+export function useTalkback(options: TalkbackOptions): Talkback {
   return usePipecatTalkback(options);
 }
 
-export type { TalkbackState, TalkbackStatus } from "./types";
+export type { PokeResult, Talkback, TalkbackState, TalkbackStatus } from "./types";

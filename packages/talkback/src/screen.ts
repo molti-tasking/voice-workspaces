@@ -40,7 +40,7 @@ export function screenFor(pathname: string): Screen {
 
 const DESCRIPTIONS: Record<Screen, string> = {
   conversation:
-    "the conversation view: the current subject, the tasks and questions captured from this drive once there are any, the drafts you have written on this drive, and below them a link to this drive's transcript. It shows nothing from earlier drives",
+    "the conversation view: two panels — what they have said on this drive and what you have said, filed under topic headings that are named automatically from what is said; you do not name the headings and cannot move anything between them — three controls at the bottom: Lock (only they speak, and you are not asked to reply), Normal (you may talk back) and Poke (they want one turn from you now), and Stop at the top right. That is everything on it while it records: no dock, no menu, no other icon or button, and nothing that leads to another screen. Drafts are not shown here; they are kept on this recording's page and on the topic in the workspace. It shows nothing from earlier drives",
   workspace:
     "the workspace: the topics touched in the last two weeks as cards, older ones folded into one closed section below, each with its open questions, tasks, notes and the drafts filed on it. It redraws by itself within seconds when a tool changes something. They can archive an item or change a task's state there; nothing is dragged",
   board:
@@ -56,6 +56,14 @@ const DESCRIPTIONS: Record<Screen, string> = {
 /**
  * Where things are, whichever screen is open.
  *
+ * NOT FROM THE CONVERSATION VIEW, while it records (talkback-20). That screen
+ * lost its dock, so this map said "the dock at the bottom" while the screen's
+ * own line said there was no dock — and on 14 Oct 2026 the agent resolved the
+ * contradiction by inventing: Workspace "in the menu at the top right", then
+ * "the icon next to the stop button", told four times running that neither
+ * exists. So the map now says where the way out is, and the conversation view
+ * says it has none.
+ *
  * On 28 Sep 2026, asked "how can I see my last discussion?", the agent said
  * the transcript was in the conversation view — which shows nothing from
  * earlier drives. It knew the current screen and nothing about the others, so
@@ -67,7 +75,7 @@ const DESCRIPTIONS: Record<Screen, string> = {
  * stays, in the menu, for reading everything end to end.
  */
 export const APP_MAP =
-  "WHERE THINGS ARE: the dock at the bottom leads to Workspace (their topics, tasks and filed drafts) and Conversations (every past recording, newest first, named by what it was about, with a search over everything they said; each opens that recording's page, with its transcript and drafts — on a wide screen Conversations is in the menu at the top right). Timeline, in that menu, reads every transcript end to end. The conversation view is the recorder itself. Point them there by those names; there is no other place to look.";
+  "WHERE THINGS ARE: Workspace (their topics, tasks and filed drafts) and Conversations (every past recording, newest first, named by what it was about, with a search over everything they said; each opens that recording's page, with its transcript and drafts). Timeline reads every transcript end to end. On every other screen the dock at the bottom leads to Workspace and Conversations, and on a wide screen Conversations and Timeline are in the menu at the top right. The conversation view is the recorder itself, and while it records it has no dock and no menu: those places open once they stop the recording. From the conversation view, say exactly that and never point them at a button there. Point them there by those names; there is no other place to look.";
 
 /**
  * The line for the turn context. Always something: "not known" is itself the

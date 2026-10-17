@@ -68,17 +68,24 @@ session and should not gain one. The context ticket gets a drive-length TTL via
 
 ```
 transport.input() → vad → Trace("in") → stt → Trace("stt") → summary
-  → title → Recall → aggregator.user() → llm → SilenceGate → tts
+  → title → Recall → Offers → AnswerGuard → aggregator.user() → Floor → llm
+  → FloorUpstream → SilenceGate → KeepAlive → AgentFeed → tts
   → transport.output() → aggregator.assistant()
 ```
 
 `title` (`TopicTitle`) names what is being talked about **right now** in two to
 four words, off its own short window of recent speech rather than the
 whole-drive summary, and pushes each change to the browser as an
-`RTVIServerMessageFrame` over the data channel the audio already needs. The
-recorder shows it as a plain title that blurs across when the subject changes.
-It never blocks a turn, and it is inert unless
+`RTVIServerMessageFrame` over the data channel the audio already needs. Every
+turn on the recorder is filed under the title it was said in, so the model is
+shown the drive's earlier titles and returns one verbatim when the
+conversation goes back to it. It never blocks a turn, and it is inert unless
 `/api/realtime/session` sent a `titlePrompt`.
+
+The person's side of the recorder's panels comes from the same processor (it
+sees every final transcript), the agent's from `AgentFeed`, which sits after
+everything that decides what is said. `Floor` and `FloorUpstream` are the lock;
+see talkback-20 below.
 
 `Trace` logs exactly three things — audio-frame counts, VAD start/stop,
 transcriptions. Those separate the three otherwise-identical silent failures:
@@ -224,6 +231,111 @@ announcing itself and disarmed by the agent actually speaking, NOT by the tool
 returning, which would fall silent at the moment the silence starts. Two
 phrases and then quiet; the list is the limit.
 
+### talkback-20: who has the floor
+
+The study has moved to turn-taking: who decides when the system talks. Until
+now that was the model's call alone, every turn, with `<silence>` its only
+restraint. The recorder now gives the person three controls during a drive,
+and nothing else besides Stop:
+
+| Control | What the container does |
+|---|---|
+| **Lock** | Their words still reach the context, summary, title and recall, but the model is never asked to reply. A reply in progress is cut off where it stands. No opening line, no offers. |
+| **Normal** | As before. |
+| **Poke** | One turn from the agent, now, in either mode. Under Lock the lock stays on afterwards. |
+
+**Enforced, not asked.** `Floor` sits between the user aggregator and the LLM,
+which is where every turn passes on its way to being generated, and under Lock
+it drops the `LLMContextFrame` that would start one. Nothing is lost by that:
+the aggregator has already written their words into the context, so the next
+turn the agent *is* given sees all of them. A tool's follow-up is the one
+completion that does not pass there — the assistant aggregator pushes it
+upstream from the end of the pipeline — so `FloorUpstream`, between the LLM and
+`SilenceGate`, drops that one. Board tools are not cancelled by an interruption,
+and without it a card moved just before a Lock would be announced after it.
+
+**Lock cuts the agent off** with `broadcast_interruption()`, which the gate
+records exactly as it records a barge-in (`agent_turn.barged_in`, decision
+`interrupted`). What tells the two apart is the `floor_event` at the same
+offset. Locking also clears `awaiting_question_answer` and the parked ask, so
+the first words after an unlock are never forced into an answer to a question
+nobody remembers.
+
+**A poke is its own moment**, trigger `poke`, never a relabelled user turn:
+it is the person handing over the floor on purpose. Nobody talking → it runs at
+once (`POKE_NUDGE` in their slot, then the context run, the same route `Offers`
+takes). Mid-sentence → it is *armed*: under Lock it rides on the completion
+their turn would have started; under Normal it runs only if their turn's reply
+declined, because a reply that reached the speaker is what it asked for. A
+cough with no transcript cannot strand it: an armed poke fires on its own
+after `user_turn_stop_timeout + 1s` of quiet. While the agent is already
+speaking it does nothing.
+
+**A poke is always answered.** A poked completion that declines is refused and
+re-run by `AnswerGuard` with `POKE_RETRY_NUDGE`, then ends in a fixed line
+(`POKE_FALLBACKS`) — the same promise the guard makes for an answer the agent
+asked for. Marked as `agent_decision.forced_poke`, NOT `forced_answer`: the
+unanswered-answer count reads that column without looking at the trigger, and
+its target is zero.
+
+**Unlocking** puts `FLOOR_OPEN_NOTE` in the context, so the first reply is to
+what they say next rather than to ten minutes of monologue.
+
+**The wire.** The browser sends RTVI client requests `floor`
+(`{"floor": "open" | "locked"}`) and `poke`; the RTVI processor `PipelineWorker`
+installs at the head of the pipeline turns each into an `RTVIClientMessageFrame`,
+and `Floor` answers with an `RTVIServerResponseFrame` carrying the floor now in
+force — which is what the toggle shows, so a lock that has been tapped and not
+applied reads as pending. The floor the device remembers also rides in the
+`/offer` request data, so a drive that starts locked is locked before the
+opening line could be said.
+
+**The record.** Every change the container applies is a `floor_event` row
+(`/api/realtime/floor`): `locked`, `open` or `poke`, an offset on the
+`utterance` clock, and `at_connect` for the floor a connection started with.
+Written by the container, not the browser, so a row means the lock the agent
+obeyed rather than a tap that may never have arrived. A line of the ledger fell
+in a locked stretch when the last change at or before its offset is `locked`.
+
+**The panels.** The recorder shows both sides of the conversation, filed by
+subject (`apps/web/src/lib/talkback/conversation.ts`): `{type:"user"}` from
+`TopicTitle`, `{type:"agent"}` from `AgentFeed` (throttled to sentence ends or
+300ms), and `{type:"title", rehomeFrom}`, which moves the turns that changed the
+subject into its section. Live ASR to the screen only: nothing here writes
+`utterance`. In memory only, like the title before it — a reload mid-drive
+starts empty, and the durable record is `/sessions/[id]`.
+
+The cue panel, the drafts and the transcript link are off the recorder, and the
+dock with them while a drive runs. Drafts are still written and kept, on the
+recording's page and on their topic; the keep section of `OUTPUT_CONTRACT` and
+WHICH SCREEN (`screen.ts`) now say so.
+
+#### What the "Tone of Voice" drive changed (14 Oct 2026)
+
+A 7½-minute drive in which the person talked in long stretches with pauses,
+and the agent answered fragment after fragment. Five changes, same version:
+
+- **The fallback before a turn ends is 3 s, not 2** (`USER_TURN_STOP_TIMEOUT_SECS`).
+  It only applies when Pipecat's smart-turn model hears them as mid-sentence;
+  a pause the model hears as an ending is still answered at once, and Lock is
+  the person's own answer to that.
+- **Pauses reach the model as words.** `PauseMarker`, last before the user
+  aggregator, prefixes the next transcript with "(pause 4s)" after two seconds
+  or more of their own silence. Only the model's context sees it — summary,
+  title, recall, the turn record and the screen all read upstream of it — and
+  never while the agent is speaking. Tone is not available; the prompt says so.
+- **The subject is named after every turn of theirs** (`TopicTitle`,
+  `CALL_AFTER_TURN_CHARS`), not only every twelve seconds, so `rehomeFrom` is one
+  turn and the panels' sections stop swallowing the first sentences of the next
+  subject. WHICH SCREEN tells the agent the headings are named automatically and
+  are not its to name or move — it had promised to "keep them separate".
+- **Earlier drives, by name**, are in the session prompt (`recent-drives.ts`), so
+  "what did we discuss last time?" is answered with the drive and when.
+- **An answer acted on with a tool counts as answered.** A "yes" became two
+  `add_task` calls and a silent follow-up, which `AnswerGuard` took for ignoring
+  the answer: "Sorry, I lost that. Say it again." The gate now remembers which
+  moment called a tool (`_acted_opportunity`).
+
 ### Which voice
 
 Three ElevenLabs voices are offered on the recorder, from the catalogue in
@@ -257,7 +369,10 @@ to the one who asked.
 word with a speaker index; AssemblyAI (`speaker_labels=true`) labels each turn
 and puts it in `user_id`. Whisper through LiteLLM returns text and nothing else,
 so on the default provider `STT_DIARIZE` is a no-op that logs once at connect.
-Turn it off with `STT_DIARIZE=false`. The **ledger has no speakers**:
+**Off by default since 14 Oct 2026** (`STT_DIARIZE=false`): on one-person drives
+Deepgram split the driver into "[Speaker 2]" and "[Speaker 1]" halfway through,
+and the prompt tells the agent to stay out of talk between people. Turn it on
+for drives with passengers. The **ledger has no speakers**:
 `utterance` is transcribed by batch Whisper, so speaker identity exists only on
 the live path. A field study with passengers wants that asymmetry in the
 ethics form and the limitations section both.
@@ -323,7 +438,8 @@ a self-hosted one keeps them at AU. Same line as `STT_PROVIDER`.
 Ask for something to take away — "draft me an email to William", "write me a
 prompt for that", "note that down" — and the model wraps it in `<draft
 title="...">...</draft>`. The body is never spoken. It is stored and shown with
-a Copy button. Ask to change it — "make it shorter", "warmer", "fix the name" —
+a Copy button on the recording's page (no longer on the recorder; see
+talkback-20). Ask to change it — "make it shorter", "warmer", "fix the name" —
 and it comes back as `<draft revises="3f9a2c" …>`, a new VERSION of the same
 draft rather than a second card.
 

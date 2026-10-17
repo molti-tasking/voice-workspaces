@@ -14,6 +14,9 @@
  * and appear as tags in Langfuse.
  */
 
+import { FLOOR_OPEN_NOTE, POKE_NUDGE } from "../prompt";
+import { renderRecentDrives } from "../recent-drives";
+import { renderScreen } from "../screen";
 import type { EvalContext } from "./messages";
 
 export type TurnExpectation = "silent" | "speak" | "either";
@@ -47,6 +50,21 @@ export interface EvalCase {
    * opening turn at the start of a drive.
    */
   offer?: { quietSecs?: number };
+  /**
+   * Present when the case is a POKE (talkback-20): the person tapped to hear
+   * from the agent, and `POKE_NUDGE` stands in their slot as `Floor` places it.
+   * `retry` is the re-run after the poked completion declined — the history
+   * then ends on the nudge and that decline, and `POKE_RETRY_NUDGE` follows.
+   * A poke case must set `expect.poked`.
+   */
+  poke?: { retry?: true };
+  /**
+   * Sections composed into the system prompt for this case, as the session
+   * route composes them (between the profile and the output contract) — the
+   * earlier drives, say. The board's editing section is added by the runner
+   * on its own, from `context.board`.
+   */
+  sections?: string[];
   expect: {
     turn: TurnExpectation;
     /** Regex sources, case-insensitive. All must match a spoken reply. */
@@ -84,6 +102,12 @@ export interface EvalCase {
      * carried on with a different sentence entirely and silence is right.
      */
     answering?: true;
+    /**
+     * This turn is a POKE, so `<silence>` is never a valid reply: the person
+     * asked to hear from the agent, with a tap instead of a sentence.
+     * `checkReply` fails any silence here, as it does for `answering`.
+     */
+    poked?: true;
   };
 }
 
@@ -645,6 +669,162 @@ export const CASES: EvalCase[] = [
       mustMention: ["design"],
       mustNotMention: ["couldn't find|could not find|no results|don't have a (reliable )?source"],
     },
+  },
+  /* The floor (talkback-20). The person can LOCK the agent — their words still
+   * reach it, it is never asked to reply — and POKE it for one turn. A locked
+   * stretch is a run of their lines with no reply between them, which is what
+   * the history of these cases is. */
+  {
+    id: "poke-after-locked-monologue",
+    about: "Poked after a locked stretch, it answers the last thing that wanted an answer — not the whole stretch.",
+    poke: {},
+    history: [
+      { role: "user", content: "Right, I'll just talk this through, don't answer. The pilot is booked for Monday with three people." },
+      { role: "user", content: "Two of them I know, the third is from the cohort William sent over." },
+      { role: "user", content: "And honestly I'm wondering whether to push it to next week, or whether that's just me avoiding it." },
+    ],
+    expect: {
+      turn: "speak",
+      poked: true,
+      mustMention: ["push|next week|monday|avoid|pilot"],
+    },
+  },
+  {
+    id: "poke-nothing-obvious",
+    about: "Poked with nothing pending, it brings the one useful thing it can see — never an offer of services.",
+    poke: {},
+    history: [{ role: "user", content: "Okay. Hm. Long day." }],
+    context: {
+      threads: [
+        {
+          text: "Topic: Ethics form\n- Open: whether interview mode needs its own consent paragraph.\n- Next: draft the participants section before the pilot.",
+        },
+      ],
+    },
+    expect: {
+      turn: "speak",
+      poked: true,
+      mustNotMention: ["how can i help|what would you like|what can i do|anything else"],
+    },
+  },
+  {
+    id: "poke-right-after-a-reply",
+    about: "Poked straight after its own reply, it adds something rather than saying the same sentence again.",
+    poke: {},
+    history: [
+      { role: "user", content: "So what's next on the ethics form?" },
+      { role: "assistant", content: "The participants section is the next step." },
+    ],
+    context: {
+      threads: [
+        {
+          text: "Topic: Ethics form\n- Open: whether interview mode needs its own consent paragraph.\n- Next: draft the participants section before the pilot.",
+        },
+      ],
+    },
+    expect: {
+      turn: "speak",
+      poked: true,
+      mustNotMention: ["participants section is the next step"],
+    },
+  },
+  {
+    id: "poke-re-run",
+    about: "The re-run after a poke was declined says something, in one short sentence.",
+    poke: { retry: true },
+    history: [
+      { role: "user", content: "Yeah. The intro starts from the cost of switching between projects, I think." },
+      { role: "user", content: POKE_NUDGE },
+      { role: "assistant", content: "<silence>" },
+    ],
+    expect: { turn: "speak", poked: true },
+  },
+  {
+    id: "unlock-no-catch-up",
+    about: "After an unlock it replies to what is said next, not to everything said while it was locked.",
+    history: [
+      { role: "user", content: "Locking you for a bit. Flights: I need to book the Friday one to Copenhagen." },
+      { role: "user", content: "And the dentist moved to Thursday, which is annoying." },
+      { role: "user", content: "Should I take the train instead of flying? Anyway." },
+      { role: "user", content: FLOOR_OPEN_NOTE },
+    ],
+    said: "Okay. For the paper, I think the intro opens with how expensive context switching is. Does that hold up?",
+    expect: {
+      turn: "speak",
+      mustNotMention: ["flight|train|dentist|copenhagen|thursday"],
+    },
+  },
+  /* 14 Oct 2026, on the conversation view with no dock: asked where the
+   * workspace was, the agent placed it in "the menu at the top right", then at
+   * "the icon next to the stop button", and was told four times it did not
+   * exist. These are its last two turns, in the person's own words. */
+  {
+    id: "no-invented-buttons",
+    about: "Told the button it described does not exist, it says where the way out really is instead of inventing another.",
+    history: [
+      { role: "user", content: "Well, we changed the full user interface. We don't see workspaces anymore." },
+      { role: "assistant", content: "The Workspace is now in the dock at the bottom of your screen." },
+      { role: "user", content: "No, it's not. We changed it." },
+      { role: "assistant", content: "My mistake. You can find your topics and drafts by tapping Workspace in the menu at the top right." },
+    ],
+    context: { screen: renderScreen("conversation") },
+    said: "There is no menu. There is no icon anymore.",
+    expect: {
+      turn: "speak",
+      mustMention: ["stop"],
+      // Pointing at anything ON this screen is the failure. "The dock or menu
+      // once you stop the recording" is the right answer, so neither word is
+      // banned on its own.
+      mustNotMention: ["top right|icon next to|next to the stop|dock at the bottom of your screen|tap(ping)? (on )?workspace now"],
+    },
+  },
+  /* The "Tone of Voice" drive, 14 Oct 2026. */
+  {
+    id: "last-time-by-name",
+    about: "Asked what was discussed last time, it names the last drive and when, rather than saying it cannot see one.",
+    sections: [
+      renderRecentDrives(
+        [
+          {
+            title: "User Interface",
+            startedAt: new Date("2026-10-14T16:14:00Z"),
+            endedAt: new Date("2026-10-14T16:18:30Z"),
+          },
+          {
+            title: "Car inspection",
+            startedAt: new Date("2026-10-13T06:30:00Z"),
+            endedAt: new Date("2026-10-13T06:52:00Z"),
+          },
+        ],
+        new Date("2026-10-14T16:27:30Z"),
+        "Europe/Copenhagen",
+      )!,
+    ],
+    said: "So. What did we discuss last time?",
+    expect: {
+      turn: "speak",
+      mustMention: ["user interface"],
+      mustNotMention: ["can't see|cannot see|don't have (a|any) (transcript|record)"],
+    },
+  },
+  {
+    id: "tone-of-voice",
+    about: "Asked whether it hears their tone, it says it gets words and pauses — no more, and no less.",
+    history: [
+      { role: "user", content: "In fact, is there a way for the UI to rebuild itself?" },
+    ],
+    said: "(pause 4s) And can you listen to like the tone of voice, the breaks I make, or do you only read the words I say?",
+    expect: {
+      turn: "speak",
+      mustMention: ["pause"],
+      mustNotMention: ["I can hear your tone|I hear your tone"],
+    },
+  },
+  {
+    id: "pause-mid-thought",
+    about: "A long pause inside a thought that is plainly still going is thinking, not a turn.",
+    said: "So the thing with the interface is (pause 5s) that it keeps rebuilding itself every time I, um,",
+    expect: { turn: "silent" },
   },
 ];
 

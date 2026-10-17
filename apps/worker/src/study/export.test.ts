@@ -150,6 +150,13 @@ async function seed() {
       latencyMs: 500,
     },
   ]);
+  // Who held the floor: the device's remembered Lock at connect, a poke, then
+  // Normal. Enums and offsets only, so nothing here can carry the sentinel.
+  await db.insert(schema.floorEvent).values([
+    { captureSessionId: SESSION, seq: 0, offsetMs: 0, kind: "locked", atConnect: true },
+    { captureSessionId: SESSION, seq: 1, offsetMs: 120_000, kind: "poke" },
+    { captureSessionId: SESSION, seq: 2, offsetMs: 300_000, kind: "open" },
+  ]);
   await db.insert(schema.macroProposal).values({
     userId: USER_ID,
     canonicalForm: `send|${SECRET}`,
@@ -227,6 +234,12 @@ describeIfDb("study export", () => {
     expect(decisions.map((d) => d.attempt)).toEqual([0, 1]);
     // The authoritative outcome of a moment is its LAST attempt.
     expect(decisions.at(-1)).toMatchObject({ trigger: "confirmation", outcome: "spoke" });
+    expect(decisions.every((d) => d.forcedPoke === false)).toBe(true);
+    expect(byType("floor_event").map((f) => [f.kind, f.atConnect, f.offsetMs])).toEqual([
+      ["locked", true, 0],
+      ["poke", false, 120_000],
+      ["open", false, 300_000],
+    ]);
     expect(byType("directive")[0]).toMatchObject({ verb: "send" });
     // Parked, asked once, and the drive ended without an answer.
     expect(byType("invocation")[0]).toMatchObject({ status: "unanswered", timesAsked: 1 });

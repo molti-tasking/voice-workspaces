@@ -44,6 +44,9 @@ const Body = z.object({
   // Whether the answer guard had to force this moment. Measurement only; the
   // container decides nothing by it. See `agent_decision.forced_answer`.
   forcedAnswer: z.boolean().optional(),
+  // Whether a poke's first completion declined and had to be re-run. Its own
+  // field so it can never inflate the unanswered-answer count above.
+  forcedPoke: z.boolean().optional(),
   agentTurnId: z.uuid().optional(),
 });
 

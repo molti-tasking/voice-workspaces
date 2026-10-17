@@ -9,7 +9,10 @@ import {
 } from "@voicemural/shared";
 
 /**
- * The ratings that follow a drive, under the debrief's spoken questions.
+ * The ratings that follow a drive: three taps over the finished conversation,
+ * with the microphone closed (since 14 Oct 2026). Which three is decided in
+ * @voicemural/shared (`itemsForPhase("post")`); the retired ones stay there so
+ * the answers already given still parse.
  *
  * WHY THEY EXIST. Pilot 01 measured only the system — latency, turn counts,
  * decline rate — and every one of those numbers was healthy on a drive that
@@ -23,13 +26,6 @@ import {
  * drive started from the dock never passes through, and every drive now opens
  * straight into the conversation — so it was dropped rather than asked a few
  * seconds into the recording (6 Oct 2026). See `MENTAL_LOAD`.
- *
- * NOT THE DEBRIEF. The three spoken questions are separate, older, and
- * promised verbatim on `/study` — they live in `@/lib/study/debrief` and are
- * answered ALOUD inside the recording. These are taps on a scale, and they sit
- * beside those questions rather than replacing them: a number the participant
- * chooses is not content, so it needs no window and crosses the privacy
- * boundary unchanged.
  *
  * DESIGNED FOR A PHONE IN A CRADLE, like everything else here: one row of
  * large targets, no typing, nothing to scroll past to reach the answer, and
@@ -66,8 +62,8 @@ function Scale({
   onPick: (value: number) => void;
 }) {
   return (
-    <fieldset className="w-full">
-      <legend className="mb-2 text-sm text-fg/70">{item.question}</legend>
+    <fieldset className="w-full min-w-0">
+      <legend className="mb-2 text-sm font-medium text-fg/85">{item.question}</legend>
       <div className="flex gap-1.5">
         {Array.from({ length: STUDY_SCALE_MAX }, (_, i) => i + 1).map((n) => (
           <button
@@ -79,14 +75,14 @@ function Scale({
               "h-11 flex-1 cursor-pointer rounded-lg font-mono text-sm transition-colors",
               value === n
                 ? "bg-fg text-[var(--color-canvas)]"
-                : "bg-fg/10 text-fg/70 hover:bg-fg/20",
+                : "bg-fg/[0.07] text-fg/70 hover:bg-fg/15",
             ].join(" ")}
           >
             {n}
           </button>
         ))}
       </div>
-      <div className="mt-1 flex justify-between text-xs text-fg/55">
+      <div className="mt-1.5 flex justify-between gap-3 text-xs text-fg/50">
         <span>{item.anchors[0]}</span>
         <span>{item.anchors[1]}</span>
       </div>
@@ -95,13 +91,7 @@ function Scale({
 }
 
 /**
- * The post items, shown under the three spoken questions while the microphone
- * is still open.
- *
- * Under rather than over: the spoken answers are what the debrief is for and
- * what the window is measured against, and a row of number buttons above them
- * would make the drive end with a form. These are answered while the
- * participant thinks about what to say.
+ * The post items, in the order `itemsForPhase` gives them.
  */
 export function PostDriveItems({ captureSessionId }: { captureSessionId: string | null }) {
   const [picked, setPicked] = useState<Record<string, number>>({});
@@ -115,7 +105,7 @@ export function PostDriveItems({ captureSessionId }: { captureSessionId: string 
   );
 
   return (
-    <div className="mt-4 space-y-4 border-t border-amber-500/20 pt-4">
+    <div className="space-y-5">
       {itemsForPhase("post").map((item) => (
         <Scale
           key={item.key}

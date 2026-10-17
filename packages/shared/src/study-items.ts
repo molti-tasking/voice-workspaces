@@ -3,6 +3,17 @@ import { z } from "zod";
 /**
  * The single-item measures the study asks around a drive.
  *
+ * THREE ITEMS AFTER A DRIVE, SINCE 14 OCT 2026, tapped with the microphone
+ * already closed: `FLOOR_CONTROL`, `LIVENESS_PERCEIVED`, `THINKING_MOVED`. The
+ * study moved to turn-taking — who decides when the system talks (Lock,
+ * Normal, Poke on the recorder) — and the debrief had grown to three spoken
+ * questions and five scales, longer than a screen. The new item asks the
+ * study's question; the two kept continue their series. `MENTAL_LOAD`,
+ * `CAN_CORRECT` and `DID_MY_THINKING` are RETIRED, not deleted: their keys
+ * stay valid so every answer already given still parses and exports, but they
+ * are no longer asked (`phases: []`). What follows is the original rationale,
+ * kept for the rows it produced.
+ *
  * FIVE ITEMS, and the count is a design decision rather than an oversight.
  * One before a drive and four after it is about twenty seconds of tapping,
  * which is what a person will do every day for a week. A validated multi-item
@@ -36,11 +47,8 @@ import { z } from "zod";
  * the series already running are unaffected, and the new one simply starts
  * later. Only rewording an existing question forks anything.
  *
- * THE SPOKEN DEBRIEF QUESTIONS ARE NOT HERE. They live in
- * `apps/web/src/lib/study/debrief.ts`, beside the window they are asked in,
- * because `/study` promises those three sentences verbatim in the information
- * sheet. These are the RATINGS that bracket them — taps on a scale, not
- * speech — and the two are answered in different ways for different reasons.
+ * `/study` reads the post items from here, so the information sheet and the
+ * recorder cannot promise and ask different things.
  *
  * Pure: no I/O and no db import, because the recorder is a client component.
  */
@@ -91,7 +99,8 @@ export const MENTAL_LOAD: StudyItem = {
   key: "mental_load",
   question: "How much are you currently holding in your head?",
   anchors: ["Almost nothing", "More than I can keep track of"],
-  phases: ["post"],
+  // Retired from the debrief on 14 Oct 2026. See the file comment.
+  phases: [],
   higherIsBetter: false,
 };
 
@@ -123,7 +132,8 @@ export const CAN_CORRECT: StudyItem = {
   key: "can_correct",
   question: "Could you correct the system when it was wrong?",
   anchors: ["Not at all", "Whenever I needed to"],
-  phases: ["post"],
+  // Retired from the debrief on 14 Oct 2026. See the file comment.
+  phases: [],
   higherIsBetter: true,
 };
 
@@ -169,11 +179,31 @@ export const DID_MY_THINKING: StudyItem = {
   key: "did_my_thinking",
   question: "Did it do thinking you wanted to do yourself?",
   anchors: ["Never", "Often"],
-  phases: ["post"],
+  // Retired from the debrief on 14 Oct 2026. See the file comment.
+  phases: [],
   higherIsBetter: false,
 };
 
+/**
+ * Whether the person got to decide when the agent talked.
+ *
+ * THE NEW ONE OF THE THREE, because it is the study's question now. The
+ * recorder gives them Lock (only they speak), Normal and Poke, and the
+ * container records every change it applied (`floor_event`) — which says what
+ * they DID with the controls, not whether it felt like theirs. A drive with no
+ * lock at all can be one where they never needed it, or one where they did
+ * not trust it to work; only they can tell the two apart.
+ */
+export const FLOOR_CONTROL: StudyItem = {
+  key: "floor_control",
+  question: "Did you get to decide when it talked?",
+  anchors: ["Never", "Always"],
+  phases: ["post"],
+  higherIsBetter: true,
+};
+
 export const STUDY_ITEMS: readonly StudyItem[] = [
+  FLOOR_CONTROL,
   MENTAL_LOAD,
   LIVENESS_PERCEIVED,
   CAN_CORRECT,

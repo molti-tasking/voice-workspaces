@@ -10,7 +10,7 @@ import {
   type Density,
 } from "./rules";
 
-export interface Cue {
+interface Cue {
   id: string;
   text: string;
   /**
@@ -52,7 +52,7 @@ interface CuePayload {
  * so it is never truncated, never aged out and never subject to the dwell
  * rules that keep the rest of the panel still.
  */
-export interface DraftCue {
+interface DraftCue {
   /** The LINEAGE id, so a rewrite replaces the card rather than adding one. */
   id: string;
   title: string;
@@ -76,7 +76,7 @@ export interface DraftCue {
 }
 
 /** One version of a draft, for the card's version picker. */
-export interface DraftVersionCue {
+interface DraftVersionCue {
   id: string;
   /** `v2.1`. */
   version: string;

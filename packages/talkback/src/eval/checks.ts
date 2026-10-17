@@ -156,6 +156,11 @@ export function checkReply(
   if (kase.expect.answering && silent && !expected) {
     failures.push("declined an answer to its own question");
   }
+  // The same rule for a poke (talkback-20): the person tapped to hear from
+  // the agent, and a silence back is the failure `Floor` refuses live.
+  if (kase.expect.poked && silent && !expected) {
+    failures.push("declined a poke");
+  }
 
   if (!silent) {
     if (!spoken && drafts.length === 0) failures.push("empty reply that is not the sentinel");

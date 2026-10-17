@@ -72,6 +72,32 @@ describeIfDb("POST /api/realtime/decision", () => {
     expect(rows).toHaveLength(1);
   });
 
+  it("keeps a forced poke apart from a forced answer", async () => {
+    const { ticket } = issueTicket({ userId: USER_ID, captureSessionId: SESSION_ID });
+    const res = await POST(
+      new Request("http://test/api/realtime/decision", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ticket,
+          seq: 3,
+          offsetMs: 120_000,
+          trigger: "poke",
+          outcome: "spoke",
+          forcedPoke: true,
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const [row] = await getDb()
+      .select()
+      .from(agentDecision)
+      .where(eq(agentDecision.captureSessionId, SESSION_ID));
+    expect(row?.trigger).toBe("poke");
+    expect(row?.forcedPoke).toBe(true);
+    expect(row?.forcedAnswer).toBe(false);
+  });
+
   it("refuses a decision for a drive that has ended, and writes nothing", async () => {
     const res = await post(ENDED_ID);
     expect(res.status).toBe(409);

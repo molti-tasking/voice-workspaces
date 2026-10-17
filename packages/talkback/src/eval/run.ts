@@ -32,7 +32,14 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chat } from "@voicemural/llm";
 import { BOARD_TOOLS } from "../board-tools";
-import { BOARD_EDITING, OPENING_NUDGE, TALKBACK_CONFIG_VERSION, renderSilenceNudge } from "../prompt";
+import {
+  BOARD_EDITING,
+  OPENING_NUDGE,
+  POKE_NUDGE,
+  POKE_RETRY_NUDGE,
+  TALKBACK_CONFIG_VERSION,
+  renderSilenceNudge,
+} from "../prompt";
 import { findCases, type EvalCase } from "./cases";
 import { checkReply, type CheckResult } from "./checks";
 import { JUDGE_AXES, judgeTurn, type Judgement } from "./judge";
@@ -160,18 +167,27 @@ async function runTurn(
   // An unprompted case carries the engine's instruction in the driver's slot
   // instead of their words — same shape the container produces, so the model
   // is judged on the system it will actually run in.
-  const nudge = kase.offer
-    ? kase.offer.quietSecs
-      ? renderSilenceNudge(kase.offer.quietSecs)
-      : OPENING_NUDGE
-    : undefined;
+  // A poke is the same shape: `POKE_NUDGE` in their slot, as `Floor` places
+  // it — or, for the re-run, the retry nudge after the declined poke.
+  const nudge = kase.poke
+    ? kase.poke.retry
+      ? POKE_RETRY_NUDGE
+      : POKE_NUDGE
+    : kase.offer
+      ? kase.offer.quietSecs
+        ? renderSilenceNudge(kase.offer.quietSecs)
+        : OPENING_NUDGE
+      : undefined;
   // A case that shows the board runs with the board as a live participant has
   // it: the editing section composed in and the four tools offered. The
   // session route makes the same pairing, so the eval never tests a model that
   // can see a board it has no hands for, or hands with no board.
   const boardOn = Boolean(kase.context?.board);
   const { composed, messages } = buildTurnMessages({
-    compose: { base: args.base, sections: boardOn ? [BOARD_EDITING] : [] },
+    compose: {
+      base: args.base,
+      sections: [...(boardOn ? [BOARD_EDITING] : []), ...(kase.sections ?? [])],
+    },
     history: kase.history,
     context: kase.context,
     said: kase.said,

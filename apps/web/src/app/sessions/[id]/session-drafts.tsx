@@ -91,7 +91,8 @@ function DraftView({ draft, onEdit }: { draft: SessionDraft; onEdit: () => void 
       setCopied(true);
       setTimeout(() => setCopied(false), 2_000);
     } catch {
-      // The text is on screen and selectable. See draft-panel.tsx.
+      // The text is on screen and selectable, so a refused clipboard costs a
+      // long-press, not the draft.
     }
   };
 
