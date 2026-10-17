@@ -46,6 +46,7 @@ export function SparkChips({
   connected,
   speaking,
   onPull,
+  layout = "row",
 }: {
   store: ConversationStore;
   ledger: SparkLedger;
@@ -54,6 +55,11 @@ export function SparkChips({
   /** The agent is talking: nothing to pull into. */
   speaking: boolean;
   onPull: (spark: SparkRequest) => Promise<PokeResult | null>;
+  /**
+   * A scrolling row under the panels (`/record`), or a stack at the foot of
+   * the person's panel (the study, `/p`), where a row would be too narrow.
+   */
+  layout?: "row" | "stack";
 }) {
   const conversation = useSyncExternalStore(
     store.subscribe,
@@ -104,33 +110,51 @@ export function SparkChips({
   }
 
   return (
-    <div className="ph-no-capture relative shrink-0" role="group" aria-label="Sparks">
-      <ul className="flex gap-2 overflow-x-auto pb-0.5">
+    <div
+      className={[
+        "ph-no-capture relative shrink-0",
+        // At the foot of their panel: set off from the subjects above it.
+        layout === "stack" ? "border-t border-line px-3 pt-3 pb-3" : "",
+      ].join(" ")}
+      role="group"
+      aria-label="Sparks"
+    >
+      <ul className={layout === "stack" ? "flex flex-col gap-2" : "flex gap-2 overflow-x-auto pb-0.5"}>
         {sparks.map((spark) => (
-          <li key={`${spark.ordinal}:${spark.kind}`} className="min-w-0 shrink-0 basis-[min(15rem,80%)]">
+          <li
+            key={`${spark.ordinal}:${spark.kind}`}
+            className={layout === "stack" ? "min-w-0" : "min-w-0 shrink-0 basis-[min(15rem,80%)]"}
+          >
             <button
               type="button"
               onClick={() => void pull(spark)}
               disabled={!connected || speaking || pulling}
               className={[
                 "flex min-h-11 w-full cursor-pointer flex-col items-start gap-0.5 rounded-2xl px-3 py-2 text-left",
-                "border border-amber-300/25 bg-amber-300/10 text-amber-50 transition-transform",
+                // The page's own text colour on a faint amber wash, so it reads
+                // in both themes; amber was the text colour once, and on the
+                // light theme it all but vanished.
+                "border border-amber-500/45 bg-amber-500/10 text-fg transition-[transform,background-color]",
+                "hover:bg-amber-500/20",
                 "active:scale-95 disabled:cursor-default disabled:opacity-40",
               ].join(" ")}
             >
               <span className="flex w-full min-w-0 items-center gap-1.5 text-sm font-medium">
-                <Sparkles size={14} aria-hidden className="shrink-0 text-amber-300" />
+                <Sparkles size={14} aria-hidden className="shrink-0 text-amber-600 dark:text-amber-300" />
                 <span className="truncate">{SPARK_LABELS[spark.kind]}</span>
               </span>
-              <span className="w-full truncate text-xs text-fg/60">
+              <span className="w-full truncate text-xs text-fg/70">
                 {spark.title} · {spark.reason}
               </span>
             </button>
           </li>
         ))}
         {asked.map((spark) => (
-          <li key={`asked:${spark.ordinal}`} className="min-w-0 shrink-0 basis-[min(12rem,60%)]">
-            <span className="flex min-h-11 w-full flex-col justify-center gap-0.5 rounded-2xl border border-line px-3 py-2 text-fg/40">
+          <li
+            key={`asked:${spark.ordinal}`}
+            className={layout === "stack" ? "min-w-0" : "min-w-0 shrink-0 basis-[min(12rem,60%)]"}
+          >
+            <span className="flex min-h-11 w-full flex-col justify-center gap-0.5 rounded-2xl border border-line px-3 py-2 text-fg/55">
               <span className="truncate text-sm">{SPARK_LABELS[spark.kind]}</span>
               <span className="truncate text-xs">{spark.title} · asked</span>
             </span>
