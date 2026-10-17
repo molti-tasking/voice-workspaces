@@ -27,7 +27,7 @@
 
 export type Speaker = "user" | "agent";
 
-interface Turn {
+export interface Turn {
   /** The container's id, unique per connection. */
   id: string;
   who: Speaker;
@@ -35,6 +35,11 @@ interface Turn {
   text: string;
   /** The agent was cut off: they talked over it, or locked it. */
   interrupted?: boolean;
+  /**
+   * Their pauses of two seconds or more inside this turn, as the container's
+   * VAD timed them (`PauseMarker`). Absent from an older container.
+   */
+  pauses?: number;
 }
 
 export interface Section {
@@ -42,6 +47,27 @@ export interface Section {
   key: string;
   title: string | null;
   turns: Turn[];
+  /**
+   * The subject's number in the order it first came up in this drive: the
+   * container's, from the title message, or the next free one if an older
+   * container sent none. The only name for a subject that ever leaves the
+   * participant's account (the sparks' `s{ordinal}`); titles never do.
+   */
+  ordinal?: number;
+  /** How many times it has been the current subject, counting the first. */
+  visits?: number;
+  /**
+   * When it was first and last talked about, as epoch ms. Stamped by the
+   * store from the clock, so the reducer itself stays pure; `signals.ts`
+   * reads them to tell a fading subject from a fresh one.
+   */
+  firstAt?: number;
+  lastAt?: number;
+  /**
+   * Whether they stated a decision or a next step on it, as the container
+   * judged when the subject was left. Absent until then.
+   */
+  settled?: boolean;
 }
 
 export interface Conversation {
@@ -60,8 +86,10 @@ export interface Conversation {
 export const EMPTY_CONVERSATION: Conversation = { sections: [], current: null, returns: 0 };
 
 export type ConversationMessage =
-  | { type: Speaker; id: string; text: string; interrupted?: boolean }
-  | { type: "title"; title: string; rehomeFrom?: string };
+  | { type: Speaker; id: string; text: string; interrupted?: boolean; pauses?: number }
+  | { type: "title"; title: string; rehomeFrom?: string; ordinal?: number }
+  /** What the container judged of a subject it has just left. */
+  | { type: "state"; ordinal: number; settled: boolean };
 
 /**
  * A server message from the container, checked.
@@ -79,6 +107,9 @@ export function parseServerMessage(data: unknown): ConversationMessage | null {
       type: "title",
       title: d.title.trim(),
       ...(typeof d.rehomeFrom === "string" ? { rehomeFrom: d.rehomeFrom } : {}),
+      ...(Number.isInteger(d.ordinal) && (d.ordinal as number) > 0
+        ? { ordinal: d.ordinal as number }
+        : {}),
     };
   }
   if (d.type === "user" || d.type === "agent") {
@@ -88,7 +119,14 @@ export function parseServerMessage(data: unknown): ConversationMessage | null {
       id: d.id,
       text: d.text,
       ...(d.interrupted === true ? { interrupted: true } : {}),
+      ...(d.type === "user" && Number.isInteger(d.pauses) && (d.pauses as number) > 0
+        ? { pauses: d.pauses as number }
+        : {}),
     };
+  }
+  if (d.type === "state") {
+    if (!Number.isInteger(d.ordinal) || typeof d.settled !== "boolean") return null;
+    return { type: "state", ordinal: d.ordinal as number, settled: d.settled };
   }
   return null;
 }
@@ -98,9 +136,45 @@ function sectionKey(title: string): string {
   return title.trim().replace(/\s+/g, " ").toLocaleLowerCase();
 }
 
-/** Fold one message into the conversation. Returns the same object when nothing changed. */
-export function applyMessage(state: Conversation, message: ConversationMessage): Conversation {
-  return message.type === "title" ? applyTitle(state, message) : applyTurn(state, message);
+/**
+ * Fold one message into the conversation. Returns the same object when nothing changed.
+ *
+ * `at` is when it arrived, as epoch ms, for the sections' `firstAt` and
+ * `lastAt`. Passed in rather than read here, so this stays a pure fold the
+ * tests can replay; the store passes `Date.now()`.
+ */
+export function applyMessage(
+  state: Conversation,
+  message: ConversationMessage,
+  at?: number,
+): Conversation {
+  if (message.type === "state") return applyState(state, message);
+  const next = message.type === "title" ? applyTitle(state, message) : applyTurn(state, message);
+  if (next === state || at === undefined || next.current === null) return next;
+  return {
+    ...next,
+    sections: next.sections.map((s) =>
+      s.key !== next.current ? s : { ...s, firstAt: s.firstAt ?? at, lastAt: at },
+    ),
+  };
+}
+
+/** A judgement on a subject, filed by its ordinal. Not a touch: `lastAt` stays. */
+function applyState(
+  state: Conversation,
+  message: Extract<ConversationMessage, { type: "state" }>,
+): Conversation {
+  const at = state.sections.findIndex((s) => s.ordinal === message.ordinal);
+  if (at === -1 || state.sections[at]!.settled === message.settled) return state;
+  return {
+    ...state,
+    sections: state.sections.map((s, i) => (i === at ? { ...s, settled: message.settled } : s)),
+  };
+}
+
+/** The ordinal a new subject gets when the container did not send one. */
+function nextOrdinal(sections: Section[]): number {
+  return sections.reduce((max, s) => Math.max(max, s.ordinal ?? 0), 0) + 1;
 }
 
 function applyTurn(
@@ -112,6 +186,7 @@ function applyTurn(
     who: message.type,
     text: message.text,
     ...(message.interrupted ? { interrupted: true } : {}),
+    ...(message.type === "user" && message.pauses ? { pauses: message.pauses } : {}),
   };
 
   // A turn already on screen is updated where it is, even if the subject has
@@ -136,7 +211,7 @@ function applyTurn(
   if (state.current === null) {
     return {
       ...state,
-      sections: [...state.sections, { key: "", title: null, turns: [turn] }],
+      sections: [...state.sections, { key: "", title: null, turns: [turn], visits: 1 }],
       current: "",
     };
   }
@@ -161,7 +236,11 @@ function applyTitle(
   if (state.current === "" && !existing) {
     return {
       ...state,
-      sections: sections.map((s) => (s.key === "" ? { ...s, key, title: message.title } : s)),
+      sections: sections.map((s) =>
+        s.key === ""
+          ? { ...s, key, title: message.title, ordinal: message.ordinal ?? nextOrdinal(sections) }
+          : s,
+      ),
       current: key,
     };
   }
@@ -182,9 +261,20 @@ function applyTitle(
   }
 
   if (existing) {
-    sections = sections.map((s) => (s.key === key ? { ...s, turns: [...s.turns, ...moved] } : s));
+    sections = sections.map((s) =>
+      s.key === key ? { ...s, turns: [...s.turns, ...moved], visits: (s.visits ?? 1) + 1 } : s,
+    );
   } else {
-    sections = [...sections, { key, title: message.title, turns: moved }];
+    sections = [
+      ...sections,
+      {
+        key,
+        title: message.title,
+        turns: moved,
+        ordinal: message.ordinal ?? nextOrdinal(sections),
+        visits: 1,
+      },
+    ];
   }
   // A section the move emptied said nothing under its title.
   sections = sections.filter((s) => s.turns.length > 0 || s.key === key);
@@ -230,7 +320,7 @@ export function createConversationStore(): ConversationStore {
     },
     getSnapshot: () => state,
     dispatch(message) {
-      const next = applyMessage(state, message);
+      const next = applyMessage(state, message, Date.now());
       if (next === state) return;
       state = next;
       for (const listener of listeners) listener();

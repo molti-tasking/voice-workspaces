@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -17,6 +18,7 @@ import {
   type Section,
   type Speaker,
 } from "@/lib/talkback/conversation";
+import { SAY_BACK_SHARE, allSignals, type SubjectSignal } from "@/lib/talkback/signals";
 
 /**
  * Both sides of the conversation, one panel each, in sections by subject.
@@ -50,6 +52,11 @@ import {
  * voice can reach the microphone, and the person's panel must not light up
  * because the agent is talking.
  *
+ * WHAT THEY HOLD OF EACH SUBJECT, under its heading in their panel: a thin
+ * bar of whose words it is built on (theirs, the agent's), a mark for settled
+ * or still open, and under the current subject the reasons in plain words
+ * (`signals.ts`). No numbers: it is an offer to look, not a score.
+ *
  * Never announced (`aria-live="off"`), as the title never was: a screen
  * reader reading turns aloud would talk over the conversation it shows. And
  * `ph-no-capture`, because PostHog's autocapture records the text of whatever
@@ -80,6 +87,12 @@ export function ConversationPanels({
 }) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, () => EMPTY_CONVERSATION);
   const still = useReducedMotion();
+  // What is drawn — whose words, settled, the reasons — does not depend on the
+  // clock, only the sparks' ranking does; so no ticking time here.
+  const signals = useMemo(
+    () => new Map(allSignals(state, 0).map((signal) => [signal.key, signal])),
+    [state],
+  );
 
   const agentPanel = useRef<HTMLDivElement>(null);
   const userPanel = useRef<HTMLDivElement>(null);
@@ -216,6 +229,7 @@ export function ConversationPanels({
         speaker={speaker}
         onTouched={touched}
         onScrolled={scrolled}
+        signals={signals}
         emptyText={empty ? (placeholder ?? null) : null}
       />
 
@@ -245,6 +259,7 @@ function Panel({
   onTouched,
   onScrolled,
   badge,
+  signals,
   emptyText,
 }: {
   who: Speaker;
@@ -257,6 +272,8 @@ function Panel({
   onTouched: (panel: HTMLDivElement | null) => void;
   onScrolled: (panel: HTMLDivElement | null) => void;
   badge?: React.ReactNode;
+  /** Each subject's signals, drawn under its heading. Their panel only. */
+  signals?: Map<string, SubjectSignal>;
   emptyText: string | null;
 }) {
   const touch = () => onTouched(panelRef.current);
@@ -321,6 +338,9 @@ function Panel({
                 >
                   {section.title ?? "…"}
                 </span>
+                {signals?.has(section.key) && (
+                  <SubjectMarks signal={signals.get(section.key)!} current={isCurrent} />
+                )}
               </h3>
               {turns.length > 0 && (
                 <ol className="space-y-2">
@@ -349,6 +369,54 @@ function Panel({
         })}
       </div>
     </section>
+  );
+}
+
+/**
+ * Whose words a subject is built on, and whether it was settled: a thin
+ * two-tone bar and a mark, and under the current subject the reasons. Drawn
+ * only once there is something to say — a bar needs enough words, a mark a
+ * judgement — so a new subject's heading stays clean.
+ */
+function SubjectMarks({ signal, current }: { signal: SubjectSignal; current: boolean }) {
+  const share = signal.agentShare;
+  if (share === null && signal.settled === null && signal.reasons.length === 0) return null;
+  return (
+    <span className="mt-1 block">
+      <span className="flex items-center gap-2">
+        {share !== null && (
+          <span
+            className="flex h-1 w-16 overflow-hidden rounded-full bg-sky-400/60"
+            role="img"
+            aria-label={
+              share >= SAY_BACK_SHARE
+                ? "Mostly Souffleur's words"
+                : share <= 1 - SAY_BACK_SHARE
+                  ? "Mostly your words"
+                  : "Your words and Souffleur's"
+            }
+          >
+            {/* Theirs first, from the left; the rest of the bar is the agent's. */}
+            <span className="h-full bg-fg/70" style={{ width: `${(1 - share) * 100}%` }} />
+          </span>
+        )}
+        {signal.settled !== null && (
+          <span
+            className={[
+              "text-[0.7rem] font-medium tracking-wide uppercase",
+              signal.settled ? "text-emerald-300/80" : "text-amber-300/80",
+            ].join(" ")}
+          >
+            {signal.settled ? "settled" : "open"}
+          </span>
+        )}
+      </span>
+      {current && signal.reasons.length > 0 && (
+        <span className="mt-0.5 block truncate text-xs font-normal text-fg/55">
+          {signal.reasons.join(" · ")}
+        </span>
+      )}
+    </span>
   );
 }
 

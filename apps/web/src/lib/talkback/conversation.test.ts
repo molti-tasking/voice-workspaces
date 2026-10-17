@@ -133,3 +133,41 @@ describe("the store", () => {
     expect(store.getSnapshot().sections[0]!.turns.map((t) => t.id)).toEqual(["c-1", "c-2"]);
   });
 });
+
+describe("what the sparks need from the container's messages", () => {
+  it("reads an ordinal, a pause count and a judgement, and drops what is malformed", () => {
+    expect(parseServerMessage({ type: "title", title: "Intro", ordinal: 3 })).toEqual({
+      type: "title",
+      title: "Intro",
+      ordinal: 3,
+    });
+    expect(parseServerMessage({ type: "title", title: "Intro", ordinal: "3" })).toEqual({
+      type: "title",
+      title: "Intro",
+    });
+    expect(parseServerMessage({ type: "user", id: "c-1", text: "so", pauses: 2 })).toEqual({
+      type: "user",
+      id: "c-1",
+      text: "so",
+      pauses: 2,
+    });
+    expect(parseServerMessage({ type: "state", ordinal: 1, settled: true })).toEqual({
+      type: "state",
+      ordinal: 1,
+      settled: true,
+    });
+    expect(parseServerMessage({ type: "state", ordinal: 1 })).toBeNull();
+  });
+
+  it("files a judgement under the subject with that ordinal, and nowhere else", () => {
+    const state = fold(
+      title("TÜV appointment"),
+      user("c-1", "book it"),
+      title("Paper intro"),
+      user("c-2", "the framing"),
+      { type: "state", ordinal: 1, settled: true },
+      { type: "state", ordinal: 9, settled: false },
+    );
+    expect(state.sections.map((s) => s.settled)).toEqual([true, undefined]);
+  });
+});
