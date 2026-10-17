@@ -41,7 +41,7 @@ export {
   type DraftForContext,
 } from "./draft-context";
 export { SUMMARY_PROMPT, foldSummary, summaryPromptFor } from "./summary";
-export { TITLE_PROMPT } from "./title";
+export { SETTLED_PROMPT, TITLE_PROMPT } from "./title";
 export {
   ANSWER_ACKNOWLEDGEMENTS,
   ANSWER_RETRY_NUDGE,

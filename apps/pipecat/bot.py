@@ -519,6 +519,17 @@ Never claim to remember anything. You cannot check the transcript right now, and
 # Turn it on for drives with passengers.
 STT_DIARIZE = os.getenv("STT_DIARIZE", "false").lower() in ("1", "true", "yes")
 
+# Whether Deepgram keeps the fillers — "um", "uh", "äh" — that it otherwise
+# drops (talkback-21). They are half of how unsure somebody sounded, and the
+# recorder counts them per subject for its hesitation signal, then leaves them
+# out of the text it shows. They ALSO reach the model, which the prompt tells
+# to read as hesitation and never answer. OFF by default: whether production
+# keeps them is an open decision of the study (SPARKS plan §10). Deepgram only;
+# Whisper and AssemblyAI have no such switch, and the signal there degrades to
+# pauses, self-repairs and hedges. Read at connect, like the rest — recreate
+# the container after changing it (`docker compose up -d` keeps the old .env).
+STT_FILLER_WORDS = os.getenv("STT_FILLER_WORDS", "false").lower() in ("1", "true", "yes")
+
 # Language for the live conversation. Unset = let the provider detect it
 # (Deepgram "multi", AssemblyAI per-turn detection, Whisper auto-detect); set to
 # force ONE BCP-47 code ("en", "de", "nl-NL") — worth doing on a monolingual
@@ -762,6 +773,8 @@ def build_stt(session_language: str | None = None):
                 # this down for latency is the obvious thing to try and it
                 # silently costs the whole conversation.
                 utterance_end_ms=deepgram_utterance_end_ms(),
+                # Forwarded as a query parameter. See STT_FILLER_WORDS.
+                **({"extra": {"filler_words": "true"}} if STT_FILLER_WORDS else {}),
             ),
         )
 
@@ -1238,6 +1251,16 @@ def clean_title(raw: str | None, previous: str | None) -> str | None:
     return text
 
 
+def parse_settled(raw: str | None) -> bool | None:
+    """SETTLED or OPEN, however the model dressed it; None for anything else."""
+    word = re.sub(r"[^A-Za-z]", "", (raw or "").split()[0] if (raw or "").split() else "").upper()
+    if word == "SETTLED":
+        return True
+    if word == "OPEN":
+        return False
+    return None
+
+
 def parse_seeded_titles(raw: object) -> list[tuple[str, int | None]]:
     """The sections a reconnecting browser already has, checked.
 
@@ -1292,6 +1315,9 @@ class TurnFeed:
         # a new subject's visit begins (`TopicTitle`).
         self._since_mark_ms: int | None = None
         self.last_mark_ms: int | None = None
+        # A pause measured before their next turn has opened: the thinking
+        # before they spoke, counted on that turn when it does.
+        self._pause_before = 0
 
     def _open(self, kind: str) -> dict:
         self._seq += 1
@@ -1310,9 +1336,27 @@ class TurnFeed:
         self._agent = None
         if self._user is None:
             self._user = self._open("user")
+            if self._pause_before:
+                self._user["pausesBefore"] = self._pause_before
+                self._user["pauses"] = self._pause_before
+                self._pause_before = 0
         self._noted(self._user)
         self._user["text"] = f"{self._user['text']} {text}".strip()
         return dict(self._user)
+
+    def note_pause(self, gap_secs: float) -> None:
+        """They stopped for `gap_secs` and started again (`PauseMarker`).
+
+        Counted on the turn it falls in, for the recorder's hesitation signal:
+        inside an open turn it is a pause in the middle of what they were
+        saying; before one, the thinking before they said it. The two count the
+        same in v1 and are sent apart (`pausesBefore`) so the study can tell.
+        A count, never the length: the signal is how often, not how long.
+        """
+        if self._user is None:
+            self._pause_before += 1
+        else:
+            self._user["pauses"] = self._user.get("pauses", 0) + 1
 
     def end_user(self) -> None:
         self._user = None
@@ -1324,6 +1368,7 @@ class TurnFeed:
         self._user = None
         if self._agent is None:
             self._agent = self._open("agent")
+            self._pause_before = 0
         self._noted(self._agent)
         self._agent["text"] += text
         return dict(self._agent)
@@ -1337,6 +1382,8 @@ class TurnFeed:
 
     def end_agent(self) -> None:
         self._agent = None
+        # The quiet after a reply is not a pause in their thought.
+        self._pause_before = 0
 
     @property
     def agent_open(self) -> bool:
@@ -1416,6 +1463,14 @@ class TopicTitle(FrameProcessor):
     closed on the one it left — so the drive's subjects survive a reload and
     the recall probe can find a subject's own speech days later. Titles never
     reach a log line: the log says `s3`.
+
+    AND WHETHER IT WAS SETTLED. When the talk leaves a subject, one more call
+    (`SETTLED_PROMPT`, sent by the web app as `settledPrompt`) is asked whether
+    the person stated a decision or a next step on it, over that visit's own
+    speech, and the answer goes to the recorder as `{"type": "state",
+    "ordinal": n, "settled": bool}`. Off the turn path like the naming, one per
+    subject left; inert without the prompt. The drive's LAST subject is never
+    judged: it is never left, and at Stop there is nobody to tell.
     """
 
     # How many earlier titles the model is shown. A drive rarely has more
@@ -1431,6 +1486,10 @@ class TopicTitle(FrameProcessor):
     MIN_GAP_SECONDS = 12
     # A slow talker still gets a title: any new speech at all, after this long.
     CALL_AFTER_SECONDS = 30
+    # How much of a visit's speech the settled check is shown: its most recent
+    # part, which is where a decision lands.
+    SETTLED_WINDOW_CHARS = 1500
+
     # ONCE PER FINISHED TURN of theirs, as well (14 Oct 2026). The thresholds
     # above name the subject every twelve seconds at best, and the recorder
     # files every turn under the subject it was said in: on a drive that moved
@@ -1448,10 +1507,14 @@ class TopicTitle(FrameProcessor):
         feed: TurnFeed | None = None,
         titles: list | None = None,
         started_at_ms: int | None = None,
+        settled_prompt: str | None = None,
     ):
         super().__init__()
         self._prompt = (title_prompt or "").strip()
+        self._settled_prompt = (settled_prompt or "").strip()
         self._started_at_ms = started_at_ms
+        # What was said on the current visit, for the settled check.
+        self._visit_text = ""
         self._metadata = metadata or {}
         self._ticket = ticket
         self._feed = feed
@@ -1582,6 +1645,10 @@ class TopicTitle(FrameProcessor):
             return
         self._window = f"{self._window} {text.strip()}".strip()[-self.WINDOW_CHARS :]
         self._new_chars += len(text.strip())
+        if self._settled_prompt:
+            self._visit_text = f"{self._visit_text}\n{text.strip()}".strip()[
+                -self.SETTLED_WINDOW_CHARS :
+            ]
 
     def _maybe_name(self, turn_ended: bool = False) -> None:
         elapsed = time.monotonic() - self._last_call
@@ -1673,6 +1740,18 @@ class TopicTitle(FrameProcessor):
         start = self._offset(start_ms or now)
         left = self._title
         self._close_visit(start)
+        # Judged on what was said while it was current. The speech that changed
+        # the subject is in there too: a few words of the next one do not make
+        # the last one settled.
+        if left is not None and self._settled_prompt and self._visit_text:
+            left_ordinal = self.ordinal_of(left)
+            if left_ordinal is not None:
+                self.create_task(
+                    self._judge(left_ordinal, left, self._visit_text), name="title:settled"
+                )
+        # A first title names everything said before it, so that speech stays.
+        if left is not None:
+            self._visit_text = ""
 
         if left is not None:
             self._remember(left)
@@ -1688,6 +1767,30 @@ class TopicTitle(FrameProcessor):
             await asyncio.to_thread(self._save, title)
             if start is not None:
                 self._post_visit({"ordinal": ordinal, "title": title, "startOffsetMs": start})
+
+    async def _judge(self, ordinal: int, title: str, said: str) -> None:
+        """Ask whether subject `ordinal` was settled, and tell the recorder."""
+        try:
+            raw = await asyncio.to_thread(
+                _litellm_chat,
+                [
+                    {"role": "system", "content": self._settled_prompt},
+                    {"role": "user", "content": f"Subject: {title}\n\nWhat was said:\n{said}"},
+                ],
+                max_tokens=4,
+                metadata=self._metadata,
+            )
+        except Exception as err:
+            # Dropped: a mark nobody sees is not worth a retry.
+            logger.warning(f"[title] s{ordinal} not judged: {type(err).__name__}")
+            return
+        settled = parse_settled(raw)
+        if settled is None:
+            return
+        logger.info(f"[title] s{ordinal} {'settled' if settled else 'open'}")
+        await self.push_frame(
+            RTVIServerMessageFrame(data={"type": "state", "ordinal": ordinal, "settled": settled})
+        )
 
     def _close_visit(self, end: int | None) -> None:
         """Close the visit to the current subject at `end`. Off the loop."""
@@ -1774,6 +1877,11 @@ class PauseMarker(FrameProcessor):
 
     The format is described to the model in `prompt.ts` (WHAT YOU CAN SEE) —
     change one, change the other.
+
+    AND COUNTED FOR THE RECORDER (talkback-21): each pause is also told to the
+    `TurnFeed`, which counts it on the turn it fell in, for the sparks'
+    hesitation signal. Counted when it is measured, so a pause whose words
+    never came still counts: they stopped, and started again.
     """
 
     MIN_PAUSE_SECS = 2.0
@@ -1781,8 +1889,9 @@ class PauseMarker(FrameProcessor):
     # carried onto speech this much later.
     STALE_SECS = 10.0
 
-    def __init__(self):
+    def __init__(self, feed: TurnFeed | None = None):
         super().__init__()
+        self._feed = feed
         # When their last stretch of speech ended, if nothing has been said by
         # anyone since.
         self._quiet_since: float | None = None
@@ -1800,6 +1909,8 @@ class PauseMarker(FrameProcessor):
                 gap = now - self._quiet_since
                 if gap >= self.MIN_PAUSE_SECS:
                     self._pause = (gap, now)
+                    if self._feed is not None:
+                        self._feed.note_pause(gap)
             self._quiet_since = None
         elif isinstance(frame, BotStartedSpeakingFrame):
             self._quiet_since = None
@@ -5217,6 +5328,7 @@ def build_pipeline(
         feed=feed,
         titles=titles,
         started_at_ms=session.get("startedAtEpochMs"),
+        settled_prompt=session.get("settledPrompt"),
     )
     # Offsets are measured against the drive's own start, the same clock
     # `utterance` uses — which is what lets the two tables be read as one
@@ -5315,7 +5427,7 @@ def build_pipeline(
             offers,
             answers,
             # Last before the aggregator, so only the model sees the marks.
-            PauseMarker(),
+            PauseMarker(feed),
             aggregator.user(),
             # Between the aggregator and the LLM: every turn passes here on its
             # way to being generated, and under Lock none is.

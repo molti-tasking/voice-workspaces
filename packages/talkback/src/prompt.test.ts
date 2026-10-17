@@ -359,6 +359,8 @@ describe("the pauses bot.py marks in their words (talkback-20)", () => {
   it("explains the mark in the format PauseMarker writes, and that tone is not heard", () => {
     expect(SYSTEM_PROMPT).toContain("(pause 4s)");
     expect(SYSTEM_PROMPT).toMatch(/you cannot hear their tone/);
+    // Fillers, when the container keeps them (talkback-21), are not words to answer.
+    expect(SYSTEM_PROMPT).toMatch(/fillers .* are hesitation, not words to answer/);
   });
 });
 

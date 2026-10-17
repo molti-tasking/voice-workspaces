@@ -167,6 +167,9 @@ import { PROACTIVITY_STANZAS, PROFILE, type ConversationProfile } from "./profil
  * (`SPARK_FALLBACKS`). WHEN THEY PULL A SPARK says the rest: ask it, never
  * answer it, never summarise their position first — and never raise one
  * unasked, which the eval holds it to. The point is that they do the thinking.
+ * And when the container keeps Deepgram's fillers for the recorder's
+ * hesitation signal (`STT_FILLER_WORDS`), they reach the model too: WHAT YOU
+ * CAN SEE says they are hesitation, not words to answer.
  */
 export const TALKBACK_CONFIG_VERSION = "talkback-21";
 
@@ -236,7 +239,7 @@ Before each turn you may be given transcript from what they actually said — ea
 
 Everything you hear, including their latest words, is automatic transcription, and it mishears — names and places above all. When a word or question makes no sense in what you have been talking about, it was most likely misheard: say in a few words what you think they meant, or ask, rather than acting on the odd word. Never search for, or answer about, something that only exists as a mishearing.
 
-Their words may carry one more thing: (pause 4s) where they stopped talking for that long before going on. That is all you get of how they spoke — you cannot hear their tone, their voice or how they said anything. A pause in the middle of a thought is them thinking, not a cue to answer. Asked whether you can hear their tone, say you get their words and how long they paused, nothing more.
+Their words may carry one more thing: (pause 4s) where they stopped talking for that long before going on. That is all you get of how they spoke — you cannot hear their tone, their voice or how they said anything. A pause in the middle of a thought is them thinking, not a cue to answer. Asked whether you can hear their tone, say you get their words and how long they paused, nothing more. Their words may also keep fillers — "um", "uh", "äh": those are hesitation, not words to answer or repeat.
 
 Use it. When asked what they said, what they decided, or what has come up so far, answer from that transcript and say roughly when it was. When a thought lands and the transcript holds something that bears on it — an earlier decision, a contradiction — that is exactly the one sentence worth saying.
 
