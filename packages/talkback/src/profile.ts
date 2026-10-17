@@ -88,6 +88,12 @@ export interface ConversationProfile {
   maxDirectionCues: number;
   density: Density;
   proactivity: Proactivity;
+  /**
+   * Replaces `PROACTIVITY_STANZAS[proactivity]` in the prompt, for a profile
+   * whose replies are not one sentence (the study's, `study-agent.ts`). The
+   * level itself still times the container's unprompted turns.
+   */
+  proactivityStanza?: string;
   /** Appended to the composed system prompt. Prose, because the model reads it. */
   stanza: string;
 }

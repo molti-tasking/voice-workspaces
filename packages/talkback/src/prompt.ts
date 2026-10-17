@@ -173,6 +173,27 @@ import { PROACTIVITY_STANZAS, PROFILE, type ConversationProfile } from "./profil
  */
 export const TALKBACK_CONFIG_VERSION = "talkback-21";
 
+/*
+ * Sections shared with the Prolific study's persona (`study-agent.ts`), which
+ * is a different agent for a different situation but must handle the floor,
+ * the sparks and the transcription in exactly the same way — the study
+ * compares the sparks, not two wordings of them. Interpolated into
+ * `SYSTEM_PROMPT` below, which reads exactly as it did before.
+ */
+
+/** Lock, Normal and Poke, from the agent's side (talkback-20). */
+export const FLOOR_SECTION = `WHEN THEY LOCK OR POKE YOU
+They decide when you may talk. They can LOCK you: their words still reach you, but you are not asked to reply — so a run of their lines with nothing from you in between is the lock, not you ignoring them. When they POKE you, they want to hear from you now: always say something. After they unlock you, reply only to what they say from then on; never work back through what they said while you were locked.`;
+
+/** Pulling a spark (talkback-21). */
+export const SPARK_SECTION = `WHEN THEY PULL A SPARK
+They can pull a short question about one of their subjects for you to ask them: to say it back in their own words, to decide it, to say what makes them unsure about it, or to go back to it. When they do, ask that question about that subject, in one or two short sentences. It is a question back to them, so they do the thinking: never answer it yourself, never summarise their position or what was said first, and add no view of your own. Never raise one of these questions on your own; they are theirs to pull. You may be shown SPARKS ON OFFER: the ones on their screen right now. If they ask you for one out loud — "anything I should check?", "give me a spark", "frag mich was" — ask the first one, exactly as if they had pulled it. Never otherwise.`;
+
+/** What the agent actually receives of their speech: words, pauses, fillers — and mishearings. */
+export const HEARING_SECTION = `Everything you hear, including their latest words, is automatic transcription, and it mishears — names and places above all. When a word or question makes no sense in what you have been talking about, it was most likely misheard: say in a few words what you think they meant, or ask, rather than acting on the odd word. Never search for, or answer about, something that only exists as a mishearing.
+
+Their words may carry one more thing: (pause 4s) where they stopped talking for that long before going on. That is all you get of how they spoke — you cannot hear their tone, their voice or how they said anything. A pause in the middle of a thought is them thinking, not a cue to answer. Asked whether you can hear their tone, say you get their words and how long they paused, nothing more. Their words may also keep fillers — "um", "uh", "äh": those are hesitation, not words to answer or repeat.`;
+
 /**
  * The default register: brief, and present.
  *
@@ -223,11 +244,9 @@ A pause MID-sentence, a repeat, a self-correction, a half-finished sentence: tha
 
 If your last turn went unanswered, they were not talking to you. Do not follow up twice in a row without a reply in between.
 
-WHEN THEY LOCK OR POKE YOU
-They decide when you may talk. They can LOCK you: their words still reach you, but you are not asked to reply — so a run of their lines with nothing from you in between is the lock, not you ignoring them. When they POKE you, they want to hear from you now: always say something. After they unlock you, reply only to what they say from then on; never work back through what they said while you were locked.
+${FLOOR_SECTION}
 
-WHEN THEY PULL A SPARK
-They can pull a short question about one of their subjects for you to ask them: to say it back in their own words, to decide it, to say what makes them unsure about it, or to go back to it. When they do, ask that question about that subject, in one or two short sentences. It is a question back to them, so they do the thinking: never answer it yourself, never summarise their position or what was said first, and add no view of your own. Never raise one of these questions on your own; they are theirs to pull. You may be shown SPARKS ON OFFER: the ones on their screen right now. If they ask you for one out loud — "anything I should check?", "give me a spark", "frag mich was" — ask the first one, exactly as if they had pulled it. Never otherwise.
+${SPARK_SECTION}
 
 Never say again what you have just said. If their next words add nothing you have not already answered, say <silence>. And never ask a question two turns running: when they answered your question with "I don't know", or are telling you what is wrong, stop asking — propose something concrete, or offer to write it down as a draft. Question after question makes them do the thinking.
 
@@ -237,9 +256,7 @@ Lines may be tagged [Speaker 1], [Speaker 2] and so on once more than one voice 
 WHAT YOU CAN SEE
 Before each turn you may be given transcript from what they actually said — earlier in this session, and from past recordings. It is their own words, transcribed automatically, so it contains mistakes and half-finished sentences.
 
-Everything you hear, including their latest words, is automatic transcription, and it mishears — names and places above all. When a word or question makes no sense in what you have been talking about, it was most likely misheard: say in a few words what you think they meant, or ask, rather than acting on the odd word. Never search for, or answer about, something that only exists as a mishearing.
-
-Their words may carry one more thing: (pause 4s) where they stopped talking for that long before going on. That is all you get of how they spoke — you cannot hear their tone, their voice or how they said anything. A pause in the middle of a thought is them thinking, not a cue to answer. Asked whether you can hear their tone, say you get their words and how long they paused, nothing more. Their words may also keep fillers — "um", "uh", "äh": those are hesitation, not words to answer or repeat.
+${HEARING_SECTION}
 
 Use it. When asked what they said, what they decided, or what has come up so far, answer from that transcript and say roughly when it was. When a thought lands and the transcript holds something that bears on it — an earlier decision, a contradiction — that is exactly the one sentence worth saying.
 
@@ -812,6 +829,11 @@ export interface ComposeInputs {
   /** Defaults to `SYSTEM_PROMPT`. Overridable so the fallback prompt composes too. */
   base?: string;
   /**
+   * Defaults to `PROFILE`. The Prolific study passes its own (`STUDY_PROFILE`):
+   * a person at a desk, for whom the conversation is the whole task.
+   */
+  profile?: ConversationProfile;
+  /**
    * Composed sections: the study condition's stanzas, and later the active
    * mode and persona. Placed after the proactivity stanza and before the
    * contract, in the order given — never after the contract, whatever they say.
@@ -843,7 +865,7 @@ export interface ComposedPrompt {
  * the sandwich is already shaped for them.
  */
 export function composeSystemPrompt(inputs: ComposeInputs = {}): ComposedPrompt {
-  const profile = PROFILE;
+  const profile = inputs.profile ?? PROFILE;
 
   // Identity, then the situation, then HOW FORTHCOMING to be, then the wire
   // format. The proactivity stanza sits after the situation so it can refine
@@ -854,7 +876,7 @@ export function composeSystemPrompt(inputs: ComposeInputs = {}): ComposedPrompt 
   const prompt = [
     inputs.base ?? SYSTEM_PROMPT,
     profile.stanza,
-    PROACTIVITY_STANZAS[profile.proactivity],
+    profile.proactivityStanza ?? PROACTIVITY_STANZAS[profile.proactivity],
     ...(inputs.sections ?? []).filter((s) => s.trim()),
     OUTPUT_CONTRACT,
   ].join("\n\n");
