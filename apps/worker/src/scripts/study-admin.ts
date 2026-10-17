@@ -9,6 +9,7 @@
  *   pnpm study:participant --user <id> --id <P07>         assign a pseudonym (or --clear)
  *   pnpm study:condition --user <id> --set '<json>'       the condition for their NEXT drives (or --clear)
  *   pnpm study:condition --user <id>                      print the template and recent drives
+ *   pnpm study:prolific [--out <dir>]                     the Prolific study: participants.csv and probes.csv (PROLIFIC.md)
  *
  * WHY SETTERS AT ALL, when `board_enabled_at` is set with SQL. A condition is
  * JSON, and a hand-written JSON typo in `user.study_condition` does not fail:
@@ -32,6 +33,7 @@ import { captureSession, user } from "@voicemural/db/schema";
 import { StudyCondition } from "@voicemural/shared";
 import { exportParticipant, studyParticipants } from "../study/export";
 import { participantMetrics } from "../study/metrics";
+import { buildProlificExport, toCsv } from "../study/prolific-export";
 import { pendingReview, recordReview } from "../study/review";
 
 function flag(name: string): string | undefined {
@@ -249,6 +251,24 @@ async function runReview(): Promise<void> {
   console.log("\nrecord one with: pnpm study:review --user <id> --card <cardId> --outcome done|open|lost");
 }
 
+/**
+ * The Prolific study, as two CSV files. Carries the free recall text and the
+ * PIDs (see prolific-export.ts), so it goes under the gitignored `storage/`
+ * unless told otherwise, like `export`.
+ */
+async function runProlific(): Promise<void> {
+  const outDir = flag("out")
+    ? resolve(flag("out")!)
+    : new URL("../../../../storage/prolific-export", import.meta.url).pathname;
+  const { participants, probes } = await buildProlificExport();
+  await mkdir(outDir, { recursive: true });
+  await writeFile(join(outDir, "participants.csv"), toCsv(participants));
+  await writeFile(join(outDir, "probes.csv"), toCsv(probes));
+  const done = participants.filter((p) => p.part2_completed_at !== null).length;
+  console.log(`${join(outDir, "participants.csv")}  ${participants.length} participants, ${done} finished part 2`);
+  console.log(`${join(outDir, "probes.csv")}  ${probes.length} probes`);
+}
+
 async function main(): Promise<void> {
   switch (process.argv[2]) {
     case "export":
@@ -261,9 +281,11 @@ async function main(): Promise<void> {
       return runParticipant();
     case "condition":
       return runCondition();
+    case "prolific":
+      return runProlific();
     default:
       throw new Error(
-        "usage: study-admin <export|metrics|review|participant|condition> [--user <id>] …",
+        "usage: study-admin <export|metrics|review|participant|condition|prolific> [--user <id>] …",
       );
   }
 }

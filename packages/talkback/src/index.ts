@@ -143,3 +143,11 @@ export {
   type TranscriptHit,
 } from "./retrieval";
 export { containment, isEcho, keptIndices, withoutEcho } from "./echo";
+export {
+  DEFAULT_STUDY_TASK,
+  PROLIFIC_TASKS,
+  isStudyTaskId,
+  studyTaskFor,
+  type StudyTask,
+  type StudyTaskId,
+} from "./study-task";

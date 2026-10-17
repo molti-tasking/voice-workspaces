@@ -4,6 +4,9 @@ import { SCREENS, renderScreen, screenFor } from "./screen";
 describe("screen", () => {
   it("names a route coarsely, never passing a raw URL on", () => {
     expect(screenFor("/record")).toBe("conversation");
+    expect(screenFor("/p")).toBe("conversation");
+    expect(screenFor("/p/recall")).toBe("conversation");
+    expect(screenFor("/profile")).toBe("other");
     expect(screenFor("/workspace?since=2026-09-01")).toBe("workspace");
     expect(screenFor("/board/brief")).toBe("board");
     expect(screenFor("/sessions/abc")).toBe("session");

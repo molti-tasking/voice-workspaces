@@ -1,6 +1,7 @@
 "use client";
 
 import posthog from "posthog-js";
+import { isStudyRoute } from "@/lib/study/routes";
 
 /**
  * Survey plumbing for custom-rendered (`API`-type) surveys.
@@ -86,6 +87,9 @@ export function canShowSurvey(context: SurveyContext): boolean {
   // page also sets `user-select: none` for glanceable use in a car, so an
   // open-text question there would be unanswerable anyway.
   if (context.pathname.startsWith("/record")) return false;
+
+  // The Prolific study: nothing but the study on screen (lib/study/routes.ts).
+  if (isStudyRoute(context.pathname)) return false;
 
   if (typeof document !== "undefined" && document.visibilityState !== "visible") return false;
 

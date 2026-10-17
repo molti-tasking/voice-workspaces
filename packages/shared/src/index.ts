@@ -9,3 +9,4 @@ export * from "./study-items";
 export * from "./survey";
 export * from "./findings-survey";
 export * from "./speech-cues";
+export * from "./prolific";

@@ -8,7 +8,8 @@
     "./profile": "./src/profile.ts",
     "./voice": "./src/voice.ts",
     "./language": "./src/language.ts",
-    "./screen": "./src/screen.ts"
+    "./screen": "./src/screen.ts",
+    "./study-task": "./src/study-task.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -3,6 +3,7 @@
 import { ChevronLeft } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
+import { isStudyRoute } from "@/lib/study/routes";
 import { useCapture } from "./capture-provider";
 import { Link } from "./nav-link";
 
@@ -22,7 +23,7 @@ import { Link } from "./nav-link";
 export function LiveDriveBar() {
   const { isRecording, title, cues } = useCapture();
   const pathname = usePathname();
-  const shown = isRecording && !pathname.startsWith("/record");
+  const shown = isRecording && !pathname.startsWith("/record") && !isStudyRoute(pathname);
   const bar = useRef<HTMLDivElement>(null);
 
   /* Its height, published for the page's own sticky headers to sit under.

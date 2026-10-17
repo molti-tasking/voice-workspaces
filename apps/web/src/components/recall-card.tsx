@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { canShowSurvey } from "@/lib/analytics/surveys";
+import { isStudyRoute } from "@/lib/study/routes";
 import { useCapture } from "./capture-provider";
 
 /**
@@ -61,7 +62,7 @@ export function RecallCard() {
   }, [isRecording, pathname]);
 
   if (due === 0 || dismissed || isRecording) return null;
-  if (pathname.startsWith("/record") || pathname.startsWith("/recall")) return null;
+  if (pathname.startsWith("/record") || pathname.startsWith("/recall") || isStudyRoute(pathname)) return null;
 
   function dismiss() {
     writeSession(DISMISSED_KEY, "1");

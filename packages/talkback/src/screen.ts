@@ -30,6 +30,8 @@ export function isScreen(value: unknown): value is Screen {
 /** A pathname as the coarse screen name that is stored and shown to the model. */
 export function screenFor(pathname: string): Screen {
   if (pathname.startsWith("/record")) return "conversation";
+  // The Prolific study's conversation page shows the same two panels.
+  if (pathname === "/p" || pathname.startsWith("/p/")) return "conversation";
   if (pathname.startsWith("/workspace")) return "workspace";
   if (pathname.startsWith("/board")) return "board";
   if (pathname.startsWith("/timeline")) return "timeline";

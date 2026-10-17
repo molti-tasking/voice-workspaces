@@ -3,6 +3,7 @@ import {
   captureSession,
   driveSubject,
   driveSubjectSegment,
+  prolificParticipant,
   recallProbe,
   recallProvenanceEnum,
   subjectSignal,
@@ -20,7 +21,9 @@ import { and, asc, eq, getDb, gte, isNotNull, isNull, lte, sql } from "./index";
  * pulled and the unpulled can be compared, and so the control arm, which pulls
  * nothing, still gets three.
  *
- * WHEN. `RECALL_DELAY_HOURS` after the drive ended. Scheduled at Stop, when the
+ * WHEN. `RECALL_DELAY_HOURS` after the drive ended — or, for a Prolific
+ * participant, the delay their enrolment fixed (`recall_delay_hours`), so a
+ * second part launched a day later finds them due. Scheduled at Stop, when the
  * recorder posts its final signals; and lazily for a drive that ended without
  * one (closed by the idle sweep), the first time the person's due probes are
  * looked up.
@@ -86,7 +89,13 @@ export async function scheduleRecallProbes(
   const rest = subjects.filter((s) => !chosen.includes(s));
   chosen.push(...sample(rest, RECALL_SUBJECTS_PER_DRIVE - chosen.length, random));
 
-  const dueAt = new Date((session.endedAt ?? now).getTime() + RECALL_DELAY_HOURS * HOUR_MS);
+  const [participant] = await db
+    .select({ hours: prolificParticipant.recallDelayHours })
+    .from(prolificParticipant)
+    .where(eq(prolificParticipant.userId, session.userId))
+    .limit(1);
+  const delayHours = participant?.hours ?? RECALL_DELAY_HOURS;
+  const dueAt = new Date((session.endedAt ?? now).getTime() + delayHours * HOUR_MS);
   const inserted = await db
     .insert(recallProbe)
     .values(chosen.map((s) => ({ userId: session.userId, driveSubjectId: s.id, dueAt })))
