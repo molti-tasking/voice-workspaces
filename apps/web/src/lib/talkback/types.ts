@@ -1,3 +1,6 @@
+import type { Floor } from "@/lib/recorder/floor-store";
+import type { ConversationMessage } from "./conversation";
+
 /**
  * The shape the recorder sees, independent of what is doing the talking.
  *
@@ -11,18 +14,22 @@ export type TalkbackStatus = "off" | "connecting" | "listening" | "speaking" | "
 export interface TalkbackState {
   status: TalkbackStatus;
   /**
-   * What the conversation is about right now, in two to four words.
+   * Who may talk, as the CONTAINER last confirmed it: "locked" or "open".
+   * Null until it has answered — before the connection is up, or from an older
+   * container that does not know the request.
    *
-   * Held in memory only, and not produced here: the voice container names it
-   * off the live STT stream and pushes it over the data channel that is
-   * already open (see `TopicTitle` in apps/pipecat/bot.py). The browser only
-   * ever receives it, so a reload during a drive starts blank again and the
-   * next push refills it — the durable record is `utterance`, as always.
-   *
-   * Null until the container has heard enough to name anything. The recorder
-   * keeps the title's space empty until then.
+   * Kept apart from the person's choice (`useFloorPreference`) because the
+   * two can differ for a moment, and the toggle on the recorder says so: a
+   * lock that has been tapped and not yet applied is not a lock the agent is
+   * under.
    */
-  title: string | null;
+  floor: Floor | null;
+  /**
+   * The container's VAD hears them right now. With `status === "speaking"` for
+   * the agent, this is what lights the panel of whoever is talking. A few
+   * changes a turn, so it can live here without the cost the turns would have.
+   */
+  userSpeaking: boolean;
   /**
    * Whether the agent can reach anything the driver has said before.
    *
@@ -42,7 +49,8 @@ export interface TalkbackState {
 
 export const OFF: TalkbackState = {
   status: "off",
-  title: null,
+  floor: null,
+  userSpeaking: false,
   memory: "ready",
   error: null,
 };
@@ -50,4 +58,19 @@ export const OFF: TalkbackState = {
 export interface TalkbackOptions {
   captureSessionId: string | null;
   enabled: boolean;
+  /** The floor the person chose. Sent with the offer, and again on every change. */
+  floor: Floor;
+  /** Where the turns and titles the container pushes go. */
+  onMessage: (message: ConversationMessage) => void;
+  /** The sections the screen already has, for a reconnect. See `titlesForReconnect`. */
+  titles: () => string[];
+}
+
+/** What became of a tap on Poke, as the container answered it. */
+export type PokeResult = "fired" | "armed" | "running" | "speaking" | "ended";
+
+export interface Talkback {
+  state: TalkbackState;
+  /** Ask the agent for one turn now. Null when it could not be asked. */
+  poke: () => Promise<PokeResult | null>;
 }

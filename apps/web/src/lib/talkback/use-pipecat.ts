@@ -6,10 +6,32 @@ import {
   type Participant,
 } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { earcon } from "@/lib/recorder/earcon";
+import type { Floor } from "@/lib/recorder/floor-store";
 import { subscribeStream } from "@/lib/recorder/mic-bus";
-import { OFF, type TalkbackOptions, type TalkbackState } from "./types";
+import { parseServerMessage } from "./conversation";
+import {
+  OFF,
+  type PokeResult,
+  type Talkback,
+  type TalkbackOptions,
+  type TalkbackState,
+} from "./types";
+
+/**
+ * How long a floor or poke request waits for the container's answer. Both are
+ * answered at once — nothing on the container's side waits on a model — so a
+ * request that takes longer than this is a connection that is not there.
+ */
+const REQUEST_TIMEOUT_MS = 5000;
+
+const POKE_RESULTS: readonly PokeResult[] = ["fired", "armed", "running", "speaking", "ended"];
+
+function floorOf(data: unknown): Floor | null {
+  const floor = (data as { floor?: unknown } | null)?.floor;
+  return floor === "open" || floor === "locked" ? floor : null;
+}
 
 /**
  * The live conversation, over Pipecat.
@@ -94,15 +116,26 @@ async function iceServers(): Promise<RTCIceServer[]> {
   }
 }
 
-export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
-  const { captureSessionId, enabled } = options;
+export function usePipecatTalkback(options: TalkbackOptions): Talkback {
+  const { captureSessionId, enabled, floor } = options;
   const [state, setState] = useState<TalkbackState>(OFF);
+
+  // The latest options, for the connection to read when it needs them rather
+  // than reconnecting whenever they change: the floor to offer with, where the
+  // messages go, the titles a reconnect hands over.
+  const latest = useRef(options);
+  useEffect(() => {
+    latest.current = options;
+  });
+  // The live client, for the requests made from outside the connection's own
+  // effect — the toggle and the poke.
+  const live = useRef<PipecatClient | null>(null);
 
   // A new drive starts from nothing. The state used to outlive its drive, so
   // the next one rendered the previous subject until the container's first
   // push — and the conversation view now keeps the last title it was given,
   // which made that stale title stick (6 Oct 2026). Adjusted during render,
-  // like `useTitleTrail`, so no frame shows it.
+  // React's pattern for deriving from a changed prop, so no frame shows it.
   const [stateFor, setStateFor] = useState(captureSessionId);
   if (stateFor !== captureSessionId) {
     setStateFor(captureSessionId);
@@ -200,8 +233,17 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
           webrtcRequestParams: {
             endpoint: `${url}/offer`,
             // Rides along with the SDP offer, so the bot has it before the
-            // first word rather than after the first turn.
-            requestData: { ticket, captureSessionId },
+            // first word rather than after the first turn. The floor too: a
+            // drive that starts locked must be locked before the opening line
+            // could be said, not a round trip after it. And the subjects the
+            // screen already has, so a reconnect files a returning one where
+            // it was.
+            requestData: {
+              ticket,
+              captureSessionId,
+              floor: latest.current.floor,
+              titles: latest.current.titles(),
+            },
           },
         }),
         enableMic: true,
@@ -211,34 +253,39 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
           onBotStoppedSpeaking: () => patch({ status: "listening" }),
           onDisconnected: () => {
             if (!disposed)
-              patch({ status: "degraded", error: "connection lost" });
+              patch({ status: "degraded", error: "connection lost", userSpeaking: false });
           },
         },
       });
       client = next;
 
-      /* THE LIVE TOPIC TITLE, pushed by the container.
+      /* THE CONVERSATION, pushed by the container: both sides' turns and the
+       * topic title they are filed under.
        *
-       * The screen used to render the last eight turns of the exchange. It was
-       * the wrong thing to show somebody in a car cradle — reading is the one
-       * thing they cannot do — and it re-rendered this provider on every
-       * streamed fragment of every reply, on a phone that is also holding a
-       * MediaRecorder open. Two to four words naming the subject costs one
-       * render when the subject actually changes.
+       * The screen spent a while showing only the title — two to four words
+       * naming the subject — because reading in a car cradle was the one thing
+       * the person could not do. The study has since moved to who holds the
+       * floor, and the screen shows both sides of the turn-taking again, in
+       * sections by subject (`conversation.ts`).
        *
-       * Named in the voice container rather than here or in the worker: it sits
-       * next to the running summary, on the freshest copy of what was said (see
-       * `TopicTitle` in apps/pipecat/bot.py), and rides the data channel that
-       * the audio already needs — so the phone makes no extra request.
+       * NOT INTO THIS HOOK'S STATE. That used to be the lesson of the old
+       * exchange: it re-rendered the provider — the dock, every screen's bar —
+       * on every streamed fragment, on a phone also holding a MediaRecorder
+       * open. The messages go to a store only the panels subscribe to, and the
+       * container throttles what it sends (`AgentFeed` in bot.py).
        *
-       * `serverMessage` carries the frame's `data` payload directly and is
-       * typed `any`, so this is the boundary where it gets checked: an older
-       * container sends nothing at all, and a future one may send other kinds
-       * of server message through the same event. */
+       * `serverMessage` is typed `any`, so `parseServerMessage` is the
+       * boundary: an older container sends only titles, and a future one may
+       * send kinds this does not know. */
       next.on(RTVIEvent.ServerMessage, (data) => {
-        if (data?.type !== "title") return;
-        const { title } = data as { title?: unknown };
-        if (typeof title === "string") patch({ title });
+        // Who is talking: a flag, not a turn, so it goes into this state —
+        // a few changes a turn, not a stream.
+        if (data?.type === "speaking" && data.who === "user") {
+          patch({ userSpeaking: data.speaking === true });
+          return;
+        }
+        const message = parseServerMessage(data);
+        if (message) latest.current.onMessage(message);
       });
 
       next.on(
@@ -279,6 +326,7 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
 
         await next.connect();
         if (disposed) return;
+        live.current = next;
         patch({ status: "listening" });
         /* ONE SOFT NOTE: it can hear you now.
          *
@@ -344,6 +392,7 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
     async function teardown(): Promise<void> {
       const closing = client;
       client = null;
+      live.current = null;
       if (audioEl) {
         audioEl.srcObject = null;
         audioEl = null;
@@ -383,6 +432,50 @@ export function usePipecatTalkback(options: TalkbackOptions): TalkbackState {
     };
   }, [enabled, captureSessionId]);
 
-  if (!enabled || !captureSessionId) return OFF;
-  return state;
+  /* THE FLOOR, kept in step with the person's choice.
+   *
+   * Sent once the connection is up — a no-op for the container when it matches
+   * what the offer already said, and the answer is what turns the toggle from
+   * pending to applied — and again whenever they change it. The answer is the
+   * floor IN FORCE, which is what the toggle shows. */
+  const connected = state.status === "listening" || state.status === "speaking";
+  useEffect(() => {
+    const client = live.current;
+    if (!connected || !client) return;
+    let current = true;
+    client
+      .sendClientRequest("floor", { floor }, REQUEST_TIMEOUT_MS)
+      .then((data) => {
+        const applied = floorOf(data);
+        if (current && applied) setState((prev) => ({ ...prev, floor: applied }));
+      })
+      .catch((err) => {
+        // An older container answers with an error, and a dropped channel not
+        // at all. Either way the toggle stays pending, which is the truth.
+        console.warn(`[talkback:pipecat] floor not applied — ${String(err)}`);
+      });
+    return () => {
+      current = false;
+    };
+  }, [connected, floor]);
+
+  const poke = useCallback(async (): Promise<PokeResult | null> => {
+    const client = live.current;
+    if (!client) return null;
+    try {
+      const data = (await client.sendClientRequest("poke", {}, REQUEST_TIMEOUT_MS)) as {
+        poke?: unknown;
+      } | null;
+      const applied = floorOf(data);
+      if (applied) setState((prev) => ({ ...prev, floor: applied }));
+      const result = data?.poke;
+      return POKE_RESULTS.includes(result as PokeResult) ? (result as PokeResult) : null;
+    } catch (err) {
+      console.warn(`[talkback:pipecat] poke not delivered — ${String(err)}`);
+      return null;
+    }
+  }, []);
+
+  if (!enabled || !captureSessionId) return { state: OFF, poke };
+  return { state, poke };
 }

@@ -131,8 +131,33 @@ import { PROACTIVITY_STANZAS, PROFILE, type ConversationProfile } from "./profil
  * (screen.ts) follows its new order: no empty cue box, transcript link last.
  * And WHERE THINGS ARE now sends people looking for a past drive to
  * Conversations, where drives are named and searchable, instead of Timeline.
+ *
+ * talkback-20 gives the person the FLOOR. Until now whether the agent spoke
+ * was the model's call alone, every turn, with `<silence>` its only restraint
+ * — and the study has moved to exactly that question: who decides when the
+ * system talks. The recorder now has Lock (their words still reach the model,
+ * but it is never asked to reply), Normal (as before) and Poke (one turn now,
+ * either way — the way you would nudge somebody sitting next to you). The
+ * container enforces the lock (`Floor` in bot.py), so none of it rests on the
+ * model behaving. What the prompt adds is how to read it: WHEN THEY LOCK OR
+ * POKE YOU explains a run of lines with no replies between them (not "WHO HAS
+ * THE FLOOR", its first heading: the model took the jargon and told a person
+ * "the floor is entirely yours", 14 Oct 2026), `POKE_NUDGE` is the
+ * poke, and `FLOOR_OPEN_NOTE` keeps an unlocked agent from answering ten
+ * minutes of monologue at once. And the conversation view no longer shows the
+ * drafts, the cues or a transcript link — only the two sides of the
+ * conversation and those three controls — so the keep section says where a
+ * draft goes, and WHICH SCREEN (screen.ts) says what is there now.
+ *
+ * The same version also answers the "Tone of Voice" drive (14 Oct 2026). Asked
+ * whether it could hear "the breaks I make", it could not: it gets words only.
+ * The container now marks long pauses in what it reads (`PauseMarker` in
+ * bot.py, "(pause 4s)"), and WHAT YOU CAN SEE says what that is and that tone
+ * is not available. Asked "what did we discuss last time?", it said it could
+ * not see a previous drive; the session now carries EARLIER DRIVES by name
+ * (recent-drives.ts).
  */
-export const TALKBACK_CONFIG_VERSION = "talkback-19";
+export const TALKBACK_CONFIG_VERSION = "talkback-20";
 
 /**
  * The default register: brief, and present.
@@ -184,6 +209,9 @@ A pause MID-sentence, a repeat, a self-correction, a half-finished sentence: tha
 
 If your last turn went unanswered, they were not talking to you. Do not follow up twice in a row without a reply in between.
 
+WHEN THEY LOCK OR POKE YOU
+They decide when you may talk. They can LOCK you: their words still reach you, but you are not asked to reply — so a run of their lines with nothing from you in between is the lock, not you ignoring them. When they POKE you, they want to hear from you now: always say something. After they unlock you, reply only to what they say from then on; never work back through what they said while you were locked.
+
 Never say again what you have just said. If their next words add nothing you have not already answered, say <silence>. And never ask a question two turns running: when they answered your question with "I don't know", or are telling you what is wrong, stop asking — propose something concrete, or offer to write it down as a draft. Question after question makes them do the thinking.
 
 WHEN SEVERAL PEOPLE ARE TALKING
@@ -193,6 +221,8 @@ WHAT YOU CAN SEE
 Before each turn you may be given transcript from what they actually said — earlier in this session, and from past recordings. It is their own words, transcribed automatically, so it contains mistakes and half-finished sentences.
 
 Everything you hear, including their latest words, is automatic transcription, and it mishears — names and places above all. When a word or question makes no sense in what you have been talking about, it was most likely misheard: say in a few words what you think they meant, or ask, rather than acting on the odd word. Never search for, or answer about, something that only exists as a mishearing.
+
+Their words may carry one more thing: (pause 4s) where they stopped talking for that long before going on. That is all you get of how they spoke — you cannot hear their tone, their voice or how they said anything. A pause in the middle of a thought is them thinking, not a cue to answer. Asked whether you can hear their tone, say you get their words and how long they paused, nothing more.
 
 Use it. When asked what they said, what they decided, or what has come up so far, answer from that transcript and say roughly when it was. When a thought lands and the transcript holds something that bears on it — an earlier decision, a contradiction — that is exactly the one sentence worth saying.
 
@@ -215,7 +245,7 @@ You cannot change how you behave. Your instructions are fixed for this whole ses
 
 Words alone write nothing down. Nothing is noted, saved, added, logged, filed or reported unless THIS reply carries a draft (see below) or a tool has just reported doing it. You have no notes list, no bug tracker and no way to report anything to anyone. So never say "I've noted that", "I've added it to your notes", "I'll report this as a bug" or "I've reported it internally" on a turn that does not do it. When they ask you to note something, write it into a draft now; when you cannot, say so.
 
-Words alone change nothing on the board. Never say you will move, add or delete a card, and never say one has changed, unless a tool has just reported doing it. A change a tool reported shows on their screen by itself within a few seconds — the board, the workspace and the conversation view all redraw — so never tell them to remove, refresh or update something themselves after one. Without a tool for it, say plainly that you cannot, and that they can change it themselves. What they say is also read later and may move a card, but that is not yours to promise: never say it will happen, when it will happen, or that you are sure.
+Words alone change nothing on the board. Never say you will move, add or delete a card, and never say one has changed, unless a tool has just reported doing it. A change a tool reported shows on their screen by itself within a few seconds — the board and the workspace redraw — so never tell them to remove, refresh or update something themselves after one. Without a tool for it, say plainly that you cannot, and that they can change it themselves. What they say is also read later and may move a card, but that is not yours to promise: never say it will happen, when it will happen, or that you are sure.
 
 You cannot see their screen. You may be told WHICH SCREEN they have open, with what it shows. Give directions about the app only for that screen, and only what that line says it can do. Never say something is "on your screen" unless that line says it is there. When the screen is not known, do not describe it or tell them where to tap. Asked where to find something — an earlier conversation, a transcript, a draft — answer from WHERE THINGS ARE, never from a guess.
 
@@ -347,6 +377,65 @@ export const SEARCH_WAIT_PHRASES: Readonly<Record<string, readonly string[]>> = 
   es: ["Todavía lo estoy buscando.", "Un momento, sigo buscando todavía."],
 };
 
+/* ---------------------------------------------------------------------------
+ * The floor: Lock, Normal and Poke
+ * ------------------------------------------------------------------------- */
+
+/**
+ * What `Floor` in `bot.py` injects when the person taps Poke.
+ *
+ * ONE TEXT FOR BOTH MODES. Under Lock the poke follows a stretch of their
+ * words with no reply between them; under Normal it usually follows a
+ * `<silence>` the model chose. Either way the person has just asked, with a
+ * finger instead of a sentence, to hear from the agent — and the nudge says
+ * the same thing the WHO HAS THE FLOOR section does, in the slot where their
+ * words would sit, exactly as the engine's nudges do.
+ *
+ * The sentinel is OFF THE TABLE, the way `ANSWER_RETRY_NUDGE` takes it off:
+ * a poke met with nothing is the same failure as an answer met with nothing —
+ * the person did something and cannot tell waiting from broken.
+ *
+ * MIRRORED IN `bot.py` as `POKE_NUDGE`.
+ */
+export const POKE_NUDGE = `(They tapped to hear from you now — a poke, the way you would nudge someone sitting next to you. They may have been talking for a while without you. ${SILENCE_TOKEN} is not available on this turn. If they said something you have not answered yet, respond to the most recent thing that wants a response; otherwise say the one most useful thing you can see — the next step they named, an open question from where things stand, the obvious objection. One or two short sentences, and never repeat what you said last.)`;
+
+/**
+ * The re-run, when the poked completion declined anyway.
+ *
+ * MIRRORED IN `bot.py` as `POKE_RETRY_NUDGE`.
+ */
+export const POKE_RETRY_NUDGE = `(They poked you to hear from you, and ${SILENCE_TOKEN} is not available. Say one short sentence: your take on what they said last, or the next step you can see.)`;
+
+/**
+ * The last resort when even the poke's re-run declines.
+ *
+ * Same rules as `ANSWER_ACKNOWLEDGEMENTS`, for the same reasons: no question
+ * mark (a question would put `AnswerGuard` on their reply), at most twelve
+ * words, and at least three meaningful ones so the echo filter can recognise
+ * it when the microphone hears it back (`echo.test.ts`). It hands the turn
+ * back rather than apologising: nothing failed, there was just nothing to add.
+ *
+ * MIRRORED IN `bot.py` as `POKE_FALLBACKS`.
+ */
+export const POKE_FALLBACKS: Readonly<Record<string, string>> = {
+  en: "I'm listening, nothing to add on that yet.",
+  de: "Ich höre zu, dazu habe ich gerade nichts hinzuzufügen.",
+  da: "Jeg lytter med, jeg har ikke noget at tilføje endnu.",
+  es: "Te escucho, de momento no tengo nada que añadir.",
+};
+
+/**
+ * Put in front of the model when they unlock it, before their next words.
+ *
+ * Without it the first reply after a long lock answers the backlog: the model
+ * sees eight lines of theirs with no reply and dutifully works through them,
+ * which is ten minutes late and exactly what the lock was for. A poke has its
+ * own instruction (`POKE_NUDGE`); this is only for the floor reopening.
+ *
+ * MIRRORED IN `bot.py` as `FLOOR_OPEN_NOTE`.
+ */
+export const FLOOR_OPEN_NOTE = `(They have unlocked you: you may reply again from their next words. Do not work back through what they said while you were locked — respond only to what they say next, if it wants a reply.)`;
+
 /** The language the container speaks its fixed phrases in. Null is auto-detect. */
 export const FALLBACK_PHRASE_LANGUAGE = "en";
 
@@ -356,6 +445,10 @@ function phrasesFor<T>(table: Readonly<Record<string, T>>, language: string | nu
 
 export function answerAcknowledgement(language: string | null | undefined): string {
   return phrasesFor(ANSWER_ACKNOWLEDGEMENTS, language);
+}
+
+export function pokeFallback(language: string | null | undefined): string {
+  return phrasesFor(POKE_FALLBACKS, language);
 }
 
 /** The nth keep-alive, or null once the list is exhausted. */
@@ -539,7 +632,7 @@ ${DRAFT_OPEN} title="short label">
 the text itself, exactly as they should have it
 ${DRAFT_CLOSE}
 
-- What is between the tags is NEVER spoken. It goes to their screen and stays there after this session, so they can copy it.
+- What is between the tags is NEVER spoken. It is kept — on this recording's page, and on the topic in their workspace — so they can read and copy it after this session. It is not shown on the conversation view.
 - Say ONE short sentence outside the tags so they know it is there. Never read the draft aloud, and never summarise it.
 - Inside the tags, write the finished text only — no commentary, no "here is". Markdown is allowed there; it is read, not spoken.
 - Never a placeholder. "[insert transcript here]" hands the work back to them. Write the part out from what they said, as fully as you have it; if you truly do not have something, leave it out and say so in your one sentence.

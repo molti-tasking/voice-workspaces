@@ -222,47 +222,45 @@ body {
   }
 }
 
-/* --- A cue arriving on the secondary display -------------------------------
-   Opacity only, on the arriving row only. No slide and no colour flash: the
-   panel is read peripherally while the person is doing something else, and
-   motion in the corner of the eye is the one thing guaranteed to pull their
-   attention off their actual task. Fading in is enough to say "this is new"
-   to someone already looking, and invisible to someone who is not. */
-@keyframes vm-cue-in {
-  from {
-    opacity: 0;
-  }
-}
-
-/* --- The topic title changing ---------------------------------------------
-   THIS DELIBERATELY BREAKS THE "OPACITY ONLY" RULE the cue panel above sets,
-   and the reason it is allowed to is upstream of the CSS: the container's title
-   prompt returns the CURRENT title unchanged while the subject holds, so this
-   fires only when the conversation genuinely turns — a handful of times an hour
-   rather than continuously. A subject changing is the one event on this screen
-   that is worth a look, and a plain fade is too quiet to say "this changed" to
-   someone glancing sideways at it.
-
-   A HEAVY blur, not a soft one: the old words should stop being words before
-   the new ones arrive, so nobody half-reads a title that is on its way out.
-   The two keyframes meet at the same blur, so the swap between them does not
-   show. `BLUR_MS` in topic-title.tsx waits out `vm-title-blur`. */
+/* --- The subject changing --------------------------------------------------
+   The current subject's heading in the recorder's panels resolves in from a
+   heavy blur when it becomes current — a new subject, or a return to an
+   earlier one — and holds still the rest of the time. Allowed to be this much
+   motion because of what is upstream of the CSS: the container's title prompt
+   returns the current title unchanged while the subject holds, so this fires
+   only when the conversation genuinely turns, a handful of times an hour. A
+   plain fade is too quiet to say "this changed" to someone glancing sideways. */
 .vm-title {
   animation: vm-title-resolve 480ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-.vm-title[data-blurred] {
-  animation: vm-title-blur 320ms cubic-bezier(0.4, 0, 1, 1) forwards;
-}
-@keyframes vm-title-blur {
-  to {
-    filter: blur(20px);
-    opacity: 0.3;
-  }
 }
 @keyframes vm-title-resolve {
   from {
     filter: blur(20px);
     opacity: 0.3;
+  }
+}
+
+/* --- Who is talking -------------------------------------------------------
+   Three bars in the header of whichever panel has the floor this second. They
+   move because the person they stand for is moving air; held at full height
+   for anyone who asked for less motion, where the lit panel alone says it. */
+.vm-speaking > span {
+  transform-origin: bottom;
+  animation: vm-speaking 900ms ease-in-out infinite;
+}
+.vm-speaking > span:nth-child(2) {
+  animation-delay: -300ms;
+}
+.vm-speaking > span:nth-child(3) {
+  animation-delay: -600ms;
+}
+@keyframes vm-speaking {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
   }
 }
 
@@ -272,16 +270,10 @@ body {
   ::view-transition-new(root) {
     animation: none !important;
   }
-  /* Including the cue fade: `motion-reduce:` cannot cancel an inline
-     `animation`, and the panel is the one surface where an unwanted animation
-     would fire repeatedly for an entire recording. */
-  [style*="vm-cue-in"] {
-    animation: none !important;
-  }
-  /* And the topic title's blur. topic-title.tsx checks the same query and skips
-     its wait, so between them the title changes as a plain cut. */
+  /* And the subject's blur: the heading changes as a plain cut. The panels
+     check the same query and scroll without smoothing. */
   .vm-title,
-  .vm-title[data-blurred] {
+  .vm-speaking > span {
     animation: none !important;
   }
 }

@@ -66,17 +66,18 @@ Tier 2 holds the behaviours the study varies. Tier 3 holds the measures.
 
 ### 2.2 System in one screen
 
-| Unit | Role |
-|---|---|
-| `apps/web` | Next.js app. Recorder PWA (`/record`), workspace, board, timeline, repertoire, session transcript (`/sessions/[id]`), `/study`, and all API routes |
-| `apps/worker` | pg-boss jobs: transcribe chunk, classify utterance (content vs direction), extract workspace, invoke capability, detect macros, index memory, idle sweep |
-| `apps/pipecat/bot.py` | Python voice agent (Pipecat, peer-to-peer WebRTC). Key classes: `RunningSummary`, `Recall`, `Offers` (unprompted turns), `TurnRecorder`, `SilenceGate` |
-| `packages/db` | Drizzle schema, migrations, queries (`repertoire.ts`, `workspace.ts`, `board.ts`, …) |
-| `packages/talkback` | Everything the agent knows: `prompt.ts`, `setting.ts`, `context.ts`, `agent-turns.ts`, `memory-search.ts`, `board-context.ts`, and `eval/` |
-| `packages/workspace` | Pure logic: extraction prompt and parser, op-log fold, board and `judge()`, trajectory, classifier prompt, macro miner |
-| `packages/shared` | Zod contracts, analytics event types, the lexical directive gate |
+| Unit                  | Role                                                                                                                                                     |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web`            | Next.js app. Recorder PWA (`/record`), workspace, board, timeline, repertoire, session transcript (`/sessions/[id]`), `/study`, and all API routes       |
+| `apps/worker`         | pg-boss jobs: transcribe chunk, classify utterance (content vs direction), extract workspace, invoke capability, detect macros, index memory, idle sweep |
+| `apps/pipecat/bot.py` | Python voice agent (Pipecat, peer-to-peer WebRTC). Key classes: `RunningSummary`, `Recall`, `Offers` (unprompted turns), `TurnRecorder`, `SilenceGate`   |
+| `packages/db`         | Drizzle schema, migrations, queries (`repertoire.ts`, `workspace.ts`, `board.ts`, …)                                                                     |
+| `packages/talkback`   | Everything the agent knows: `prompt.ts`, `setting.ts`, `context.ts`, `agent-turns.ts`, `memory-search.ts`, `board-context.ts`, and `eval/`               |
+| `packages/workspace`  | Pure logic: extraction prompt and parser, op-log fold, board and `judge()`, trajectory, classifier prompt, macro miner                                   |
+| `packages/shared`     | Zod contracts, analytics event types, the lexical directive gate                                                                                         |
 
 There are two separate audio paths:
+
 - **Ledger path.** 10-second chunks, batch Whisper, append-only `utterance` rows, then
   classification and workspace extraction.
 - **Live path.** The browser talks over WebRTC to the Pipecat container, which uses the web app's
@@ -94,6 +95,7 @@ pnpm dev                    # web :3000 + worker
 ```
 
 **Live voice agent.**
+
 - `pnpm talkback:up` starts it; `pnpm talkback:logs` follows the container.
 - `.env` must set both `TALKBACK_ENABLED` and `NEXT_PUBLIC_TALKBACK_ENABLED`, plus
   `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID`.
@@ -105,13 +107,13 @@ pnpm dev                    # web :3000 + worker
 
 **Checks.**
 
-| What | Command | Watch out for |
-|---|---|---|
-| Types | `pnpm typecheck` | Misses client components that import server-only packages. Run `pnpm build` too. |
-| Unit tests | `pnpm test` | **Run with Postgres up.** DB tests skip themselves silently; check the counts, not the colour. |
-| `bot.py` tests | pytest, inside the container | Command is in `TALKBACK.md` → "Testing locally". |
-| Prompt eval | `pnpm talkback:eval` | Needs LiteLLM keys. |
-| Container env | `docker compose up -d --force-recreate` | Without `--force-recreate`, `.env` changes are not picked up. |
+| What           | Command                                 | Watch out for                                                                                  |
+| -------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Types          | `pnpm typecheck`                        | Misses client components that import server-only packages. Run `pnpm build` too.               |
+| Unit tests     | `pnpm test`                             | **Run with Postgres up.** DB tests skip themselves silently; check the counts, not the colour. |
+| `bot.py` tests | pytest, inside the container            | Command is in `TALKBACK.md` → "Testing locally".                                               |
+| Prompt eval    | `pnpm talkback:eval`                    | Needs LiteLLM keys.                                                                            |
+| Container env  | `docker compose up -d --force-recreate` | Without `--force-recreate`, `.env` changes are not picked up.                                  |
 
 **`packages/workspace/src/extract.ts` looks binary to grep.** Use `grep -a`.
 
@@ -121,19 +123,20 @@ pnpm dev                    # web :3000 + worker
 
 ### 3.1 The 18 human-AI interaction guidelines (G1–G18)
 
-| # | Guideline | # | Guideline |
-|---|---|---|---|
-| G1 | Make clear what the system can do | G10 | Scope services when in doubt (disambiguate or degrade gracefully) |
-| G2 | Make clear how well the system can do it | G11 | Make clear why the system did what it did |
-| G3 | Time services based on the user's current task and environment | G12 | Remember recent interactions |
-| G4 | Show contextually relevant information | G13 | Learn from user behaviour |
-| G5 | Match relevant social norms | G14 | Update and adapt cautiously |
-| G6 | Mitigate social biases | G15 | Encourage granular feedback |
-| G7 | Support efficient invocation | G16 | Convey the consequences of user actions |
-| G8 | Support efficient dismissal | G17 | Provide global controls |
-| G9 | Support efficient correction | G18 | Notify users about changes |
+| #   | Guideline                                                      | #   | Guideline                                                         |
+| --- | -------------------------------------------------------------- | --- | ----------------------------------------------------------------- |
+| G1  | Make clear what the system can do                              | G10 | Scope services when in doubt (disambiguate or degrade gracefully) |
+| G2  | Make clear how well the system can do it                       | G11 | Make clear why the system did what it did                         |
+| G3  | Time services based on the user's current task and environment | G12 | Remember recent interactions                                      |
+| G4  | Show contextually relevant information                         | G13 | Learn from user behaviour                                         |
+| G5  | Match relevant social norms                                    | G14 | Update and adapt cautiously                                       |
+| G6  | Mitigate social biases                                         | G15 | Encourage granular feedback                                       |
+| G7  | Support efficient invocation                                   | G16 | Convey the consequences of user actions                           |
+| G8  | Support efficient dismissal                                    | G17 | Provide global controls                                           |
+| G9  | Support efficient correction                                   | G18 | Notify users about changes                                        |
 
 **Audit of the current code:**
+
 - **Strong:** G3 (setting profiles, offer rules, surveys blocked while recording), G4, G12, G14.
 - **Partial:** G1, G5, G6, G7, G8 (dismissals not stored), G13, G15.
 - **Weak or regressed:** G2, G9, G10, G11, G16, G17, G18.
@@ -142,6 +145,7 @@ The tasks below fix the gaps the study needs.
 
 **Design idea: deferred guideline satisfaction.** While driving there is no screen, so G11
 ("why"), G16 and G18 cannot be met in the moment. Each gets two forms:
+
 - a **spoken form** now, one clause at most;
 - a **desk form** later, on `/sessions/[id]` or the workspace pages.
 
@@ -157,15 +161,15 @@ The tasks below fix the gaps the study needs.
 - **Fading:** support prompts should decrease as the user internalises the strategy, over days
   and not only within one drive.
 - **Processing fluency:** fast, fluent output inflates confidence in it. **Design tension:** the
-  prompt tells the agent *"Commit to a view; a hedge is a wasted sentence"*, and a fluent voice
+  prompt tells the agent _"Commit to a view; a hedge is a wasted sentence"_, and a fluent voice
   talking to a driver who cannot check anything invites over-trust (G2). The fix is not hedging.
   It is **naming the source in one clause** ("from Tuesday's drive…") (T2.2).
 - **Calibration:** whether a user's confidence in AI output matches its actual accuracy.
 - **Attention investment:** a user automates only when the expected saving beats the cost of
   setting up the automation. A macro proposal shows up at the moment that trade-off is visible.
 
-**Constraint from the advisor's feedback (9 Sep):** *"I am the one who prompts. You don't prompt
-me."* Unprompted support must **offer and never assign**. A declined offer must not come back.
+**Constraint from the advisor's feedback (9 Sep):** _"I am the one who prompts. You don't prompt
+me."_ Unprompted support must **offer and never assign**. A declined offer must not come back.
 
 ---
 
@@ -180,8 +184,10 @@ me."* Unprompted support must **offer and never assign**. A declined offer must 
 
    Any export, event or dashboard that leaks transcript, agent-turn or workspace **text** breaks
    the study.
+
 2. **The ledger never depends on the conversation.** Kill the Pipecat container mid-recording:
-   - the timer, chunk uploads, `/sessions/[id]` and the cue panel on `/record` must keep working;
+   - the timer, chunk uploads, `/sessions/[id]`, Stop and the debrief on `/record` must keep working
+     (the conversation panels simply stop filling);
    - live ASR text never goes into `utterance`;
    - agent speech never goes into `utterance`.
 3. **Append-only record.** `utterance.text` is never changed. Human corrections go to
@@ -199,17 +205,20 @@ me."* Unprompted support must **offer and never assign**. A declined offer must 
 7. **Mirrored code must stay in sync:**
    - `PROACTIVE_AFTER_SECS` in `setting.ts` and `bot.py`;
    - `OPENING_NUDGE` and `SILENCE_NUDGE` in `prompt.ts` and `bot.py`;
+   - `POKE_NUDGE`, `POKE_RETRY_NUDGE`, `POKE_FALLBACKS` and `FLOOR_OPEN_NOTE` in `prompt.ts` and `bot.py`;
    - `extractDrafts` and `extract_drafts`;
    - `Recall._compose` in `bot.py` and `packages/talkback/src/eval/messages.ts`.
 
    Change one side, change the other.
+
 8. **Version bumps.**
 
-   | Change | Bump | Also |
-   |---|---|---|
-   | Talk-back prompt | `TALKBACK_CONFIG_VERSION` (`prompt.ts`, now `"talkback-12"`) | |
+   | Change                     | Bump                                                              | Also                                             |
+   | -------------------------- | ----------------------------------------------------------------- | ------------------------------------------------ |
+   | Talk-back prompt           | `TALKBACK_CONFIG_VERSION` (`prompt.ts`, now `"talkback-20"`)      |                                                  |
    | Extraction prompt or input | `PROMPT_VERSION` (`packages/workspace/src/extract.ts`, now `"4"`) | Update the fingerprint test in `extract.test.ts` |
-   | Classifier or macro prompt | `CLASSIFY_PROMPT_VERSION` / `MACRO_PROMPT_VERSION` | |
+   | Classifier or macro prompt | `CLASSIFY_PROMPT_VERSION` / `MACRO_PROMPT_VERSION`                |                                                  |
+
 9. **Every new spoken behaviour gets eval cases** in `packages/talkback/src/eval/cases.ts`, and
    `pnpm talkback:eval --strict` must pass.
 10. **Client bundles.** Client components import setting profiles from
@@ -218,7 +227,7 @@ me."* Unprompted support must **offer and never assign**. A declined offer must 
 11. **Schema changes** are additive Drizzle migrations (`pnpm db:generate`, then
     `pnpm db:migrate`). `packages/db` and `packages/shared` are shared contracts, so keep changes
     minimal and explain them in the commit.
-12. **Match the house style.** Comments explain *why*, often at length. Follow that.
+12. **Match the house style.** Comments explain _why_, often at length. Follow that.
 13. **Git.**
     - Branch from `develop`, one branch per task or small group of tasks.
     - The working tree may contain the maintainer's uncommitted work (at the time of writing:
@@ -243,6 +252,7 @@ Do not settle these yourself:
    - "Send it to the doc": outlets are not implemented.
 
    Build them, or remove them from the page?
+
 3. **Debrief format.** `/study` says three fixed questions appear after Stop and are **answered
    aloud** (T3.1). Are on-screen ratings allowed as well, e.g. for confidence and calibration?
 4. **"Mark as shareable".** It is promised but has no mechanism. Is it needed for the study?
@@ -345,7 +355,7 @@ Each task lists **Why**, **Now** (verified current state), **Change**, and **Don
   3. A later `kindOverride` does not rewrite past workspace ops. State that in a comment.
   4. Bump `PROMPT_VERSION` and the fingerprint.
   5. **Do not re-run extraction over existing data without asking.** It costs model calls and
-    changes people's workspaces.
+     changes people's workspaces.
 - **Done when:** worker tests show a direction segment is never sent to the model and an
   unclassified segment is sent after the timeout.
 
@@ -492,6 +502,7 @@ they are correctness fixes.
   - They run through the existing `Offers` gate: never mid-thought, never twice without a reply.
   - `agent_turn.kind='proactive_prompt'`.
   - Add eval cases.
+
 - **T2.6 Clarification policy (G10; condition `clarificationPolicy`).**
   - `best_guess`: today's prompt, which answers the most likely reading.
   - `one_short_question`: when ambiguous, ask one short question with at most three options.
@@ -554,7 +565,7 @@ they are correctness fixes.
     board they already keep (Trello, Jira, Notion, a list), and those ops carry a fourth `via`,
     `"import"`. `judge()` skips them exactly as it skips a person's own move: an imported card
     nobody touched for two drives is not an accepted machine-made transition. Everything speech
-    or the agent does to an imported card *afterwards* is judged normally, which is the reason to
+    or the agent does to an imported card _afterwards_ is judged normally, which is the reason to
     offer the import at all — it puts real work on the board before drive one, so the acceptance
     measure has something to measure in the first week rather than the third.
   - The export needs no change for it: `workspace_op.via` already comes through verbatim, so
@@ -608,21 +619,21 @@ and two of them are about the person.
 The fixes are `PILOT_01.md` §1. What they left in the ledger is the part this plan depends on,
 because a measure is only as good as the column it counts.
 
-| The failure | What it now writes | Which measure needs it |
-|---|---|---|
-| Answered "Ja." to the agent's own question, got 40.4 s of dead air | `AnswerGuard` re-runs the refused turn; the refusal itself writes no decision, so the moment is stamped `agent_decision.forced_answer` instead (see `TurnRecorder.note_forced_answer`) | `steerability.unansweredAnswers`, **target 0** — without the stamp a rescued decline is invisible and the target reads as met |
-| A turn spoken 52.6 s after Stop, into a closed drive | `resolveLiveSession` rejects it; `TurnRecorder.session_ended` seals the recorder | Every rate in Tier 1, whose denominator was counting turns that nobody heard |
-| 8.4 s median on tool-backed turns against 1.3 s, in silence | `KeepAlive` speaks from `SEARCH_WAIT_PHRASES` and records each as `agent_turn.kind = 'backchannel'` | `thinking.intrusions` and the silence rate both have to *exclude* these: they are this container's words, not the model's |
-| `resolved_model`, `asr_ms`, `speak_ttfb_ms` null on all 15 turns; the end of speech guessed at `len(text) / 14` | `Playback` measures it, and `agent_turn.end_offset_measured` says which ends are real | `tier1.latency`, and every gap measure in `thinking` — a guessed end makes a re-prompt gap fiction |
-| 16 of 48 decision rows shared an `offset_ms` with another | `agent_decision.opportunity_seq` and `attempt`; the authoritative outcome of a moment is its **last** attempt | Every rate over decisions, whose denominator was roughly doubled |
-| The debrief was never recorded — Stop ended the session | The debrief window on `/record`, `capture_session.debrief_started_offset_ms` / `debrief_ended_offset_ms` | `study_response` phase `post`, and the three spoken answers existing at all |
-| Run stationary under the `driving` profile, and nothing recorded that the profile was a guess | The recorder asks rather than starting under a guess; the correction is remembered per browser; `capture_session.setting_source` stores how the answer was reached (`device` / `motion` / `remembered` / `chosen` / `default`) | Any comparison across drives — a 53% decline rate from a sofa under the driving profile is not the same number as one from a car |
+| The failure                                                                                                     | What it now writes                                                                                                                                                                                                             | Which measure needs it                                                                                                           |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| Answered "Ja." to the agent's own question, got 40.4 s of dead air                                              | `AnswerGuard` re-runs the refused turn; the refusal itself writes no decision, so the moment is stamped `agent_decision.forced_answer` instead (see `TurnRecorder.note_forced_answer`)                                         | `steerability.unansweredAnswers`, **target 0** — without the stamp a rescued decline is invisible and the target reads as met    |
+| A turn spoken 52.6 s after Stop, into a closed drive                                                            | `resolveLiveSession` rejects it; `TurnRecorder.session_ended` seals the recorder                                                                                                                                               | Every rate in Tier 1, whose denominator was counting turns that nobody heard                                                     |
+| 8.4 s median on tool-backed turns against 1.3 s, in silence                                                     | `KeepAlive` speaks from `SEARCH_WAIT_PHRASES` and records each as `agent_turn.kind = 'backchannel'`                                                                                                                            | `thinking.intrusions` and the silence rate both have to _exclude_ these: they are this container's words, not the model's        |
+| `resolved_model`, `asr_ms`, `speak_ttfb_ms` null on all 15 turns; the end of speech guessed at `len(text) / 14` | `Playback` measures it, and `agent_turn.end_offset_measured` says which ends are real                                                                                                                                          | `tier1.latency`, and every gap measure in `thinking` — a guessed end makes a re-prompt gap fiction                               |
+| 16 of 48 decision rows shared an `offset_ms` with another                                                       | `agent_decision.opportunity_seq` and `attempt`; the authoritative outcome of a moment is its **last** attempt                                                                                                                  | Every rate over decisions, whose denominator was roughly doubled                                                                 |
+| The debrief was never recorded — Stop ended the session                                                         | The debrief window on `/record`, `capture_session.debrief_started_offset_ms` / `debrief_ended_offset_ms`                                                                                                                       | `study_response` phase `post`, and the three spoken answers existing at all                                                      |
+| Run stationary under the `driving` profile, and nothing recorded that the profile was a guess                   | The recorder asks rather than starting under a guess; the correction is remembered per browser; `capture_session.setting_source` stores how the answer was reached (`device` / `motion` / `remembered` / `chosen` / `default`) | Any comparison across drives — a 53% decline rate from a sofa under the driving profile is not the same number as one from a car |
 
 Two of these are worth stating as rules rather than rows, because they are easy to get wrong
 in any new query:
 
 - **Count moments, not rows.** `select distinct on (opportunity_seq) … order by
-  opportunity_seq, attempt desc` — the last attempt is what the participant experienced.
+opportunity_seq, attempt desc` — the last attempt is what the participant experienced.
 - **Except for `forcedAnswer`, which counts the refusals themselves.** When `AnswerGuard`
   rescues a decline, the completion that finally speaks becomes the moment's last attempt.
   Deduplicating would report zero for a drive where the model declined every answer and was
@@ -632,14 +643,14 @@ in any new query:
 
 `pnpm study:metrics [--user <id>] [--re-prompt-ms 5000] [--tz <zone>] [--print]` computes all of
 them, per session and per participant, and writes one JSON file each. It reads transcript text
-*inside* the privacy boundary to classify two of the steerability measures and returns counts
+_inside_ the privacy boundary to classify two of the steerability measures and returns counts
 only; `metrics.test.ts` seeds a sentinel string into every text column and fails if it surfaces.
 
 **Tier 1 — system behaviour** (unchanged, and no longer the point). Response latency split by
 whether a tool ran; silent opportunities as a share of deduplicated moments; error rate.
 
-**Tier 2 — steerability: could the person aim it?** Re-prompt rate (their words after *n*
-seconds of agent silence, *n* configurable, default 5 s); repeat-request rate; correction rate
+**Tier 2 — steerability: could the person aim it?** Re-prompt rate (their words after _n_
+seconds of agent silence, _n_ configurable, default 5 s); repeat-request rate; correction rate
 (spoken rejections, declined invocations and `judge()`'s reversed/corrected transitions,
 reported apart and pooled); intent throughput (directions that reached the board); and
 **unanswered answers, whose target is 0**.
@@ -647,7 +658,7 @@ reported apart and pooled); intent throughput (directions that reached the board
 **Tier 3 — relief: did it take the holding off them?** Mental load after the drive, read within
 a participant across their drives (lower is the good direction; the before-the-drive rating was
 dropped on 6 Oct 2026, see §9.3); whether they could tell it was working; whether
-they could correct it; revisit rate by *calendar day* in `STUDY_TIME_ZONE`; and the day-7
+they could correct it; revisit rate by _calendar day_ in `STUDY_TIME_ZONE`; and the day-7
 verdict per item — done / still open / **lost**. `lostRate` is the primary failure measure for
 offloading: an item the participant put on the board, never came back to, and no longer counts
 as theirs is the exact shape of a system that wrote a lot and returned nothing.
@@ -687,8 +698,8 @@ and how long they speak without the agent taking a turn.
 
 ## 10. Thinking aloud is the task, not the input method
 
-Feedback after Pilot 01, in one line: *consider talking aloud as a way of thinking and
-processing for knowledge work.* It is the sharpest thing anyone has said about this system,
+Feedback after Pilot 01, in one line: _consider talking aloud as a way of thinking and
+processing for knowledge work._ It is the sharpest thing anyone has said about this system,
 because it says the measures in §9 are still measuring the wrong thing — better than before, but
 still about the machine.
 
@@ -704,7 +715,7 @@ Ericsson and Simon's protocol analysis separates levels of verbalisation: saying
 in working memory (Levels 1–2) leaves the cognition alone, while being asked to explain or
 justify (Level 3) alters it, and alters task performance and completion times with it.
 
-> *Consequence.* Every prompted turn this system takes is a Level 3 intervention. It is not a
+> _Consequence._ Every prompted turn this system takes is a Level 3 intervention. It is not a
 > neutral observation of somebody's thinking — it is a manipulation of it. That is not an
 > argument for silence; it is an argument for **counting the interventions** and for never
 > treating "the agent said something useful" as free. `thinking.intrusions` is the version of
@@ -716,7 +727,7 @@ Chi et al. found that students prompted to explain each line to themselves under
 and that the high explainers were the ones who built a correct model. The mechanism is
 integration and self-correction: explaining surfaces conflicts you would otherwise not notice.
 
-> *Consequence.* The same intervention the first finding warns about is the one that produces
+> _Consequence._ The same intervention the first finding warns about is the one that produces
 > the benefit. The interesting question for this study is therefore not "does it interrupt" but
 > **when does a question move the thinking on and when does it derail it** — which is exactly
 > what `thinking_moved` (asked) and `thinking.intrusions` / `selfRepairs` (observed) are for,
@@ -727,7 +738,7 @@ The recent CHI work on speech as a canvas ("Orality") names the tension directly
 thinking is half-formed utterances and spontaneous sparks, and the sequential stream of dictation
 fights the non-linear structure of the thought.
 
-> *Consequence.* This is an argument FOR the workspace and the board and AGAINST the transcript
+> _Consequence._ This is an argument FOR the workspace and the board and AGAINST the transcript
 > as an artefact — which is the architecture we already have, and it is worth saying out loud,
 > because it means the board is not a to-do list that happens to be voice-driven. It is the
 > non-linear structure the speech could not carry. It is also why `medianUtteranceWords` and the
@@ -737,10 +748,10 @@ fights the non-linear structure of the thought.
 **Offloading the thinking is a documented failure mode, not a hypothetical one.**
 Fan et al. found learners with a generative assistant produced better essays, showed no
 knowledge gain, and self-corrected less — they call it metacognitive laziness. Lee et al., in a
-survey of 319 knowledge workers, found confidence in the assistant associated with *less*
+survey of 319 knowledge workers, found confidence in the assistant associated with _less_
 critical thinking, and the work shifting from doing to supervising.
 
-> *Consequence, and it is the big one.* **"Optimise for relief, not throughput" is not
+> _Consequence, and it is the big one._ **"Optimise for relief, not throughput" is not
 > sufficient as a guiding principle.** A system that did the thinking would score beautifully on
 > mental load. The principle has to be stated as:
 >
@@ -775,13 +786,13 @@ critical thinking, and the work shifting from doing to supervising.
 ### 10.3 What follows, and is not built
 
 - **A prompt change is warranted and has not been made.** The base prompt tells the model not to
-  interrupt a thought in formation; it does not tell it to avoid asking somebody to *justify* a
+  interrupt a thought in formation; it does not tell it to avoid asking somebody to _justify_ a
   thought they are still forming, which is the specific Level 3 intervention the first finding
   is about. This repo's definition of done requires a version bump and
   `pnpm talkback:eval --strict --runs 3` for any prompt change, which needs a live model, so it
   is proposed rather than applied. The wording to add, after the "WHEN TO SPEAK" bullets:
-  *"While a thought is still being formed, do not ask them to explain or justify it. Ask after
-  it has landed, or not at all."*
+  _"While a thought is still being formed, do not ask them to explain or justify it. Ask after
+  it has landed, or not at all."_
 - **Intrusions are measured against ASR boundaries**, which are approximate. Read the rate, not
   the individual incidents.
 - **The condition that would settle it is not in the design.** Whether an offered question moves
@@ -794,16 +805,16 @@ critical thinking, and the work shifting from doing to supervising.
   "just a kind of log" and said "I don't need another view" (`Inverview/Topics.md` N2): below
   `md` its five columns stack into one list of the tasks the workspace already shows. The dock
   now offers the board from `md` up only, and workspace task rows carry their state as a
-  control. The structure is the same fold either way, so the claim stands; how it is *presented*
+  control. The structure is the same fold either way, so the claim stands; how it is _presented_
   on a small screen is what changed, and the paper should say so.
 
 **Sources.**
-[Ericsson & Simon, *Protocol Analysis*](https://www.ida.liu.se/~nilda08/Anders_Ericsson/Ericsson_protocol.pdf) ·
+[Ericsson & Simon, _Protocol Analysis_](https://www.ida.liu.se/~nilda08/Anders_Ericsson/Ericsson_protocol.pdf) ·
 [Think-aloud protocols, overview](https://benjamins.com/online/hop/articles/thi1) ·
-[Chi et al. (1994), *Eliciting self-explanations improves understanding*](https://onlinelibrary.wiley.com/doi/10.1207/s15516709cog1803_3) ·
-[*Orality: A Semantic Canvas for Externalizing and Clarifying Thoughts with Speech*, CHI 2026](https://dl.acm.org/doi/10.1145/3772318.3791713) ·
-[Fan et al. (2025), *Beware of metacognitive laziness*, BJET](https://bera-journals.onlinelibrary.wiley.com/doi/10.1111/bjet.13544) ·
-[Lee et al. (2025), *The Impact of Generative AI on Critical Thinking*, CHI](https://dl.acm.org/doi/full/10.1145/3706598.3713778)
+[Chi et al. (1994), _Eliciting self-explanations improves understanding_](https://onlinelibrary.wiley.com/doi/10.1207/s15516709cog1803_3) ·
+[_Orality: A Semantic Canvas for Externalizing and Clarifying Thoughts with Speech_, CHI 2026](https://dl.acm.org/doi/10.1145/3772318.3791713) ·
+[Fan et al. (2025), _Beware of metacognitive laziness_, BJET](https://bera-journals.onlinelibrary.wiley.com/doi/10.1111/bjet.13544) ·
+[Lee et al. (2025), _The Impact of Generative AI on Critical Thinking_, CHI](https://dl.acm.org/doi/full/10.1145/3706598.3713778)
 
 ---
 
@@ -813,7 +824,7 @@ critical thinking, and the work shifting from doing to supervising.
 
 The second piece of feedback after Pilot 01: **make it more salient that recording has started.**
 
-Everything that said "recording" was a *modifier of a control that is always there* — the record
+Everything that said "recording" was a _modifier of a control that is always there_ — the record
 button changed colour, a level meter appeared inside it, a timer began to count. Each of those
 reads as "on" only against a memory of what "off" looked like a second ago, which a first-time
 participant does not have. And all of it was visual, for a system whose premise is that the
@@ -823,7 +834,7 @@ person's eyes are on something else.
   one soft note when talk-back is actually connected and listening
   (`apps/web/src/lib/recorder/earcon.ts`). Local WebAudio, so they work with the conversation
   switched off, the network down and the container dead — which is when they matter most. The
-  third one is the important one conceptually: *"it is recording"* and *"it can hear me"* are
+  third one is the important one conceptually: _"it is recording"_ and _"it can hear me"_ are
   different facts arriving seconds apart, and only the failure of the second was ever shown.
 - **A haptic** alongside the transport pair, where the device has one.
 - **A badge that is present or absent**, never a shade of something: a pulsing red dot, the word,
@@ -842,7 +853,7 @@ cheaper and more honest than another rating. Worth watching in the next pilot's
 
 `PILOT_01.md` §3 asks for the cheapest possible experiment: the same person, the same task,
 `agendaOffers` on in one drive and off in the next. A study condition is otherwise a property of
-the *participant*, copied onto each drive when it opens, so running that meant a database write
+the _participant_, copied onto each drive when it opens, so running that meant a database write
 with the researcher sitting in a car.
 
 `NEXT_PUBLIC_STUDY_TOGGLES=true` puts the toggleable flags on the recorder, and the override

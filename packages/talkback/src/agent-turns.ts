@@ -3,6 +3,8 @@ import {
   agentDecisionOutcomeEnum,
   agentDecisionTriggerEnum,
   agentTurn,
+  floorEvent,
+  floorEventKindEnum,
   getDb,
 } from "@voicemural/db";
 import { log } from "@voicemural/telemetry";
@@ -131,6 +133,8 @@ export interface AgentDecisionRecord {
   subjectKey?: string;
   /** Whether `AnswerGuard` had to force this moment. See the column. */
   forcedAnswer?: boolean;
+  /** Whether a poke's first completion declined and had to be re-run. */
+  forcedPoke?: boolean;
   agentTurnId?: string;
 }
 
@@ -156,10 +160,52 @@ export async function recordAgentDecision(record: AgentDecisionRecord): Promise<
       latencyMs: record.latencyMs,
       subjectKey: record.subjectKey,
       forcedAnswer: record.forcedAnswer ?? false,
+      forcedPoke: record.forcedPoke ?? false,
       agentTurnId: record.agentTurnId,
     });
   } catch (err) {
     log.error("could not record agent decision", {
+      captureSessionId: record.captureSessionId,
+      userId: record.userId,
+      seq: record.seq,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+export type FloorEventKind = (typeof floorEventKindEnum.enumValues)[number];
+
+export interface FloorEventRecord {
+  captureSessionId: string;
+  /** For log attribution only. */
+  userId: string;
+  seq: number;
+  offsetMs: number;
+  kind: FloorEventKind;
+  /** The floor a connection started with, not a press. See the column. */
+  atConnect?: boolean;
+  configVersion?: string;
+}
+
+/**
+ * Persist one change of who may talk, as the container applied it.
+ *
+ * Never throws, for the reason `recordAgentTurn` never throws: the lock still
+ * holds in the container whether or not its row lands, and a conversation must
+ * not go down over its own bookkeeping.
+ */
+export async function recordFloorEvent(record: FloorEventRecord): Promise<void> {
+  try {
+    await getDb().insert(floorEvent).values({
+      captureSessionId: record.captureSessionId,
+      seq: record.seq,
+      offsetMs: record.offsetMs,
+      kind: record.kind,
+      atConnect: record.atConnect ?? false,
+      configVersion: record.configVersion,
+    });
+  } catch (err) {
+    log.error("could not record floor event", {
       captureSessionId: record.captureSessionId,
       userId: record.userId,
       seq: record.seq,

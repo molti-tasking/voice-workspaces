@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-// ONE COPY of the three questions. The information sheet promises these exact
-// ones, and `/record` asks them the moment a drive ends; a participant who
-// read one set here and heard another in the car would have consented to
-// something that did not happen.
-import { DEBRIEF_QUESTIONS } from "@/lib/study/debrief";
+// ONE COPY of the ratings asked after a drive. The information sheet promises
+// these exact ones, and `/record` asks them the moment a drive ends; a
+// participant who read one thing here and was asked another in the car would
+// have consented to something that did not happen.
+import { itemsForPhase } from "@voicemural/shared";
 
 /**
  * The page participants read before day one, and re-read on their phone when
@@ -27,9 +27,10 @@ import { DEBRIEF_QUESTIONS } from "@/lib/study/debrief";
  * The privacy boundary is a study design decision, not a courtesy. Participants
  * are recruited from people who know the research team, and someone who thinks
  * their supervisor might hear the tape does not think out loud — which would
- * leave the deployment measuring self-censorship. So the drive is unread and
- * the debrief is the channel addressed to us. Say nothing here that undercuts
- * that split.
+ * leave the deployment measuring self-censorship. So the drive is unread, and
+ * what reaches us after it is three numbers they tap. (Until 14 Oct 2026 it was
+ * also a spoken debrief, recorded after Stop; that window is gone.) Say nothing
+ * here that undercuts that split.
  */
 
 export const metadata: Metadata = {
@@ -95,7 +96,7 @@ export default function StudyPage() {
         </p>
         <List>
           <li>Roughly {STUDY.days} days of ordinary commuting.</li>
-          <li>A one-minute debrief once you have parked, after each drive.</li>
+          <li>Three quick taps once you have parked, after each drive.</li>
           <li>One conversation with us at the end, about 45 minutes.</li>
         </List>
       </Section>
@@ -122,32 +123,34 @@ export default function StudyPage() {
             [
               "Once you have parked",
               <>
-                Press <strong>Stop</strong>. Three questions appear on screen;
-                answer them out loud, because it is still listening. Under a
-                minute. Forget, and the recording closes itself.
+                Press <strong>Stop</strong> — that ends the recording. Three
+                questions appear; tap a number for each, or skip any. Nothing
+                is listening any more.
               </>,
             ],
           ]}
         />
         <div className="rounded-xl border border-line p-5">
           <p className="mb-3 text-sm font-medium tracking-wide text-fg/60 uppercase">
-            The three questions
+            The three questions, each from 1 to 7
           </p>
           <ol className="space-y-2.5">
-            {DEBRIEF_QUESTIONS.map((q, i) => (
-              <li key={q} className="flex gap-3 leading-relaxed">
-                <span className="shrink-0 font-mono text-sm text-fg/50">
-                  {i + 1}
+            {itemsForPhase("post").map((item, i) => (
+              <li key={item.key} className="flex gap-3 leading-relaxed">
+                <span className="shrink-0 font-mono text-sm text-fg/50">{i + 1}</span>
+                <span>
+                  {item.question}{" "}
+                  <span className="text-fg/55">
+                    ({item.anchors[0]} … {item.anchors[1]})
+                  </span>
                 </span>
-                {q}
               </li>
             ))}
           </ol>
         </div>
         <p className="text-fg/65">
-          Same three every time, so you can turn them over while you drive.
-          &ldquo;Nothing today&rdquo; is a fine answer, and complaints are the
-          useful one — if it keeps doing something irritating, say exactly that.
+          The same three every time. A low number is as useful to us as a high
+          one.
         </p>
       </Section>
 
@@ -222,10 +225,10 @@ export default function StudyPage() {
             named the things you made. Not what you talked about.
           </li>
           <li>
-            <strong>What you hand us</strong> is the debrief after each drive,
-            anything you mark as shareable, and whatever you show us in the final
-            conversation. Quotes in a paper can only come from that, are
-            anonymised, and go past you first.
+            <strong>What you hand us</strong> is the three numbers after each
+            drive, anything you mark as shareable, and whatever you show us in the
+            final conversation. Quotes in a paper can only come from the last two,
+            are anonymised, and go past you first.
           </li>
           <li>
             <strong>Passengers and phone calls are still recorded</strong> while

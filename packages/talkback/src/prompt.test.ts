@@ -3,8 +3,12 @@ import { PROACTIVITY_STANZAS, PROFILE } from "./profile";
 import {
   ANSWER_ACKNOWLEDGEMENTS,
   ANSWER_RETRY_NUDGE,
+  FLOOR_OPEN_NOTE,
   OPENING_NUDGE,
   OUTPUT_CONTRACT,
+  POKE_FALLBACKS,
+  POKE_NUDGE,
+  POKE_RETRY_NUDGE,
   SEARCH_WAIT_PHRASES,
   SILENCE_NUDGE,
   SILENCE_TOKEN,
@@ -14,6 +18,7 @@ import {
   composeSystemPrompt,
   extractDrafts,
   isSilence,
+  pokeFallback,
   renderSilenceNudge,
   searchWaitPhrase,
 } from "./prompt";
@@ -252,6 +257,54 @@ describe("the drive of 29 Sep 2026", () => {
 
   it("never leaves a placeholder in a draft", () => {
     expect(OUTPUT_CONTRACT).toMatch(/Never a placeholder/);
+  });
+});
+
+describe("the floor: Lock, Normal and Poke (talkback-20), which bot.py mirrors", () => {
+  it("tells the model what a run of unanswered lines means", () => {
+    // Under Lock the model sees line after line of theirs with no reply in
+    // between. Without this it reads the gap as its own failure to answer.
+    expect(SYSTEM_PROMPT).toMatch(/WHEN THEY LOCK OR POKE YOU/);
+    // Not the study's jargon: "the floor is entirely yours" (14 Oct 2026).
+    expect(SYSTEM_PROMPT).not.toMatch(/\bfloor\b/i);
+    expect(SYSTEM_PROMPT).toMatch(/is the lock, not you ignoring them/);
+  });
+
+  it("never lets a poke be met with silence", () => {
+    for (const nudge of [POKE_NUDGE, POKE_RETRY_NUDGE]) {
+      expect(nudge).toContain(SILENCE_TOKEN);
+      expect(nudge).toMatch(/not available/i);
+    }
+    // One poke is one moment: the sentinel stays in the contract for every
+    // other turn.
+    expect(OUTPUT_CONTRACT).toContain(`reply with exactly: ${SILENCE_TOKEN}`);
+  });
+
+  it("keeps an unlocked agent from answering the whole locked stretch", () => {
+    expect(FLOOR_OPEN_NOTE).toMatch(/Do not work back through what they said while you were locked/);
+  });
+
+  it("keeps the poke's last resort out of question form, and short", () => {
+    // Same reason as the acknowledgement: a question would put `AnswerGuard`
+    // on their reply.
+    for (const phrase of Object.values(POKE_FALLBACKS)) {
+      expect(phrase.trim()).not.toMatch(/\?["'`*)\]]*$/);
+      expect(phrase.split(/\s+/).length).toBeLessThanOrEqual(12);
+    }
+    expect(Object.keys(POKE_FALLBACKS).sort()).toEqual(Object.keys(ANSWER_ACKNOWLEDGEMENTS).sort());
+  });
+
+  it("speaks the drive's own language, and falls back to English on auto-detect", () => {
+    expect(pokeFallback("da")).toBe(POKE_FALLBACKS.da);
+    expect(pokeFallback(null)).toBe(POKE_FALLBACKS.en);
+    expect(pokeFallback("fr")).toBe(POKE_FALLBACKS.en);
+  });
+});
+
+describe("the pauses bot.py marks in their words (talkback-20)", () => {
+  it("explains the mark in the format PauseMarker writes, and that tone is not heard", () => {
+    expect(SYSTEM_PROMPT).toContain("(pause 4s)");
+    expect(SYSTEM_PROMPT).toMatch(/you cannot hear their tone/);
   });
 });
 

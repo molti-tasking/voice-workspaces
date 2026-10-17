@@ -83,9 +83,11 @@ from pipecat.frames.frames import (
     BotStoppedSpeakingFrame,
     CancelFrame,
     EndFrame,
+    ErrorFrame,
     Frame,
     InputAudioRawFrame,
     InterruptionFrame,
+    LLMContextFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMRunFrame,
@@ -101,6 +103,7 @@ from pipecat.frames.frames import (
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
     VADUserStartedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
 )
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
@@ -120,6 +123,10 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 # installs turns this frame into a `server-message` on the data channel the
 # transcripts already use, so it can be pushed from anywhere in the pipeline.
 from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
+# And the wire back. A `client-message` from the browser arrives as this frame,
+# pushed by the RTVI processor at the head of the pipeline; the answer goes out
+# as a response tied to it, which is what lets the browser `await` the request.
+from pipecat.processors.frameworks.rtvi import RTVIClientMessageFrame, RTVIServerResponseFrame
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.transcriptions.language import Language
 from pipecat.services.llm_service import FunctionCallParams
@@ -506,7 +513,11 @@ Never claim to remember anything. You cannot check the transcript right now, and
 # LiteLLM returns text and nothing else, so on the default provider this is a
 # no-op that logs once at connect. Defaults on because a passenger is the
 # common case rather than the edge case, and the cost is a flag, not a service.
-STT_DIARIZE = os.getenv("STT_DIARIZE", "true").lower() in ("1", "true", "yes")
+# OFF by default since 14 Oct 2026. On a one-person drive Deepgram split the
+# driver into "[Speaker 2]" and "[Speaker 1]" halfway through, and the prompt
+# tells the agent that talk between people is theirs and to stay out of it.
+# Turn it on for drives with passengers.
+STT_DIARIZE = os.getenv("STT_DIARIZE", "false").lower() in ("1", "true", "yes")
 
 # Language for the live conversation. Unset = let the provider detect it
 # (Deepgram "multi", AssemblyAI per-turn detection, Whisper auto-detect); set to
@@ -640,16 +651,22 @@ def user_turn_stop_timeout_secs() -> float:
     own first token took 0.3-0.5s: the fallback, every time. A reply that late
     answers what was said two lines ago.
 
-    2.0 by default. Ending a turn early does not make the agent talk over a
-    thinker: the completion still runs through the prompt's "mid-thought, reply
-    <silence>" rule and SilenceGate, so the cost is a declined completion, not
-    an interruption. Clamped to 1-5s; `USER_TURN_STOP_TIMEOUT_SECS` tunes it
-    without a rebuild (but with --force-recreate).
+    3.0 by default, since 14 Oct 2026; it was 2.0. The theory was that ending
+    a turn early does not make the agent talk over a thinker — the completion
+    still runs through the prompt's "mid-thought, reply <silence>" rule — and
+    on the "Tone of Voice" drive that theory failed: the person talked in long
+    stretches with pauses, the agent answered fragment after fragment ("the
+    words I say? But can you maybe also just, like,"), and they said so twice.
+    Only the case where the turn model judged them MID-SENTENCE waits on this;
+    a pause the model hears as an ending is still answered at once, which is
+    what Lock on the recorder is for. Clamped to 1-5s;
+    `USER_TURN_STOP_TIMEOUT_SECS` tunes it without a rebuild (but with
+    --force-recreate).
     """
     try:
-        value = float(os.getenv("USER_TURN_STOP_TIMEOUT_SECS") or 2.0)
+        value = float(os.getenv("USER_TURN_STOP_TIMEOUT_SECS") or 3.0)
     except ValueError:
-        value = 2.0
+        value = 3.0
     return min(5.0, max(1.0, value))
 
 
@@ -1221,6 +1238,93 @@ def clean_title(raw: str | None, previous: str | None) -> str | None:
     return text
 
 
+class TurnFeed:
+    """The turns, as the recorder's two panels show them.
+
+    The recorder used to show no turns at all — a title, and the trail of the
+    ones before it — because reading in a car cradle was the one thing the
+    person could not do. The study has moved to who has the floor, and the
+    screen with it: one panel for what the agent said, one for what they said,
+    in sections by subject, so both sides of the turn-taking are visible at a
+    glance. This is what feeds them.
+
+    LIVE ASR, AND ONLY TO THE SCREEN. These are the same words the agent hears
+    — the only transcript that exists while it is being spoken — and they go to
+    the browser over the data channel and nowhere else. The ledger is still
+    `utterance`, from the chunk pipeline, and nothing here writes it.
+
+    ONE OBJECT FOR BOTH SIDES, because a turn ends when the other side starts:
+    a reply closes their bubble and their next words close the agent's. Ids
+    carry a per-connection prefix, so a reconnect's turn 1 is never mistaken
+    for the first connection's.
+
+    `mark` serves `TopicTitle`: the first turn heard since the last naming
+    call. When the title changes, the turns from there on are the ones that
+    changed it, and the browser moves them into the new section rather than
+    leaving the first sentences of a new subject under the old one.
+    """
+
+    def __init__(self):
+        self._connection = uuid.uuid4().hex[:6]
+        self._seq = 0
+        self._user: dict | None = None
+        self._agent: dict | None = None
+        self._since_mark: str | None = None
+
+    def _open(self, kind: str) -> dict:
+        self._seq += 1
+        return {"type": kind, "id": f"{self._connection}-{self._seq}", "text": ""}
+
+    def _noted(self, turn: dict) -> None:
+        if self._since_mark is None:
+            self._since_mark = turn["id"]
+
+    def user(self, text: str) -> dict | None:
+        """Their words, joined onto the turn they are still in. The message to push."""
+        text = strip_speaker_tags(text).strip()
+        if not text:
+            return None
+        self._agent = None
+        if self._user is None:
+            self._user = self._open("user")
+        self._noted(self._user)
+        self._user["text"] = f"{self._user['text']} {text}".strip()
+        return dict(self._user)
+
+    def end_user(self) -> None:
+        self._user = None
+
+    def agent(self, text: str) -> dict | None:
+        """What reached the agent's speaker, joined onto its open turn."""
+        if not text:
+            return None
+        self._user = None
+        if self._agent is None:
+            self._agent = self._open("agent")
+        self._noted(self._agent)
+        self._agent["text"] += text
+        return dict(self._agent)
+
+    def interrupt_agent(self) -> dict | None:
+        """Close the agent's turn as cut off. The message to push, if any."""
+        turn, self._agent = self._agent, None
+        if turn is None or not turn["text"].strip():
+            return None
+        return {**turn, "interrupted": True}
+
+    def end_agent(self) -> None:
+        self._agent = None
+
+    @property
+    def agent_open(self) -> bool:
+        return self._agent is not None
+
+    def mark(self) -> str | None:
+        """The first turn heard since the last mark, and start counting again."""
+        first, self._since_mark = self._since_mark, None
+        return first
+
+
 class TopicTitle(FrameProcessor):
     """The live topic title: what is being talked about RIGHT NOW, in 2-4 words.
 
@@ -1263,7 +1367,24 @@ class TopicTitle(FrameProcessor):
     not view my past transcripts easily", 7 Oct 2026). After the push, off the
     event loop, and never awaited by a turn; a 409 means the drive has ended,
     and stops it.
+
+    AND THE SECTIONS OF THE RECORDER'S PANELS (talkback-20). Every turn is
+    filed under the title it was said in, so a subject the conversation comes
+    BACK to must come back under the same name, or one subject ends up in two
+    sections. The model is shown this drive's earlier titles and asked to
+    return one verbatim when the speech has gone back to it; an answer that
+    matches one, in any case, is taken as that title exactly. Each title
+    message also says from which turn the new subject began (`rehomeFrom`),
+    so the browser can move the sentences that changed the subject into it.
+
+    And it is where the person's side of the panels comes from: it sees every
+    final transcript already, and the turns are numbered by the same `TurnFeed`
+    the title's `rehomeFrom` points into.
     """
+
+    # How many earlier titles the model is shown. A drive rarely has more
+    # subjects than this, and the list is part of every naming call.
+    EARLIER_SHOWN = 16
 
     # How much recent speech the model is shown. Enough for a subject to be
     # recognisable, short enough that last quarter-hour cannot outvote the last
@@ -1274,24 +1395,50 @@ class TopicTitle(FrameProcessor):
     MIN_GAP_SECONDS = 12
     # A slow talker still gets a title: any new speech at all, after this long.
     CALL_AFTER_SECONDS = 30
+    # ONCE PER FINISHED TURN of theirs, as well (14 Oct 2026). The thresholds
+    # above name the subject every twelve seconds at best, and the recorder
+    # files every turn under the subject it was said in: on a drive that moved
+    # between subjects faster than that, the first sentences of each new one
+    # landed under the old heading ("You put everything on a tone of voice").
+    # Naming at the end of each turn makes `rehomeFrom` one turn, not twelve
+    # seconds of them. Below this much new speech a turn is a "yes".
+    CALL_AFTER_TURN_CHARS = 20
 
     def __init__(
         self,
         title_prompt: str | None,
         metadata: dict | None = None,
         ticket: str | None = None,
+        feed: TurnFeed | None = None,
+        titles: list[str] | None = None,
     ):
         super().__init__()
         self._prompt = (title_prompt or "").strip()
         self._metadata = metadata or {}
         self._ticket = ticket
+        self._feed = feed
         # Set once the web app refuses a title because the drive is over.
         self._drive_ended = False
-        self._title: str | None = None
+        # Seeded from the browser on a reconnect: the sections it already has,
+        # the current one last. This process starts knowing nothing, and
+        # without them a subject from before the tunnel would come back under a
+        # new name and a second section.
+        # Whether the VAD hears them right now, as last told to the browser.
+        # Deduplicated here because two VADs report it — the pipeline's own and
+        # the aggregator's, whose copies come back upstream.
+        self._hearing_them = False
+        seeded = [t.strip() for t in (titles or []) if isinstance(t, str) and t.strip()]
+        self._title: str | None = seeded[-1] if seeded else None
+        self._earlier: list[str] = []
+        for earlier in seeded[:-1]:
+            self._remember(earlier)
         self._window = ""
         self._new_chars = 0
         self._last_call = time.monotonic()
         self._task: asyncio.Task | None = None
+        # A turn ended while a call was in flight: name again when it lands,
+        # so that turn is not filed by whichever call happens next.
+        self._again = False
 
     @property
     def title(self) -> str | None:
@@ -1312,17 +1459,49 @@ class TopicTitle(FrameProcessor):
         if text.strip():
             self._append(f"(you said) {text.strip()}")
 
+    def _remember(self, title: str) -> None:
+        """Keep `title` among the earlier ones, once, most recent last."""
+        folded = title.casefold()
+        self._earlier = [t for t in self._earlier if t.casefold() != folded]
+        self._earlier.append(title)
+
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, TranscriptionFrame) and frame.text.strip():
             self._append(frame.text.strip())
+        elif isinstance(frame, UserStoppedSpeakingFrame):
+            # The aggregator's end of their turn, coming back upstream. Not its
+            # START: a turn starts on words, so that frame arrives after the
+            # transcript it was started by and would split it off its own turn.
+            if self._feed is not None:
+                self._feed.end_user()
+            self._maybe_name(turn_ended=True)
 
         # Pushed on IMMEDIATELY, before anything is decided about it. Nothing
         # downstream waits on the board.
         await self.push_frame(frame, direction)
 
+        # WHO IS TALKING, for the recorder to light their panel. The VAD, not
+        # the turn: a turn starts on their first transcribed word and ends two
+        # seconds after their last, which on the screen reads as lag at both
+        # ends. The agent's side needs nothing from here — the browser already
+        # hears its audio start and stop.
+        if self._feed is not None and isinstance(
+            frame, (VADUserStartedSpeakingFrame, VADUserStoppedSpeakingFrame)
+        ):
+            hearing = isinstance(frame, VADUserStartedSpeakingFrame)
+            if hearing != self._hearing_them:
+                self._hearing_them = hearing
+                await self.push_frame(
+                    RTVIServerMessageFrame(data={"type": "speaking", "who": "user", "speaking": hearing})
+                )
+
         if isinstance(frame, TranscriptionFrame) and frame.text.strip():
+            if self._feed is not None:
+                message = self._feed.user(frame.text)
+                if message is not None:
+                    await self.push_frame(RTVIServerMessageFrame(data=message))
             self._maybe_name()
 
     def _append(self, text: str) -> None:
@@ -1331,13 +1510,19 @@ class TopicTitle(FrameProcessor):
         self._window = f"{self._window} {text.strip()}".strip()[-self.WINDOW_CHARS :]
         self._new_chars += len(text.strip())
 
-    def _maybe_name(self) -> None:
+    def _maybe_name(self, turn_ended: bool = False) -> None:
         elapsed = time.monotonic() - self._last_call
-        enough = self._new_chars >= self.CALL_AFTER_CHARS and elapsed >= self.MIN_GAP_SECONDS
-        overdue = self._new_chars > 0 and elapsed >= self.CALL_AFTER_SECONDS
-        if not (enough or overdue):
+        if turn_ended:
+            due = self._new_chars >= self.CALL_AFTER_TURN_CHARS
+        else:
+            enough = self._new_chars >= self.CALL_AFTER_CHARS and elapsed >= self.MIN_GAP_SECONDS
+            overdue = self._new_chars > 0 and elapsed >= self.CALL_AFTER_SECONDS
+            due = enough or overdue
+        if not due:
             return
         if self._task is not None and not self._task.done():
+            if turn_ended:
+                self._again = True
             return
         # `create_task`, not `asyncio.create_task`, because this task PUSHES A
         # FRAME — the same reason `Offers` uses it. Pipecat's task manager is
@@ -1348,12 +1533,28 @@ class TopicTitle(FrameProcessor):
         self._task = self.create_task(self._name_topic(), name="title:call")
 
     async def _name_topic(self) -> None:
+        await self._name_once()
+        # A turn ended while this call ran: name again for it, now. Not in a
+        # `finally`, so a cancelled pipeline does not start a call on its way
+        # down.
+        if self._again:
+            self._again = False
+            self._task = None
+            self._maybe_name(turn_ended=True)
+
+    async def _name_once(self) -> None:
         window, self._new_chars = self._window, 0
         self._last_call = time.monotonic()
+        # Taken with the window: these are the turns this call is about.
+        rehome_from = self._feed.mark() if self._feed is not None else None
         if not window:
             return
 
         current = self._title or "(none yet)"
+        earlier = ""
+        if self._earlier:
+            shown = self._earlier[-self.EARLIER_SHOWN :]
+            earlier = "Earlier titles: " + "; ".join(shown) + "\n\n"
         try:
             raw = await asyncio.to_thread(
                 _litellm_chat,
@@ -1361,7 +1562,7 @@ class TopicTitle(FrameProcessor):
                     {"role": "system", "content": self._prompt},
                     {
                         "role": "user",
-                        "content": f"Current title: {current}\n\nRecent speech:\n{window}",
+                        "content": f"Current title: {current}\n\n{earlier}Recent speech:\n{window}",
                     },
                 ],
                 max_tokens=16,
@@ -1378,9 +1579,23 @@ class TopicTitle(FrameProcessor):
         if title is None:
             return
 
+        # A subject come back: the earlier title exactly, whatever case the
+        # model returned it in, because the browser finds its section by it.
+        returned = next((t for t in self._earlier if t.casefold() == title.casefold()), None)
+        if returned is not None:
+            title = returned
+            logger.info(f"[title] back to {title}")
+        else:
+            logger.info(f"[title] {title}")
+        if self._title is not None:
+            self._remember(self._title)
+        self._earlier = [t for t in self._earlier if t.casefold() != title.casefold()]
         self._title = title
-        logger.info(f"[title] {title}")
-        await self.push_frame(RTVIServerMessageFrame(data={"type": "title", "title": title}))
+
+        message: dict = {"type": "title", "title": title}
+        if rehome_from is not None:
+            message["rehomeFrom"] = rehome_from
+        await self.push_frame(RTVIServerMessageFrame(data=message))
         if self._ticket and not self._drive_ended:
             await asyncio.to_thread(self._save, title)
 
@@ -1402,6 +1617,151 @@ class TopicTitle(FrameProcessor):
             logger.warning(f"[title] not saved ({err.code})")
         except Exception as err:
             logger.warning(f"[title] not saved: {err}")
+
+
+class PauseMarker(FrameProcessor):
+    """Tells the model where they stopped to think, in the one channel it has.
+
+    THE AGENT ONLY EVER GETS WORDS. Asked on 14 Oct 2026 whether it could hear
+    "the tone of voice, the breaks I make", it said — truthfully — "I only read
+    the words you say". Tone needs a model that takes audio. The breaks do not:
+    the VAD has been timing them all along, and a long pause in the middle of
+    a stretch of speech is exactly the cue for "still thinking, do not answer
+    yet" that the prompt asks the model to respect from words alone.
+
+    So when they start again after `MIN_PAUSE_SECS` or more of their own
+    silence, the next transcript reaches the model as "(pause 4s) and then…".
+    Only gaps between THEIR speech: an agent turn in between resets the clock,
+    because the quiet after a reply is not a pause in their thought.
+
+    LAST BEFORE THE USER AGGREGATOR, so only the model's context sees the mark.
+    The summary, the title, recall, the turn record and the screen all read the
+    transcript upstream of here, clean. And only while the agent is quiet,
+    which is also what keeps it out of the aggregator's barge-in rule: that
+    counts words while the agent speaks, and the mark is never added then.
+
+    The format is described to the model in `prompt.ts` (WHAT YOU CAN SEE) —
+    change one, change the other.
+    """
+
+    MIN_PAUSE_SECS = 2.0
+    # A pause whose words never came (a cough the VAD took for speech) is not
+    # carried onto speech this much later.
+    STALE_SECS = 10.0
+
+    def __init__(self):
+        super().__init__()
+        # When their last stretch of speech ended, if nothing has been said by
+        # anyone since.
+        self._quiet_since: float | None = None
+        # A pause measured at the start of new speech, waiting for its words.
+        self._pause: tuple[float, float] | None = None
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        now = time.monotonic()
+        if direction == FrameDirection.DOWNSTREAM and isinstance(frame, VADUserStoppedSpeakingFrame):
+            self._quiet_since = now
+        elif direction == FrameDirection.DOWNSTREAM and isinstance(frame, VADUserStartedSpeakingFrame):
+            if self._quiet_since is not None:
+                gap = now - self._quiet_since
+                if gap >= self.MIN_PAUSE_SECS:
+                    self._pause = (gap, now)
+            self._quiet_since = None
+        elif isinstance(frame, BotStartedSpeakingFrame):
+            self._quiet_since = None
+            self._pause = None
+        elif isinstance(frame, TranscriptionFrame) and frame.text.strip() and self._pause:
+            gap, at = self._pause
+            self._pause = None
+            if now - at <= self.STALE_SECS:
+                frame.text = f"(pause {round(gap)}s) {frame.text}"
+
+        await self.push_frame(frame, direction)
+
+
+class AgentFeed(FrameProcessor):
+    """Sends the agent's side of the conversation to its panel on the recorder.
+
+    BETWEEN THE GATE AND THE TTS, because that is the one place that sees
+    exactly what reaches the speaker: text `SilenceGate` released (never a
+    `<silence>`, never a draft body) and every sentence the container speaks
+    with no completion behind it — the acknowledgement, a poke's last line, the
+    keep-alive while a search runs — which arrive as `TTSSpeakFrame`.
+
+    THROTTLED, because a reply streams a few characters at a time and every
+    message re-renders the panel on a phone that is also holding a call up and
+    a recorder open (the cost `use-pipecat.ts` describes for the old exchange).
+    A message goes on a sentence end or every `THROTTLE_SECS`, and whatever is
+    left is flushed when the completion ends. The text is the whole turn so far
+    each time, so a dropped message costs nothing the next one does not carry.
+    """
+
+    THROTTLE_SECS = 0.3
+    SENTENCE_END = (".", "!", "?", "…", ":", ";")
+
+    def __init__(self, feed: TurnFeed):
+        super().__init__()
+        self._feed = feed
+        self._last_push = 0.0
+        self._pending: dict | None = None
+        self._in_response = False
+        self._speaking = False
+
+    async def _send(self, message: dict | None) -> None:
+        if message is None:
+            return
+        self._pending = None
+        self._last_push = time.monotonic()
+        await self.push_frame(RTVIServerMessageFrame(data=message))
+
+    async def _said(self, text: str, *, flush: bool = False) -> None:
+        message = self._feed.agent(text)
+        if message is None:
+            return
+        due = time.monotonic() - self._last_push >= self.THROTTLE_SECS
+        if flush or due or text.rstrip().endswith(self.SENTENCE_END):
+            await self._send(message)
+        else:
+            self._pending = message
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if direction == FrameDirection.DOWNSTREAM:
+            if isinstance(frame, LLMFullResponseStartFrame):
+                self._in_response = True
+            elif isinstance(frame, LLMTextFrame):
+                await self._said(frame.text)
+            elif isinstance(frame, TTSSpeakFrame):
+                await self._said(frame.text, flush=True)
+            elif isinstance(frame, LLMFullResponseEndFrame):
+                self._in_response = False
+                await self._send(self._pending)
+            elif isinstance(frame, InterruptionFrame):
+                # Only a turn that was still going can have been cut off: the
+                # aggregator broadcasts an interruption at the start of every
+                # turn of theirs, including after a reply that finished.
+                if self._speaking or self._in_response:
+                    self._pending = None
+                    await self._send(self._feed.interrupt_agent())
+                else:
+                    self._feed.end_agent()
+                self._in_response = False
+        elif isinstance(frame, BotStartedSpeakingFrame):
+            self._speaking = True
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            self._speaking = False
+            # The audio has finished and nothing more is being generated: the
+            # turn is over, and the next thing the agent says is a new one.
+            # Not on a stop mid-reply — TTS can run dry between two sentences
+            # of a slow completion, and that is one turn with a pause in it.
+            if not self._in_response:
+                await self._send(self._pending)
+                self._feed.end_agent()
+
+        await self.push_frame(frame, direction)
 
 
 class Recall(FrameProcessor):
@@ -1809,6 +2169,37 @@ SEARCH_WAIT_PHRASES = {
 }
 FALLBACK_PHRASE_LANGUAGE = "en"
 
+# --- The floor: Lock, Normal and Poke ----------------------------------------
+#
+# Mirrors POKE_NUDGE / POKE_RETRY_NUDGE / POKE_FALLBACKS / FLOOR_OPEN_NOTE in
+# packages/talkback/src/prompt.ts — change one, change both. The fallbacks are
+# spoken with no completion behind them, so they follow the rules above: no
+# question mark, at most twelve words, and enough words for the echo filter.
+POKE_NUDGE = (
+    "(They tapped to hear from you now — a poke, the way you would nudge someone "
+    "sitting next to you. They may have been talking for a while without you. "
+    "<silence> is not available on this turn. If they said something you have not "
+    "answered yet, respond to the most recent thing that wants a response; "
+    "otherwise say the one most useful thing you can see — the next step they "
+    "named, an open question from where things stand, the obvious objection. One "
+    "or two short sentences, and never repeat what you said last.)"
+)
+POKE_RETRY_NUDGE = (
+    "(They poked you to hear from you, and <silence> is not available. Say one "
+    "short sentence: your take on what they said last, or the next step you can see.)"
+)
+POKE_FALLBACKS = {
+    "en": "I'm listening, nothing to add on that yet.",
+    "de": "Ich höre zu, dazu habe ich gerade nichts hinzuzufügen.",
+    "da": "Jeg lytter med, jeg har ikke noget at tilføje endnu.",
+    "es": "Te escucho, de momento no tengo nada que añadir.",
+}
+FLOOR_OPEN_NOTE = (
+    "(They have unlocked you: you may reply again from their next words. Do not "
+    "work back through what they said while you were locked — respond only to "
+    "what they say next, if it wants a reply.)"
+)
+
 
 def phrase_language(session: dict) -> str:
     """Which language the fixed phrases above are said in.
@@ -1823,6 +2214,10 @@ def phrase_language(session: dict) -> str:
 
 def answer_acknowledgement(language: str | None) -> str:
     return ANSWER_ACKNOWLEDGEMENTS.get(language or "", ANSWER_ACKNOWLEDGEMENTS[FALLBACK_PHRASE_LANGUAGE])
+
+
+def poke_fallback(language: str | None) -> str:
+    return POKE_FALLBACKS.get(language or "", POKE_FALLBACKS[FALLBACK_PHRASE_LANGUAGE])
 
 
 def search_wait_phrase(language: str | None, index: int) -> str | None:
@@ -1880,11 +2275,15 @@ class Offers(FrameProcessor):
         recall: "Recall",
         session: dict,
         recorder: "TurnRecorder | None" = None,
+        floor: "Floor | None" = None,
     ):
         super().__init__()
         self._context = context
         self._recall = recall
         self._recorder = recorder
+        # Who may talk. An unprompted turn is the one kind the person never
+        # asked for, so it is the first thing a Lock takes away.
+        self._floor = floor
         self._enabled = offers_enabled(session)
         # The profile's proactivity level, arrived via /api/realtime/session —
         # the same value that governs how forthcoming the prompt is allowed to
@@ -1953,6 +2352,15 @@ class Offers(FrameProcessor):
         # aloud, and offering something she had already agreed to.
         if self._recorder is not None and self._recorder.session_ended:
             logger.info("[offers] the drive has ended — no unprompted turn")
+            return
+
+        # Locked: they have said only they speak. Checked here, where the turn
+        # would be taken, rather than by not arming — the lock can come and go
+        # while a timer waits, and a timer armed under Normal must not speak
+        # into a Lock pressed since. Not even the opening: a drive that starts
+        # locked starts in silence, which is what the remembered mode means.
+        if self._floor is not None and self._floor.locked:
+            logger.info("[offers] locked — no unprompted turn")
             return
 
         if opening:
@@ -2059,6 +2467,9 @@ class AnswerGuard(FrameProcessor):
         # answered with the acknowledgement while the re-run was still to come
         # ("Sorry, I lost that" twice on the 27 Sep 2026 evaluation drive).
         self._retry_started = False
+        # What the re-run is told. The answer guard's own nudge, unless the
+        # moment being forced is a poke — see `Floor`.
+        self._nudge = ANSWER_RETRY_NUDGE
 
     @property
     def retrying(self) -> bool:
@@ -2073,17 +2484,27 @@ class AnswerGuard(FrameProcessor):
     def acknowledgement(self) -> str:
         return answer_acknowledgement(self._language)
 
-    def request_retry(self) -> None:
+    @property
+    def poke_fallback(self) -> str:
+        """What a poke ends in when its re-run declines too, in the drive's language."""
+        return poke_fallback(self._language)
+
+    def request_retry(self, nudge: str = ANSWER_RETRY_NUDGE) -> None:
         """Run this turn again, from the gate's frame handler.
 
         Synchronous on purpose: the gate calls it while handling the declined
         completion's end frame, and the work happens on a task afterwards.
+
+        `nudge` is what the re-run is told. The same machinery forces a poke —
+        a moment the person asked for with a tap rather than an answer — and
+        "they have just answered the question YOU asked" would be false there.
         """
         if self._retrying:
             # Already asked for; one re-run per moment.
             return
         self._retrying = True
         self._retry_started = False
+        self._nudge = nudge
         self.create_task(self._retry(), name="answers:retry")
 
     def settled(self) -> None:
@@ -2098,8 +2519,12 @@ class AnswerGuard(FrameProcessor):
         if not self._retrying:
             logger.info("[answer] settled before the re-run — not re-running")
             return
-        self._context.add_message({"role": "user", "content": ANSWER_RETRY_NUDGE})
-        logger.info("[answer] a declined answer to our own question — re-running the turn")
+        self._context.add_message({"role": "user", "content": self._nudge})
+        logger.info(
+            "[answer] a declined poke — re-running the turn"
+            if self._nudge is POKE_RETRY_NUDGE
+            else "[answer] a declined answer to our own question — re-running the turn"
+        )
         self._retry_started = True
         await self.push_frame(LLMRunFrame())
 
@@ -2110,6 +2535,373 @@ class AnswerGuard(FrameProcessor):
         # NEXT decline would be answered with the acknowledgement.
         if isinstance(frame, TranscriptionFrame) and frame.text.strip() and self._retrying:
             self.settled()
+        await self.push_frame(frame, direction)
+
+
+class Floor(FrameProcessor):
+    """Who may talk: the person's Lock, Normal and Poke, made mechanical.
+
+    WHAT IT IS FOR. Until talkback-20 whether the agent spoke was the model's
+    call alone, every turn, with `<silence>` as its only restraint. The study
+    has moved to exactly that question — who decides when the system talks —
+    so the person now has three controls on the recorder:
+
+    - LOCK: only they speak. Their words still reach the context (and the
+      summary, the title, recall), but the model is never asked to reply, and
+      a reply in progress is cut off where it stands.
+    - NORMAL: what there was before. Every turn is the model's to take.
+    - POKE: one turn from the agent, now, in either mode — the way you would
+      nudge somebody sitting next to you. Under Lock the lock stays on.
+
+    WHY IN THE CONTAINER, NOT THE PROMPT. A lock the model is asked to honour
+    is a lock that holds most of the time. This one holds by construction:
+    the completion is never started.
+
+    WHERE IT SITS: between the user aggregator and the LLM, because that is the
+    one place every turn passes on its way to being generated — the person's
+    words (`LLMContextFrame` pushed by the aggregator), an offer's or the answer
+    guard's run (an `LLMRunFrame` the aggregator turns into the same frame), and
+    a poke, which this pushes itself. Dropping that frame under Lock costs
+    nothing: the aggregator has already written their words into the context,
+    so the next turn the agent IS given sees all of them. A tool's follow-up is
+    the one completion that does not pass here — the assistant aggregator sends
+    it UPSTREAM from the end of the pipeline — which is what `FloorUpstream`,
+    downstream of the LLM, is for.
+
+    A POKE IS ITS OWN MOMENT (trigger `poke`), never a relabelled user turn: a
+    poke is the person handing the agent the floor on purpose, and the study
+    needs that apart from their words. When nobody is talking it runs at once.
+    When they are mid-sentence it is ARMED and runs when they finish — under
+    Lock on the very completion their words would have started, under Normal
+    only if the turn their words started declined, because a reply that
+    reached the speaker is what the poke asked for. When the agent is already
+    speaking it does nothing: it is already talking.
+
+    ALWAYS ANSWERED. A poked completion that declines is refused and re-run by
+    `AnswerGuard`, then ends in a fixed line — the same promise the guard makes
+    for an answer the agent asked for. See `SilenceGate`.
+
+    The browser sends `floor` ({"floor": "open" | "locked"}) and `poke` as RTVI
+    client requests and gets the floor now in force back in the response,
+    which is how the toggle on the recorder shows the lock the agent is
+    actually under rather than the one that was tapped. Every change is
+    written to `floor_event` as the container applied it.
+    """
+
+    # A poke that has started but whose completion never reports back — an LLM
+    # error travels upstream and the gate never sees an end — is given up on
+    # after this, rather than holding a lock open for one turn forever.
+    RUN_TIMEOUT_SECS = 30.0
+    # How often an armed poke looks to see whether the person has finished.
+    ARMED_POLL_SECS = 0.25
+    # An armed poke whose turn never produced a completion — a cough the VAD
+    # took for speech, words the STT returned nothing for — fires by itself
+    # after this much quiet. Longer than the aggregator's own end-of-turn wait,
+    # so a real turn always reaches the LLM first and the poke rides on it.
+    ARMED_SETTLE_MARGIN_SECS = 1.0
+    # And is dropped if they never stop talking for this long.
+    ARMED_GIVE_UP_SECS = 90.0
+
+    def __init__(
+        self,
+        context: LLMContext,
+        recorder: "TurnRecorder | None" = None,
+        *,
+        locked: bool = False,
+    ):
+        super().__init__()
+        self._context = context
+        self._recorder = recorder
+        # The mode the device remembered, applied before the first word so the
+        # opening offer cannot race it. Written as `at_connect` on StartFrame.
+        self._locked = locked
+        # None, "armed" (waiting for them to finish) or "running".
+        self._poke: str | None = None
+        # The person is talking: VAD hears them, or the aggregator's turn is
+        # still open. Either one; the aggregator's ends seconds after the VAD's.
+        self._vad_speaking = False
+        self._user_turn = False
+        # The agent's audio is playing, from the output transport's own frames.
+        self._bot_speaking = False
+        # A completion has been asked for and has not ended.
+        self._generating = False
+        self._waiter: asyncio.Task | None = None
+        self._watchdog: asyncio.Task | None = None
+
+    # -- state the rest of the pipeline reads --------------------------------
+
+    @property
+    def locked(self) -> bool:
+        return self._locked
+
+    @property
+    def floor(self) -> str:
+        return "locked" if self._locked else "open"
+
+    def allows_upstream_run(self) -> bool:
+        """Whether a completion asked for from downstream (a tool's follow-up)
+        may run: always under Normal, and under Lock only inside a poke."""
+        return not self._locked or self._poke == "running"
+
+    def note_generating(self, generating: bool) -> None:
+        """A completion started or ended, as `FloorUpstream` saw it."""
+        self._generating = generating
+
+    @property
+    def _user_busy(self) -> bool:
+        return self._vad_speaking or self._user_turn
+
+    # -- what SilenceGate reports --------------------------------------------
+
+    def note_outcome(self, outcome: str, *, spoke: bool = False) -> None:
+        """What a turn became: "spoke", "declined" or "interrupted".
+
+        Spoken ends any poke — a reply reaching the speaker is what it asked
+        for, whoever started the turn. Declined matters only to an ARMED poke
+        under Normal: their own turn passed up the moment, so the poke takes it.
+        Interrupted before a word came out puts a running poke back to armed:
+        they started talking over a reply that had not begun, which is them
+        finishing their sentence, not them taking the poke back.
+        """
+        self._generating = False
+        if outcome == "spoke":
+            if self._poke is not None:
+                logger.info("[floor] the poke was answered")
+            self._clear_poke()
+        elif outcome == "interrupted":
+            if self._poke == "running":
+                if spoke:
+                    self._clear_poke()
+                else:
+                    self._clear_poke()
+                    self._arm()
+        elif outcome == "declined":
+            if self._poke == "armed" and not self._user_busy and not self._bot_speaking:
+                self._run_soon()
+            elif self._poke == "running":
+                # Only without an answer guard to force it; with one, a declined
+                # poke is refused and re-run and this is never called for it.
+                self._clear_poke()
+
+    # -- the requests --------------------------------------------------------
+
+    async def _set(self, locked: bool) -> None:
+        if locked == self._locked:
+            # The browser re-sends its floor after every connect; the same
+            # floor again is no change and no row.
+            return
+        self._locked = locked
+        if self._recorder is not None:
+            self._recorder.record_floor(self.floor)
+        if locked:
+            logger.info("[floor] locked — only they speak")
+            if self._recorder is not None:
+                self._recorder.clear_question()
+            # Before the interruption, so the gate reporting it finds no poke
+            # to put back.
+            self._clear_poke()
+            if self._bot_speaking or self._generating:
+                # Cut off where it stands. The gate records it the way it
+                # records a barge-in, and `floor_event` at the same offset is
+                # what tells a lock from a voice.
+                await self.broadcast_interruption()
+                self._generating = False
+        else:
+            logger.info("[floor] open — the agent may talk back")
+            self._context.add_message({"role": "user", "content": FLOOR_OPEN_NOTE})
+
+    async def _poke_request(self) -> str:
+        """Handle a tap on Poke. Returns what became of it, for the browser."""
+        if self._recorder is not None:
+            self._recorder.record_floor("poke")
+        if self._bot_speaking:
+            logger.info("[floor] poked while speaking — nothing to do")
+            return "speaking"
+        if self._poke is not None:
+            # One poke at a time: a second tap while the first is waiting or
+            # running asks for nothing the first is not already getting.
+            return self._poke
+        if self._user_busy or self._generating:
+            self._arm()
+            logger.info("[floor] poked mid-turn — waiting for them to finish")
+            return "armed"
+        if not self._start():
+            return "ended"
+        self._push_soon()
+        return "fired"
+
+    # -- the poke itself ------------------------------------------------------
+
+    def _start(self) -> bool:
+        """Make the moment: the cue, the nudge, the state. False once the drive
+        has ended — the same check `Offers` makes where its turn is taken."""
+        if self._recorder is not None and self._recorder.session_ended:
+            logger.info("[floor] the drive has ended — not poking")
+            self._clear_poke()
+            return False
+        self._cancel(self._waiter)
+        self._waiter = None
+        if self._recorder is not None:
+            self._recorder.note_offer("poke")
+        self._context.add_message({"role": "user", "content": POKE_NUDGE})
+        self._poke = "running"
+        self._generating = True
+        self._cancel(self._watchdog)
+        self._watchdog = self.create_task(self._give_up_running(), name="floor:watchdog")
+        logger.info("[floor] poked — one turn")
+        return True
+
+    def _push_soon(self) -> None:
+        self.create_task(self.push_frame(LLMContextFrame(context=self._context)), name="floor:poke")
+
+    def _run_soon(self) -> None:
+        if self._start():
+            self._push_soon()
+
+    def _arm(self) -> None:
+        self._poke = "armed"
+        self._cancel(self._waiter)
+        self._waiter = self.create_task(self._await_quiet(), name="floor:armed")
+
+    async def _await_quiet(self) -> None:
+        """Fire an armed poke that nothing else picked up, once they are done.
+
+        Polled rather than event-driven because "done" is the conjunction of
+        three things that end in no fixed order — their VAD, their turn, any
+        completion in flight — and a quarter-second tick is cheaper to reason
+        about than every interleaving of their frames.
+        """
+        settle = user_turn_stop_timeout_secs() + self.ARMED_SETTLE_MARGIN_SECS
+        quiet = waited = 0.0
+        while self._poke == "armed" and waited < self.ARMED_GIVE_UP_SECS:
+            await asyncio.sleep(self.ARMED_POLL_SECS)
+            waited += self.ARMED_POLL_SECS
+            if self._user_busy or self._generating or self._bot_speaking:
+                quiet = 0.0
+                continue
+            quiet += self.ARMED_POLL_SECS
+            if quiet >= settle:
+                self._waiter = None
+                if self._start():
+                    await self.push_frame(LLMContextFrame(context=self._context))
+                return
+        if self._poke == "armed":
+            logger.info("[floor] they never finished — the poke lapses")
+            self._poke = None
+
+    async def _give_up_running(self) -> None:
+        await asyncio.sleep(self.RUN_TIMEOUT_SECS)
+        if self._poke == "running":
+            logger.warning("[floor] the poked turn never reported back — giving up on it")
+            self._poke = None
+            self._generating = False
+
+    def _clear_poke(self) -> None:
+        self._poke = None
+        self._cancel(self._waiter)
+        self._cancel(self._watchdog)
+        self._waiter = self._watchdog = None
+
+    @staticmethod
+    def _cancel(task: "asyncio.Task | None") -> None:
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+
+    # -- frame plumbing -------------------------------------------------------
+
+    async def _answer(self, request: RTVIClientMessageFrame, data: dict) -> None:
+        await self.push_frame(RTVIServerResponseFrame(client_msg=request, data=data))
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, RTVIClientMessageFrame) and frame.type in ("floor", "poke"):
+            data = frame.data if isinstance(frame.data, dict) else {}
+            if frame.type == "floor":
+                wanted = data.get("floor")
+                if wanted in ("open", "locked"):
+                    await self._set(wanted == "locked")
+                await self._answer(frame, {"floor": self.floor})
+            else:
+                result = await self._poke_request()
+                await self._answer(frame, {"poke": result, "floor": self.floor})
+            # Consumed: nothing downstream has any use for the request.
+            return
+
+        if isinstance(frame, StartFrame):
+            if self._recorder is not None:
+                self._recorder.record_floor(self.floor, at_connect=True)
+        elif isinstance(frame, LLMContextFrame) and direction == FrameDirection.DOWNSTREAM:
+            if self._locked and self._poke != "running":
+                if self._poke == "armed":
+                    # Their turn has ended and asked for a reply; the poke they
+                    # tapped while talking takes this completion as its own.
+                    if not self._start():
+                        return
+                else:
+                    logger.info("[floor] locked — their words are kept, no reply asked for")
+                    return
+            self._generating = True
+        elif isinstance(frame, VADUserStartedSpeakingFrame):
+            self._vad_speaking = True
+        elif isinstance(frame, VADUserStoppedSpeakingFrame):
+            self._vad_speaking = False
+        elif isinstance(frame, UserStartedSpeakingFrame):
+            self._user_turn = True
+        elif isinstance(frame, UserStoppedSpeakingFrame):
+            self._user_turn = False
+        elif isinstance(frame, BotStartedSpeakingFrame):
+            self._bot_speaking = True
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            self._bot_speaking = False
+        elif isinstance(frame, ErrorFrame):
+            # A completion that failed sends this upstream and never an end, so
+            # without it an armed poke would wait on a generation that is gone.
+            self._generating = False
+            if self._poke == "running":
+                self._clear_poke()
+        elif isinstance(frame, (EndFrame, CancelFrame)):
+            self._clear_poke()
+
+        await self.push_frame(frame, direction)
+
+    async def cleanup(self):
+        self._clear_poke()
+        await super().cleanup()
+
+
+class FloorUpstream(FrameProcessor):
+    """The second half of the lock, between the LLM and `SilenceGate`.
+
+    A tool's result comes back as an `LLMContextFrame` pushed UPSTREAM by the
+    assistant aggregator at the very end of the pipeline, and reaches the LLM
+    without passing `Floor`. Board tools are not cancelled by an interruption,
+    so without this a card moved just before a Lock would still be announced
+    after it. Under Lock the follow-up is dropped — the tool has run and its
+    result is in the context; only the sentence about it goes unsaid — unless a
+    poke is the turn that called it.
+
+    It is also where `Floor` learns that a completion has ended, since the
+    LLM's own frames come out here and never pass back through it.
+    """
+
+    def __init__(self, floor: Floor):
+        super().__init__()
+        self._floor = floor
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, LLMContextFrame) and direction == FrameDirection.UPSTREAM:
+            if not self._floor.allows_upstream_run():
+                logger.info("[floor] locked — a tool's follow-up is not spoken")
+                return
+            self._floor.note_generating(True)
+        elif isinstance(frame, LLMFullResponseStartFrame):
+            self._floor.note_generating(True)
+        elif isinstance(frame, (LLMFullResponseEndFrame, InterruptionFrame)):
+            self._floor.note_generating(False)
+
         await self.push_frame(frame, direction)
 
 
@@ -2386,6 +3178,10 @@ class TurnRecorder:
         self._asked_question = False
         # The moment `AnswerGuard` had to force, if any. See `note_forced_answer`.
         self._forced_opportunity: int | None = None
+        # The same mark for a poke, kept apart from it. See `note_forced_poke`.
+        self._forced_poke_opportunity: int | None = None
+        # `floor_event.seq`, per connection like the others.
+        self._floor_seq = 0
         # Board tools called since the last recorded turn, for `toolCalls` on
         # the turn that reports them.
         self._tool_calls: list[dict] = []
@@ -2465,6 +3261,60 @@ class TurnRecorder:
         countable, and it is why `agent_decision.forced_answer` exists.
         """
         self._forced_opportunity = self._cue.opportunity
+
+    def note_forced_poke(self) -> None:
+        """This moment's first completion declined a POKE.
+
+        The twin of `note_forced_answer`, and deliberately not the same mark:
+        `forced_answer` feeds the unanswered-answer count, which reads it
+        without looking at the trigger and whose target is zero. A poke the
+        model would have let pass is a different finding — how often being
+        asked to speak finds the agent with nothing to say — and it lands in
+        `agent_decision.forced_poke`.
+        """
+        self._forced_poke_opportunity = self._cue.opportunity
+
+    def clear_question(self) -> None:
+        """Forget that the last spoken turn asked them anything.
+
+        Called when they LOCK the agent. Whatever it asked, they have just said
+        they are not talking to it: without this, the first words after an
+        unlock — five minutes and another subject later — would be taken as
+        the answer, and `AnswerGuard` would refuse to let the agent stay quiet
+        about a question nobody remembers. The parked ask goes too, so their
+        locked monologue is never sent to `/context` as a yes or a no.
+        """
+        self._asked_question = False
+        self._awaiting_answer = None
+
+    def record_floor(self, kind: str, at_connect: bool = False) -> None:
+        """Who may talk changed, and the container has applied it.
+
+        `kind` is a `floor_event_kind`: "locked", "open" or "poke". Fire and
+        forget like every other write here: the lock holds in this process
+        whether or not its row lands, and a tap must never wait on Postgres.
+        """
+        if not self._ticket or not self._started_at_ms or self._session_ended:
+            return
+        seq, self._floor_seq = self._floor_seq, self._floor_seq + 1
+        payload: dict = {
+            "ticket": self._ticket,
+            "seq": seq,
+            "offsetMs": max(0, _now_ms() - self._started_at_ms),
+            "kind": kind,
+        }
+        if at_connect:
+            payload["atConnect"] = True
+        if self._config_version:
+            payload["configVersion"] = self._config_version
+
+        async def send() -> None:
+            try:
+                await asyncio.to_thread(self._post, "floor", payload)
+            except Exception as err:
+                logger.warning(f"[floor] not recorded: {err}")
+
+        asyncio.create_task(send())
 
     @property
     def awaiting_question_answer(self) -> bool:
@@ -2709,6 +3559,12 @@ class TurnRecorder:
         if self._forced_opportunity is not None and cue.opportunity == self._forced_opportunity:
             decision["forcedAnswer"] = True
             self._forced_opportunity = None
+        if (
+            self._forced_poke_opportunity is not None
+            and cue.opportunity == self._forced_poke_opportunity
+        ):
+            decision["forcedPoke"] = True
+            self._forced_poke_opportunity = None
         if self._config_version:
             decision["configVersion"] = self._config_version
         if latency is not None:
@@ -3357,11 +4213,15 @@ class SilenceGate(FrameProcessor):
         answers: "AnswerGuard | None" = None,
         stt_name: str | None = None,
         resolved_model: Callable[[], str] | None = None,
+        floor: "Floor | None" = None,
     ):
         super().__init__()
         self._summary = summary
         self._title = title
         self._answers = answers
+        # Told what each turn became, as the proactive engine is: a poke ends
+        # when something reaches the speaker, and waits on through a decline.
+        self._floor = floor
         self._recorder = recorder
         self._drafts = drafts
         self._offers = offers
@@ -3422,6 +4282,14 @@ class SilenceGate(FrameProcessor):
         self._superseded = False
         # Whether the completion now running is `AnswerGuard`'s re-run.
         self._is_retry = False
+        # The moment whose completion called a tool. An answer acted on with a
+        # tool HAS been acted on, so the completion after the tool may be
+        # silent: on 14 Oct 2026 the agent added two tasks to the board for a
+        # "yes", its follow-up said nothing, and the guard took that for
+        # ignoring the answer — "Sorry, I lost that. Say it again." after doing
+        # exactly what it was asked. Not cleared by `_reset`, for the reason
+        # `_answered_opportunity` is not: the follow-up is a new completion.
+        self._acted_opportunity: int | None = None
 
     def _record_drafts(self, text: str) -> None:
         """Send the drafts in `text` to be kept, and mark them on the turn.
@@ -3589,6 +4457,8 @@ class SilenceGate(FrameProcessor):
         # not state: it is decided and acted on within one frame, and `_reset`
         # runs in between.
         retry = False
+        # What the re-run is told: the answer guard's nudge, or the poke's.
+        retry_nudge: str | None = None
 
         if isinstance(frame, LLMFullResponseStartFrame):
             self._reset()
@@ -3620,6 +4490,8 @@ class SilenceGate(FrameProcessor):
                 self._playback.abandon()
         elif isinstance(frame, FunctionCallsStartedFrame):
             self._calling_tools = True
+            if self._cue is not None:
+                self._acted_opportunity = self._cue.opportunity
             # A tool that runs has effects, and its result must be spoken, so a
             # completion that calls one is never the duplicate of anything.
             self._superseded = False
@@ -3684,6 +4556,8 @@ class SilenceGate(FrameProcessor):
             # the speaker at all, so it counts as not having happened.
             if self._offers is not None:
                 self._offers.note_agent_turn(bool(self._spoken.strip()))
+            if self._floor is not None:
+                self._floor.note_outcome("interrupted", spoke=bool(self._spoken.strip()))
             # A draft whose closing tag had already arrived is finished, and the
             # interruption cannot have been about it — its body is never spoken,
             # so the person talking over the reply is the ordinary case while
@@ -3757,7 +4631,13 @@ class SilenceGate(FrameProcessor):
                     # reaches the speaker, so it is a turn like any other — and
                     # it is the decision this moment produced.
                     self._answers.settled()
-                    spoken = self._answers.acknowledgement
+                    # A poke is not an answer they gave, so "I lost that" would
+                    # be false: it gets its own line, which hands the turn back.
+                    spoken = (
+                        self._answers.poke_fallback
+                        if self._cue is not None and self._cue.trigger == "poke"
+                        else self._answers.acknowledgement
+                    )
                     logger.info(f"[answer] re-run declined too, acknowledging: {spoken!r}")
                     # `append_to_context` left at its default, unlike the search
                     # announcement: the model did not write this one, but it
@@ -3783,6 +4663,8 @@ class SilenceGate(FrameProcessor):
                     and self._cue is not None
                     and self._cue.trigger == "user_turn"
                     and self._recorder.awaiting_question_answer
+                    # Already acted on with a tool: see `_acted_opportunity`.
+                    and self._cue.opportunity != self._acted_opportunity
                 ):
                     # An answer to the agent's own question, declined. Refuse
                     # it: no turn (nothing was spoken) and NO decision either —
@@ -3794,6 +4676,20 @@ class SilenceGate(FrameProcessor):
                     # count could never be anything but zero.
                     self._recorder.note_forced_answer()
                     retry = True
+                elif (
+                    self._answers is not None
+                    and self._cue is not None
+                    and self._cue.trigger == "poke"
+                ):
+                    # They tapped Poke to hear from the agent, and the model
+                    # declined. Refused exactly as a declined answer is — no
+                    # turn, no decision, one re-run — because a poke met with
+                    # silence is the same failure: they did something and
+                    # cannot tell waiting from broken. Marked on its own column
+                    # so it never counts as an unanswered answer.
+                    self._recorder.note_forced_poke()
+                    retry = True
+                    retry_nudge = POKE_RETRY_NUDGE
                 else:
                     self._recorder.decline(cue=self._cue)
             # The proactive engine needs the same fact the summary does: what
@@ -3812,6 +4708,15 @@ class SilenceGate(FrameProcessor):
                 and not (self._calling_tools and not spoke)
             ):
                 self._offers.note_agent_turn(spoke)
+            # The floor needs the same fact, on the same conditions: a refused
+            # decline is not an outcome (the re-run is), and a completion that
+            # only called a tool has not finished its turn.
+            if (
+                self._floor is not None
+                and not retry
+                and not (self._calling_tools and not spoke)
+            ):
+                self._floor.note_outcome("spoke" if spoke else "declined")
             self._reset()
 
         await self.push_frame(frame, direction)
@@ -3820,7 +4725,10 @@ class SilenceGate(FrameProcessor):
         # aggregator at the end of the pipeline has closed this turn before the
         # next one starts behind it. `AnswerGuard` adds its own beat on top.
         if retry and self._answers is not None:
-            self._answers.request_retry()
+            if retry_nudge is not None:
+                self._answers.request_retry(retry_nudge)
+            else:
+                self._answers.request_retry()
 
 
 def build_pipeline(
@@ -3828,8 +4736,16 @@ def build_pipeline(
     ticket: str | None = None,
     session: dict | None = None,
     capture_session_id: str | None = None,
+    *,
+    locked: bool = False,
+    titles: list[str] | None = None,
 ) -> PipelineWorker:
     """Assemble one drive's pipeline.
+
+    `locked` and `titles` come from the browser with the offer: the floor it
+    remembers, applied before the first word, and the sections it already has,
+    so a reconnect files a returning subject where it was. See `Floor`,
+    `TopicTitle`.
 
     `session` is the bootstrap from `/api/realtime/session` — the prompt, the
     summary instruction, the voice and any seed summary. Fetched once by the
@@ -3978,10 +4894,16 @@ def build_pipeline(
     # speech rather than the summary above, because the title answers "what
     # now" and the summary answers "what so far" — see the class. Inert when the
     # web app sends no `titlePrompt`.
+    # Both sides of the conversation, for the recorder's panels: their words
+    # from the title processor, which already sees every transcript, and what
+    # reached the speaker from `AgentFeed`. One numbering for both.
+    feed = TurnFeed()
     title = TopicTitle(
         session.get("titlePrompt"),
         metadata=litellm_metadata("talkback.title", session, capture_session_id),
         ticket=ticket,
+        feed=feed,
+        titles=titles,
     )
     # Offsets are measured against the drive's own start, the same clock
     # `utterance` uses — which is what lets the two tables be read as one
@@ -3989,6 +4911,9 @@ def build_pipeline(
     recorder = TurnRecorder(
         ticket, session.get("startedAtEpochMs"), session.get("configVersion")
     )
+    # Who may talk. Built before the engine, which must not offer a turn into a
+    # Lock. See `Floor`.
+    floor = Floor(context, recorder, locked=locked)
     # Says something while a turn that has already announced itself runs long.
     # Its own processor because it needs a position in the pipeline (it speaks)
     # and a task to count on; it sits between the gate and the TTS, so the
@@ -4033,7 +4958,7 @@ def build_pipeline(
     # pushes to run an unprompted turn flows into the aggregator's own run
     # path — the same one a normal turn takes.
     recall = Recall(context, summary, ticket, recorder, drafts)
-    offers = Offers(context, recall, session, recorder)
+    offers = Offers(context, recall, session, recorder, floor)
     # Not conditional on anything: a declined answer to the agent's own
     # question is a defect in every study arm. Sits next to `Offers` because it
     # re-runs a turn by the same route — a message on the context and an
@@ -4076,8 +5001,16 @@ def build_pipeline(
             recall,
             offers,
             answers,
+            # Last before the aggregator, so only the model sees the marks.
+            PauseMarker(),
             aggregator.user(),
+            # Between the aggregator and the LLM: every turn passes here on its
+            # way to being generated, and under Lock none is.
+            floor,
             llm,
+            # The lock's other half: a tool's follow-up comes back upstream from
+            # the end of the pipeline and never passes `floor`.
+            FloorUpstream(floor),
             # Between the LLM and TTS deliberately: the aggregator downstream
             # still records what the model generated, so a declined turn is
             # visible in the context as a turn that happened, while never
@@ -4095,8 +5028,12 @@ def build_pipeline(
                 # answered with off `chunk.model`, and an alias or a fallback
                 # makes the two differ. Read per turn, at the end of it.
                 resolved_model=llm.get_full_model_name,
+                floor=floor,
             ),
             keepalive,
+            # After everything that decides what is said, before the voice that
+            # says it: exactly what reaches the speaker, on its way to the panel.
+            AgentFeed(feed),
             tts,
             transport.output(),
             aggregator.assistant(),
@@ -4237,13 +5174,25 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
     # Tracing only. It is NOT trusted for anything the participant owns —
     # ownership is re-resolved from the signed ticket on every /context call.
     capture_session_id = request_data.get("captureSessionId")
+    # The floor the device remembers, and the sections the screen already has.
+    # Display state, so unauthenticated is fine — bounded, because this route
+    # is public and a list is a list someone could make long.
+    locked = request_data.get("floor") == "locked"
+    raw_titles = request_data.get("titles")
+    titles = (
+        [t[:64] for t in raw_titles if isinstance(t, str)][-40:]
+        if isinstance(raw_titles, list)
+        else None
+    )
 
     # Once per connection, not per turn. Off the event loop because it makes a
     # blocking HTTP call that itself waits on a model call for the seed summary,
     # and stalling the loop here would stall every other drive on this container.
     session = await asyncio.to_thread(fetch_session, ticket)
 
-    worker = build_pipeline(connection, ticket, session, capture_session_id)
+    worker = build_pipeline(
+        connection, ticket, session, capture_session_id, locked=locked, titles=titles
+    )
 
     async def run():
         await WorkerRunner(handle_sigint=False).run(worker)

@@ -29,35 +29,24 @@ import { formatOffset } from "@voicemural/shared";
  * still and stays full strength, because the alternative to the pulse is not
  * "no signal", it is a solid one.
  */
-export function RecordingBadge({
-  elapsedMs,
-  debriefing,
-}: {
-  elapsedMs: number;
-  debriefing: boolean;
-}) {
+export function RecordingBadge({ elapsedMs }: { elapsedMs: number }) {
   return (
     <div
       role="status"
       aria-live="polite"
       className={[
         "flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium",
-        debriefing
-          ? "bg-amber-500/15 text-amber-100 ring-1 ring-amber-400/40"
-          : "bg-red-500/15 text-red-100 ring-1 ring-red-400/40",
+        "bg-red-500/15 text-red-100 ring-1 ring-red-400/40",
       ].join(" ")}
     >
       <span
         aria-hidden
-        className={[
-          "vm-rec-dot size-2.5 rounded-full",
-          debriefing ? "bg-amber-400" : "bg-red-500",
-        ].join(" ")}
+        className="vm-rec-dot size-2.5 rounded-full bg-red-500"
       />
       {/* The elapsed time is inside the badge rather than beside it: two
           numbers that mean "how long" in two places is one too many, and this
           is the one that is always on screen. */}
-      <span>{debriefing ? "Debrief — still recording" : "Recording"}</span>
+      <span>Recording</span>
       <span className="font-mono tabular-nums opacity-70">{formatOffset(elapsedMs)}</span>
     </div>
   );

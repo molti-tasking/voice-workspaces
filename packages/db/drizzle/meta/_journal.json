@@ -169,6 +169,13 @@
       "when": 1791905273919,
       "tag": "0023_anonymous_survey_response",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791988265440,
+      "tag": "0024_floor_event",
+      "breakpoints": true
     }
   ]
 }

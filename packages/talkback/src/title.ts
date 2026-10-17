@@ -21,6 +21,18 @@
  *   nothing. The proper noun or the concrete thing being decided is the only
  *   version of this that is worth a glance.
  *
+ * AND ONE MORE, since the recorder files every turn under the title it was
+ * said in (two panels, one section per subject):
+ *
+ *   "If the speech has gone back to one of those, return that earlier title
+ *   EXACTLY"
+ *   — a conversation comes back to things. Without the earlier titles in front
+ *   of it the model names the return afresh ("TÜV appointment" becomes "Car
+ *   inspection date"), the screen grows a second section for one subject, and
+ *   the person scrolling back finds half of it in each. Returned verbatim, the
+ *   browser recognises the title it already has a section for and scrolls back
+ *   to it.
+ *
  * Sent to the Python container in the `/api/realtime/session` response rather
  * than duplicated there, for the same reason as `SUMMARY_PROMPT`: one copy of
  * this text. The container calls it against a short window of recent speech —
@@ -34,6 +46,8 @@ Return 2-4 words naming the most specific subject in the recent speech: the prop
 Never begin with "Discussing", "Thoughts on", "About" or any other framing. No punctuation, no quotes, no markdown. Use the language being spoken.
 
 You are given the current title and the most recent speech. If the speech is still about the current title, return it EXACTLY as given — the board only changes when the subject does.
+
+You may also be given the earlier titles of this conversation. If the speech has gone back to one of those subjects, return that earlier title EXACTLY as given, so the talk is filed with what was said about it before. Only for the same subject: a new subject gets a new title.
 
 This is automatic transcription of unrehearsed speech, so it contains mistakes and half-finished sentences. If the speech is too fragmentary to name anything, return the current title unchanged, or NONE if there is no current title.
 

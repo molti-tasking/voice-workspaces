@@ -92,6 +92,8 @@ class FakeRecorder:
         # `TurnRecorder.note_forced_answer` — and the one trace the refused
         # completion leaves, since it writes no decision of its own.
         self.forced = 0
+        # Pokes the gate had to force, kept apart from answers as the columns are.
+        self.forced_pokes = 0
         self.tool_calls = []
 
     def cue(self):
@@ -128,6 +130,9 @@ class FakeRecorder:
 
     def note_forced_answer(self):
         self.forced += 1
+
+    def note_forced_poke(self):
+        self.forced_pokes += 1
 
 
 def drive(frames, recorder=None, llm_name=None):
@@ -360,6 +365,9 @@ class FakeAnswers:
     def __init__(self, retrying=False, acknowledgement="Sorry, I lost that. Say it again."):
         self.retrying = retrying
         self.acknowledgement = acknowledgement
+        self.poke_fallback = bot.poke_fallback("en")
+        # What each re-run was told; None is the guard's own nudge.
+        self.nudges = []
         self.retries = 0
         self.settlements = 0
         # Whether the next completion is the re-run. By default a requested
@@ -367,9 +375,10 @@ class FakeAnswers:
         self.retry_started = retrying
         self.start_immediately = True
 
-    def request_retry(self):
+    def request_retry(self, nudge=None):
         if self.retrying:
             return
+        self.nudges.append(nudge)
         self.retries += 1
         self.retrying = True
         self.retry_started = self.start_immediately
@@ -445,6 +454,32 @@ def test_the_phrases_match_the_typescript_they_mirror():
         "da": ("Jeg leder stadig efter det.", "Et øjeblik, jeg søger stadig."),
         "es": ("Todavía lo estoy buscando.", "Un momento, sigo buscando todavía."),
     }
+    # The floor (talkback-20): POKE_NUDGE, POKE_RETRY_NUDGE, POKE_FALLBACKS and
+    # FLOOR_OPEN_NOTE.
+    assert bot.POKE_NUDGE == (
+        "(They tapped to hear from you now — a poke, the way you would nudge someone "
+        "sitting next to you. They may have been talking for a while without you. "
+        "<silence> is not available on this turn. If they said something you have not "
+        "answered yet, respond to the most recent thing that wants a response; "
+        "otherwise say the one most useful thing you can see — the next step they "
+        "named, an open question from where things stand, the obvious objection. One "
+        "or two short sentences, and never repeat what you said last.)"
+    )
+    assert bot.POKE_RETRY_NUDGE == (
+        "(They poked you to hear from you, and <silence> is not available. Say one "
+        "short sentence: your take on what they said last, or the next step you can see.)"
+    )
+    assert bot.POKE_FALLBACKS == {
+        "en": "I'm listening, nothing to add on that yet.",
+        "de": "Ich höre zu, dazu habe ich gerade nichts hinzuzufügen.",
+        "da": "Jeg lytter med, jeg har ikke noget at tilføje endnu.",
+        "es": "Te escucho, de momento no tengo nada que añadir.",
+    }
+    assert bot.FLOOR_OPEN_NOTE == (
+        "(They have unlocked you: you may reply again from their next words. Do not "
+        "work back through what they said while you were locked — respond only to "
+        "what they say next, if it wants a reply.)"
+    )
 
 
 def test_the_fixed_phrases_follow_the_drive_s_language():
@@ -561,6 +596,26 @@ def test_a_tool_calling_completion_is_not_refused_either():
 
     assert recorder.declines == []
     assert answers.retries == 0
+
+
+def test_an_answer_acted_on_with_a_tool_may_be_followed_by_silence():
+    """14 Oct 2026: "yes" to "Should I add those as tasks?" — two `add_task`
+    calls, a silent follow-up, and the guard answered its own success with
+    "Sorry, I lost that. Say it again." The tool call WAS the answer."""
+    recorder, answers = asking_recorder(), FakeAnswers()
+    frames = [
+        LLMFullResponseStartFrame(),
+        FunctionCallsStartedFrame(function_calls=[]),
+        LLMFullResponseEndFrame(),
+        # The completion Pipecat runs with the tools' results in.
+        *reply("<silence>"),
+    ]
+
+    assert drive_answers(frames, recorder, answers) == []
+    assert answers.retries == 0
+    assert recorder.forced == 0
+    # An ordinary decline of the follow-up, recorded as one.
+    assert len(recorder.declines) == 1
 
 
 def test_a_gate_with_no_answer_guard_behaves_exactly_as_before():
@@ -1252,8 +1307,9 @@ def test_a_repeat_ask_is_worded_to_be_let_go_of():
 
 def test_the_turn_fallback_defaults_short_and_stays_within_bounds(monkeypatch):
     monkeypatch.delenv("USER_TURN_STOP_TIMEOUT_SECS", raising=False)
-    assert bot.user_turn_stop_timeout_secs() == 2.0  # not Pipecat's 5.0
-    for raw, expected in (("1.5", 1.5), ("0.1", 1.0), ("30", 5.0), ("soon", 2.0), ("", 2.0)):
+    # 3.0 since 14 Oct 2026 (2.0 answered fragments of a thought); not Pipecat's 5.0.
+    assert bot.user_turn_stop_timeout_secs() == 3.0
+    for raw, expected in (("1.5", 1.5), ("0.1", 1.0), ("30", 5.0), ("soon", 3.0), ("", 3.0)):
         monkeypatch.setenv("USER_TURN_STOP_TIMEOUT_SECS", raw)
         assert bot.user_turn_stop_timeout_secs() == expected
 
@@ -2818,3 +2874,751 @@ def test_a_negative_asr_time_is_left_out_rather_than_recorded():
 
     asyncio.run(run())
     assert "asrMs" not in recorder.calls[0]["metrics"]
+
+
+# --- The floor: Lock, Normal and Poke (talkback-20) --------------------------
+#
+# Who may talk is the study's subject now, and the lock has to hold by
+# construction rather than by the model's good behaviour. These pin the three
+# controls and what each leaves in the record.
+
+
+class FloorRecorder:
+    """Stands in for `TurnRecorder` in the floor's tests: remembers, posts nothing."""
+
+    def __init__(self):
+        self.floors = []
+        self.offers = []
+        self.questions_cleared = 0
+        self.session_ended = False
+
+    def record_floor(self, kind, at_connect=False):
+        self.floors.append((kind, at_connect))
+
+    def note_offer(self, trigger):
+        self.offers.append(trigger)
+
+    def clear_question(self):
+        self.questions_cleared += 1
+
+
+def floor_with(monkeypatch, *, locked=False, recorder=None):
+    """A bare `Floor` whose pushes are collected and whose timers are logged.
+
+    The poke's own push is a real task, so a test can await it; the armed
+    waiter and the run's watchdog sleep for seconds, so they are recorded by
+    name instead of run — `_await_quiet` gets a test of its own.
+    """
+    context = FakeContext()
+    floor = bot.Floor(context, recorder or FloorRecorder(), locked=locked)
+    floor.pushed = []
+    floor.timers = []
+    floor.interruptions = 0
+
+    async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+        floor.pushed.append((frame, direction))
+
+    async def interrupt():
+        floor.interruptions += 1
+
+    def create_task(coro, name=None):
+        if name == "floor:poke":
+            return asyncio.get_running_loop().create_task(coro)
+        coro.close()
+        floor.timers.append(name)
+        return FakeTask(floor.timers)
+
+    floor.push_frame = capture
+    floor.broadcast_interruption = interrupt
+    monkeypatch.setattr(floor, "create_task", create_task)
+    return floor
+
+
+def request(kind, data=None):
+    return bot.RTVIClientMessageFrame(msg_id="m1", type=kind, data=data or {})
+
+
+def answers_from(floor):
+    return [f.data for f, _ in floor.pushed if isinstance(f, bot.RTVIServerResponseFrame)]
+
+
+def runs_from(floor):
+    return [f for f, _ in floor.pushed if isinstance(f, bot.LLMContextFrame)]
+
+
+async def settle_tasks():
+    """Let a pushed-on-a-task poke land."""
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+
+def nudges(floor):
+    return [m["content"] for m in floor._context.messages]
+
+
+def test_a_locked_floor_keeps_their_words_but_asks_for_no_reply(monkeypatch):
+    floor = floor_with(monkeypatch, locked=True)
+
+    async def run():
+        await floor.process_frame(bot.LLMContextFrame(context=floor._context), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    # Dropped: the aggregator has already written their words into the context,
+    # so nothing is lost but the reply.
+    assert runs_from(floor) == []
+
+
+def test_normal_lets_the_next_turn_through_and_tells_the_model_it_may_talk_again(monkeypatch):
+    recorder = FloorRecorder()
+    floor = floor_with(monkeypatch, locked=True, recorder=recorder)
+
+    async def run():
+        await floor.process_frame(request("floor", {"floor": "open"}), FrameDirection.DOWNSTREAM)
+        await floor.process_frame(bot.LLMContextFrame(context=floor._context), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert answers_from(floor) == [{"floor": "open"}]
+    assert recorder.floors == [("open", False)]
+    assert len(runs_from(floor)) == 1
+    # And it is told not to answer the whole locked stretch at once.
+    assert nudges(floor) == [bot.FLOOR_OPEN_NOTE]
+
+
+def test_the_same_floor_again_is_no_change_and_no_row(monkeypatch):
+    # The browser re-sends its floor after every connect.
+    recorder = FloorRecorder()
+    floor = floor_with(monkeypatch, locked=True, recorder=recorder)
+
+    async def run():
+        await floor.process_frame(request("floor", {"floor": "locked"}), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert answers_from(floor) == [{"floor": "locked"}]
+    assert recorder.floors == []
+
+
+def test_the_floor_a_connection_starts_with_is_recorded_as_such(monkeypatch):
+    recorder = FloorRecorder()
+    floor = floor_with(monkeypatch, locked=True, recorder=recorder)
+
+    async def run():
+        await floor.process_frame(StartFrame(), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert recorder.floors == [("locked", True)]
+
+
+def test_lock_while_the_agent_speaks_cuts_it_off_and_forgets_its_question(monkeypatch):
+    recorder = FloorRecorder()
+    floor = floor_with(monkeypatch, recorder=recorder)
+
+    async def run():
+        await floor.process_frame(bot.BotStartedSpeakingFrame(), FrameDirection.UPSTREAM)
+        await floor.process_frame(request("floor", {"floor": "locked"}), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert floor.interruptions == 1
+    assert floor.locked
+    assert recorder.floors == [("locked", False)]
+    # Whatever it asked, the answer is not coming: the first words after an
+    # unlock must not be forced into one.
+    assert recorder.questions_cleared == 1
+    assert answers_from(floor) == [{"floor": "locked"}]
+
+
+def test_lock_in_a_quiet_moment_interrupts_nothing(monkeypatch):
+    floor = floor_with(monkeypatch)
+
+    async def run():
+        await floor.process_frame(request("floor", {"floor": "locked"}), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert floor.interruptions == 0
+
+
+def test_an_idle_poke_runs_one_turn_with_its_own_instruction(monkeypatch):
+    recorder = FloorRecorder()
+    floor = floor_with(monkeypatch, recorder=recorder)
+
+    async def run():
+        await floor.process_frame(request("poke"), FrameDirection.DOWNSTREAM)
+        await settle_tasks()
+        # A second tap while the first is running asks for nothing more.
+        await floor.process_frame(request("poke"), FrameDirection.DOWNSTREAM)
+        await settle_tasks()
+
+    asyncio.run(run())
+    assert answers_from(floor) == [
+        {"poke": "fired", "floor": "open"},
+        {"poke": "running", "floor": "open"},
+    ]
+    assert nudges(floor) == [bot.POKE_NUDGE]
+    assert recorder.offers == ["poke"]
+    assert len(runs_from(floor)) == 1
+    # Both taps are in the record, the second included: it was pressed.
+    assert recorder.floors == [("poke", False), ("poke", False)]
+
+
+def test_a_poke_under_lock_gets_exactly_one_reply_and_the_lock_stays(monkeypatch):
+    floor = floor_with(monkeypatch, locked=True)
+    turn = bot.LLMContextFrame(context=floor._context)
+
+    async def run():
+        await floor.process_frame(request("poke"), FrameDirection.DOWNSTREAM)
+        await settle_tasks()
+        # The answer guard's re-run, should the poked completion decline.
+        await floor.process_frame(turn, FrameDirection.DOWNSTREAM)
+        floor.note_outcome("spoke")
+        # Their next words: locked again, so no reply is asked for.
+        await floor.process_frame(turn, FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert len(runs_from(floor)) == 2  # the poke and its re-run, nothing after
+    assert floor.locked
+    assert floor._poke is None
+
+
+def test_a_poke_while_the_agent_is_speaking_does_nothing(monkeypatch):
+    recorder = FloorRecorder()
+    floor = floor_with(monkeypatch, recorder=recorder)
+
+    async def run():
+        await floor.process_frame(bot.BotStartedSpeakingFrame(), FrameDirection.UPSTREAM)
+        await floor.process_frame(request("poke"), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert answers_from(floor) == [{"poke": "speaking", "floor": "open"}]
+    assert nudges(floor) == []
+    assert recorder.offers == []
+    assert recorder.floors == [("poke", False)]
+
+
+def test_a_poke_mid_sentence_under_lock_takes_their_turn_s_completion(monkeypatch):
+    recorder = FloorRecorder()
+    floor = floor_with(monkeypatch, locked=True, recorder=recorder)
+
+    async def run():
+        await floor.process_frame(bot.UserStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+        await floor.process_frame(request("poke"), FrameDirection.DOWNSTREAM)
+        assert nudges(floor) == []  # nothing yet: they are still talking
+        await floor.process_frame(bot.UserStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+        await floor.process_frame(bot.LLMContextFrame(context=floor._context), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert answers_from(floor) == [{"poke": "armed", "floor": "locked"}]
+    assert "floor:armed" in floor.timers
+    # Their completion went through, with the poke's instruction after their
+    # words and the moment labelled a poke.
+    assert len(runs_from(floor)) == 1
+    assert nudges(floor) == [bot.POKE_NUDGE]
+    assert recorder.offers == ["poke"]
+
+
+def test_a_poke_mid_sentence_under_normal_waits_to_see_if_their_turn_is_answered(monkeypatch):
+    floor = floor_with(monkeypatch)
+
+    async def run():
+        await floor.process_frame(bot.UserStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+        await floor.process_frame(request("poke"), FrameDirection.DOWNSTREAM)
+        await floor.process_frame(bot.UserStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+        await floor.process_frame(bot.LLMContextFrame(context=floor._context), FrameDirection.DOWNSTREAM)
+        assert nudges(floor) == []  # their own turn, untouched
+        # …which the model let pass. The poke takes the moment.
+        floor.note_outcome("declined")
+        await settle_tasks()
+
+    asyncio.run(run())
+    assert nudges(floor) == [bot.POKE_NUDGE]
+    assert len(runs_from(floor)) == 2
+
+
+def test_a_reply_to_their_turn_is_what_an_armed_poke_asked_for(monkeypatch):
+    floor = floor_with(monkeypatch)
+
+    async def run():
+        await floor.process_frame(bot.UserStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+        await floor.process_frame(request("poke"), FrameDirection.DOWNSTREAM)
+        await floor.process_frame(bot.UserStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+        floor.note_outcome("spoke")
+        await settle_tasks()
+
+    asyncio.run(run())
+    assert nudges(floor) == []
+    assert floor._poke is None
+
+
+def test_talking_over_a_poke_before_its_first_word_waits_for_them_instead(monkeypatch):
+    floor = floor_with(monkeypatch)
+
+    async def run():
+        await floor.process_frame(request("poke"), FrameDirection.DOWNSTREAM)
+        await settle_tasks()
+        floor.note_outcome("interrupted", spoke=False)
+
+    asyncio.run(run())
+    assert floor._poke == "armed"
+
+
+def test_an_armed_poke_nothing_picked_up_fires_once_they_are_quiet(monkeypatch):
+    # A cough the VAD took for speech: no transcript, so no completion of
+    # theirs for the poke to ride on.
+    floor = floor_with(monkeypatch)
+
+    async def now(_secs):
+        return None
+
+    monkeypatch.setattr(bot.asyncio, "sleep", now)
+
+    async def run():
+        floor._poke = "armed"
+        await floor._await_quiet()
+
+    asyncio.run(run())
+    assert nudges(floor) == [bot.POKE_NUDGE]
+    assert len(runs_from(floor)) == 1
+
+
+def test_an_armed_poke_waits_while_they_keep_talking_and_then_lapses(monkeypatch):
+    floor = floor_with(monkeypatch)
+
+    async def now(_secs):
+        return None
+
+    monkeypatch.setattr(bot.asyncio, "sleep", now)
+
+    async def run():
+        floor._poke = "armed"
+        floor._vad_speaking = True
+        await floor._await_quiet()
+
+    asyncio.run(run())
+    assert nudges(floor) == []
+    assert floor._poke is None
+
+
+def test_a_poke_after_the_drive_has_ended_is_not_taken(monkeypatch):
+    recorder = FloorRecorder()
+    recorder.session_ended = True
+    floor = floor_with(monkeypatch, recorder=recorder)
+
+    async def run():
+        await floor.process_frame(request("poke"), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert answers_from(floor) == [{"poke": "ended", "floor": "open"}]
+    assert nudges(floor) == []
+
+
+def test_a_tool_s_follow_up_is_not_spoken_under_lock_unless_a_poke_called_it(monkeypatch):
+    floor = floor_with(monkeypatch, locked=True)
+    upstream = bot.FloorUpstream(floor)
+    passed = []
+
+    async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+        passed.append(frame)
+
+    upstream.push_frame = capture
+    follow_up = bot.LLMContextFrame(context=floor._context)
+
+    async def run():
+        await upstream.process_frame(follow_up, FrameDirection.UPSTREAM)
+        floor._poke = "running"
+        await upstream.process_frame(follow_up, FrameDirection.UPSTREAM)
+
+    asyncio.run(run())
+    assert passed == [follow_up]
+
+
+def test_other_client_messages_pass_through_untouched(monkeypatch):
+    floor = floor_with(monkeypatch)
+    message = request("something-else")
+
+    async def run():
+        await floor.process_frame(message, FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert floor.pushed == [(message, FrameDirection.DOWNSTREAM)]
+
+
+def test_the_engine_offers_nothing_into_a_lock(monkeypatch):
+    class Locked:
+        locked = True
+
+    engine = offers_with(monkeypatch)
+    engine._floor = Locked()
+
+    async def run():
+        await engine._fire(engine._delay, opening=False)
+        await engine._fire(2.5, opening=True)
+
+    asyncio.run(run())
+    assert engine._context.messages == []
+
+
+def test_a_declined_poke_is_refused_re_run_and_marked_apart_from_answers():
+    recorder = FakeRecorder(cue=bot.Cue("poke", None, 1_000, 3))
+    answers, offers = FakeAnswers(), FakeOffers()
+
+    assert drive_answers(reply("<silence>"), recorder, answers, offers) == []
+
+    assert recorder.calls == [] and recorder.declines == []
+    assert answers.nudges == [bot.POKE_RETRY_NUDGE]
+    assert recorder.forced_pokes == 1
+    # Not an unanswered answer: that count's target is zero.
+    assert recorder.forced == 0
+
+
+def test_a_poke_declined_twice_ends_in_its_own_line_not_an_apology():
+    recorder = FakeRecorder(cue=bot.Cue("poke", None, 1_000, 3))
+    answers = FakeAnswers()
+
+    frames = [*reply("<silence>"), *reply("<silence>")]
+    assert drive_answers(frames, recorder, answers) == [answers.poke_fallback]
+    assert [call["spoken"] for call in recorder.calls] == [answers.poke_fallback]
+
+
+def test_the_poke_s_last_line_does_not_ask_a_question():
+    for language in bot.POKE_FALLBACKS:
+        assert not bot._ends_in_question(bot.poke_fallback(language))
+    assert bot.poke_fallback("fr") == bot.POKE_FALLBACKS["en"]
+
+
+def test_the_gate_tells_the_floor_what_each_turn_became():
+    told = []
+
+    class Floor:
+        def note_outcome(self, outcome, *, spoke=False):
+            told.append((outcome, spoke))
+
+    async def run():
+        gate = bot.SilenceGate(floor=Floor())
+        gate.push_frame = _swallow
+        for frame in [*reply("<silence>"), *reply("Noted.")]:
+            await gate.process_frame(frame, FrameDirection.DOWNSTREAM)
+        await gate.process_frame(LLMFullResponseStartFrame(), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(LLMTextFrame(text="The deadline"), FrameDirection.DOWNSTREAM)
+        await gate.process_frame(InterruptionFrame(), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert told == [("declined", False), ("spoke", False), ("interrupted", True)]
+
+
+def test_a_forced_poke_is_marked_on_its_own_column():
+    def act(recorder):
+        recorder.note_user("so the intro still needs the framing")
+        recorder.note_offer("poke")
+        recorder.note_forced_poke()
+        recorder.record("Lead with the context-switching cost.", "…")
+
+    posted = posted_by(act)
+    decision = only(posted, "decision")
+    turn = only(posted, "agent-turn")
+    assert decision["trigger"] == "poke"
+    assert decision["forcedPoke"] is True
+    assert "forcedAnswer" not in decision
+    # Asked for by the person, so a reply to what they said — not an offer.
+    assert turn["kind"] == "reply"
+    assert turn["respondingToText"] == "so the intro still needs the framing"
+
+
+def test_a_floor_change_is_written_with_its_offset_and_nothing_else():
+    def act(recorder):
+        recorder.record_floor("locked", at_connect=True)
+        recorder.record_floor("poke")
+
+    posted = posted_by(act)
+    assert [route for route, _ in posted] == ["floor", "floor"]
+    first, second = (payload for _, payload in posted)
+    assert (first["kind"], first["seq"], first["atConnect"]) == ("locked", 0, True)
+    assert (second["kind"], second["seq"]) == ("poke", 1)
+    assert "atConnect" not in second
+    assert first["configVersion"] == "talkback-test"
+    assert set(first) == {"ticket", "seq", "offsetMs", "kind", "atConnect", "configVersion"}
+
+
+def test_no_floor_change_is_written_into_a_drive_that_has_ended():
+    recorder = bot.TurnRecorder(ticket="ticket", started_at_ms=1_000)
+    recorder._session_ended = True
+    assert posted_by(lambda r: r.record_floor("locked"), recorder) == []
+
+
+def test_a_lock_forgets_the_question_and_the_parked_ask():
+    recorder = bot.TurnRecorder(ticket=None, started_at_ms=None)
+    recorder._asked_question = True
+    recorder._awaiting_answer = "invocation-1"
+    recorder.clear_question()
+    assert recorder.awaiting_question_answer is False
+    assert recorder.take_awaiting_answer() is None
+
+
+# --- The panels: both sides of the conversation, by subject -----------------
+
+
+def test_the_feed_joins_their_words_into_one_turn_until_it_ends():
+    feed = bot.TurnFeed()
+    first = feed.user("[Speaker 1] so the intro")
+    second = feed.user("needs the framing")
+    assert first["id"] == second["id"]
+    assert second == {"type": "user", "id": first["id"], "text": "so the intro needs the framing"}
+    feed.end_user()
+    assert feed.user("and then")["id"] != first["id"]
+
+
+def test_a_reply_closes_their_turn_and_their_words_close_the_agent_s():
+    feed = bot.TurnFeed()
+    theirs = feed.user("what was the deadline")
+    mine = feed.agent("The fourteenth.")
+    assert mine["type"] == "agent" and mine["id"] != theirs["id"]
+    assert feed.user("right")["id"] != theirs["id"]
+    assert feed.agent("Yes.")["id"] != mine["id"]
+
+
+def test_the_mark_is_the_first_turn_since_the_last_one():
+    feed = bot.TurnFeed()
+    first = feed.user("about the car")
+    feed.agent("The TÜV is due.")
+    assert feed.mark() == first["id"]
+    assert feed.mark() is None
+    # A turn still open when the mark was taken counts again once it grows.
+    later = feed.agent(" In March.")
+    assert feed.mark() == later["id"]
+
+
+def test_ids_differ_between_connections():
+    assert bot.TurnFeed().user("hi")["id"] != bot.TurnFeed().user("hi")["id"]
+
+
+def agent_feed():
+    feed = bot.TurnFeed()
+    processor = bot.AgentFeed(feed)
+    processor.sent = []
+
+    async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+        if isinstance(frame, bot.RTVIServerMessageFrame):
+            processor.sent.append(frame.data)
+
+    processor.push_frame = capture
+    return processor
+
+
+def test_the_agent_s_panel_gets_what_reached_the_speaker_whole_and_throttled():
+    processor = agent_feed()
+
+    async def run():
+        for frame in reply("The dead", "line is", " the fourteenth.", " After that", " nothing"):
+            await processor.process_frame(frame, FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    # The first fragment opens the bubble; the sentence end sends it whole; the
+    # rest waits for the end of the completion rather than going word by word.
+    texts = [m["text"] for m in processor.sent]
+    assert texts[0] == "The dead"
+    assert "The deadline is the fourteenth." in texts
+    assert texts[-1] == "The deadline is the fourteenth. After that nothing"
+    assert len(texts) <= 3
+
+
+def test_a_cut_off_reply_is_marked_and_a_finished_one_is_not():
+    processor = agent_feed()
+
+    async def run():
+        await processor.process_frame(LLMFullResponseStartFrame(), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(LLMTextFrame(text="The deadline is"), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(InterruptionFrame(), FrameDirection.DOWNSTREAM)
+        # A finished reply, then their next turn's interruption: not cut off.
+        for frame in reply("Noted."):
+            await processor.process_frame(frame, FrameDirection.DOWNSTREAM)
+        await processor.process_frame(bot.BotStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
+        await processor.process_frame(InterruptionFrame(), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert processor.sent[-2]["interrupted"] is True
+    assert processor.sent[-1] == {"type": "agent", "id": processor.sent[-1]["id"], "text": "Noted."}
+
+
+def test_a_fixed_line_reaches_the_panel_like_any_other_speech():
+    processor = agent_feed()
+
+    async def run():
+        await processor.process_frame(
+            bot.TTSSpeakFrame(bot.poke_fallback("en")), FrameDirection.DOWNSTREAM
+        )
+
+    asyncio.run(run())
+    assert processor.sent[0]["text"] == bot.poke_fallback("en")
+
+
+def test_their_words_reach_their_panel_and_their_turn_ends_with_the_aggregator_s(monkeypatch):
+    processor = titler(monkeypatch, reply="Funding round")
+    processor._feed = bot.TurnFeed()
+
+    async def run():
+        await processor.process_frame(heard("so about"), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(heard("the funding"), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(bot.UserStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
+        await processor.process_frame(heard("next thing"), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    turns = [m.data for m in messages_pushed(processor) if m.data["type"] == "user"]
+    assert [t["text"] for t in turns] == ["so about", "so about the funding", "next thing"]
+    assert turns[0]["id"] == turns[1]["id"] != turns[2]["id"]
+
+
+def test_a_new_title_says_which_turn_the_new_subject_began_at(monkeypatch):
+    processor = titler(monkeypatch, reply="Funding round")
+    processor._feed = bot.TurnFeed()
+
+    async def run():
+        processor._last_call -= bot.TopicTitle.CALL_AFTER_SECONDS + 1
+        await processor.process_frame(heard("about the funding"), FrameDirection.DOWNSTREAM)
+        await settled(processor)
+
+    asyncio.run(run())
+    (turn,) = [m.data for m in messages_pushed(processor) if m.data["type"] == "user"]
+    (title,) = [m.data for m in messages_pushed(processor) if m.data["type"] == "title"]
+    assert title == {"type": "title", "title": "Funding round", "rehomeFrom": turn["id"]}
+
+
+def test_a_subject_come_back_is_named_with_its_earlier_title_exactly(monkeypatch):
+    processor = titler(monkeypatch, replies=["TÜV appointment", "Paper intro", "tüv APPOINTMENT"])
+
+    async def run():
+        for words in ("the car needs its TÜV", "now the intro of the paper", "back to the car"):
+            processor._last_call -= bot.TopicTitle.CALL_AFTER_SECONDS + 1
+            await processor.process_frame(heard(words), FrameDirection.DOWNSTREAM)
+            await settled(processor)
+
+    asyncio.run(run())
+    titles = [m.data["title"] for m in messages_pushed(processor)]
+    assert titles == ["TÜV appointment", "Paper intro", "TÜV appointment"]
+    # The model was shown the subjects it could return to.
+    assert "Earlier titles: TÜV appointment" in processor.asked[2][1]["content"]
+    assert "Earlier titles" not in processor.asked[0][1]["content"]
+
+
+def test_a_reconnect_starts_from_the_sections_the_screen_already_has(monkeypatch):
+    monkeypatch.setattr(bot, "_litellm_chat", lambda *a, **k: "Car inspection")
+    processor = bot.TopicTitle("name it", titles=["Car inspection", "Paper intro"])
+    assert processor.title == "Paper intro"
+    assert processor._earlier == ["Car inspection"]
+
+
+def test_their_panel_lights_while_the_vad_hears_them_and_once_per_change(monkeypatch):
+    processor = titler(monkeypatch)
+    processor._feed = bot.TurnFeed()
+
+    async def run():
+        await processor.process_frame(bot.VADUserStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+        # The aggregator's own VAD says the same thing, coming back upstream.
+        await processor.process_frame(bot.VADUserStartedSpeakingFrame(), FrameDirection.UPSTREAM)
+        await processor.process_frame(bot.VADUserStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(bot.VADUserStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
+
+    asyncio.run(run())
+    speaking = [m.data for m in messages_pushed(processor) if m.data["type"] == "speaking"]
+    assert speaking == [
+        {"type": "speaking", "who": "user", "speaking": True},
+        {"type": "speaking", "who": "user", "speaking": False},
+    ]
+
+
+def test_the_subject_is_named_when_their_turn_ends_without_waiting_for_the_gap(monkeypatch):
+    processor = titler(monkeypatch, reply="Tone of voice")
+    processor._feed = bot.TurnFeed()
+
+    async def run():
+        # Well under the 160 characters and 12 seconds the stream needs…
+        await processor.process_frame(heard("can you hear my tone of voice"), FrameDirection.DOWNSTREAM)
+        assert processor.asked == []
+        # …but their turn has ended, which is when its subject is known.
+        await processor.process_frame(bot.UserStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
+        await settled(processor)
+
+    asyncio.run(run())
+    assert len(processor.asked) == 1
+    (turn,) = [m.data for m in messages_pushed(processor) if m.data["type"] == "user"]
+    (title,) = [m.data for m in messages_pushed(processor) if m.data["type"] == "title"]
+    # The new subject begins at exactly the turn that named it.
+    assert title["rehomeFrom"] == turn["id"]
+
+
+def test_a_yes_is_not_worth_naming_a_subject_over(monkeypatch):
+    processor = titler(monkeypatch, reply="Anything")
+
+    async def run():
+        await processor.process_frame(heard("yes"), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(bot.UserStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
+
+    asyncio.run(run())
+    assert processor.asked == []
+
+
+def test_a_turn_that_ends_while_a_call_runs_is_named_after_it(monkeypatch):
+    processor = titler(monkeypatch, replies=["Car inspection", "Paper intro"])
+
+    async def run():
+        processor._last_call -= bot.TopicTitle.CALL_AFTER_SECONDS + 1
+        await processor.process_frame(heard("the car inspection is due in March"), FrameDirection.DOWNSTREAM)
+        first = processor._task
+        # Let the call start, so it has read its window.
+        await asyncio.sleep(0)
+        # A second turn ends before the first call has landed.
+        await processor.process_frame(heard("anyway the paper introduction"), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(bot.UserStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
+        assert processor._again is True
+        await first
+        await settled(processor)
+
+    asyncio.run(run())
+    assert len(processor.asked) == 2
+    titles = [m.data["title"] for m in messages_pushed(processor) if m.data["type"] == "title"]
+    assert titles == ["Car inspection", "Paper intro"]
+
+
+def pause_marker(monkeypatch):
+    clock = {"now": 100.0}
+    monkeypatch.setattr(bot.time, "monotonic", lambda: clock["now"])
+    marker = bot.PauseMarker()
+    marker.out = []
+
+    async def capture(frame, direction=FrameDirection.DOWNSTREAM):
+        if isinstance(frame, TranscriptionFrame):
+            marker.out.append(frame.text)
+
+    marker.push_frame = capture
+    return marker, clock
+
+
+def test_a_pause_in_their_speech_reaches_the_model_as_words(monkeypatch):
+    marker, clock = pause_marker(monkeypatch)
+
+    async def run():
+        down = FrameDirection.DOWNSTREAM
+        await marker.process_frame(bot.VADUserStartedSpeakingFrame(), down)
+        await marker.process_frame(heard("so the tone of voice"), down)
+        await marker.process_frame(bot.VADUserStoppedSpeakingFrame(), down)
+        clock["now"] += 4.2
+        await marker.process_frame(bot.VADUserStartedSpeakingFrame(), down)
+        await marker.process_frame(heard("and the breaks I make"), down)
+        await marker.process_frame(bot.VADUserStoppedSpeakingFrame(), down)
+        clock["now"] += 0.8  # an ordinary breath between sentences
+        await marker.process_frame(bot.VADUserStartedSpeakingFrame(), down)
+        await marker.process_frame(heard("matter too"), down)
+
+    asyncio.run(run())
+    assert marker.out == ["so the tone of voice", "(pause 4s) and the breaks I make", "matter too"]
+
+
+def test_the_quiet_after_a_reply_is_not_their_pause(monkeypatch):
+    marker, clock = pause_marker(monkeypatch)
+
+    async def run():
+        down = FrameDirection.DOWNSTREAM
+        await marker.process_frame(bot.VADUserStoppedSpeakingFrame(), down)
+        await marker.process_frame(bot.BotStartedSpeakingFrame(), FrameDirection.UPSTREAM)
+        clock["now"] += 6
+        await marker.process_frame(bot.VADUserStartedSpeakingFrame(), down)
+        await marker.process_frame(heard("right"), down)
+
+    asyncio.run(run())
+    assert marker.out == ["right"]

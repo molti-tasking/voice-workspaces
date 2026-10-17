@@ -314,6 +314,16 @@ export interface Thinking {
 }
 
 export interface Tier3Session {
+  /**
+   * "Did you get to decide when it talked?" — the one rating asked after a
+   * drive since 14 Oct 2026 (`FLOOR_CONTROL`). Higher is better. Read next to
+   * the session's `floor_event` rows: what they did with the controls, and
+   * whether it felt like theirs.
+   */
+  floorControl: number | null;
+  /* Mental load and can-correct were retired on 14 Oct 2026, so null on every
+     later drive; kept for the drives that answered them. Liveness is still
+     asked. So is `thinking_moved`, which this tier has never carried. */
   mentalLoadPre: number | null;
   mentalLoadPost: number | null;
   /** Post minus pre. NEGATIVE IS THE GOOD DIRECTION: less held in the head. */
@@ -730,6 +740,7 @@ export async function participantMetrics(
         tier2,
         thinking,
         tier3: {
+          floorControl: answer("post", "floor_control"),
           mentalLoadPre,
           mentalLoadPost,
           mentalLoadDelta:

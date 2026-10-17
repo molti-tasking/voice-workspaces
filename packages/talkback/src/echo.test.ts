@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { containment, isEcho, keptIndices, withoutEcho } from "./echo";
-import { ANSWER_ACKNOWLEDGEMENTS, SEARCH_WAIT_PHRASES } from "./prompt";
+import { ANSWER_ACKNOWLEDGEMENTS, POKE_FALLBACKS, SEARCH_WAIT_PHRASES } from "./prompt";
 
 /**
  * The filter that keeps the system's own voice out of what it reads back.
@@ -8,7 +8,7 @@ import { ANSWER_ACKNOWLEDGEMENTS, SEARCH_WAIT_PHRASES } from "./prompt";
  * Its input is `agent_turn.text` and nothing else, which is why every sentence
  * the container speaks with no completion behind it — the search
  * announcement, the keep-alive while a long turn runs, the acknowledgement
- * when a re-run declines — is written to that table. The tests below are the
+ * when a re-run declines, the line a declined poke ends in — is written to that table. The tests below are the
  * second half of that contract: recorded is not enough, the phrase also has to
  * be one this filter can actually recognise.
  */
@@ -17,6 +17,7 @@ import { ANSWER_ACKNOWLEDGEMENTS, SEARCH_WAIT_PHRASES } from "./prompt";
 const FIXED_PHRASES = [
   ...Object.values(SEARCH_WAIT_PHRASES).flatMap((phrases) => [...phrases]),
   ...Object.values(ANSWER_ACKNOWLEDGEMENTS),
+  ...Object.values(POKE_FALLBACKS),
 ];
 
 describe("containment", () => {

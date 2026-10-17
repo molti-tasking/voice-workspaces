@@ -1,7 +1,15 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { createContext, useCallback, useContext, useEffect, useMemo } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 // The `/screen` subpath, not the package index — see capture-settings.tsx.
 // The `/profile` subpath for the same reason: the index drags in the database.
 import { PROFILE } from "@voicemural/talkback/profile";
@@ -12,12 +20,18 @@ import {
   type ConditionOverride,
   type ToggleableFlag,
 } from "@/lib/recorder/condition-store";
+import { useFloorPreference, type Floor } from "@/lib/recorder/floor-store";
 import { useSttLanguage } from "@/lib/recorder/language-store";
 import { useRecorder } from "@/lib/recorder/use-recorder";
 import { useVoice } from "@/lib/recorder/voice-store";
-import { useTalkback, type TalkbackState } from "@/lib/talkback/use-talkback";
-import { useTitleTrail } from "@/lib/talkback/use-title-trail";
- 
+import {
+  createConversationStore,
+  currentTitle,
+  titlesForReconnect,
+  type ConversationStore,
+} from "@/lib/talkback/conversation";
+import { useTalkback, type PokeResult, type TalkbackState } from "@/lib/talkback/use-talkback";
+
 /**
  * Whether talk-back is built into this bundle.
  *
@@ -41,12 +55,24 @@ export interface CaptureContextValue {
    */
   conversationId: string | null;
   /**
-   * What the conversation is about, kept after the drive ends. `talkback.title`
-   * goes null at Stop, when talk-back does; this does not. See `useTitleTrail`.
+   * Both sides of this drive's conversation, by subject — what the recorder's
+   * two panels show. A store rather than a value, because it changes every few
+   * hundred milliseconds while the agent talks and only the panels need to
+   * hear about that; read it with `useSyncExternalStore`. Replaced when the
+   * next drive starts, and kept after this one ends, like the rest of the view.
    */
+  conversation: ConversationStore;
+  /** What the conversation is about now, from `conversation`. Kept after Stop. */
   title: string | null;
-  /** Earlier subjects of this drive, newest first. See `useTitleTrail`. */
-  trail: string[];
+  /**
+   * Who may talk, as the person chose it — remembered on this device, so the
+   * next drive starts the same way. What the agent is actually under is
+   * `talkback.floor`; the two differ only while a change is on its way.
+   */
+  floor: Floor;
+  setFloor: (next: Floor) => void;
+  /** Ask the agent for one turn now, whichever floor is in force. */
+  poke: () => Promise<PokeResult | null>;
   /**
    * What the record screen shows under the title: cues and the drafts written
    * on this drive. Frozen at Stop and kept, like the title.
@@ -60,17 +86,6 @@ export interface CaptureContextValue {
    */
   cues: CueState;
   isRecording: boolean;
-  /**
-   * The post-drive debrief: Stop has been tapped, the three questions are on
-   * screen, and the microphone is STILL OPEN for the answers.
-   *
-   * Separate from `isRecording` on purpose. Capture carries on — the chunk
-   * loop, the wake lock and the uploader do not know the difference — but
-   * talk-back does not, because these answers are the study's channel and an
-   * agent replying to them would be talking over the one part of a drive it
-   * is not in.
-   */
-  isDebriefing: boolean;
   /** True while the microphone is being opened or the last chunk closed out. */
   isBusy: boolean;
 
@@ -90,8 +105,6 @@ export interface CaptureContextValue {
   /** Start a drive with whatever is currently selected. Safe to call twice. */
   startRecording: () => void;
   stopRecording: () => void;
-  /** Done with the three questions: close the window and end the recording. */
-  finishDebrief: () => void;
 }
 
 const CaptureContext = createContext<CaptureContextValue | null>(null);
@@ -121,7 +134,6 @@ const CaptureContext = createContext<CaptureContextValue | null>(null);
 export function CaptureProvider({ children }: { children: React.ReactNode }) {
   const recorder = useRecorder();
   const isRecording = recorder.status === "recording";
-  const isDebriefing = recorder.status === "debriefing";
   const isBusy = recorder.status === "requesting" || recorder.status === "stopping";
 
   // Per-browser preferences, remembered across visits. See their stores.
@@ -129,19 +141,38 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
   const [sttLanguage, chooseSttLanguage] = useSttLanguage();
   const [conditionOverride, toggleCondition] = useConditionOverride();
 
-  // Armed with the recording, for the whole drive — there is no separate
-  // gesture to enter it. Everything it does is downstream of the microphone
-  // stream the recorder publishes, so capture is unaffected either way.
-  const talkback = useTalkback({
-    captureSessionId: recorder.currentSessionId,
-    enabled: TALKBACK_ENABLED && isRecording,
-  });
+  const [floor, setFloor] = useFloorPreference();
 
   // Both ids are set in the one patch that ends a drive, so this never goes
   // null between Stop and the next drive: see `finish` in use-recorder.ts.
   const conversationId = recorder.currentSessionId ?? recorder.lastSessionId;
 
-  const { title, trail } = useTitleTrail(talkback.title, conversationId);
+  // One store per drive, swapped during render when the drive changes so no
+  // frame shows the last drive's turns under the new one. Held here, above
+  // the router, for the reason the title trail was (27 Sep 2026): walking to
+  // the workspace and back mid-drive must not come back to an empty screen.
+  const [conversation, setConversation] = useState(createConversationStore);
+  const [conversationFor, setConversationFor] = useState(conversationId);
+  if (conversationFor !== conversationId) {
+    setConversationFor(conversationId);
+    setConversation(createConversationStore());
+  }
+  const title = useSyncExternalStore(
+    conversation.subscribe,
+    () => currentTitle(conversation.getSnapshot()),
+    () => null,
+  );
+
+  // Armed with the recording, for the whole drive — there is no separate
+  // gesture to enter it. Everything it does is downstream of the microphone
+  // stream the recorder publishes, so capture is unaffected either way.
+  const { state: talkback, poke } = useTalkback({
+    captureSessionId: recorder.currentSessionId,
+    enabled: TALKBACK_ENABLED && isRecording,
+    floor,
+    onMessage: conversation.dispatch,
+    titles: () => titlesForReconnect(conversation.getSnapshot()),
+  });
 
   // Reads Postgres, never the voice container: the panel keeps filling with
   // talk-back dead, and survives a reload mid-recording. See the route comment.
@@ -172,7 +203,7 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     }).catch(() => undefined);
   }, [isRecording, sessionId, screen]);
 
-  const { start, stop, finishDebrief: endDebrief } = recorder;
+  const { start, stop } = recorder;
 
   const startRecording = useCallback(() => {
     void start(voiceId, sttLanguage, conditionOverride);
@@ -182,20 +213,18 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     void stop();
   }, [stop]);
 
-  const finishDebrief = useCallback(() => {
-    void endDebrief();
-  }, [endDebrief]);
-
   const value = useMemo<CaptureContextValue>(
     () => ({
       recorder,
       talkback,
       conversationId,
+      conversation,
       title,
-      trail,
+      floor,
+      setFloor,
+      poke,
       cues,
       isRecording,
-      isDebriefing,
       isBusy,
       conditionOverride,
       toggleCondition,
@@ -205,17 +234,18 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       chooseSttLanguage,
       startRecording,
       stopRecording,
-      finishDebrief,
     }),
     [
       recorder,
       talkback,
       conversationId,
+      conversation,
       title,
-      trail,
+      floor,
+      setFloor,
+      poke,
       cues,
       isRecording,
-      isDebriefing,
       isBusy,
       conditionOverride,
       toggleCondition,
@@ -225,7 +255,6 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       chooseSttLanguage,
       startRecording,
       stopRecording,
-      finishDebrief,
     ],
   );
 

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { captureSession, eq, getDb } from "@voicemural/db";
+import { and, captureSession, desc, eq, getDb, lt } from "@voicemural/db";
 import { boardEnabledAt } from "@voicemural/db/board";
 import { nextDraftSeq } from "@voicemural/db/drafts";
 import { resolveStudyCondition } from "@voicemural/shared";
@@ -8,6 +8,7 @@ import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import {
   BOARD_EDITING,
   BOARD_TOOLS,
+  RECENT_DRIVES_SHOWN,
   TALKBACK_CONFIG_VERSION,
   TITLE_PROMPT,
   WEB_SEARCH_TOOL,
@@ -17,6 +18,7 @@ import {
   foldSummary,
   loadDriveSoFarText,
   nativeVoicesByLanguage,
+  renderRecentDrives,
   summaryPromptFor,
   timeZoneOf,
   voiceFor,
@@ -118,8 +120,27 @@ export async function POST(req: Request) {
   // only in `/search` so a deployment without one never tells the model it can
   // look things up.
   const webSearch = Boolean(process.env.SEARXNG_URL);
+  // Their drives before this one, by name, so "what did we discuss last
+  // time?" has an answer (see recent-drives.ts). Fails open to none: an
+  // agent that cannot name the last drive is what there was before.
+  const earlier = await getDb()
+    .select({
+      title: captureSession.title,
+      startedAt: captureSession.startedAt,
+      endedAt: captureSession.endedAt,
+    })
+    .from(captureSession)
+    .where(and(eq(captureSession.userId, payload.userId), lt(captureSession.startedAt, row.startedAt)))
+    .orderBy(desc(captureSession.startedAt))
+    .limit(RECENT_DRIVES_SHOWN)
+    .catch(() => []);
+  const recentDrives = renderRecentDrives(earlier, new Date(), timeZoneOf(row.deviceInfo));
   const composed = composeSystemPrompt({
-    sections: [...(boardEditable ? [BOARD_EDITING] : []), ...(webSearch ? [webSearchSection(new Date(), timeZoneOf(row.deviceInfo))] : [])],
+    sections: [
+      ...(boardEditable ? [BOARD_EDITING] : []),
+      ...(webSearch ? [webSearchSection(new Date(), timeZoneOf(row.deviceInfo))] : []),
+      ...(recentDrives ? [recentDrives] : []),
+    ],
   });
 
   return NextResponse.json(

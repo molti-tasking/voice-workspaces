@@ -32,6 +32,7 @@ import {
   capabilityVersion,
   captureSession,
   directive,
+  floorEvent,
   invocation,
   macroProposal,
   studyEvent,
@@ -48,8 +49,12 @@ import { KEPT_AFTER_SESSIONS, foldBoard, judge } from "@voicemural/workspace";
  * 2 adds the relief measures: `study_response`, `study_item_review` and
  * `study_event` records, the setting's source on a session, and the mark that
  * says the answer guard had to force a moment.
+ *
+ * 3 adds who held the floor (talkback-20): `floor_event` records — each Lock,
+ * Normal and Poke as the container applied it — and `forcedPoke` on a
+ * decision, kept apart from `forcedAnswer`.
  */
-export const EXPORT_VERSION = 2;
+export const EXPORT_VERSION = 3;
 
 export type ExportRecord = { type: string } & Record<string, unknown>;
 
@@ -271,6 +276,9 @@ export async function exportParticipant(
         // unanswered-answer count, whose target is zero, is the share of
         // moments carrying it.
         forcedAnswer: agentDecision.forcedAnswer,
+        // The same mark for a poke (trigger `poke`), on its own column so it
+        // never counts as an unanswered answer.
+        forcedPoke: agentDecision.forcedPoke,
         agentTurnId: agentDecision.agentTurnId,
       })
       .from(agentDecision)
@@ -286,6 +294,27 @@ export async function exportParticipant(
     for (const d of decisions) {
       const { id, ...rest } = d;
       out.push({ type: "agent_decision", decisionId: id, ...rest });
+    }
+
+    // Who was allowed to talk, and when. Enums and offsets only. A line of the
+    // ledger fell in a locked stretch when the last change at or before its
+    // offset is `locked`; `atConnect` rows are the floor a connection started
+    // with, which nobody pressed for, and a reconnect writes one too.
+    const floors = await db
+      .select({
+        sessionId: floorEvent.captureSessionId,
+        seq: floorEvent.seq,
+        offsetMs: floorEvent.offsetMs,
+        kind: floorEvent.kind,
+        atConnect: floorEvent.atConnect,
+        configVersion: floorEvent.configVersion,
+      })
+      .from(floorEvent)
+      .where(inArray(floorEvent.captureSessionId, sessionIds))
+      .orderBy(asc(floorEvent.captureSessionId), asc(floorEvent.offsetMs));
+
+    for (const f of floors) {
+      out.push({ type: "floor_event", ...f });
     }
 
     /* Directions and what they fired ----------------------------------------- */

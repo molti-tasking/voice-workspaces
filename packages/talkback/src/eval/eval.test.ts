@@ -28,6 +28,20 @@ describe("the cases", () => {
     for (const c of answering) expect(endsOnAnAgentQuestion(c), c.id).toBe(true);
   });
 
+  it("hold every poke to speaking, and only pokes", () => {
+    // A poke is never declined live — `Floor` refuses the silence and re-runs
+    // it — so a poke case that allowed silence would test a system that does
+    // not exist.
+    const pokes = CASES.filter((c) => c.poke);
+    expect(pokes.length).toBeGreaterThan(0);
+    for (const c of pokes) {
+      expect(c.expect.turn, c.id).toBe("speak");
+      expect(c.expect.poked, c.id).toBe(true);
+      expect(c.said, c.id).toBeUndefined();
+    }
+    for (const c of CASES.filter((c) => c.expect.poked)) expect(c.poke, c.id).toBeDefined();
+  });
+
   it("can be selected by id and refuse an unknown one", () => {
     expect(findCases(["stuck", "mid-sentence"]).map((c) => c.id)).toEqual(["mid-sentence", "stuck"]);
     expect(() => findCases(["nope"])).toThrow(/unknown case/);
@@ -72,6 +86,12 @@ describe("the deterministic checks", () => {
       "declined an answer to its own question",
     );
     expect(checkReply(answering, "Der in Altenholz hat bis achtzehn Uhr offen.", 25).pass).toBe(true);
+  });
+
+  it("fails any silence on a poke", () => {
+    const poke = CASES.find((c) => c.id === "poke-nothing-obvious")!;
+    expect(checkReply(poke, "<silence>", 25).failures).toContain("declined a poke");
+    expect(checkReply(poke, "The participants section is still open before the pilot.", 25).pass).toBe(true);
   });
 
   it("lets a tool call stand in for speech on an answering turn", () => {
