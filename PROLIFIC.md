@@ -17,12 +17,25 @@ instructions that explains them) differ.
    (`chooseArm`). The arm is written onto the account as its study condition,
    so the drive copies it like any other (`capture_session.study_condition`).
 2. Microphone check.
-3. The task (`PROLIFIC_TASKS` in `packages/talkback/src/study-task.ts`) and how
-   the controls work. The agent gets the same task as a prompt section, which
-   also tells it to contribute, and never to summarise or write drafts — any
-   recap would be retrieval practice in both arms.
-4. The conversation: the two panels, Lock / Normal / Poke, and in the sparks
-   arm the spark chips. Finish appears after `PROLIFIC_MIN_MINUTES`.
+3. The task (`PROLIFIC_TASKS` in `packages/talkback/src/study-task.ts`): a
+   short plan for a town council — three measures and why — and how the
+   controls work.
+4. The conversation, with the study's own agent (`study-agent.ts`): a
+   conversational assistant, not the field study's quiet companion, the same
+   in both arms. On screen: the topics (theirs without words; the agent's
+   last three replies on the current topic), **the plan**, Lock / Normal /
+   Poke, and in the sparks arm the spark chips at the foot of their panel.
+   - **The plan** is one draft the agent writes only when asked ("put that on
+     the plan"), holding only what the participant decided; asked to write
+     the whole thing, it offers options to choose from instead. Finish needs
+     `PROLIFIC_MIN_MINUTES` **and** a plan. The final plan is exported.
+   - **Sparks are targeted**: the rules in `signals.ts` pick the subject and
+     the kind; `/api/realtime/spark-question` writes a question about that
+     subject's actual content (MODEL_FAST), shown on the chip and asked by
+     the agent when pulled (`SPARK_QUESTION_NUDGE`, mirrored in `bot.py`).
+     Without a question the chip keeps its generic label.
+   - The agent never summarises the conversation: a recap would be retrieval
+     practice in both arms. The plan is visible in both arms alike.
 5. One question: how much they expect to remember tomorrow (a judgement of
    learning). Then the completion code and the link back to Prolific.
 

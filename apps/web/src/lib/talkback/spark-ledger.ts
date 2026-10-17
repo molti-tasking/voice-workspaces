@@ -19,6 +19,11 @@ export interface SparkLedgerState {
   offered: readonly Spark[];
   shown: ReadonlyMap<number, ReadonlySet<SparkKind>>;
   pulled: ReadonlyMap<number, SparkKind>;
+  /**
+   * Each spark's own question, once written (`/api/realtime/spark-question`),
+   * by `sparkKey`. A spark without one keeps its kind's generic label.
+   */
+  questions: ReadonlyMap<string, string>;
 }
 
 export interface SparkLedger {
@@ -29,9 +34,21 @@ export interface SparkLedger {
   /** These were on screen. Idempotent. */
   noteShown(sparks: readonly { kind: SparkKind; ordinal: number }[]): void;
   notePulled(spark: { kind: SparkKind; ordinal: number }): void;
+  /** A spark's own question has been written. The first one stands. */
+  setQuestion(spark: { kind: SparkKind; ordinal: number }, question: string): void;
 }
 
-export const EMPTY_LEDGER: SparkLedgerState = { offered: [], shown: new Map(), pulled: new Map() };
+export const EMPTY_LEDGER: SparkLedgerState = {
+  offered: [],
+  shown: new Map(),
+  pulled: new Map(),
+  questions: new Map(),
+};
+
+/** One spark, as a key: its subject and its kind. */
+export function sparkKey(spark: { kind: SparkKind; ordinal: number }): string {
+  return `${spark.ordinal}:${spark.kind}`;
+}
 
 /** What the container is told, and what decides whether the offer changed. */
 export function offerKey(sparks: readonly { kind: SparkKind; ordinal: number }[]): string {
@@ -73,6 +90,11 @@ export function createSparkLedger(): SparkLedger {
         // Off the offer at once, not at the next refresh.
         offered: state.offered.filter((s) => s.ordinal !== spark.ordinal),
       });
+    },
+    setQuestion(spark, question) {
+      const key = sparkKey(spark);
+      if (state.questions.has(key)) return;
+      set({ ...state, questions: new Map(state.questions).set(key, question) });
     },
   };
 }

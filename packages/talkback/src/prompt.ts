@@ -507,6 +507,20 @@ export const SPARK_NUDGES: Readonly<Record<SparkKind, string>> = {
 export const SPARK_RETRY_NUDGE = `(They pulled a spark about "{subject}" for you to ask them, and ${SILENCE_TOKEN} is not available. Ask its question now, in one short sentence, and do not answer it yourself.)`;
 
 /**
+ * A spark that carries its own question, written for this conversation by
+ * `/api/realtime/spark-question` (the study screen): the chip showed it, so the
+ * agent asks THAT, not the kind's generic one. Same tail as the kinds'.
+ *
+ * MIRRORED IN `bot.py` as `SPARK_QUESTION_NUDGE`, pinned by tests on both sides.
+ */
+export const SPARK_QUESTION_NUDGE = `(They pulled a spark about "{subject}": ask them this question, which is on their screen — in your own voice, but keep its point: "{question}" ${SPARK_TAIL}`;
+
+/** The nudge for a spark with its own question, as `spark_question_text` builds it. */
+export function sparkQuestionText(subject: string, question: string): string {
+  return SPARK_QUESTION_NUDGE.replaceAll("{subject}", subject).replaceAll("{question}", question);
+}
+
+/**
  * The last resort when even a spark's re-run declines: the question itself.
  *
  * UNLIKE `POKE_FALLBACKS`, A QUESTION, on purpose. A spark is a question they

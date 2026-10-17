@@ -1,4 +1,5 @@
 import { asc, eq, getDb, inArray } from "@voicemural/db";
+import { loadSessionDrafts } from "@voicemural/db/drafts";
 import { listParticipants, pseudonymFor } from "@voicemural/db/prolific";
 import { captureSession, driveSubject, recallProbe, subjectSignal } from "@voicemural/db/schema";
 import { ProlificClosing, isRealProlificPid } from "@voicemural/shared";
@@ -7,8 +8,8 @@ import { ProlificClosing, isRealProlificPid } from "@voicemural/shared";
  * The Prolific study's data, as two flat tables (PROLIFIC.md):
  *
  * - `participants`: one row per participant — arm, timings, the judgement of
- *   learning, the FREE RECALL TEXT, the closing answers, and the sparks they
- *   were shown and pulled across the conversation.
+ *   learning, the FINAL PLAN and the FREE RECALL TEXT, the closing answers,
+ *   and the sparks they were shown and pulled across the conversation.
  * - `probes`: one row per recall probe — the subject's title (content: the
  *   free recall is scored against it), its signals, and the three answers.
  *
@@ -58,8 +59,19 @@ export async function buildProlificExport(): Promise<{ participants: Row[]; prob
         .orderBy(asc(driveSubject.captureSessionId), asc(driveSubject.ordinal))
     : [];
 
+  // The plan as it stood at the end: the draft the agent kept (study-task.ts
+  // asks for exactly one), at its current version. The latest if there were
+  // several; how many there were is kept too, as a check on that rule.
+  const plans = new Map<string, { text: string; version: string; drafts: number }>();
+  for (const id of sessionIds) {
+    const drafts = await loadSessionDrafts(id);
+    const last = drafts.at(-1);
+    if (last) plans.set(id, { text: last.text, version: last.version, drafts: drafts.length });
+  }
+
   const iso = (d: Date | null) => (d ? d.toISOString() : null);
   const participants: Row[] = people.map((p) => {
+    const plan = p.captureSessionId ? plans.get(p.captureSessionId) : undefined;
     const drive = drives.find((d) => d.id === p.captureSessionId);
     const mine = subjects.filter((s) => s.captureSessionId === p.captureSessionId);
     const closing = ProlificClosing.safeParse(p.closing ?? null);
@@ -78,6 +90,9 @@ export async function buildProlificExport(): Promise<{ participants: Row[]; prob
       sparks_pulled: mine.reduce((n, s) => n + (s.sparksPulled?.length ?? 0), 0),
       part1_completed_at: iso(p.part1CompletedAt),
       judgment_of_learning: p.judgmentOfLearning,
+      plan_version: plan?.version ?? null,
+      plan_drafts: plan?.drafts ?? 0,
+      plan: plan?.text ?? null,
       part2_started_at: iso(p.part2StartedAt),
       free_recall_at: iso(p.freeRecallAt),
       free_recall_confidence: p.freeRecallConfidence,

@@ -12,6 +12,8 @@ import {
   SPARK_FALLBACKS,
   SPARK_KINDS,
   SPARK_NUDGES,
+  SPARK_QUESTION_NUDGE,
+  sparkQuestionText,
   SPARK_RETRY_NUDGE,
   SEARCH_WAIT_PHRASES,
   SILENCE_NUDGE,
@@ -485,5 +487,15 @@ describe("extractDrafts, which bot.py mirrors", () => {
       '<draft revises="3f9a2c" title="A">one</draft>and<draft title="B">two</draft>',
     );
     expect(drafts.map((d) => d.revises)).toEqual(["3f9a2c", undefined]);
+  });
+});
+
+
+describe("a spark with its own question, which bot.py mirrors", () => {
+  it("is word for word the container's", () => {
+    expect(SPARK_QUESTION_NUDGE).toBe(
+      '(They pulled a spark about "{subject}": ask them this question, which is on their screen — in your own voice, but keep its point: "{question}" <silence> is not available on this turn. One or two short sentences with a single question back to them: do not answer it yourself, do not summarise their position or what was said first, and add no view of your own.)',
+    );
+    expect(sparkQuestionText("Budget", "Trees or roofs first?")).toContain('"Trees or roofs first?"');
   });
 });

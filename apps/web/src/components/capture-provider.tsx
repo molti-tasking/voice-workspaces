@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -30,7 +31,7 @@ import {
   titlesForReconnect,
   type ConversationStore,
 } from "@/lib/talkback/conversation";
-import { createSparkLedger, type SparkLedger } from "@/lib/talkback/spark-ledger";
+import { createSparkLedger, sparkKey, type SparkLedger } from "@/lib/talkback/spark-ledger";
 import { postSubjectSignals, subjectSignalsBody } from "@/lib/talkback/subject-signals";
 import type { SparkRequest } from "@/lib/talkback/types";
 import { useTalkback, type PokeResult, type TalkbackState } from "@/lib/talkback/use-talkback";
@@ -215,6 +216,39 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
   // still worked out, and kept at Stop, because whether they predict recall
   // is half the question.
   const sparksArm = recorder.sparksArm;
+
+  // EACH SPARK ITS OWN QUESTION, in the sparks arm: written once per spark
+  // from that subject's lines (`/api/realtime/spark-question`), shown on the
+  // chip and asked by the agent when it is pulled. Until one arrives, or if
+  // none comes, the chip keeps its kind's label and the agent its generic
+  // question — nothing waits on this.
+  const asking = useRef(new Set<string>());
+  const questionsFor = recorder.currentSessionId;
+  useEffect(() => {
+    if (!sparksArm || !questionsFor) return;
+    const fetchMissing = () => {
+      const { offered, questions } = sparks.getSnapshot();
+      for (const spark of offered) {
+        const key = sparkKey(spark);
+        if (questions.has(key) || asking.current.has(key)) continue;
+        asking.current.add(key);
+        const section = conversation.getSnapshot().sections.find((s) => s.ordinal === spark.ordinal);
+        const lines = (section?.turns ?? []).map((t) => ({ who: t.who, text: t.text }));
+        void fetch("/api/realtime/spark-question", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ captureSessionId: questionsFor, kind: spark.kind, title: spark.title, lines }),
+        })
+          .then((res) => (res.ok ? (res.json() as Promise<{ question?: string | null }>) : null))
+          .then((body) => {
+            if (body?.question) sparks.setQuestion(spark, body.question);
+          })
+          .catch(() => undefined);
+      }
+    };
+    fetchMissing();
+    return sparks.subscribe(fetchMissing);
+  }, [sparks, conversation, sparksArm, questionsFor]);
   useEffect(() => {
     const send = () => offerSparks(sparksArm ? sparks.getSnapshot().offered : []);
     send();

@@ -2502,6 +2502,14 @@ SPARK_RETRY_NUDGE = (
     "not available. Ask its question now, in one short sentence, and do not answer "
     "it yourself.)"
 )
+# A spark that carries its own question, written for this conversation by the
+# browser's spark-question route (study screen): the chip showed it, so the
+# agent asks THAT, not the kind's generic one. Same tail as the kinds'.
+SPARK_QUESTION_NUDGE = (
+    '(They pulled a spark about "{subject}": ask them this question, which is on '
+    'their screen — in your own voice, but keep its point: "{question}" ' + _SPARK_TAIL
+)
+SPARK_QUESTION_MAX_CHARS = 200
 SPARK_FALLBACKS = {
     "say_back": {
         "en": "In your own words: where did you land on {subject}?",
@@ -2575,6 +2583,25 @@ def parse_spark(data: object) -> tuple[str, int] | None:
     if ordinal < 1:
         return None
     return kind, ordinal
+
+
+def parse_spark_question(data: object) -> str | None:
+    """The question a spark carries, if any: one line of plain text, bounded.
+    Anything else is no question, and the kind's generic one is asked."""
+    if not isinstance(data, dict):
+        return None
+    question = data.get("question")
+    if not isinstance(question, str):
+        return None
+    question = " ".join(question.split())
+    if not question or len(question) > SPARK_QUESTION_MAX_CHARS:
+        return None
+    return question
+
+
+def spark_question_text(subject: str, question: str) -> str:
+    """The nudge for a spark with its own question. `replace`, as `spark_text`."""
+    return SPARK_QUESTION_NUDGE.replace("{subject}", subject).replace("{question}", question)
 
 
 def phrase_language(session: dict) -> str:
@@ -3012,7 +3039,9 @@ class Floor(FrameProcessor):
         # None, "armed" (waiting for them to finish) or "running".
         self._poke: str | None = None
         # The spark the pending poke carries: (kind, ordinal, title), or None.
-        self._spark: tuple[str, int, str] | None = None
+        # (kind, ordinal, title, question) — the question only when the
+        # browser sent one (`parse_spark_question`).
+        self._spark: tuple[str, int, str, str | None] | None = None
         # The sparks on their screen, as the browser last sent them: what the
         # model may ask when they ask for one out loud. (kind, ordinal) only;
         # titles are looked up when the context is composed.
@@ -3113,7 +3142,9 @@ class Floor(FrameProcessor):
             logger.info("[floor] open — the agent may talk back")
             self._context.add_message({"role": "user", "content": FLOOR_OPEN_NOTE})
 
-    def _resolve_spark(self, spark: tuple[str, int] | None) -> tuple[str, int, str] | None:
+    def _resolve_spark(
+        self, spark: tuple[str, int] | None, question: str | None = None
+    ) -> tuple[str, int, str, str | None] | None:
         """The spark with its subject's title, or None for a plain poke."""
         if spark is None or self._subject_title is None:
             return None
@@ -3122,9 +3153,11 @@ class Floor(FrameProcessor):
         if not title:
             logger.info(f"[floor] a {kind} spark for s{ordinal}, which this drive has not named — a plain poke")
             return None
-        return kind, ordinal, title
+        return kind, ordinal, title, question
 
-    async def _poke_request(self, spark: tuple[str, int] | None = None) -> str:
+    async def _poke_request(
+        self, spark: tuple[str, int] | None = None, question: str | None = None
+    ) -> str:
         """Handle a tap on Poke, or on a spark. Returns what became of it, for
         the browser."""
         if self._recorder is not None:
@@ -3136,7 +3169,7 @@ class Floor(FrameProcessor):
             # One poke at a time: a second tap while the first is waiting or
             # running asks for nothing the first is not already getting.
             return self._poke
-        self._spark = self._resolve_spark(spark)
+        self._spark = self._resolve_spark(spark, question)
         if self._user_busy or self._generating:
             self._arm()
             logger.info("[floor] poked mid-turn — waiting for them to finish")
@@ -3165,13 +3198,21 @@ class Floor(FrameProcessor):
         self._cancel(self._waiter)
         self._waiter = None
         if self._spark is not None:
-            kind, ordinal, title = self._spark
+            kind, ordinal, title, question = self._spark
             if self._recorder is not None:
                 self._recorder.note_offer(
-                    "poke", subject_key=f"s{ordinal}", spark_kind=kind, spark_subject=title
+                    "poke",
+                    subject_key=f"s{ordinal}",
+                    spark_kind=kind,
+                    spark_subject=title,
+                    spark_question=question,
                 )
-            nudge = spark_text(SPARK_NUDGES[kind], title)
-            logger.info(f"[floor] a {kind} spark for s{ordinal}")
+            nudge = (
+                spark_question_text(title, question)
+                if question
+                else spark_text(SPARK_NUDGES[kind], title)
+            )
+            logger.info(f"[floor] a {kind} spark for s{ordinal}{' with its own question' if question else ''}")
         else:
             if self._recorder is not None:
                 self._recorder.note_offer("poke")
@@ -3267,7 +3308,9 @@ class Floor(FrameProcessor):
                     await self._set(wanted == "locked")
                 await self._answer(frame, {"floor": self.floor})
             else:
-                result = await self._poke_request(parse_spark(data.get("spark")))
+                result = await self._poke_request(
+                    parse_spark(data.get("spark")), parse_spark_question(data.get("spark"))
+                )
                 await self._answer(frame, {"poke": result, "floor": self.floor})
             # Consumed: nothing downstream has any use for the request.
             return
@@ -3480,6 +3523,9 @@ class Cue:
     # `spark_kind` and `subject_key` ("s3") are ever written down.
     spark_kind: str | None = None
     spark_subject: str | None = None
+    # Its own question, when the browser wrote one: asked on the re-run and
+    # spoken as the fixed last line instead of the kind's generic one.
+    spark_question: str | None = None
 
 
 # Unprompted moments: the engine made them, nobody spoke. A turn taken in one
@@ -3666,6 +3712,7 @@ class TurnRecorder:
         subject_key: str | None = None,
         spark_kind: str | None = None,
         spark_subject: str | None = None,
+        spark_question: str | None = None,
     ) -> None:
         """The proactive engine is about to run a turn nobody asked for — or a
         poke is, and if it carries a spark, which one and about what."""
@@ -3676,6 +3723,7 @@ class TurnRecorder:
             self._new_opportunity(),
             spark_kind=spark_kind,
             spark_subject=spark_subject,
+            spark_question=spark_question,
         )
 
     def _new_opportunity(self) -> int:
@@ -5106,7 +5154,7 @@ class SilenceGate(FrameProcessor):
                         and self._cue.spark_subject is not None
                     )
                     if spark:
-                        spoken = self._answers.spark_fallback(
+                        spoken = self._cue.spark_question or self._answers.spark_fallback(
                             self._cue.spark_kind, self._cue.spark_subject
                         )
                         # Not the line itself: it carries the subject's title.
@@ -5171,7 +5219,9 @@ class SilenceGate(FrameProcessor):
                     self._recorder.note_forced_poke()
                     retry = True
                     retry_nudge = (
-                        spark_text(SPARK_RETRY_NUDGE, self._cue.spark_subject)
+                        spark_question_text(self._cue.spark_subject, self._cue.spark_question)
+                        if self._cue.spark_kind and self._cue.spark_subject and self._cue.spark_question
+                        else spark_text(SPARK_RETRY_NUDGE, self._cue.spark_subject)
                         if self._cue.spark_kind and self._cue.spark_subject
                         else POKE_RETRY_NUDGE
                     )

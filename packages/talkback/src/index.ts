@@ -152,3 +152,10 @@ export {
   type StudyTaskId,
 } from "./study-task";
 export { STUDY_PROFILE, STUDY_SYSTEM_PROMPT } from "./study-agent";
+export {
+  SPARK_QUESTION_MAX_CHARS,
+  cleanSparkQuestion,
+  sparkQuestionMessages,
+  type SparkLine,
+} from "./spark-question";
+export { SPARK_QUESTION_NUDGE, sparkQuestionText } from "./prompt";
