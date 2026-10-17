@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { agentDecisionOutcomeEnum, agentDecisionTriggerEnum } from "@voicemural/db";
+import {
+  agentDecisionOutcomeEnum,
+  agentDecisionTriggerEnum,
+  sparkKindEnum,
+} from "@voicemural/db";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import { recordAgentDecision } from "@voicemural/talkback";
 import { resolveLiveSession } from "@/lib/talkback/live-session";
@@ -47,6 +51,9 @@ const Body = z.object({
   // Whether a poke's first completion declined and had to be re-run. Its own
   // field so it can never inflate the unanswered-answer count above.
   forcedPoke: z.boolean().optional(),
+  // The spark a poke carried (talkback-21). An enum; its subject is
+  // `subjectKey`, as `s{ordinal}`.
+  sparkKind: z.enum(sparkKindEnum.enumValues).optional(),
   agentTurnId: z.uuid().optional(),
 });
 

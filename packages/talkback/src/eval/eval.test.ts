@@ -42,6 +42,18 @@ describe("the cases", () => {
     for (const c of CASES.filter((c) => c.expect.poked)) expect(c.poke, c.id).toBeDefined();
   });
 
+  it("hold every spark to asking a question and to not answering it, and never volunteering one", () => {
+    const sparks = CASES.filter((c) => c.poke?.spark);
+    expect(new Set(sparks.map((c) => c.poke!.spark!.kind)).size).toBe(4);
+    for (const c of sparks) {
+      expect(c.expect.mustMention, c.id).toContain("\\?");
+      expect(c.expect.mustNotMention?.length, c.id).toBeGreaterThan(0);
+    }
+    const unasked = CASES.find((c) => c.id === "spark-never-volunteered")!;
+    expect(unasked.poke).toBeUndefined();
+    expect(unasked.expect.mustNotMention?.length).toBeGreaterThan(0);
+  });
+
   it("can be selected by id and refuse an unknown one", () => {
     expect(findCases(["stuck", "mid-sentence"]).map((c) => c.id)).toEqual(["mid-sentence", "stuck"]);
     expect(() => findCases(["nope"])).toThrow(/unknown case/);

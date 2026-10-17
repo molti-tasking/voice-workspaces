@@ -30,6 +30,8 @@ import {
   titlesForReconnect,
   type ConversationStore,
 } from "@/lib/talkback/conversation";
+import { createSparkLedger, type SparkLedger } from "@/lib/talkback/spark-ledger";
+import type { SparkRequest } from "@/lib/talkback/types";
 import { useTalkback, type PokeResult, type TalkbackState } from "@/lib/talkback/use-talkback";
 
 /**
@@ -62,6 +64,11 @@ export interface CaptureContextValue {
    * next drive starts, and kept after this one ends, like the rest of the view.
    */
   conversation: ConversationStore;
+  /**
+   * The sparks this drive has shown and the ones pulled, beside the
+   * conversation they are about and replaced with it. See `spark-ledger.ts`.
+   */
+  sparks: SparkLedger;
   /** What the conversation is about now, from `conversation`. Kept after Stop. */
   title: string | null;
   /**
@@ -71,8 +78,11 @@ export interface CaptureContextValue {
    */
   floor: Floor;
   setFloor: (next: Floor) => void;
-  /** Ask the agent for one turn now, whichever floor is in force. */
-  poke: () => Promise<PokeResult | null>;
+  /**
+   * Ask the agent for one turn now, whichever floor is in force — carrying a
+   * spark when they pulled one.
+   */
+  poke: (spark?: SparkRequest) => Promise<PokeResult | null>;
   /**
    * What the record screen shows under the title: cues and the drafts written
    * on this drive. Frozen at Stop and kept, like the title.
@@ -152,10 +162,12 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
   // the router, for the reason the title trail was (27 Sep 2026): walking to
   // the workspace and back mid-drive must not come back to an empty screen.
   const [conversation, setConversation] = useState(createConversationStore);
+  const [sparks, setSparks] = useState(createSparkLedger);
   const [conversationFor, setConversationFor] = useState(conversationId);
   if (conversationFor !== conversationId) {
     setConversationFor(conversationId);
     setConversation(createConversationStore());
+    setSparks(createSparkLedger());
   }
   const title = useSyncExternalStore(
     conversation.subscribe,
@@ -219,6 +231,7 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       talkback,
       conversationId,
       conversation,
+      sparks,
       title,
       floor,
       setFloor,
@@ -240,6 +253,7 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       talkback,
       conversationId,
       conversation,
+      sparks,
       title,
       floor,
       setFloor,

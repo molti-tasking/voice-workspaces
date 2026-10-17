@@ -9,6 +9,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  real,
   text,
   timestamp,
   uniqueIndex,
@@ -755,6 +756,13 @@ export const agentDecisionOutcomeEnum = pgEnum("agent_decision_outcome", [
 ]);
 
 /**
+ * The four questions the recorder can offer about one subject, for the person
+ * to pull (apps/web/src/lib/talkback/signals.ts): say it back in your own
+ * words, decide it, what makes you unsure, go back to it.
+ */
+export const sparkKindEnum = pgEnum("spark_kind", ["say_back", "decide", "unsure", "revisit"]);
+
+/**
  * Every moment the model was given to speak, and what it did with it.
  * Append-only.
  *
@@ -889,6 +897,13 @@ export const agentDecision = pgTable(
      * asked to hear from me, so you will"), and it gets its own mark.
      */
     forcedPoke: boolean("forced_poke").notNull().default(false),
+    /**
+     * The spark a poke carried, when it carried one (talkback-21): the person
+     * pulled a question about one subject for the agent to ask. The trigger
+     * stays `poke`, so everything that reads pokes reads these too, and
+     * `subject_key` is the subject as `s{ordinal}` — an id, never a phrase.
+     */
+    sparkKind: sparkKindEnum("spark_kind"),
     agentTurnId: uuid("agent_turn_id").references(() => agentTurn.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -976,6 +991,187 @@ export const floorEventRelations = relations(floorEvent, ({ one }) => ({
   captureSession: one(captureSession, {
     fields: [floorEvent.captureSessionId],
     references: [captureSession.id],
+  }),
+}));
+
+/* ---------------------------------------------------------------------------
+ * Sparks: the subjects of a drive, what the person held of them, and recall
+ * ------------------------------------------------------------------------- */
+
+/**
+ * One subject of a drive, as the voice container named it (`TopicTitle` in
+ * bot.py), written when a NEW subject is named — a return to one is a new
+ * `drive_subject_segment`, not a new row.
+ *
+ * `ordinal` is the subject's number in the order it first came up: 1, 2, 3.
+ * It is the only name for a subject that leaves the participant's account —
+ * the sparks' `agent_decision.subject_key` is `s{ordinal}`, and the export
+ * carries the ordinal and the offsets. `title` is CONTENT, on the same side of
+ * the privacy boundary as `capture_session.title`: shown back to the person
+ * (the recall probe asks about it by name) and never exported.
+ */
+export const driveSubject = pgTable(
+  "drive_subject",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    captureSessionId: uuid("capture_session_id")
+      .notNull()
+      .references(() => captureSession.id, { onDelete: "cascade" }),
+    ordinal: integer("ordinal").notNull(),
+    /** Content. Never exported. */
+    title: text("title").notNull(),
+    /** When it first came up, ms into the drive on the `utterance` clock. */
+    firstOffsetMs: integer("first_offset_ms").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("drive_subject_session_ordinal_uq").on(t.captureSessionId, t.ordinal),
+  ],
+);
+
+export const driveSubjectRelations = relations(driveSubject, ({ one, many }) => ({
+  captureSession: one(captureSession, {
+    fields: [driveSubject.captureSessionId],
+    references: [captureSession.id],
+  }),
+  segments: many(driveSubjectSegment),
+}));
+
+/**
+ * One visit to a subject: from when the talk turned to it to when it turned
+ * away, on the `utterance` clock. Written by the container when the talk turns
+ * to it, and closed when it turns away.
+ *
+ * `end_offset_ms` is NULL for a visit still open when the container last
+ * wrote — always the drive's last one, because Stop ends the session before
+ * the container hears of it and its closing write is refused. A reader closes
+ * an open visit at the drive's end.
+ *
+ * What lets the recall probe show a subject's own speech days later — the
+ * `utterance` and `agent_turn` rows inside its ranges — without storing a word
+ * of it here.
+ */
+export const driveSubjectSegment = pgTable(
+  "drive_subject_segment",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    driveSubjectId: uuid("drive_subject_id")
+      .notNull()
+      .references(() => driveSubject.id, { onDelete: "cascade" }),
+    startOffsetMs: integer("start_offset_ms").notNull(),
+    endOffsetMs: integer("end_offset_ms"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // A reconnect re-sends nothing, but a retried POST can: the same visit
+    // twice is one visit.
+    uniqueIndex("drive_subject_segment_uq").on(t.driveSubjectId, t.startOffsetMs),
+  ],
+);
+
+export const driveSubjectSegmentRelations = relations(driveSubjectSegment, ({ one }) => ({
+  subject: one(driveSubject, {
+    fields: [driveSubjectSegment.driveSubjectId],
+    references: [driveSubject.id],
+  }),
+}));
+
+/**
+ * What the recorder worked out about one subject, as the browser last posted
+ * it: counts, a judgement, the sparks it showed and the ones pulled.
+ *
+ * Posted at Stop, and as a best effort when the page is hidden; the last write
+ * wins, and `final` says whether it came from Stop. Kept with the arm off too
+ * — signals are computed either way, because whether they predict recall is
+ * half the question.
+ *
+ * Numbers, a boolean and enums only: exported as they stand.
+ */
+export const subjectSignal = pgTable(
+  "subject_signal",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    driveSubjectId: uuid("drive_subject_id")
+      .notNull()
+      .references(() => driveSubject.id, { onDelete: "cascade" }),
+    userWords: integer("user_words").notNull(),
+    agentWords: integer("agent_words").notNull(),
+    pauses: integer("pauses").notNull(),
+    fillers: integer("fillers").notNull(),
+    selfRepairs: integer("self_repairs").notNull(),
+    hedges: integer("hedges").notNull(),
+    /** The container's judgement when the subject was left. Null: never judged. */
+    settled: boolean("settled"),
+    fade: real("fade").notNull(),
+    sparksShown: sparkKindEnum("sparks_shown").array().notNull().default(sql`'{}'`),
+    sparksPulled: sparkKindEnum("sparks_pulled").array().notNull().default(sql`'{}'`),
+    final: boolean("final").notNull().default(false),
+    /** `SIGNALS_VERSION` of the rules that computed it. */
+    signalsVersion: text("signals_version"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("subject_signal_subject_uq").on(t.driveSubjectId)],
+);
+
+export const subjectSignalRelations = relations(subjectSignal, ({ one }) => ({
+  subject: one(driveSubject, {
+    fields: [subjectSignal.driveSubjectId],
+    references: [driveSubject.id],
+  }),
+}));
+
+/** Whose idea the person says a subject mostly was, asked by the recall probe. */
+export const recallProvenanceEnum = pgEnum("recall_provenance", [
+  "mine",
+  "souffleur",
+  "both",
+  "unsure",
+]);
+
+/**
+ * One recall question about one subject, a couple of days after the drive.
+ *
+ * The person is shown the subject's title, rates how well they remember where
+ * they landed, says or types it TO THEMSELVES — never stored — and is then
+ * shown their own speech on it and rates how close they were. Then: whose idea
+ * was it mostly. Confidence against self-rated accuracy is the study's
+ * metacognitive measure; the provenance answer checks the word-share proxy.
+ *
+ * THERE IS NO TEXT COLUMN, and that is the promise `/study` makes. Numbers and
+ * an enum only, exported as they stand.
+ */
+export const recallProbe = pgTable(
+  "recall_probe",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    driveSubjectId: uuid("drive_subject_id")
+      .notNull()
+      .references(() => driveSubject.id, { onDelete: "cascade" }),
+    dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
+    answeredAt: timestamp("answered_at", { withTimezone: true }),
+    /** 1-7: how well they remember where they landed, before seeing it. */
+    confidence: integer("confidence"),
+    /** 1-7: how close their recall was, after seeing their own words. */
+    selfAccuracy: integer("self_accuracy"),
+    provenance: recallProvenanceEnum("provenance"),
+    /** Days from the drive to the answer, whole. */
+    delayDays: integer("delay_days"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("recall_probe_subject_uq").on(t.driveSubjectId),
+    index("recall_probe_user_due_idx").on(t.userId, t.dueAt),
+  ],
+);
+
+export const recallProbeRelations = relations(recallProbe, ({ one }) => ({
+  user: one(user, { fields: [recallProbe.userId], references: [user.id] }),
+  subject: one(driveSubject, {
+    fields: [recallProbe.driveSubjectId],
+    references: [driveSubject.id],
   }),
 }));
 

@@ -293,14 +293,17 @@ export function currentTitle(state: Conversation): string | null {
 
 /**
  * The titles to hand the container on a reconnect, current one LAST — so a
- * subject from before the tunnel comes back under the name it already has.
+ * subject from before the tunnel comes back under the name it already has,
+ * and under the same ordinal, which the sparks and the stored subjects
+ * (`drive_subject`) both key on.
  */
-export function titlesForReconnect(state: Conversation): string[] {
+export function titlesForReconnect(state: Conversation): { title: string; ordinal?: number }[] {
   const named = state.sections.filter((s) => s.title !== null);
   const current = named.find((s) => s.key === state.current);
-  return [...named.filter((s) => s !== current), ...(current ? [current] : [])].map(
-    (s) => s.title!,
-  );
+  return [...named.filter((s) => s !== current), ...(current ? [current] : [])].map((s) => ({
+    title: s.title!,
+    ...(s.ordinal !== undefined ? { ordinal: s.ordinal } : {}),
+  }));
 }
 
 export interface ConversationStore {

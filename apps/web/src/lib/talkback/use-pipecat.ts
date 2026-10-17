@@ -14,6 +14,7 @@ import { parseServerMessage } from "./conversation";
 import {
   OFF,
   type PokeResult,
+  type SparkRequest,
   type Talkback,
   type TalkbackOptions,
   type TalkbackState,
@@ -459,11 +460,14 @@ export function usePipecatTalkback(options: TalkbackOptions): Talkback {
     };
   }, [connected, floor]);
 
-  const poke = useCallback(async (): Promise<PokeResult | null> => {
+  const poke = useCallback(async (spark?: SparkRequest): Promise<PokeResult | null> => {
     const client = live.current;
     if (!client) return null;
     try {
-      const data = (await client.sendClientRequest("poke", {}, REQUEST_TIMEOUT_MS)) as {
+      // A spark rides the poke: the kind and the ordinal, never the title,
+      // which the container already holds (`Floor` in bot.py).
+      const body = spark ? { spark: { kind: spark.kind, ordinal: spark.ordinal } } : {};
+      const data = (await client.sendClientRequest("poke", body, REQUEST_TIMEOUT_MS)) as {
         poke?: unknown;
       } | null;
       const applied = floorOf(data);

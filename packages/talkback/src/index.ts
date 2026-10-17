@@ -53,6 +53,10 @@ export {
   POKE_RETRY_NUDGE,
   SEARCH_WAIT_PHRASES,
   SILENCE_TOKEN,
+  SPARK_FALLBACKS,
+  SPARK_KINDS,
+  SPARK_NUDGES,
+  SPARK_RETRY_NUDGE,
   SYSTEM_PROMPT,
   TALKBACK_CONFIG_VERSION,
   answerAcknowledgement,
@@ -61,7 +65,10 @@ export {
   isSilence,
   pokeFallback,
   searchWaitPhrase,
+  sparkFallback,
+  sparkText,
   type ComposeInputs,
+  type SparkKind,
   type ComposedPrompt,
 } from "./prompt";
 export {

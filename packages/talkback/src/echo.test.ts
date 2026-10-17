@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { containment, isEcho, keptIndices, withoutEcho } from "./echo";
-import { ANSWER_ACKNOWLEDGEMENTS, POKE_FALLBACKS, SEARCH_WAIT_PHRASES } from "./prompt";
+import {
+  ANSWER_ACKNOWLEDGEMENTS,
+  POKE_FALLBACKS,
+  SEARCH_WAIT_PHRASES,
+  SPARK_FALLBACKS,
+  sparkText,
+} from "./prompt";
 
 /**
  * The filter that keeps the system's own voice out of what it reads back.
@@ -18,6 +24,11 @@ const FIXED_PHRASES = [
   ...Object.values(SEARCH_WAIT_PHRASES).flatMap((phrases) => [...phrases]),
   ...Object.values(ANSWER_ACKNOWLEDGEMENTS),
   ...Object.values(POKE_FALLBACKS),
+  // A spark's last line carries its subject; the shortest title still makes it
+  // one the filter can recognise.
+  ...Object.values(SPARK_FALLBACKS).flatMap((byLanguage) =>
+    Object.values(byLanguage).map((phrase) => sparkText(phrase, "Budget")),
+  ),
 ];
 
 describe("containment", () => {

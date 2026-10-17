@@ -6,6 +6,7 @@ import {
   floorEvent,
   floorEventKindEnum,
   getDb,
+  sparkKindEnum,
 } from "@voicemural/db";
 import { log } from "@voicemural/telemetry";
 
@@ -135,6 +136,8 @@ export interface AgentDecisionRecord {
   forcedAnswer?: boolean;
   /** Whether a poke's first completion declined and had to be re-run. */
   forcedPoke?: boolean;
+  /** The spark a poke carried, if any. See the column. */
+  sparkKind?: (typeof sparkKindEnum.enumValues)[number];
   agentTurnId?: string;
 }
 
@@ -161,6 +164,7 @@ export async function recordAgentDecision(record: AgentDecisionRecord): Promise<
       subjectKey: record.subjectKey,
       forcedAnswer: record.forcedAnswer ?? false,
       forcedPoke: record.forcedPoke ?? false,
+      sparkKind: record.sparkKind,
       agentTurnId: record.agentTurnId,
     });
   } catch (err) {

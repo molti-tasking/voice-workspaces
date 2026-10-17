@@ -1238,6 +1238,24 @@ def clean_title(raw: str | None, previous: str | None) -> str | None:
     return text
 
 
+def parse_seeded_titles(raw: object) -> list[tuple[str, int | None]]:
+    """The sections a reconnecting browser already has, checked.
+
+    Each is a bare title (an older web app) or `{"title": ..., "ordinal": n}`;
+    anything else is dropped. The current subject is last, as sent.
+    """
+    seeded: list[tuple[str, int | None]] = []
+    for entry in raw[-40:] if isinstance(raw, list) else []:
+        title = entry.get("title") if isinstance(entry, dict) else entry
+        if not isinstance(title, str) or not title.strip():
+            continue
+        ordinal = entry.get("ordinal") if isinstance(entry, dict) else None
+        if isinstance(ordinal, bool) or not isinstance(ordinal, int) or ordinal < 1:
+            ordinal = None
+        seeded.append((title.strip()[:64], ordinal))
+    return seeded
+
+
 class TurnFeed:
     """The turns, as the recorder's two panels show them.
 
@@ -1270,6 +1288,10 @@ class TurnFeed:
         self._user: dict | None = None
         self._agent: dict | None = None
         self._since_mark: str | None = None
+        # When that first turn since the mark was heard, wall clock ms — where
+        # a new subject's visit begins (`TopicTitle`).
+        self._since_mark_ms: int | None = None
+        self.last_mark_ms: int | None = None
 
     def _open(self, kind: str) -> dict:
         self._seq += 1
@@ -1278,6 +1300,7 @@ class TurnFeed:
     def _noted(self, turn: dict) -> None:
         if self._since_mark is None:
             self._since_mark = turn["id"]
+            self._since_mark_ms = _now_ms()
 
     def user(self, text: str) -> dict | None:
         """Their words, joined onto the turn they are still in. The message to push."""
@@ -1320,8 +1343,10 @@ class TurnFeed:
         return self._agent is not None
 
     def mark(self) -> str | None:
-        """The first turn heard since the last mark, and start counting again."""
+        """The first turn heard since the last mark, and start counting again.
+        When it was heard is left in `last_mark_ms`."""
         first, self._since_mark = self._since_mark, None
+        self.last_mark_ms, self._since_mark_ms = self._since_mark_ms, None
         return first
 
 
@@ -1380,6 +1405,17 @@ class TopicTitle(FrameProcessor):
     And it is where the person's side of the panels comes from: it sees every
     final transcript already, and the turns are numbered by the same `TurnFeed`
     the title's `rehomeFrom` points into.
+
+    AND THE SUBJECTS OF THE DRIVE, KEPT (talkback-21). Every new subject gets
+    an ORDINAL — 1, 2, 3, in the order it first came up — carried on its title
+    message, and a return keeps the one it had. The ordinal is the only name
+    for a subject that leaves the participant's account: a spark the person
+    pulls names its subject by it, and the decision it becomes is filed under
+    `s{ordinal}`. Each turn of the talk is also posted to
+    `/api/realtime/subject` — the visit opened on the subject it turned to, and
+    closed on the one it left — so the drive's subjects survive a reload and
+    the recall probe can find a subject's own speech days later. Titles never
+    reach a log line: the log says `s3`.
     """
 
     # How many earlier titles the model is shown. A drive rarely has more
@@ -1410,10 +1446,12 @@ class TopicTitle(FrameProcessor):
         metadata: dict | None = None,
         ticket: str | None = None,
         feed: TurnFeed | None = None,
-        titles: list[str] | None = None,
+        titles: list | None = None,
+        started_at_ms: int | None = None,
     ):
         super().__init__()
         self._prompt = (title_prompt or "").strip()
+        self._started_at_ms = started_at_ms
         self._metadata = metadata or {}
         self._ticket = ticket
         self._feed = feed
@@ -1427,11 +1465,24 @@ class TopicTitle(FrameProcessor):
         # Deduplicated here because two VADs report it — the pipeline's own and
         # the aggregator's, whose copies come back upstream.
         self._hearing_them = False
-        seeded = [t.strip() for t in (titles or []) if isinstance(t, str) and t.strip()]
+        # Each subject's ordinal, by its folded title. Seeded with the
+        # browser's own numbers on a reconnect, so a subject keeps the one its
+        # sparks and its stored row already have.
+        self._ordinals: dict[str, int] = {}
+        seeded: list[str] = []
+        for title, ordinal in parse_seeded_titles(titles):
+            seeded.append(title)
+            self._ordinals[title.casefold()] = ordinal or max(self._ordinals.values(), default=0) + 1
         self._title: str | None = seeded[-1] if seeded else None
         self._earlier: list[str] = []
         for earlier in seeded[:-1]:
             self._remember(earlier)
+        # Where the current visit began, as an offset into the drive. A
+        # reconnect starts a new visit to the subject it was on.
+        self._visit_start: int | None = self._offset(_now_ms()) if self._title else None
+        # When they first spoke on this connection, for the visit of a first
+        # title, which names what was said before it.
+        self._first_speech_ms: int | None = None
         self._window = ""
         self._new_chars = 0
         self._last_call = time.monotonic()
@@ -1443,6 +1494,21 @@ class TopicTitle(FrameProcessor):
     @property
     def title(self) -> str | None:
         return self._title
+
+    def ordinal_of(self, title: str | None) -> int | None:
+        return self._ordinals.get(title.casefold()) if title else None
+
+    def title_for(self, ordinal: int) -> str | None:
+        """The title of subject `ordinal`, if this drive has one — what a
+        spark the person pulled is about."""
+        if self._title is not None and self.ordinal_of(self._title) == ordinal:
+            return self._title
+        return next((t for t in self._earlier if self.ordinal_of(t) == ordinal), None)
+
+    def _offset(self, wall_ms: int | None) -> int | None:
+        if wall_ms is None or not self._started_at_ms:
+            return None
+        return max(0, wall_ms - self._started_at_ms)
 
     def note_agent(self, text: str) -> None:
         """Record what the driver actually HEARD.
@@ -1469,7 +1535,14 @@ class TopicTitle(FrameProcessor):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, TranscriptionFrame) and frame.text.strip():
+            if self._first_speech_ms is None:
+                self._first_speech_ms = _now_ms()
             self._append(frame.text.strip())
+        elif isinstance(frame, (EndFrame, CancelFrame)):
+            # The drive's last visit, closed as a best effort: Stop usually
+            # ends the session first, and then the write is refused and the
+            # reader closes it at the drive's end.
+            self._close_visit(self._offset(_now_ms()))
         elif isinstance(frame, UserStoppedSpeakingFrame):
             # The aggregator's end of their turn, coming back upstream. Not its
             # START: a turn starts on words, so that frame arrives after the
@@ -1584,20 +1657,79 @@ class TopicTitle(FrameProcessor):
         returned = next((t for t in self._earlier if t.casefold() == title.casefold()), None)
         if returned is not None:
             title = returned
-            logger.info(f"[title] back to {title}")
         else:
-            logger.info(f"[title] {title}")
-        if self._title is not None:
-            self._remember(self._title)
+            self._ordinals[title.casefold()] = max(self._ordinals.values(), default=0) + 1
+        ordinal = self._ordinals[title.casefold()]
+        # The ordinal, never the title: no subject's name reaches the log.
+        logger.info(f"[title] {'back to ' if returned is not None else ''}s{ordinal}")
+
+        # The visit: from the turn that changed the subject, or — for the
+        # first title, which names everything said before it — from their
+        # first words.
+        now = _now_ms()
+        start_ms = self._feed.last_mark_ms if self._feed is not None else None
+        if self._title is None and self._first_speech_ms is not None:
+            start_ms = min(start_ms or now, self._first_speech_ms)
+        start = self._offset(start_ms or now)
+        left = self._title
+        self._close_visit(start)
+
+        if left is not None:
+            self._remember(left)
         self._earlier = [t for t in self._earlier if t.casefold() != title.casefold()]
         self._title = title
+        self._visit_start = start
 
-        message: dict = {"type": "title", "title": title}
+        message: dict = {"type": "title", "title": title, "ordinal": ordinal}
         if rehome_from is not None:
             message["rehomeFrom"] = rehome_from
         await self.push_frame(RTVIServerMessageFrame(data=message))
         if self._ticket and not self._drive_ended:
             await asyncio.to_thread(self._save, title)
+            if start is not None:
+                self._post_visit({"ordinal": ordinal, "title": title, "startOffsetMs": start})
+
+    def _close_visit(self, end: int | None) -> None:
+        """Close the visit to the current subject at `end`. Off the loop."""
+        if self._title is None or self._visit_start is None or end is None:
+            return
+        ordinal = self.ordinal_of(self._title)
+        if ordinal is None or not self._ticket or self._drive_ended:
+            return
+        payload = {
+            "ordinal": ordinal,
+            "title": self._title,
+            "startOffsetMs": self._visit_start,
+            "endOffsetMs": max(end, self._visit_start),
+        }
+        self._visit_start = None
+
+        async def send() -> None:
+            await asyncio.to_thread(self._post_visit, payload)
+
+        asyncio.create_task(send())
+
+    def _post_visit(self, visit: dict) -> None:
+        """Keep a visit to a subject. Logged by ordinal and dropped on failure:
+        the next turn of the talk writes the next one, and a 409 means the drive
+        has ended."""
+        if self._drive_ended:
+            return
+        req = urllib.request.Request(
+            f"{WEB_URL}/api/realtime/subject",
+            method="POST",
+            data=json.dumps({"ticket": self._ticket, **visit}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5):
+                pass
+        except urllib.error.HTTPError as err:
+            if err.code == 409:
+                self._drive_ended = True
+            logger.warning(f"[title] s{visit['ordinal']} not kept ({err.code})")
+        except Exception as err:
+            logger.warning(f"[title] s{visit['ordinal']} not kept: {type(err).__name__}")
 
     def _save(self, title: str) -> None:
         """Keep `title` as the drive's name. Logged and dropped on failure: the
@@ -2200,6 +2332,99 @@ FLOOR_OPEN_NOTE = (
     "what they say next, if it wants a reply.)"
 )
 
+# --- Sparks: a question about one subject, pulled by the person --------------
+#
+# Mirrors SPARK_NUDGES / SPARK_RETRY_NUDGE / SPARK_FALLBACKS in
+# packages/talkback/src/prompt.ts — change one, change both. `{subject}` is the
+# subject's title, which this container holds (`TopicTitle`); the browser sends
+# only the kind and the ordinal. The fallbacks are spoken with no completion
+# behind them, so they are recorded like the rest — but unlike a poke's they
+# are QUESTIONS, on purpose: a spark is a question they pulled, and their reply
+# is then an answer `AnswerGuard` keeps from being met with silence.
+SPARK_KINDS = ("say_back", "decide", "unsure", "revisit")
+_SPARK_TAIL = (
+    "<silence> is not available on this turn. One or two short sentences with a "
+    "single question back to them: do not answer it yourself, do not summarise their "
+    "position or what was said first, and add no view of your own.)"
+)
+SPARK_NUDGES = {
+    "say_back": (
+        '(They pulled a spark about "{subject}": ask them to say, in their own words, '
+        "where they landed on it. " + _SPARK_TAIL
+    ),
+    "decide": (
+        '(They pulled a spark about "{subject}": ask them what they would decide on it '
+        "if they had to decide now. " + _SPARK_TAIL
+    ),
+    "unsure": (
+        '(They pulled a spark about "{subject}": ask them what is making them unsure '
+        "about it. " + _SPARK_TAIL
+    ),
+    "revisit": (
+        '(They pulled a spark about "{subject}": ask, in one question, whether they want '
+        "to go back to it and what was still open there. " + _SPARK_TAIL
+    ),
+}
+SPARK_RETRY_NUDGE = (
+    '(They pulled a spark about "{subject}" for you to ask them, and <silence> is '
+    "not available. Ask its question now, in one short sentence, and do not answer "
+    "it yourself.)"
+)
+SPARK_FALLBACKS = {
+    "say_back": {
+        "en": "In your own words: where did you land on {subject}?",
+        "de": "In deinen eigenen Worten: Wo bist du bei {subject} gelandet?",
+        "da": "Med dine egne ord: hvor endte du med {subject}?",
+        "es": "Con tus propias palabras: ¿dónde llegaste con {subject}?",
+    },
+    "decide": {
+        "en": "If you had to decide on {subject} now, what would it be?",
+        "de": "Wenn du bei {subject} jetzt entscheiden müsstest, was wäre es?",
+        "da": "Hvis du skulle beslutte {subject} nu, hvad ville det så være?",
+        "es": "Si tuvieras que decidir {subject} ahora, ¿qué sería?",
+    },
+    "unsure": {
+        "en": "What is making you unsure about {subject}?",
+        "de": "Was macht dich bei {subject} unsicher?",
+        "da": "Hvad gør dig usikker på {subject}?",
+        "es": "¿Qué te hace dudar sobre {subject}?",
+    },
+    "revisit": {
+        "en": "Back to {subject}: what was still open there?",
+        "de": "Zurück zu {subject}: Was war da noch offen?",
+        "da": "Tilbage til {subject}: hvad var stadig åbent der?",
+        "es": "Volviendo a {subject}: ¿qué quedaba abierto?",
+    },
+}
+
+
+def spark_text(template: str, subject: str) -> str:
+    """A spark's text with its subject filled in. `replace`, not `format`: a
+    title with a brace in it must not be taken for a placeholder."""
+    return template.replace("{subject}", subject)
+
+
+def spark_fallback(kind: str, subject: str, language: str | None) -> str:
+    phrases = SPARK_FALLBACKS[kind]
+    return spark_text(phrases.get(language or "", phrases[FALLBACK_PHRASE_LANGUAGE]), subject)
+
+
+def parse_spark(data: object) -> tuple[str, int] | None:
+    """The spark a poke carries, checked: `{"kind": ..., "ordinal": n}` or None.
+
+    The browser is the boundary: an older one sends a bare poke, and anything
+    malformed is a plain poke rather than an error — the tap still deserves a
+    turn.
+    """
+    if not isinstance(data, dict):
+        return None
+    kind, ordinal = data.get("kind"), data.get("ordinal")
+    if kind not in SPARK_KINDS or isinstance(ordinal, bool) or not isinstance(ordinal, int):
+        return None
+    if ordinal < 1:
+        return None
+    return kind, ordinal
+
 
 def phrase_language(session: dict) -> str:
     """Which language the fixed phrases above are said in.
@@ -2489,6 +2714,10 @@ class AnswerGuard(FrameProcessor):
         """What a poke ends in when its re-run declines too, in the drive's language."""
         return poke_fallback(self._language)
 
+    def spark_fallback(self, kind: str, subject: str) -> str:
+        """What a spark ends in when its re-run declines too: its question, fixed."""
+        return spark_fallback(kind, subject, self._language)
+
     def request_retry(self, nudge: str = ANSWER_RETRY_NUDGE) -> None:
         """Run this turn again, from the gate's frame handler.
 
@@ -2522,7 +2751,7 @@ class AnswerGuard(FrameProcessor):
         self._context.add_message({"role": "user", "content": self._nudge})
         logger.info(
             "[answer] a declined poke — re-running the turn"
-            if self._nudge is POKE_RETRY_NUDGE
+            if self._nudge is not ANSWER_RETRY_NUDGE
             else "[answer] a declined answer to our own question — re-running the turn"
         )
         self._retry_started = True
@@ -2581,6 +2810,14 @@ class Floor(FrameProcessor):
     `AnswerGuard`, then ends in a fixed line — the same promise the guard makes
     for an answer the agent asked for. See `SilenceGate`.
 
+    A POKE CAN CARRY A SPARK (talkback-21): `{"spark": {"kind": ..., "ordinal":
+    n}}`, a question about one subject the person pulled from the recorder.
+    It is a poke in every way — the same arming, the same forced re-run, the
+    same `poke` trigger — except for what the model is told: `SPARK_NUDGES`
+    for that subject instead of `POKE_NUDGE`, and the decision is marked with
+    the kind and `s{ordinal}`. The title is looked up here, from the ordinal;
+    an ordinal this drive has no subject for is a plain poke.
+
     The browser sends `floor` ({"floor": "open" | "locked"}) and `poke` as RTVI
     client requests and gets the floor now in force back in the response,
     which is how the toggle on the recorder shows the lock the agent is
@@ -2608,15 +2845,20 @@ class Floor(FrameProcessor):
         recorder: "TurnRecorder | None" = None,
         *,
         locked: bool = False,
+        subject_title: Callable[[int], str | None] | None = None,
     ):
         super().__init__()
         self._context = context
         self._recorder = recorder
+        # What a spark's ordinal names: `TopicTitle.title_for`.
+        self._subject_title = subject_title
         # The mode the device remembered, applied before the first word so the
         # opening offer cannot race it. Written as `at_connect` on StartFrame.
         self._locked = locked
         # None, "armed" (waiting for them to finish) or "running".
         self._poke: str | None = None
+        # The spark the pending poke carries: (kind, ordinal, title), or None.
+        self._spark: tuple[str, int, str] | None = None
         # The person is talking: VAD hears them, or the aggregator's turn is
         # still open. Either one; the aggregator's ends seconds after the VAD's.
         self._vad_speaking = False
@@ -2673,7 +2915,10 @@ class Floor(FrameProcessor):
                 if spoke:
                     self._clear_poke()
                 else:
+                    # Back to armed, still carrying its spark.
+                    spark = self._spark
                     self._clear_poke()
+                    self._spark = spark
                     self._arm()
         elif outcome == "declined":
             if self._poke == "armed" and not self._user_busy and not self._bot_speaking:
@@ -2710,8 +2955,20 @@ class Floor(FrameProcessor):
             logger.info("[floor] open — the agent may talk back")
             self._context.add_message({"role": "user", "content": FLOOR_OPEN_NOTE})
 
-    async def _poke_request(self) -> str:
-        """Handle a tap on Poke. Returns what became of it, for the browser."""
+    def _resolve_spark(self, spark: tuple[str, int] | None) -> tuple[str, int, str] | None:
+        """The spark with its subject's title, or None for a plain poke."""
+        if spark is None or self._subject_title is None:
+            return None
+        kind, ordinal = spark
+        title = self._subject_title(ordinal)
+        if not title:
+            logger.info(f"[floor] a {kind} spark for s{ordinal}, which this drive has not named — a plain poke")
+            return None
+        return kind, ordinal, title
+
+    async def _poke_request(self, spark: tuple[str, int] | None = None) -> str:
+        """Handle a tap on Poke, or on a spark. Returns what became of it, for
+        the browser."""
         if self._recorder is not None:
             self._recorder.record_floor("poke")
         if self._bot_speaking:
@@ -2721,6 +2978,7 @@ class Floor(FrameProcessor):
             # One poke at a time: a second tap while the first is waiting or
             # running asks for nothing the first is not already getting.
             return self._poke
+        self._spark = self._resolve_spark(spark)
         if self._user_busy or self._generating:
             self._arm()
             logger.info("[floor] poked mid-turn — waiting for them to finish")
@@ -2741,9 +2999,19 @@ class Floor(FrameProcessor):
             return False
         self._cancel(self._waiter)
         self._waiter = None
-        if self._recorder is not None:
-            self._recorder.note_offer("poke")
-        self._context.add_message({"role": "user", "content": POKE_NUDGE})
+        if self._spark is not None:
+            kind, ordinal, title = self._spark
+            if self._recorder is not None:
+                self._recorder.note_offer(
+                    "poke", subject_key=f"s{ordinal}", spark_kind=kind, spark_subject=title
+                )
+            nudge = spark_text(SPARK_NUDGES[kind], title)
+            logger.info(f"[floor] a {kind} spark for s{ordinal}")
+        else:
+            if self._recorder is not None:
+                self._recorder.note_offer("poke")
+            nudge = POKE_NUDGE
+        self._context.add_message({"role": "user", "content": nudge})
         self._poke = "running"
         self._generating = True
         self._cancel(self._watchdog)
@@ -2788,16 +3056,19 @@ class Floor(FrameProcessor):
         if self._poke == "armed":
             logger.info("[floor] they never finished — the poke lapses")
             self._poke = None
+            self._spark = None
 
     async def _give_up_running(self) -> None:
         await asyncio.sleep(self.RUN_TIMEOUT_SECS)
         if self._poke == "running":
             logger.warning("[floor] the poked turn never reported back — giving up on it")
             self._poke = None
+            self._spark = None
             self._generating = False
 
     def _clear_poke(self) -> None:
         self._poke = None
+        self._spark = None
         self._cancel(self._waiter)
         self._cancel(self._watchdog)
         self._waiter = self._watchdog = None
@@ -2823,7 +3094,7 @@ class Floor(FrameProcessor):
                     await self._set(wanted == "locked")
                 await self._answer(frame, {"floor": self.floor})
             else:
-                result = await self._poke_request()
+                result = await self._poke_request(parse_spark(data.get("spark")))
                 await self._answer(frame, {"poke": result, "floor": self.floor})
             # Consumed: nothing downstream has any use for the request.
             return
@@ -3031,6 +3302,11 @@ class Cue:
     subject_key: str | None = None
     at_ms: int | None = None
     opportunity: int = 0
+    # A poke that carries a spark: which kind, and the subject's title for the
+    # re-run and the fixed last line. The title stays in this process — only
+    # `spark_kind` and `subject_key` ("s3") are ever written down.
+    spark_kind: str | None = None
+    spark_subject: str | None = None
 
 
 # Unprompted moments: the engine made them, nobody spoke. A turn taken in one
@@ -3211,9 +3487,23 @@ class TurnRecorder:
                 "confirmation", invocation_id, self._cue.at_ms, self._cue.opportunity
             )
 
-    def note_offer(self, trigger: str) -> None:
-        """The proactive engine is about to run a turn nobody asked for."""
-        self._cue = Cue(trigger, None, _now_ms(), self._new_opportunity())
+    def note_offer(
+        self,
+        trigger: str,
+        subject_key: str | None = None,
+        spark_kind: str | None = None,
+        spark_subject: str | None = None,
+    ) -> None:
+        """The proactive engine is about to run a turn nobody asked for — or a
+        poke is, and if it carries a spark, which one and about what."""
+        self._cue = Cue(
+            trigger,
+            subject_key,
+            _now_ms(),
+            self._new_opportunity(),
+            spark_kind=spark_kind,
+            spark_subject=spark_subject,
+        )
 
     def _new_opportunity(self) -> int:
         """The next moment the agent is given. See `Cue.opportunity`."""
@@ -3571,6 +3861,8 @@ class TurnRecorder:
             decision["latencyMs"] = latency
         if cue.subject_key:
             decision["subjectKey"] = cue.subject_key
+        if cue.spark_kind:
+            decision["sparkKind"] = cue.spark_kind
         return decision
 
     # How long a turn's row waits for the speaker to finish before it is
@@ -4633,12 +4925,28 @@ class SilenceGate(FrameProcessor):
                     self._answers.settled()
                     # A poke is not an answer they gave, so "I lost that" would
                     # be false: it gets its own line, which hands the turn back.
-                    spoken = (
-                        self._answers.poke_fallback
-                        if self._cue is not None and self._cue.trigger == "poke"
-                        else self._answers.acknowledgement
+                    # A spark's is its question, fixed, about its subject.
+                    spark = (
+                        self._cue is not None
+                        and self._cue.trigger == "poke"
+                        and self._cue.spark_kind is not None
+                        and self._cue.spark_subject is not None
                     )
-                    logger.info(f"[answer] re-run declined too, acknowledging: {spoken!r}")
+                    if spark:
+                        spoken = self._answers.spark_fallback(
+                            self._cue.spark_kind, self._cue.spark_subject
+                        )
+                        # Not the line itself: it carries the subject's title.
+                        logger.info(
+                            f"[answer] re-run declined too, asking the {self._cue.spark_kind} spark itself"
+                        )
+                    else:
+                        spoken = (
+                            self._answers.poke_fallback
+                            if self._cue is not None and self._cue.trigger == "poke"
+                            else self._answers.acknowledgement
+                        )
+                        logger.info(f"[answer] re-run declined too, acknowledging: {spoken!r}")
                     # `append_to_context` left at its default, unlike the search
                     # announcement: the model did not write this one, but it
                     # DID say it, and a next turn that cannot see it would
@@ -4689,7 +4997,11 @@ class SilenceGate(FrameProcessor):
                     # so it never counts as an unanswered answer.
                     self._recorder.note_forced_poke()
                     retry = True
-                    retry_nudge = POKE_RETRY_NUDGE
+                    retry_nudge = (
+                        spark_text(SPARK_RETRY_NUDGE, self._cue.spark_subject)
+                        if self._cue.spark_kind and self._cue.spark_subject
+                        else POKE_RETRY_NUDGE
+                    )
                 else:
                     self._recorder.decline(cue=self._cue)
             # The proactive engine needs the same fact the summary does: what
@@ -4738,7 +5050,7 @@ def build_pipeline(
     capture_session_id: str | None = None,
     *,
     locked: bool = False,
-    titles: list[str] | None = None,
+    titles: list | None = None,
 ) -> PipelineWorker:
     """Assemble one drive's pipeline.
 
@@ -4904,6 +5216,7 @@ def build_pipeline(
         ticket=ticket,
         feed=feed,
         titles=titles,
+        started_at_ms=session.get("startedAtEpochMs"),
     )
     # Offsets are measured against the drive's own start, the same clock
     # `utterance` uses — which is what lets the two tables be read as one
@@ -4913,7 +5226,7 @@ def build_pipeline(
     )
     # Who may talk. Built before the engine, which must not offer a turn into a
     # Lock. See `Floor`.
-    floor = Floor(context, recorder, locked=locked)
+    floor = Floor(context, recorder, locked=locked, subject_title=title.title_for)
     # Says something while a turn that has already announced itself runs long.
     # Its own processor because it needs a position in the pipeline (it speaks)
     # and a task to count on; it sits between the gate and the TTS, so the
@@ -5178,12 +5491,9 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
     # Display state, so unauthenticated is fine — bounded, because this route
     # is public and a list is a list someone could make long.
     locked = request_data.get("floor") == "locked"
-    raw_titles = request_data.get("titles")
-    titles = (
-        [t[:64] for t in raw_titles if isinstance(t, str)][-40:]
-        if isinstance(raw_titles, list)
-        else None
-    )
+    # Bare titles from an older web app, `{title, ordinal}` from a newer one.
+    # Checked by `parse_seeded_titles` in `TopicTitle`.
+    titles = request_data.get("titles") if isinstance(request_data.get("titles"), list) else None
 
     # Once per connection, not per turn. Off the event loop because it makes a
     # blocking HTTP call that itself waits on a model call for the seed summary,

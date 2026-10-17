@@ -1,5 +1,6 @@
 import type { Floor } from "@/lib/recorder/floor-store";
 import type { ConversationMessage } from "./conversation";
+import type { SparkKind } from "./signals";
 
 /**
  * The shape the recorder sees, independent of what is doing the talking.
@@ -63,7 +64,13 @@ export interface TalkbackOptions {
   /** Where the turns and titles the container pushes go. */
   onMessage: (message: ConversationMessage) => void;
   /** The sections the screen already has, for a reconnect. See `titlesForReconnect`. */
-  titles: () => string[];
+  titles: () => { title: string; ordinal?: number }[];
+}
+
+/** A spark the person pulled: which question, about which subject. Never its title. */
+export interface SparkRequest {
+  kind: SparkKind;
+  ordinal: number;
 }
 
 /** What became of a tap on Poke, as the container answered it. */
@@ -71,6 +78,9 @@ export type PokeResult = "fired" | "armed" | "running" | "speaking" | "ended";
 
 export interface Talkback {
   state: TalkbackState;
-  /** Ask the agent for one turn now. Null when it could not be asked. */
-  poke: () => Promise<PokeResult | null>;
+  /**
+   * Ask the agent for one turn now — carrying a spark, when they pulled one.
+   * Null when it could not be asked.
+   */
+  poke: (spark?: SparkRequest) => Promise<PokeResult | null>;
 }
