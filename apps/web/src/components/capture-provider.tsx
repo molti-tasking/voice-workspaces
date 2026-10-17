@@ -31,6 +31,7 @@ import {
   type ConversationStore,
 } from "@/lib/talkback/conversation";
 import { createSparkLedger, type SparkLedger } from "@/lib/talkback/spark-ledger";
+import { postSubjectSignals, subjectSignalsBody } from "@/lib/talkback/subject-signals";
 import type { SparkRequest } from "@/lib/talkback/types";
 import { useTalkback, type PokeResult, type TalkbackState } from "@/lib/talkback/use-talkback";
 
@@ -210,11 +211,15 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       window.clearInterval(timer);
     };
   }, [isRecording, conversation, sparks]);
+  // The control arm offers nothing, by screen or by voice — the signals are
+  // still worked out, and kept at Stop, because whether they predict recall
+  // is half the question.
+  const sparksArm = recorder.sparksArm;
   useEffect(() => {
-    const send = () => offerSparks(sparks.getSnapshot().offered);
+    const send = () => offerSparks(sparksArm ? sparks.getSnapshot().offered : []);
     send();
     return sparks.subscribe(send);
-  }, [sparks, offerSparks]);
+  }, [sparks, offerSparks, sparksArm]);
 
   // Reads Postgres, never the voice container: the panel keeps filling with
   // talk-back dead, and survives a reload mid-recording. See the route comment.
@@ -251,9 +256,39 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     void start(voiceId, sttLanguage, conditionOverride);
   }, [start, voiceId, sttLanguage, conditionOverride]);
 
+  // What the recorder worked out about each subject, kept at Stop — with the
+  // arm on or off, because whether the signals predict recall is half the
+  // question — and as a best effort whenever the page is hidden mid-drive,
+  // since a drive often ends by the phone going in a pocket rather than by
+  // Stop. Counts and enums by ordinal only (`subject-signals.ts`).
+  const keepSignals = useCallback(
+    (final: boolean) => {
+      if (!sessionId) return;
+      postSubjectSignals(
+        subjectSignalsBody(
+          sessionId,
+          conversation.getSnapshot(),
+          sparks.getSnapshot(),
+          Date.now(),
+          final,
+        ),
+      );
+    },
+    [sessionId, conversation, sparks],
+  );
+  useEffect(() => {
+    if (!isRecording) return;
+    const onHide = () => {
+      if (document.visibilityState === "hidden") keepSignals(false);
+    };
+    document.addEventListener("visibilitychange", onHide);
+    return () => document.removeEventListener("visibilitychange", onHide);
+  }, [isRecording, keepSignals]);
+
   const stopRecording = useCallback(() => {
+    keepSignals(true);
     void stop();
-  }, [stop]);
+  }, [stop, keepSignals]);
 
   const value = useMemo<CaptureContextValue>(
     () => ({

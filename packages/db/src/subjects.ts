@@ -1,4 +1,4 @@
-import { driveSubject, driveSubjectSegment } from "./schema";
+import { driveSubject, driveSubjectSegment, sparkKindEnum, subjectSignal } from "./schema";
 import { and, eq, getDb, sql } from "./index";
 
 /**
@@ -63,4 +63,75 @@ export async function recordSubjectVisit(visit: SubjectVisit): Promise<void> {
         },
       });
   });
+}
+
+/** One subject's signal as the recorder posts it. See `subject_signal`. */
+export interface SubjectSignalRecord {
+  ordinal: number;
+  userWords: number;
+  agentWords: number;
+  pauses: number;
+  pausesBefore: number;
+  fillers: number;
+  selfRepairs: number;
+  hedges: number;
+  settled: boolean | null;
+  fade: number;
+  sparksShown: (typeof sparkKindEnum.enumValues)[number][];
+  sparksPulled: (typeof sparkKindEnum.enumValues)[number][];
+}
+
+/**
+ * Keep the recorder's signals for a drive's subjects. Last write wins, with
+ * two exceptions: a best-effort write (page hidden) never replaces the one
+ * Stop made (`final`), and a judgement the browser had never heard of is not
+ * erased by a later write without one.
+ *
+ * Only subjects the container has already kept get a row: an ordinal with no
+ * `drive_subject` is skipped, and the number skipped is returned.
+ */
+export async function saveSubjectSignals(
+  captureSessionId: string,
+  signals: SubjectSignalRecord[],
+  options: { final: boolean; signalsVersion?: string },
+): Promise<{ saved: number; skipped: number }> {
+  if (signals.length === 0) return { saved: 0, skipped: 0 };
+  const db = getDb();
+  const subjects = await db
+    .select({ id: driveSubject.id, ordinal: driveSubject.ordinal })
+    .from(driveSubject)
+    .where(eq(driveSubject.captureSessionId, captureSessionId));
+  const byOrdinal = new Map(subjects.map((s) => [s.ordinal, s.id]));
+
+  let saved = 0;
+  let skipped = 0;
+  for (const signal of signals) {
+    const driveSubjectId = byOrdinal.get(signal.ordinal);
+    if (!driveSubjectId) {
+      skipped += 1;
+      continue;
+    }
+    const { ordinal: _ordinal, ...counts } = signal;
+    const values = {
+      ...counts,
+      driveSubjectId,
+      final: options.final,
+      signalsVersion: options.signalsVersion ?? null,
+      updatedAt: new Date(),
+    };
+    const written = await db
+      .insert(subjectSignal)
+      .values(values)
+      .onConflictDoUpdate({
+        target: subjectSignal.driveSubjectId,
+        set: {
+          ...values,
+          settled: sql`coalesce(excluded.settled, ${subjectSignal.settled})`,
+        },
+        setWhere: sql`${subjectSignal.final} = false or excluded.final = true`,
+      })
+      .returning({ id: subjectSignal.id });
+    saved += written.length;
+  }
+  return { saved, skipped };
 }

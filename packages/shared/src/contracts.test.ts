@@ -8,7 +8,12 @@ describe("StudyCondition", () => {
    * system does today, every "control" drive is silently something else.
    */
   it("resolves an empty or missing template to today's behaviour", () => {
-    const today = { proactiveOffers: true, agendaOffers: false, voiceMacroOffers: false };
+    const today = {
+      proactiveOffers: true,
+      agendaOffers: false,
+      voiceMacroOffers: false,
+      sparks: false,
+    };
     expect(StudyCondition.parse({})).toEqual(today);
     expect(resolveStudyCondition(null)).toEqual({ ok: true, condition: today });
     expect(resolveStudyCondition(undefined)).toEqual({ ok: true, condition: today });
@@ -19,6 +24,7 @@ describe("StudyCondition", () => {
       proactiveOffers: true,
       agendaOffers: true,
       voiceMacroOffers: false,
+      sparks: false,
     });
   });
 

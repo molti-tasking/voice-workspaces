@@ -75,6 +75,8 @@ export interface SubjectSignal {
   /** Said back in their own words since the agent last spoke on it. */
   restated: boolean;
   pauses: number;
+  /** Of `pauses`, the ones before a turn began. Kept apart for the study; counted the same. */
+  pausesBefore: number;
   fillers: number;
   selfRepairs: number;
   hedges: number;
@@ -189,6 +191,7 @@ export function signalsFor(section: Section, drive: DriveContext): SubjectSignal
   let selfRepairs = 0;
   let hedges = 0;
   let pauses = 0;
+  let pausesBefore = 0;
   let sinceAgent = 0;
   for (const turn of section.turns) {
     if (turn.who === "agent") {
@@ -200,6 +203,7 @@ export function signalsFor(section: Section, drive: DriveContext): SubjectSignal
     userWords += said;
     sinceAgent += said;
     pauses += turn.pauses ?? 0;
+    pausesBefore += turn.pausesBefore ?? 0;
     fillers += countFillers(turn.text);
     selfRepairs += countSelfRepairs(turn.text);
     hedges += countHedges(turn.text);
@@ -235,6 +239,7 @@ export function signalsFor(section: Section, drive: DriveContext): SubjectSignal
     agentShare,
     restated: agentWords > 0 && sinceAgent >= RESTATED_WORDS,
     pauses,
+    pausesBefore,
     fillers,
     selfRepairs,
     hedges,

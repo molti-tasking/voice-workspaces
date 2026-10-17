@@ -295,6 +295,39 @@ async function seed() {
     { userId: USER_ID, kind: "board_open", occurredAt: new Date("2026-09-22T08:00:00Z") },
     { userId: USER_ID, kind: "card_open", cardId: CARD, occurredAt: new Date("2026-09-22T08:00:05Z") },
   ]);
+
+  // Sparks: two subjects, one settled and mostly theirs, one open and mostly
+  // the agent's, and one answered recall probe. The subject's title carries
+  // the sentinel, which the metrics must never read.
+  const subjects = await db
+    .insert(schema.driveSubject)
+    .values([
+      { captureSessionId: SESSION, ordinal: 1, title: `${SECRET} one`, firstOffsetMs: 0 },
+      { captureSessionId: SESSION, ordinal: 2, title: `${SECRET} two`, firstOffsetMs: 60_000 },
+    ])
+    .returning({ id: schema.driveSubject.id });
+  const signal = { pauses: 2, pausesBefore: 0, fillers: 0, selfRepairs: 1, hedges: 1, fade: 0.5 };
+  await db.insert(schema.subjectSignal).values([
+    { driveSubjectId: subjects[0]!.id, userWords: 80, agentWords: 20, settled: true, sparksShown: [], ...signal },
+    {
+      driveSubjectId: subjects[1]!.id,
+      userWords: 20,
+      agentWords: 80,
+      settled: false,
+      sparksShown: ["say_back"],
+      ...signal,
+    },
+  ]);
+  await db.insert(schema.recallProbe).values({
+    userId: USER_ID,
+    driveSubjectId: subjects[1]!.id,
+    dueAt: new Date("2026-09-21T09:00:00Z"),
+    answeredAt: new Date("2026-09-21T10:00:00Z"),
+    confidence: 6,
+    selfAccuracy: 3,
+    provenance: "souffleur",
+    delayDays: 2,
+  });
 }
 
 describe("median and share", () => {
@@ -322,6 +355,24 @@ describeIfDb("participantMetrics", () => {
 
   it("carries no transcript, no agent speech and no workspace text", () => {
     expect(JSON.stringify(metrics)).not.toContain(SECRET);
+  });
+
+  it("adds up the sparks per drive and pooled, by words and counts", () => {
+    const sparks = metrics.sessions[0]!.sparks;
+    expect(sparks).toMatchObject({
+      subjects: 2,
+      withSignal: 2,
+      shown: 1,
+      pulled: 0,
+      settledShare: 0.5,
+      agentShare: 0.5,
+      hesitationPer100: 8,
+      recallAnswered: 1,
+      recallBias: 3,
+      provenance: { souffleur: 1 },
+    });
+    expect(metrics.sparks).toMatchObject({ drives: 1, subjects: 2, recallBias: 3 });
+    expect(metrics.metricsVersion).toBe(2);
   });
 
   it("splits response latency by whether a tool ran", () => {

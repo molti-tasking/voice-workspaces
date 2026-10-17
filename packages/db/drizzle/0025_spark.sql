@@ -36,6 +36,7 @@ CREATE TABLE "subject_signal" (
 	"user_words" integer NOT NULL,
 	"agent_words" integer NOT NULL,
 	"pauses" integer NOT NULL,
+	"pauses_before" integer DEFAULT 0 NOT NULL,
 	"fillers" integer NOT NULL,
 	"self_repairs" integer NOT NULL,
 	"hedges" integer NOT NULL,

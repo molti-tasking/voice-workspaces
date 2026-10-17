@@ -40,6 +40,8 @@ export interface Turn {
    * VAD timed them (`PauseMarker`). Absent from an older container.
    */
   pauses?: number;
+  /** Of those, the ones before the turn began: thinking before speaking. */
+  pausesBefore?: number;
 }
 
 export interface Section {
@@ -86,7 +88,14 @@ export interface Conversation {
 export const EMPTY_CONVERSATION: Conversation = { sections: [], current: null, returns: 0 };
 
 export type ConversationMessage =
-  | { type: Speaker; id: string; text: string; interrupted?: boolean; pauses?: number }
+  | {
+      type: Speaker;
+      id: string;
+      text: string;
+      interrupted?: boolean;
+      pauses?: number;
+      pausesBefore?: number;
+    }
   | { type: "title"; title: string; rehomeFrom?: string; ordinal?: number }
   /** What the container judged of a subject it has just left. */
   | { type: "state"; ordinal: number; settled: boolean };
@@ -121,6 +130,9 @@ export function parseServerMessage(data: unknown): ConversationMessage | null {
       ...(d.interrupted === true ? { interrupted: true } : {}),
       ...(d.type === "user" && Number.isInteger(d.pauses) && (d.pauses as number) > 0
         ? { pauses: d.pauses as number }
+        : {}),
+      ...(d.type === "user" && Number.isInteger(d.pausesBefore) && (d.pausesBefore as number) > 0
+        ? { pausesBefore: d.pausesBefore as number }
         : {}),
     };
   }
@@ -187,6 +199,9 @@ function applyTurn(
     text: message.text,
     ...(message.interrupted ? { interrupted: true } : {}),
     ...(message.type === "user" && message.pauses ? { pauses: message.pauses } : {}),
+    ...(message.type === "user" && message.pausesBefore
+      ? { pausesBefore: message.pausesBefore }
+      : {}),
   };
 
   // A turn already on screen is updated where it is, even if the subject has

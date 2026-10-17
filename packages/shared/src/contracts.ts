@@ -88,6 +88,13 @@ export const StudyCondition = z.strictObject({
   agendaOffers: z.boolean().default(false),
   /** Offer a detected macro by voice rather than only on /repertoire (T2.8). Inert until built. */
   voiceMacroOffers: z.boolean().default(false),
+  /**
+   * Whether the recorder offers sparks — short questions about one subject the
+   * person can pull for the agent to ask (talkback-21, the sparks plan). Off,
+   * the signals are still worked out and kept, because whether they predict
+   * recall is half the question; only the chips and the spark pokes go.
+   */
+  sparks: z.boolean().default(false),
 });
 export type StudyCondition = z.infer<typeof StudyCondition>;
 
