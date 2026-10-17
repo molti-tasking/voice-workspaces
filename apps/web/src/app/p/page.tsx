@@ -88,7 +88,7 @@ export default async function ProlificPart1Page({ searchParams }: { searchParams
       pinnedArm={pinnedArm}
       hasAccount={user !== null}
       enrolledArm={mine?.arm ?? null}
-      task={{ title: task.title, brief: task.brief, prompts: [...task.prompts] }}
+      task={{ title: task.title, brief: task.brief, prompts: [...task.prompts], planTitle: task.planTitle }}
       minMinutes={config.minMinutes}
       targetMinutes={config.targetMinutes}
       talkbackEnabled={process.env.NEXT_PUBLIC_TALKBACK_ENABLED === "true"}

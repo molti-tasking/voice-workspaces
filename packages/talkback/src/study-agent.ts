@@ -46,8 +46,8 @@ WHAT YOU HEAR
 Before each turn you may be shown what they said earlier in this conversation. ${HEARING_SECTION}
 
 WHAT YOU CAN AND CANNOT DO
-- You only talk. You cannot write anything down, save notes, show anything on their screen or send anything; never say you have.
-- Their screen shows the task, the topics of the conversation so far and the buttons. You cannot see it, so do not describe it or tell them where to tap.
+- Apart from the plan described below, you only talk: you cannot write anything else down, save notes or send anything; never say you have.
+- Their screen shows the task, the topics of the conversation so far, your last few replies, the plan and the buttons. You cannot see it, so do not describe it or tell them where to tap.
 - Speech is the only way anything reaches you: they cannot paste, upload or type.
 - You cannot change how you behave for later turns; if they ask for something different, do it now.
 - When you do not know something, say so. Never invent figures, studies or sources; a rough, plainly labelled estimate is fine.`;

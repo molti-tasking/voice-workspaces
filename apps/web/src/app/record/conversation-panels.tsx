@@ -84,6 +84,7 @@ export function ConversationPanels({
   placeholder,
   order = "agent-first",
   titlesOnly = false,
+  agentRecent,
   userFooter,
   className = "",
 }: {
@@ -100,6 +101,11 @@ export function ConversationPanels({
   order?: "agent-first" | "user-first";
   /** Subjects only, no turns under them. */
   titlesOnly?: boolean;
+  /**
+   * With `titlesOnly`: the agent's last few turns under the CURRENT subject
+   * after all, so what it just said can be glanced at. Theirs stay hidden.
+   */
+  agentRecent?: number;
   /** Drawn at the foot of their panel, outside its scroller. */
   userFooter?: React.ReactNode;
   className?: string;
@@ -220,6 +226,7 @@ export function ConversationPanels({
       onTouched={touched}
       onScrolled={scrolled}
       titlesOnly={titlesOnly}
+      recentTurns={agentRecent}
       badge={
         floor === "locked" ? (
           <span className="flex items-center gap-1 normal-case tracking-normal text-amber-700 dark:text-amber-300">
@@ -300,6 +307,7 @@ function Panel({
   badge,
   signals,
   titlesOnly = false,
+  recentTurns,
   footer,
   emptyText,
 }: {
@@ -317,6 +325,8 @@ function Panel({
   signals?: Map<string, SubjectSignal>;
   /** Subjects only: no turns under the headings. */
   titlesOnly?: boolean;
+  /** With `titlesOnly`: this many of the latest turns under the current subject. */
+  recentTurns?: number;
   /** Below the scroller, always in view: the study's sparks. */
   footer?: React.ReactNode;
   emptyText: string | null;
@@ -364,7 +374,8 @@ function Panel({
         {emptyText && <p className="pt-2 text-sm text-fg/50">{emptyText}</p>}
         {sections.map((section) => {
           const isCurrent = section.key === current;
-          const turns = section.turns.filter((t) => t.who === who);
+          const all = section.turns.filter((t) => t.who === who);
+          const turns = !titlesOnly ? all : isCurrent && recentTurns ? all.slice(-recentTurns) : [];
           return (
             <section key={section.key} data-section={section.key} className="pb-4">
               {/* The subject, stuck to the top of the panel while its turns are
@@ -387,7 +398,7 @@ function Panel({
                   <SubjectMarks signal={signals.get(section.key)!} current={isCurrent} />
                 )}
               </h3>
-              {!titlesOnly && turns.length > 0 && (
+              {turns.length > 0 && (
                 <ol className="space-y-2">
                   {turns.map((turn) => (
                     <li

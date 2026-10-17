@@ -71,6 +71,8 @@ export interface TalkbackOptions {
 export interface SparkRequest {
   kind: SparkKind;
   ordinal: number;
+  /** Its own question, when one was written: the agent asks that one. */
+  question?: string;
 }
 
 /** What became of a tap on Poke, as the container answered it. */

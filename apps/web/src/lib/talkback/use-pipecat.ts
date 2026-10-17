@@ -465,8 +465,17 @@ export function usePipecatTalkback(options: TalkbackOptions): Talkback {
     if (!client) return null;
     try {
       // A spark rides the poke: the kind and the ordinal, never the title,
-      // which the container already holds (`Floor` in bot.py).
-      const body = spark ? { spark: { kind: spark.kind, ordinal: spark.ordinal } } : {};
+      // which the container already holds (`Floor` in bot.py) — and its own
+      // question when one was written, which the agent then asks.
+      const body = spark
+        ? {
+            spark: {
+              kind: spark.kind,
+              ordinal: spark.ordinal,
+              ...(spark.question ? { question: spark.question } : {}),
+            },
+          }
+        : {};
       const data = (await client.sendClientRequest("poke", body, REQUEST_TIMEOUT_MS)) as {
         poke?: unknown;
       } | null;

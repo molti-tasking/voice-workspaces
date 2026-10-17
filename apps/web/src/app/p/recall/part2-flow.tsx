@@ -130,8 +130,9 @@ function FreeRecall({ pid, onDone }: { pid: string; onDone: () => void }) {
   return (
     <StudyFrame eyebrow="Part 2 of 2" title="Write down everything you remember">
       <p>
-        Write down everything you remember from the conversation: the ideas, suggestions, reasons and decisions —
-        both yours and the assistant&apos;s. Short notes or bullet points are fine. Take your time.
+        Write down everything you remember from the conversation and your plan: the measures you chose, the reasons,
+        the ideas you considered and dropped — both yours and the assistant&apos;s. Short notes or bullet points are
+        fine. Take your time.
       </p>
       <textarea
         value={text}

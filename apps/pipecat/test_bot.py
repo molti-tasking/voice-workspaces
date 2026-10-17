@@ -2898,11 +2898,13 @@ class FloorRecorder:
     def record_floor(self, kind, at_connect=False):
         self.floors.append((kind, at_connect))
 
-    def note_offer(self, trigger, subject_key=None, spark_kind=None, spark_subject=None):
+    def note_offer(self, trigger, subject_key=None, spark_kind=None, spark_subject=None, spark_question=None):
         self.offers.append(trigger)
         self.sparks = getattr(self, "sparks", [])
+        self.questions = getattr(self, "questions", [])
         if spark_kind:
             self.sparks.append((spark_kind, subject_key, spark_subject))
+            self.questions.append(spark_question)
 
     def clear_question(self):
         self.questions_cleared += 1
@@ -3746,7 +3748,7 @@ def test_talking_over_a_spark_before_its_first_word_keeps_the_spark(monkeypatch)
 
     asyncio.run(run())
     assert floor._poke == "armed"
-    assert floor._spark == ("unsure", 1, "Intro")
+    assert floor._spark == ("unsure", 1, "Intro", None)
 
 
 def test_a_spark_is_gone_once_its_poke_is_answered(monkeypatch):
@@ -4076,3 +4078,72 @@ def test_in_the_control_arm_a_spark_is_a_plain_poke_and_nothing_is_listed(monkey
     asyncio.run(run())
     assert nudges(floor) == [bot.POKE_NUDGE]
     assert floor.sparks_on_offer() is None
+
+
+
+# --- A spark with its own question (the Prolific study's targeted sparks) ---
+
+
+def test_a_spark_question_is_read_from_the_request_and_bounded():
+    assert bot.parse_spark_question({"kind": "say_back", "ordinal": 1, "question": "  Why  shade sails? "}) == "Why shade sails?"
+    assert bot.parse_spark_question({"kind": "say_back", "ordinal": 1}) is None
+    assert bot.parse_spark_question({"question": 42}) is None
+    assert bot.parse_spark_question({"question": "x" * (bot.SPARK_QUESTION_MAX_CHARS + 1)}) is None
+    assert bot.parse_spark_question("nope") is None
+
+
+def test_a_spark_question_nudge_names_the_subject_and_the_question_and_keeps_the_tail():
+    text = bot.spark_question_text("Cooling {centres}", "Why the library?")
+    assert '"Cooling {centres}"' in text
+    assert '"Why the library?"' in text
+    assert "<silence> is not available" in text
+    assert "do not answer it yourself" in text
+
+
+def test_a_spark_with_its_own_question_is_asked_with_that_question(monkeypatch):
+    floor = floor_with(monkeypatch, subjects={2: "Cooling centres"})
+
+    async def run():
+        await floor.process_frame(
+            request(
+                "poke",
+                {"spark": {"kind": "say_back", "ordinal": 2, "question": "Why would the library work better than the gym?"}},
+            ),
+            FrameDirection.DOWNSTREAM,
+        )
+        await settle_tasks()
+
+    asyncio.run(run())
+    assert nudges(floor) == [
+        bot.spark_question_text("Cooling centres", "Why would the library work better than the gym?")
+    ]
+    assert floor._spark == ("say_back", 2, "Cooling centres", "Why would the library work better than the gym?")
+
+
+def question_cue():
+    return bot.Cue(
+        "poke", "s2", 1_000, 3, spark_kind="decide", spark_subject="Budget", spark_question="Trees or roofs first?"
+    )
+
+
+def test_a_declined_spark_with_a_question_is_re_run_with_that_question():
+    recorder = FakeRecorder(cue=question_cue())
+    answers, offers = FakeAnswers(), FakeOffers()
+
+    assert drive_answers(reply("<silence>"), recorder, answers, offers) == []
+    assert answers.nudges == [bot.spark_question_text("Budget", "Trees or roofs first?")]
+
+
+def test_a_spark_with_a_question_declined_twice_ends_in_that_question():
+    recorder = FakeRecorder(cue=question_cue())
+    answers = FakeAnswers()
+
+    frames = [*reply("<silence>"), *reply("<silence>")]
+    assert drive_answers(frames, recorder, answers) == ["Trees or roofs first?"]
+
+
+
+def test_the_spark_question_nudge_is_word_for_word_prompt_ts():
+    assert bot.SPARK_QUESTION_NUDGE == (
+        '(They pulled a spark about "{subject}": ask them this question, which is on their screen — in your own voice, but keep its point: "{question}" <silence> is not available on this turn. One or two short sentences with a single question back to them: do not answer it yourself, do not summarise their position or what was said first, and add no view of your own.)'
+    )

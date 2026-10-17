@@ -4,7 +4,7 @@ import { Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { EMPTY_CONVERSATION, type ConversationStore } from "@/lib/talkback/conversation";
 import type { Spark, SparkKind } from "@/lib/talkback/signals";
-import { EMPTY_LEDGER, type SparkLedger } from "@/lib/talkback/spark-ledger";
+import { EMPTY_LEDGER, sparkKey, type SparkLedger } from "@/lib/talkback/spark-ledger";
 import type { SparkRequest } from "@/lib/talkback/types";
 import type { PokeResult } from "@/lib/talkback/use-talkback";
 import { POKE_NOTES } from "./floor-controls";
@@ -99,7 +99,8 @@ export function SparkChips({
   async function pull(spark: Spark) {
     setPulling(true);
     try {
-      const result = await onPull({ kind: spark.kind, ordinal: spark.ordinal });
+      const question = spent.questions.get(sparkKey(spark));
+      const result = await onPull({ kind: spark.kind, ordinal: spark.ordinal, ...(question ? { question } : {}) });
       // Taken only if the poke was: an agent already talking, or another poke
       // under way, has not asked it.
       if (result === "fired" || result === "armed") ledger.notePulled(spark);
@@ -120,7 +121,11 @@ export function SparkChips({
       aria-label="Sparks"
     >
       <ul className={layout === "stack" ? "flex flex-col gap-2" : "flex gap-2 overflow-x-auto pb-0.5"}>
-        {sparks.map((spark) => (
+        {sparks.map((spark) => {
+          // Its own question when one has been written; the kind's label
+          // until then, or if none comes.
+          const question = spent.questions.get(sparkKey(spark));
+          return (
           <li
             key={`${spark.ordinal}:${spark.kind}`}
             className={layout === "stack" ? "min-w-0" : "min-w-0 shrink-0 basis-[min(15rem,80%)]"}
@@ -139,16 +144,19 @@ export function SparkChips({
                 "active:scale-95 disabled:cursor-default disabled:opacity-40",
               ].join(" ")}
             >
-              <span className="flex w-full min-w-0 items-center gap-1.5 text-sm font-medium">
-                <Sparkles size={14} aria-hidden className="shrink-0 text-amber-600 dark:text-amber-300" />
-                <span className="truncate">{SPARK_LABELS[spark.kind]}</span>
+              <span className="flex w-full min-w-0 items-start gap-1.5 text-sm font-medium">
+                <Sparkles size={14} aria-hidden className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-300" />
+                <span className={question ? "line-clamp-2" : "truncate"}>
+                  {question ?? SPARK_LABELS[spark.kind]}
+                </span>
               </span>
               <span className="w-full truncate text-xs text-fg/70">
-                {spark.title} · {spark.reason}
+                {spark.title} · {question ? SPARK_LABELS[spark.kind] : spark.reason}
               </span>
             </button>
           </li>
-        ))}
+          );
+        })}
         {asked.map((spark) => (
           <li
             key={`asked:${spark.ordinal}`}

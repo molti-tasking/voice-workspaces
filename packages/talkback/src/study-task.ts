@@ -21,6 +21,8 @@ export interface StudyTask {
   brief: string;
   /** The parts worth covering, shown as a checklist they may ignore. */
   prompts: readonly string[];
+  /** What the plan is called: the agent titles its one draft this, and the screen names it. */
+  planTitle: string;
   /** Composed into the agent's system prompt (see `/api/realtime/session`). */
   agentSection: string;
 }
@@ -31,27 +33,48 @@ They are a study participant working through the problem below by talking it ove
 
 - Stay on the task. If they drift far from it, one short nudge back is fine.
 - Never summarise the conversation or list what has been covered, and never offer to: not at the end, not when asked "where are we?" — then name only the part they are on and what is still open about it.
-- Do not write drafts, notes or lists for them to keep. If they ask, say briefly that this study is about thinking it through out loud.
-- If they ask whether they are done or how long to go on, say the page tells them when they can finish.`;
+- The plan below is the only thing you write. No other drafts, notes or lists.
+- If they ask whether they are done or how long to go on, say the page tells them when they can finish, once the plan holds their decisions.`;
+
+/**
+ * The plan: one draft the participant and the agent build together, shown on
+ * the study screen. It is what makes the task a task — without it, "give me
+ * the full solution" and Finish was a complete session (first local run,
+ * 18 Oct 2026) — and the rules keep it THEIRS: the agent writes only what
+ * they decided, and answers "just write it" with options to choose from.
+ */
+function planSection(title: string): string {
+  return `THE PLAN
+Together you are writing one short plan, shown on their screen beside the conversation and updated within seconds of your writing it — in this study a draft IS shown on their screen. It is a draft titled "${title}": keep exactly one, and every change after the first is a revision of it (revises=…), never a second draft.
+- Write to it when they ask ("put that on the plan", "add that", "change the second one", "take it out"). Write only what THEY decided, in their terms. Never add a measure they have not chosen.
+- If they ask you to write the whole plan, or to decide for them, do not. Lay out two or three options for the first open decision, with a reason each, and ask which they choose; then write that one.
+- When they settle something out loud but do not ask, you may offer once: "Shall I put that on the plan?"
+- Its shape: up to three measures, each one line with its reason, then "Still open:" with anything undecided. No introduction and no conclusion.
+- Having written it, say one short sentence ("That's on the plan."). Never read the plan out.`;
+}
 
 export const PROLIFIC_TASKS = {
   heat: {
     id: "heat",
-    title: "A town getting ready for hotter summers",
+    title: "A heat plan for a small town",
     brief:
-      "Imagine a small town of about 20,000 people that expects longer and hotter heatwaves over the next ten years. " +
-      "Think through, out loud and together with the assistant, how the town could keep its residents safe and comfortable. " +
-      "There is no right answer and you do not need any expert knowledge. Ask the assistant for facts or ideas whenever you like.",
+      "A town of about 20,000 people expects longer and hotter heatwaves over the next ten years, and its council has asked you for a short plan: " +
+      "the three measures the town should take first, and why. Work it out by talking it over with the assistant. " +
+      "The assistant can explain, suggest and argue, but the choices are yours, and it writes onto the plan only what you decide. " +
+      "There is no right answer and you need no expert knowledge.",
     prompts: [
       "Who in the town is most at risk, and why?",
-      "What could the town do this summer, quickly and cheaply?",
-      "What could it change over the next ten years?",
-      "What would you do first, and what would you leave out?",
+      "What could help this summer, and what takes years?",
+      "Which three would you pick, and what would you leave out?",
+      "Say “put that on the plan” whenever you have decided something.",
     ],
+    planTitle: "Heat plan",
     agentSection: `${STUDY_SETTING}
 
 THE PROBLEM
-A small town of about 20,000 people expects longer and hotter heatwaves over the next ten years. They are working out how the town could keep its residents safe and comfortable: who is most at risk, what can be done quickly this summer, what could change over ten years, and what to prioritise. There is no right answer, and they are not experts.`,
+A small town of about 20,000 people expects longer and hotter heatwaves over the next ten years. Its council has asked them for a short plan: the three measures the town should take first, and why. Who is most at risk, what can be done quickly this summer, what takes years, and what to leave out are all part of it. There is no right answer, and they are not experts.
+
+${planSection("Heat plan")}`,
   },
 } as const satisfies Record<string, StudyTask>;
 

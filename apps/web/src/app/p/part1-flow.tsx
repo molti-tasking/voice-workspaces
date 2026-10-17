@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ProlificArm } from "@voicemural/shared";
 import { useCapture } from "@/components/capture-provider";
+import { DraftMarkdown } from "@/components/draft-markdown";
 import { signIn } from "@/lib/auth-client";
 import { ConversationPanels } from "../record/conversation-panels";
 import { FloorControls } from "../record/floor-controls";
@@ -29,6 +30,8 @@ interface Task {
   title: string;
   brief: string;
   prompts: string[];
+  /** What the agent titles the plan draft (`StudyTask.planTitle`). */
+  planTitle: string;
 }
 
 type Step = "consent" | "mic" | "brief" | "talk" | "judge" | "done";
@@ -62,14 +65,18 @@ export function Part1Flow({
 }) {
   const [step, setStep] = useState<Step>(enrolledArm ? "mic" : "consent");
   const [arm, setArm] = useState<ProlificArm | null>(enrolledArm);
-  const [completion, setCompletion] = useState<{ url: string | null; code: string | null } | null>(null);
+  const [completion, setCompletion] = useState<{
+    url: string | null;
+    code: string | null;
+  } | null>(null);
 
   if (!talkbackEnabled) {
     return (
       <StudyFrame title="The conversation is not available in this build">
         <p>
-          Set <code>NEXT_PUBLIC_TALKBACK_ENABLED=true</code> and <code>TALKBACK_ENABLED=true</code>, run the
-          voice container, and rebuild. See PROLIFIC.md.
+          Set <code>NEXT_PUBLIC_TALKBACK_ENABLED=true</code> and{" "}
+          <code>TALKBACK_ENABLED=true</code>, run the voice container, and
+          rebuild. See PROLIFIC.md.
         </p>
       </StudyFrame>
     );
@@ -162,19 +169,32 @@ function Consent({
       const { error: guestError } = await signIn.anonymous();
       if (guestError) {
         setBusy(false);
-        return setError("Could not start the study in this browser. Please reload and try again.");
+        return setError(
+          "Could not start the study in this browser. Please reload and try again.",
+        );
       }
     }
     const res = await fetch("/api/prolific/enroll", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pid, studyId, sessionId, consent: true, arm: pinnedArm }),
+      body: JSON.stringify({
+        pid,
+        studyId,
+        sessionId,
+        consent: true,
+        arm: pinnedArm,
+      }),
     }).catch(() => null);
-    const body = (await res?.json().catch(() => null)) as { arm?: ProlificArm; error?: string } | null;
+    const body = (await res?.json().catch(() => null)) as {
+      arm?: ProlificArm;
+      error?: string;
+    } | null;
     setBusy(false);
     if (res?.ok && body?.arm) return onEnrolled(body.arm);
     if (body?.error === "enrolled_elsewhere") {
-      return setError("You already started this study in another browser. Please continue there.");
+      return setError(
+        "You already started this study in another browser. Please continue there.",
+      );
     }
     if (body?.error === "not_a_guest") {
       return setError(
@@ -190,30 +210,37 @@ function Consent({
   }
 
   return (
-    <StudyFrame eyebrow="Part 1 of 2" title="Thinking a problem through with a voice assistant">
+    <StudyFrame
+      eyebrow="Part 1 of 2"
+      title="Thinking a problem through with a voice assistant"
+    >
       <p>
-        In this study you talk with an AI voice assistant about an everyday planning problem for about{" "}
-        15 minutes. Tomorrow we will invite you to a short second part (about 10 minutes) where we ask what
-        you remember. You need a microphone, and headphones are best.
+        In this study you talk with an AI voice assistant about an everyday
+        planning problem for about 15 minutes. Tomorrow we will invite you to a
+        short second part (about 10 minutes) where we ask what you remember. You
+        need a microphone, and headphones are best.
       </p>
       <div className="space-y-3 rounded-2xl border border-line bg-surface p-5 text-[0.95rem]">
         <p className="font-medium">What we record and why</p>
         <ul className="list-disc space-y-1.5 pl-5 text-fg/80">
           <li>
-            Your voice during the conversation is recorded and transcribed automatically. The transcript, the
-            assistant&apos;s replies and how you used the buttons are stored for research.
+            Your voice during the conversation is recorded and transcribed
+            automatically. The transcript, the assistant&apos;s replies and how
+            you used the buttons are stored for research.
           </li>
           <li>
-            In part 2, what you write from memory and your answers are stored with your Prolific ID, so the two
-            parts can be matched and you can be paid.
+            In part 2, what you write from memory and your answers are stored
+            with your Prolific ID, so the two parts can be matched and you can
+            be paid.
           </li>
           <li>
-            Please do not mention your name or other personal details in the conversation. The data are used
-            only for research, analysed by the research team, and published only in anonymised form.
+            Please do not mention your name or other personal details in the
+            conversation. The data are used only for research, analysed by the
+            research team, and published only in anonymised form.
           </li>
           <li>
-            Taking part is voluntary. You can stop at any time by closing this page; message us on Prolific to
-            have your data deleted.
+            Taking part is voluntary. You can stop at any time by closing this
+            page; message us on Prolific to have your data deleted.
           </li>
         </ul>
       </div>
@@ -224,7 +251,9 @@ function Consent({
           onChange={(e) => setAgreed(e.target.checked)}
           className="mt-1 size-5 shrink-0"
         />
-        <span>I have read the above, I am 18 or older, and I agree to take part.</span>
+        <span>
+          I have read the above, I am 18 or older, and I agree to take part.
+        </span>
       </label>
       {error && <ErrorLine>{error}</ErrorLine>}
       <PrimaryButton disabled={!agreed || busy} onClick={() => void enrol()}>
@@ -241,7 +270,9 @@ function Consent({
  * depends on it. The stream is closed again: the recorder opens its own.
  */
 function MicCheck({ onReady }: { onReady: () => void }) {
-  const [state, setState] = useState<"idle" | "asking" | "listening" | "denied" | "unsupported">("idle");
+  const [state, setState] = useState<
+    "idle" | "asking" | "listening" | "denied" | "unsupported"
+  >("idle");
   const [heard, setHeard] = useState(false);
   const bar = useRef<HTMLDivElement>(null);
   const stop = useRef<() => void>(() => undefined);
@@ -249,7 +280,10 @@ function MicCheck({ onReady }: { onReady: () => void }) {
   useEffect(() => () => stop.current(), []);
 
   async function listen() {
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+    if (
+      !navigator.mediaDevices?.getUserMedia ||
+      typeof MediaRecorder === "undefined"
+    ) {
       return setState("unsupported");
     }
     setState("asking");
@@ -286,25 +320,41 @@ function MicCheck({ onReady }: { onReady: () => void }) {
   return (
     <StudyFrame eyebrow="Part 1 of 2" title="Check your microphone">
       <p>
-        Your browser will ask for permission to use the microphone. Then say a few words; the bar should move.
-        Headphones help, so the assistant does not hear itself.
+        Your browser will ask for permission to use the microphone. Then say a
+        few words; the bar should move. Headphones help, so the assistant does
+        not hear itself.
       </p>
       {state === "idle" || state === "asking" ? (
-        <PrimaryButton disabled={state === "asking"} onClick={() => void listen()}>
+        <PrimaryButton
+          disabled={state === "asking"}
+          onClick={() => void listen()}
+        >
           Turn on microphone
         </PrimaryButton>
       ) : state === "denied" ? (
         <ErrorLine>
-          The microphone was blocked. Allow it in your browser&apos;s address bar, then reload this page.
+          The microphone was blocked. Allow it in your browser&apos;s address
+          bar, then reload this page.
         </ErrorLine>
       ) : state === "unsupported" ? (
-        <ErrorLine>This browser cannot record audio. Please use a current Chrome, Edge or Firefox.</ErrorLine>
+        <ErrorLine>
+          This browser cannot record audio. Please use a current Chrome, Edge or
+          Firefox.
+        </ErrorLine>
       ) : (
         <>
-          <div className="h-4 w-full overflow-hidden rounded-full bg-fg/10" aria-hidden>
-            <div ref={bar} className="h-full w-0 rounded-full bg-emerald-500 transition-[width] duration-75" />
+          <div
+            className="h-4 w-full overflow-hidden rounded-full bg-fg/10"
+            aria-hidden
+          >
+            <div
+              ref={bar}
+              className="h-full w-0 rounded-full bg-emerald-500 transition-[width] duration-75"
+            />
           </div>
-          <p className="text-sm text-fg/60">{heard ? "We can hear you." : "Say something…"}</p>
+          <p className="text-sm text-fg/60">
+            {heard ? "We can hear you." : "Say something…"}
+          </p>
           <PrimaryButton
             disabled={!heard}
             onClick={() => {
@@ -358,17 +408,25 @@ function Brief({
         <p className="font-medium text-fg">How it works</p>
         <ul className="list-disc space-y-1.5 pl-5">
           <li>
-            Talk out loud. The assistant, called Souffleur, listens and answers when you pause. The screen shows
-            the topics you have talked about, not the words.
+            Talk out loud. The assistant, called Souffleur, listens and answers
+            when you pause. The screen shows the topics you have talked about
+            and its last few replies.
           </li>
           <li>
-            <strong>Lock</strong> keeps the assistant quiet until you switch back to <strong>Normal</strong>.{" "}
-            <strong>Poke</strong> asks it to say something now.
+            Your plan builds up on the right. Whenever you have decided
+            something, say <strong>&ldquo;put that on the plan&rdquo;</strong>.
+            You can finish once the plan holds your three measures.
+          </li>
+          <li>
+            <strong>Lock</strong> keeps the assistant quiet until you switch
+            back to <strong>Normal</strong>. <strong>Poke</strong> asks it to
+            say something now.
           </li>
           {sparks && (
             <li>
-              Now and then, question cards appear at the bottom of your side of the screen. Tap one whenever
-              you want the assistant to ask you that question.
+              Now and then, question cards appear at the bottom of your side of
+              the screen. Tap one whenever you want the assistant to ask you
+              that question.
             </li>
           )}
           <li>
@@ -417,13 +475,17 @@ function Talk({
     isRecording,
     isBusy,
     stopRecording,
+    cues,
   } = useCapture();
   const [stopping, setStopping] = useState(false);
+  const plan = planFrom(cues.drafts, task.planTitle);
 
   const hearing = talk.status === "speaking";
   const connected = talk.status === "listening" || talk.status === "speaking";
   const minutes = Math.floor(rec.elapsedMs / 60_000);
-  const canFinish = rec.elapsedMs >= minMinutes * 60_000;
+  const timeUp = rec.elapsedMs >= minMinutes * 60_000;
+  // The plan is the task: no Finish on a conversation that decided nothing.
+  const canFinish = timeUp && plan !== null;
 
   // Tell the server which drive is the conversation, once the recorder has
   // registered it. The registration can land after this first asks, so retry.
@@ -440,7 +502,8 @@ function Talk({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ step: "started", captureSessionId: sessionId }),
       }).catch(() => null);
-      if (!res?.ok && !cancelled) window.setTimeout(() => void send(), STARTED_RETRY_MS);
+      if (!res?.ok && !cancelled)
+        window.setTimeout(() => void send(), STARTED_RETRY_MS);
     };
     void send();
     return () => {
@@ -464,7 +527,7 @@ function Talk({
   }
 
   return (
-    <main className="no-touch-fuss mx-auto flex h-dvh w-full max-w-5xl flex-col gap-3 overflow-hidden px-4 pt-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    <main className="no-touch-fuss mx-auto flex h-dvh w-full max-w-7xl flex-col gap-3 overflow-hidden px-4 pt-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-3">
         <p className="min-w-0 truncate font-semibold">{task.title}</p>
         <div className="flex items-center gap-3">
@@ -506,38 +569,56 @@ function Talk({
             ? "The assistant is not reachable right now. Keep talking; it reconnects by itself."
             : talk.status === "connecting"
               ? "Connecting to the assistant…"
-              : canFinish
-                ? rec.elapsedMs >= targetMinutes * 60_000
-                  ? "You can finish whenever you are ready."
-                  : `You can finish now, or keep going to about ${targetMinutes} minutes.`
-                : `You can finish after ${minMinutes} minutes.`}
+              : !timeUp
+                ? `You can finish after ${minMinutes} minutes, once your plan holds your decisions.`
+                : plan === null
+                  ? "Before you finish: decide on your measures and ask the assistant to put them on the plan."
+                  : rec.elapsedMs >= targetMinutes * 60_000
+                    ? "You can finish whenever you are ready."
+                    : `You can finish now, or keep going to about ${targetMinutes} minutes.`}
       </p>
 
-      <ConversationPanels
-        store={conversation}
-        live={isRecording}
-        floor={isRecording ? (talk.floor ?? floor) : null}
-        speaker={!isRecording ? null : hearing ? "agent" : talk.userSpeaking ? "user" : null}
-        placeholder={isRecording ? "Start talking whenever you are ready." : undefined}
-        // The study's variant: them first, subjects without the words under
-        // them (a transcript on screen is something to reread), and the
-        // sparks inside their panel, beside the subjects they are about.
-        order="user-first"
-        titlesOnly
-        userFooter={
-          isRecording && rec.sparksArm ? (
-            <SparkChips
-              store={conversation}
-              ledger={sparks}
-              connected={connected}
-              speaking={hearing}
-              onPull={poke}
-              layout="stack"
-            />
-          ) : null
-        }
-        className="min-h-0 flex-1"
-      />
+      <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
+        <ConversationPanels
+          store={conversation}
+          live={isRecording}
+          floor={isRecording ? (talk.floor ?? floor) : null}
+          speaker={
+            !isRecording
+              ? null
+              : hearing
+                ? "agent"
+                : talk.userSpeaking
+                  ? "user"
+                  : null
+          }
+          placeholder={
+            isRecording ? "Start talking whenever you are ready." : undefined
+          }
+          // The study's variant: them first, subjects without the words under
+          // them (a transcript on screen is something to reread), and the
+          // sparks inside their panel, beside the subjects they are about.
+          order="user-first"
+          titlesOnly
+          // …except the agent's last few replies on the current topic, so
+          // what it just said can be glanced at.
+          agentRecent={3}
+          userFooter={
+            isRecording && rec.sparksArm ? (
+              <SparkChips
+                store={conversation}
+                ledger={sparks}
+                connected={connected}
+                speaking={hearing}
+                onPull={poke}
+                layout="stack"
+              />
+            ) : null
+          }
+          className="min-h-0 flex-1 lg:flex-[2]"
+        />
+        <PlanCard title={task.planTitle} plan={plan} />
+      </div>
 
       {isRecording && (
         <FloorControls
@@ -555,7 +636,63 @@ function Talk({
 
 /* ------------------------------------------------------------------------- */
 
-function Judge({ onDone }: { onDone: (completion: { url: string | null; code: string | null }) => void }) {
+type DraftCue = ReturnType<typeof useCapture>["cues"]["drafts"][number];
+
+/**
+ * The plan, from this drive's drafts: the one titled like the task's plan,
+ * or failing that the latest draft — the agent is told to keep exactly one,
+ * and a slightly different title must not leave the screen empty.
+ */
+function planFrom(drafts: readonly DraftCue[], title: string): DraftCue | null {
+  const named = drafts.filter((d) =>
+    d.title.trim().toLowerCase().includes(title.toLowerCase()),
+  );
+  return named.at(-1) ?? drafts.at(-1) ?? null;
+}
+
+/**
+ * The plan they are building, beside the conversation. What the agent wrote
+ * when they asked it to; the version label says a rewrite has landed, as on
+ * the recording page.
+ */
+function PlanCard({ title, plan }: { title: string; plan: DraftCue | null }) {
+  return (
+    <section
+      aria-label={title}
+      className="ph-no-capture flex min-h-0 flex-col overflow-hidden rounded-2xl border border-line bg-surface lg:flex-1"
+    >
+      <header className="flex h-8 shrink-0 items-center justify-between gap-2 px-3 text-xs font-medium tracking-wide text-fg/60 uppercase">
+        <span>Your plan</span>
+        {plan && (
+          <span className="font-mono normal-case tracking-normal">
+            {plan.version}
+          </span>
+        )}
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+        {plan ? (
+          <DraftMarkdown
+            text={plan.text}
+            className="text-[0.95rem] leading-relaxed"
+          />
+        ) : (
+          <p className="pt-1 text-sm text-fg/55">
+            Nothing yet. When you have decided something, say &ldquo;put that on
+            the plan&rdquo; and the assistant writes it here.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------------- */
+
+function Judge({
+  onDone,
+}: {
+  onDone: (completion: { url: string | null; code: string | null }) => void;
+}) {
   const [value, setValue] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -575,7 +712,10 @@ function Judge({ onDone }: { onDone: (completion: { url: string | null; code: st
     } | null;
     setBusy(false);
     if (!res?.ok) return setError("That did not save. Please try again.");
-    onDone({ url: body?.completionUrl ?? null, code: body?.completionCode ?? null });
+    onDone({
+      url: body?.completionUrl ?? null,
+      code: body?.completionCode ?? null,
+    });
   }
 
   return (
@@ -589,7 +729,10 @@ function Judge({ onDone }: { onDone: (completion: { url: string | null; code: st
         onPick={setValue}
       />
       {error && <ErrorLine>{error}</ErrorLine>}
-      <PrimaryButton disabled={value === null || busy} onClick={() => void submit()}>
+      <PrimaryButton
+        disabled={value === null || busy}
+        onClick={() => void submit()}
+      >
         Finish part 1
       </PrimaryButton>
     </StudyFrame>
