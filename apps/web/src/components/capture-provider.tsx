@@ -44,6 +44,9 @@ import { useTalkback, type PokeResult, type TalkbackState } from "@/lib/talkback
 export const TALKBACK_ENABLED =
   process.env.NEXT_PUBLIC_TALKBACK_ENABLED === "true";
 
+/** How often the sparks on offer are worked out again with no new talk: a subject fades with time. */
+const SPARK_REFRESH_MS = 30_000;
+
 export interface CaptureContextValue {
   recorder: ReturnType<typeof useRecorder>;
   talkback: TalkbackState;
@@ -178,13 +181,40 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
   // Armed with the recording, for the whole drive — there is no separate
   // gesture to enter it. Everything it does is downstream of the microphone
   // stream the recorder publishes, so capture is unaffected either way.
-  const { state: talkback, poke } = useTalkback({
+  const {
+    state: talkback,
+    poke,
+    offerSparks,
+  } = useTalkback({
     captureSessionId: recorder.currentSessionId,
     enabled: TALKBACK_ENABLED && isRecording,
     floor,
     onMessage: conversation.dispatch,
     titles: () => titlesForReconnect(conversation.getSnapshot()),
   });
+
+  // THE SPARKS ON OFFER, worked out here rather than on `/record`: the
+  // container is told about them wherever the person is, so a spark can be
+  // asked for out loud with the phone in a pocket. Subscribed outside React's
+  // render, so a conversation that changes every few hundred milliseconds
+  // does not re-render everything that reads this context; and on a clock
+  // too, because a subject fades with time and not only with talk.
+  useEffect(() => {
+    if (!isRecording) return;
+    const refresh = () => sparks.refresh(conversation.getSnapshot(), Date.now());
+    refresh();
+    const unsubscribe = conversation.subscribe(refresh);
+    const timer = window.setInterval(refresh, SPARK_REFRESH_MS);
+    return () => {
+      unsubscribe();
+      window.clearInterval(timer);
+    };
+  }, [isRecording, conversation, sparks]);
+  useEffect(() => {
+    const send = () => offerSparks(sparks.getSnapshot().offered);
+    send();
+    return sparks.subscribe(send);
+  }, [sparks, offerSparks]);
 
   // Reads Postgres, never the voice container: the panel keeps filling with
   // talk-back dead, and survives a reload mid-recording. See the route comment.

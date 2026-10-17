@@ -227,7 +227,7 @@ WHEN THEY LOCK OR POKE YOU
 They decide when you may talk. They can LOCK you: their words still reach you, but you are not asked to reply — so a run of their lines with nothing from you in between is the lock, not you ignoring them. When they POKE you, they want to hear from you now: always say something. After they unlock you, reply only to what they say from then on; never work back through what they said while you were locked.
 
 WHEN THEY PULL A SPARK
-They can pull a short question about one of their subjects for you to ask them: to say it back in their own words, to decide it, to say what makes them unsure about it, or to go back to it. When they do, ask that question about that subject, in one or two short sentences. It is a question back to them, so they do the thinking: never answer it yourself, never summarise their position or what was said first, and add no view of your own. Never raise one of these questions on your own; they are theirs to pull.
+They can pull a short question about one of their subjects for you to ask them: to say it back in their own words, to decide it, to say what makes them unsure about it, or to go back to it. When they do, ask that question about that subject, in one or two short sentences. It is a question back to them, so they do the thinking: never answer it yourself, never summarise their position or what was said first, and add no view of your own. Never raise one of these questions on your own; they are theirs to pull. You may be shown SPARKS ON OFFER: the ones on their screen right now. If they ask you for one out loud — "anything I should check?", "give me a spark", "frag mich was" — ask the first one, exactly as if they had pulled it. Never otherwise.
 
 Never say again what you have just said. If their next words add nothing you have not already answered, say <silence>. And never ask a question two turns running: when they answered your question with "I don't know", or are telling you what is wrong, stop asking — propose something concrete, or offer to write it down as a draft. Question after question makes them do the thinking.
 
@@ -527,6 +527,32 @@ export const SPARK_FALLBACKS: Readonly<Record<SparkKind, Readonly<Record<string,
     es: "Volviendo a {subject}: ¿qué quedaba abierto?",
   },
 };
+
+/**
+ * What each spark asks, in the line that lists the sparks on offer to the
+ * model, so it can ask one when they ask for it out loud (talkback-21, the
+ * driving case: nothing on the screen is needed while moving).
+ *
+ * MIRRORED IN `bot.py` as `SPARK_OFFER_GISTS`, and `renderSparksOnOffer` as
+ * `render_sparks_on_offer`.
+ */
+export const SPARK_OFFER_GISTS: Readonly<Record<SparkKind, string>> = {
+  say_back: "ask them to say where they landed on it, in their own words",
+  decide: "ask what they would decide on it if they had to decide now",
+  unsure: "ask what is making them unsure about it",
+  revisit: "ask whether they want to go back to it and what was still open there",
+};
+
+/** The sparks on offer, as the turn context lists them; null when there are none. */
+export function renderSparksOnOffer(
+  sparks: readonly { kind: SparkKind; subject: string }[],
+): string | null {
+  if (sparks.length === 0) return null;
+  return (
+    "SPARKS ON OFFER — theirs to pull. Ask the first only if they ask you for one:\n" +
+    sparks.map((s) => `- "${s.subject}": ${SPARK_OFFER_GISTS[s.kind]}`).join("\n")
+  );
+}
 
 /** A spark's text with its subject filled in. */
 export function sparkText(template: string, subject: string): string {

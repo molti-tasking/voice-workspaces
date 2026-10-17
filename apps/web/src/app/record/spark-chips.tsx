@@ -3,7 +3,7 @@
 import { Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { EMPTY_CONVERSATION, type ConversationStore } from "@/lib/talkback/conversation";
-import { sparksFor, type Spark, type SparkKind } from "@/lib/talkback/signals";
+import type { Spark, SparkKind } from "@/lib/talkback/signals";
 import { EMPTY_LEDGER, type SparkLedger } from "@/lib/talkback/spark-ledger";
 import type { SparkRequest } from "@/lib/talkback/types";
 import type { PokeResult } from "@/lib/talkback/use-talkback";
@@ -39,8 +39,6 @@ const SPARK_LABELS: Record<SparkKind, string> = {
 
 /** How long what became of a pull stays under the chips. */
 const NOTE_MS = 2500;
-/** How often the ranking is looked at again: a subject fades with time, not only with talk. */
-const TICK_MS = 30_000;
 
 export function SparkChips({
   store,
@@ -62,15 +60,12 @@ export function SparkChips({
     store.getSnapshot,
     () => EMPTY_CONVERSATION,
   );
+  // Worked out above the router, where the container is also told about it
+  // (`capture-provider.tsx`): what is here is what can be asked for out loud.
   const spent = useSyncExternalStore(ledger.subscribe, ledger.getSnapshot, () => EMPTY_LEDGER);
-  const now = useNow(TICK_MS);
+  const sparks = spent.offered;
   const [note, setNote] = useState<string | null>(null);
   const [pulling, setPulling] = useState(false);
-
-  const sparks = useMemo(
-    () => sparksFor(conversation, now, new Set(spent.pulled.keys())),
-    [conversation, now, spent.pulled],
-  );
 
   // The ones already pulled, greyed at the end of the row.
   const asked = useMemo(
@@ -150,14 +145,4 @@ export function SparkChips({
       )}
     </div>
   );
-}
-
-/** The clock, as epoch ms, ticking every `ms`. */
-function useNow(ms: number): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), ms);
-    return () => window.clearInterval(timer);
-  }, [ms]);
-  return now;
 }

@@ -264,6 +264,26 @@ describe("the turn messages, which mirror bot.py", () => {
     expect(block.indexOf("WHICH SCREEN")).toBeLessThan(block.indexOf("Their task board right now:"));
   });
 
+  it("list the sparks on offer right after the screen, in the text bot.py renders", () => {
+    const block = composeContextBlock({
+      screen: "WHICH SCREEN: they have the recorder open.",
+      sparks: [
+        { kind: "decide", subject: "Budget" },
+        { kind: "revisit", subject: "Pilot date" },
+      ],
+      board: "Their task board right now:\n- [doing] ethics form",
+    })!;
+    expect(block.indexOf("WHICH SCREEN")).toBeLessThan(block.indexOf("SPARKS ON OFFER"));
+    expect(block.indexOf("SPARKS ON OFFER")).toBeLessThan(block.indexOf("Their task board"));
+    // Pinned on both sides: `test_bot.py` has the same text.
+    expect(block).toContain(
+      "SPARKS ON OFFER — theirs to pull. Ask the first only if they ask you for one:\n" +
+        '- "Budget": ask what they would decide on it if they had to decide now\n' +
+        '- "Pilot date": ask whether they want to go back to it and what was still open there',
+    );
+    expect(composeContextBlock({ sparks: [] })).toBeNull();
+  });
+
   it("put the board ahead of everything, as Recall._compose does", () => {
     const block = composeContextBlock({
       board: "Their task board right now:\n- [doing] ethics form",

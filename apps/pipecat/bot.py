@@ -2034,10 +2034,13 @@ class Recall(FrameProcessor):
         ticket: str | None,
         recorder: "TurnRecorder | None" = None,
         drafts: "DraftRecorder | None" = None,
+        sparks: Callable[[], str | None] | None = None,
     ):
         super().__init__()
         self._recorder = recorder
         self._drafts = drafts
+        # The sparks on their screen, rendered (`Floor.sparks_on_offer`).
+        self._sparks = sparks
         self._context = context
         self._summary = summary
         self._ticket = ticket
@@ -2114,6 +2117,13 @@ class Recall(FrameProcessor):
         # packages/talkback/src/eval/messages.ts — change one, change both.
         if self._screen:
             sections.append(self._screen)
+        # The sparks on their screen, right after it and for the same reason:
+        # a fact about right now. Listed so that asking for one OUT LOUD works
+        # with the phone untouched; the prompt says to ask the first only then.
+        # Mirrored in packages/talkback/src/eval/messages.ts.
+        offered = self._sparks() if self._sparks is not None else None
+        if offered:
+            sections.append(offered)
         # THE BOARD FIRST, ahead even of where things stand. It is the most
         # concrete thing in the turn — what they committed to, and which column
         # each of those sits in — and it is the only section that can answer
@@ -2507,6 +2517,25 @@ SPARK_FALLBACKS = {
         "es": "Volviendo a {subject}: ¿qué quedaba abierto?",
     },
 }
+
+
+SPARK_OFFER_GISTS = {
+    "say_back": "ask them to say where they landed on it, in their own words",
+    "decide": "ask what they would decide on it if they had to decide now",
+    "unsure": "ask what is making them unsure about it",
+    "revisit": "ask whether they want to go back to it and what was still open there",
+}
+
+
+def render_sparks_on_offer(sparks: list[tuple[str, str]]) -> str | None:
+    """The sparks on their screen, as the turn context lists them: `(kind,
+    title)` pairs, the first first. None when there are none. Mirrors
+    `renderSparksOnOffer` in prompt.ts."""
+    if not sparks:
+        return None
+    return "SPARKS ON OFFER — theirs to pull. Ask the first only if they ask you for one:\n" + "\n".join(
+        f'- "{title}": {SPARK_OFFER_GISTS[kind]}' for kind, title in sparks
+    )
 
 
 def spark_text(template: str, subject: str) -> str:
@@ -2970,6 +2999,10 @@ class Floor(FrameProcessor):
         self._poke: str | None = None
         # The spark the pending poke carries: (kind, ordinal, title), or None.
         self._spark: tuple[str, int, str] | None = None
+        # The sparks on their screen, as the browser last sent them: what the
+        # model may ask when they ask for one out loud. (kind, ordinal) only;
+        # titles are looked up when the context is composed.
+        self._offered: list[tuple[str, int]] = []
         # The person is talking: VAD hears them, or the aggregator's turn is
         # still open. Either one; the aggregator's ends seconds after the VAD's.
         self._vad_speaking = False
@@ -3099,6 +3132,13 @@ class Floor(FrameProcessor):
         self._push_soon()
         return "fired"
 
+    def sparks_on_offer(self) -> str | None:
+        """The sparks on their screen, rendered for the turn context (`Recall`)."""
+        if self._subject_title is None:
+            return None
+        named = [(kind, self._subject_title(ordinal)) for kind, ordinal in self._offered]
+        return render_sparks_on_offer([(kind, title) for kind, title in named if title])
+
     # -- the poke itself ------------------------------------------------------
 
     def _start(self) -> bool:
@@ -3197,8 +3237,16 @@ class Floor(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, RTVIClientMessageFrame) and frame.type in ("floor", "poke"):
+        if isinstance(frame, RTVIClientMessageFrame) and frame.type in ("floor", "poke", "sparks"):
             data = frame.data if isinstance(frame.data, dict) else {}
+            if frame.type == "sparks":
+                # The sparks on their screen, replaced whole each time they
+                # change. At most three, as the screen shows; anything
+                # malformed is dropped rather than refused.
+                raw = data.get("sparks") if isinstance(data.get("sparks"), list) else []
+                self._offered = [s for s in map(parse_spark, raw[:3]) if s is not None]
+                await self._answer(frame, {"sparks": len(self._offered)})
+                return
             if frame.type == "floor":
                 wanted = data.get("floor")
                 if wanted in ("open", "locked"):
@@ -5382,7 +5430,7 @@ def build_pipeline(
     # context block, and before the user aggregator so the `LLMRunFrame` it
     # pushes to run an unprompted turn flows into the aggregator's own run
     # path — the same one a normal turn takes.
-    recall = Recall(context, summary, ticket, recorder, drafts)
+    recall = Recall(context, summary, ticket, recorder, drafts, sparks=floor.sparks_on_offer)
     offers = Offers(context, recall, session, recorder, floor)
     # Not conditional on anything: a declined answer to the agent's own
     # question is a defect in every study arm. Sits next to `Offers` because it

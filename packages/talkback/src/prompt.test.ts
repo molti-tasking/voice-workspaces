@@ -312,6 +312,9 @@ describe("sparks (talkback-21), which bot.py mirrors", () => {
     expect(SYSTEM_PROMPT).toMatch(/WHEN THEY PULL A SPARK/);
     expect(SYSTEM_PROMPT).toMatch(/never answer it yourself, never summarise their position/);
     expect(SYSTEM_PROMPT).toMatch(/Never raise one of these questions on your own/);
+    // By voice, for the car: only when they ask, and then the first on offer.
+    expect(SYSTEM_PROMPT).toMatch(/SPARKS ON OFFER/);
+    expect(SYSTEM_PROMPT).toMatch(/ask the first one, exactly as if they had pulled it\. Never otherwise\./);
   });
 
   it("has a nudge, a fallback per language, and the subject in each, for every kind", () => {

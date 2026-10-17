@@ -388,6 +388,14 @@ speech — `SUMMARISE_MODEL`, four tokens, temperature 0 — and pushes
 `{"type": "state", "ordinal": n, "settled": bool}`. The drive's last subject is
 never left, so it is never judged.
 
+**By voice, for the car.** Nothing on the screen may be needed while moving, so
+the browser also sends the sparks on offer as an RTVI `sparks` request
+(`{"sparks": [{kind, ordinal}]}`, whenever they change and on every connect),
+`Floor` keeps them, and `Recall` lists them right after WHICH SCREEN as
+SPARKS ON OFFER. Asked out loud — "anything I should check?", "frag mich was" —
+the model asks the first; never otherwise. A spark asked this way is a
+`user_turn` decision, not a `poke`: the ledger has no mark for it.
+
 ### Which voice
 
 Three ElevenLabs voices are offered on the recorder, from the catalogue in
