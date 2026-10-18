@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 /**
  * The two moments of part 1 the server must know about: which drive is the
  * conversation (`started`), and its end with their judgement of how much they
- * will remember (`finished`). The answer to `finished` carries the completion
+ * will remember and the questionnaire (`finished`). The answer to `finished` carries the completion
  * code — the only place a browser learns it.
  */
 export async function POST(req: Request) {
@@ -38,7 +38,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true }, { headers });
   }
 
-  const participant = await finishPart1(userId, parsed.data.judgmentOfLearning);
+  const participant = await finishPart1(userId, parsed.data.judgmentOfLearning, parsed.data.questionnaire);
   if (!participant) return NextResponse.json({ error: "no_conversation" }, { status: 409, headers });
   return NextResponse.json(
     { ok: true, completionUrl: completionUrlFor(1), completionCode: completionCodeFor(1) },

@@ -65,8 +65,12 @@ export type ProlificEnroll = z.infer<typeof ProlificEnroll>;
 export const ProlificPart1 = z.discriminatedUnion("step", [
   /** The conversation has started: which drive it is. */
   z.object({ step: z.literal("started"), captureSessionId: z.uuid() }),
-  /** It has ended, with their judgement of how much they will remember. */
-  z.object({ step: z.literal("finished"), judgmentOfLearning: Likert }),
+  /** It has ended: their judgement of how much they will remember, and the questionnaire. */
+  z.object({
+    step: z.literal("finished"),
+    judgmentOfLearning: Likert,
+    questionnaire: z.lazy(() => ProlificQuestionnaire),
+  }),
 ]);
 export type ProlificPart1 = z.infer<typeof ProlificPart1>;
 
@@ -92,6 +96,11 @@ export const ProlificClosing = z.object({
   cardsHelped: Likert.nullable(),
   /** Since part 1: wrote anything down, looked it up, or talked it over with someone. */
   rehearsed: z.boolean(),
+  /**
+   * The manipulation check, asked in both arms: did they see question cards
+   * during the conversation? The control arm never had any.
+   */
+  noticedCards: z.enum(["yes", "no", "unsure"]),
   comment: z.string().max(2000).optional(),
 });
 export type ProlificClosing = z.infer<typeof ProlificClosing>;
@@ -127,4 +136,85 @@ export type ProlificPart2 = z.infer<typeof ProlificPart2>;
 /** Where Prolific takes a finished participant, with the code that marks the submission complete. */
 export function prolificCompletionUrl(code: string): string {
   return `https://app.prolific.com/submissions/complete?cc=${encodeURIComponent(code)}`;
+}
+
+/* ---------------------------------------------------------------------------
+ * The questionnaire after the conversation (end of part 1)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Raw NASA-TLX (Hart & Staveland 1988; "raw" without the pairwise weighting,
+ * Hart 2006): six subscales, each 0-100 in steps of 5. The between-arm
+ * question it answers: did the sparks add workload?
+ *
+ * Performance is anchored "Perfect" (0) to "Failure" (100), as in the
+ * original, so a higher score is more workload on every subscale.
+ */
+export const TLX_ITEMS = [
+  { key: "mental", label: "Mental demand", question: "How mentally demanding was the task?", low: "Very low", high: "Very high" },
+  { key: "physical", label: "Physical demand", question: "How physically demanding was the task?", low: "Very low", high: "Very high" },
+  { key: "temporal", label: "Temporal demand", question: "How hurried or rushed was the pace of the task?", low: "Very low", high: "Very high" },
+  { key: "performance", label: "Performance", question: "How successful were you in accomplishing what you were asked to do?", low: "Perfect", high: "Failure" },
+  { key: "effort", label: "Effort", question: "How hard did you have to work to accomplish your level of performance?", low: "Very low", high: "Very high" },
+  { key: "frustration", label: "Frustration", question: "How insecure, discouraged, irritated, stressed and annoyed were you?", low: "Very low", high: "Very high" },
+] as const;
+export type TlxKey = (typeof TLX_ITEMS)[number]["key"];
+
+/**
+ * The System Usability Scale (Brooke 1996), ten items, 1 (strongly disagree)
+ * to 5 (strongly agree), worded as published with "system" — the convention
+ * that keeps scores comparable with the SUS literature.
+ */
+export const SUS_ITEMS = [
+  "I think that I would like to use this system frequently.",
+  "I found the system unnecessarily complex.",
+  "I thought the system was easy to use.",
+  "I think that I would need the support of a technical person to be able to use this system.",
+  "I found the various functions in this system were well integrated.",
+  "I thought there was too much inconsistency in this system.",
+  "I would imagine that most people would learn to use this system very quickly.",
+  "I found the system very cumbersome to use.",
+  "I felt very confident using the system.",
+  "I needed to learn a lot of things before I could get going with this system.",
+] as const;
+
+/**
+ * An instructed-response item shown among the SUS items (not part of the
+ * score): "please select Strongly disagree". The answer is kept, and the
+ * export marks who passed; nobody is turned away on it.
+ */
+export const ATTENTION_ITEM = "To show that you are reading carefully, please select “Strongly disagree” for this statement.";
+/** The answer the attention item asks for. */
+export const ATTENTION_EXPECTED = 1;
+/** Where among the SUS items it is shown (after this many). */
+export const ATTENTION_AFTER = 6;
+
+const Tlx = z.number().int().min(0).max(100).refine((n) => n % 5 === 0, "steps of 5");
+const Agreement = z.number().int().min(1).max(5);
+
+export const ProlificQuestionnaire = z.object({
+  tlx: z.strictObject({
+    mental: Tlx,
+    physical: Tlx,
+    temporal: Tlx,
+    performance: Tlx,
+    effort: Tlx,
+    frustration: Tlx,
+  }),
+  /** The ten SUS answers, in the published order. */
+  sus: z.array(Agreement).length(SUS_ITEMS.length),
+  attention: Agreement,
+});
+export type ProlificQuestionnaire = z.infer<typeof ProlificQuestionnaire>;
+
+/** Raw TLX: the mean of the six subscales, 0-100. */
+export function rawTlx(tlx: ProlificQuestionnaire["tlx"]): number {
+  const values = TLX_ITEMS.map((item) => tlx[item.key]);
+  return Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 10) / 10;
+}
+
+/** The SUS score, 0-100: odd items score x-1, even items 5-x, the sum times 2.5. */
+export function susScore(sus: readonly number[]): number {
+  const sum = sus.reduce((total, x, i) => total + (i % 2 === 0 ? x - 1 : 5 - x), 0);
+  return sum * 2.5;
 }

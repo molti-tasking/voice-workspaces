@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   ProlificClosing,
+  ProlificQuestionnaire,
+  SUS_ITEMS,
+  rawTlx,
+  susScore,
   ProlificEnroll,
   ProlificPart2,
   ProlificPid,
@@ -49,12 +53,32 @@ describe("the contracts", () => {
   });
 
   it("keeps the cards question null in the control arm", () => {
-    const answers = { tookAway: 4, ownIdeas: 5, assistantThought: 3, cardsHelped: null, rehearsed: false };
+    const answers = { tookAway: 4, ownIdeas: 5, assistantThought: 3, cardsHelped: null, rehearsed: false, noticedCards: "no" };
     expect(ProlificClosing.safeParse(answers).success).toBe(true);
     expect(ProlificClosing.safeParse({ ...answers, tookAway: 8 }).success).toBe(false);
   });
 
   it("builds Prolific's completion URL", () => {
     expect(prolificCompletionUrl("C1A2B3")).toBe("https://app.prolific.com/submissions/complete?cc=C1A2B3");
+  });
+});
+
+
+describe("the questionnaire after the conversation", () => {
+  const tlx = { mental: 70, physical: 10, temporal: 40, performance: 30, effort: 60, frustration: 20 };
+
+  it("takes the raw TLX in steps of 5 and the ten SUS answers", () => {
+    expect(ProlificQuestionnaire.safeParse({ tlx, sus: Array(10).fill(3), attention: 1 }).success).toBe(true);
+    expect(ProlificQuestionnaire.safeParse({ tlx: { ...tlx, mental: 72 }, sus: Array(10).fill(3), attention: 1 }).success).toBe(false);
+    expect(ProlificQuestionnaire.safeParse({ tlx, sus: Array(9).fill(3), attention: 1 }).success).toBe(false);
+    expect(SUS_ITEMS).toHaveLength(10);
+  });
+
+  it("scores them as published", () => {
+    expect(rawTlx(tlx)).toBe(38.3);
+    // All "agree" on the positive items and "disagree" on the negative: the best score.
+    expect(susScore([5, 1, 5, 1, 5, 1, 5, 1, 5, 1])).toBe(100);
+    expect(susScore([3, 3, 3, 3, 3, 3, 3, 3, 3, 3])).toBe(50);
+    expect(susScore([1, 5, 1, 5, 1, 5, 1, 5, 1, 5])).toBe(0);
   });
 });

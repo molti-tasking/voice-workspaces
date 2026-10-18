@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
-import { chooseArm, type ProlificArm, type ProlificClosing } from "@voicemural/shared";
+import {
+  chooseArm,
+  type ProlificArm,
+  type ProlificClosing,
+  type ProlificQuestionnaire,
+} from "@voicemural/shared";
 import { scheduleRecallProbes } from "./recall";
 import { prolificParticipant, user } from "./schema";
 import { and, eq, getDb, isNull, sql } from "./index";
@@ -196,13 +201,15 @@ export async function markConversationStarted(
 }
 
 /**
- * The end of part 1: their judgement of learning, and the drive's recall
- * probes scheduled (idempotent — Stop's final signals may have done it
- * already). Refused before a conversation exists. The first answer stands.
+ * The end of part 1: their judgement of learning and the questionnaire, and
+ * the drive's recall probes scheduled (idempotent — Stop's final signals may
+ * have done it already). Refused before a conversation exists. The first
+ * answer stands.
  */
 export async function finishPart1(
   userId: string,
   judgmentOfLearning: number,
+  questionnaire: ProlificQuestionnaire,
   now = new Date(),
 ): Promise<ProlificParticipant | null> {
   const participant = await findParticipantByUser(userId);
@@ -210,7 +217,7 @@ export async function finishPart1(
   if (participant.part1CompletedAt === null) {
     await getDb()
       .update(prolificParticipant)
-      .set({ part1CompletedAt: now, judgmentOfLearning })
+      .set({ part1CompletedAt: now, judgmentOfLearning, questionnaire })
       .where(and(eq(prolificParticipant.id, participant.id), isNull(prolificParticipant.part1CompletedAt)));
   }
   await scheduleRecallProbes(participant.captureSessionId, { now });

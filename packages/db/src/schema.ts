@@ -2113,6 +2113,11 @@ export const prolificParticipant = pgTable(
     part1CompletedAt: timestamp("part1_completed_at", { withTimezone: true }),
     /** 1-7 at the end of part 1: how much they expect to remember tomorrow. */
     judgmentOfLearning: integer("judgment_of_learning"),
+    /**
+     * The questionnaire after the conversation: raw NASA-TLX, SUS and the
+     * attention item, validated by `ProlificQuestionnaire` in @voicemural/shared.
+     */
+    questionnaire: jsonb("questionnaire").$type<Record<string, unknown>>(),
     part2StudyId: text("part2_study_id"),
     part2SessionId: text("part2_session_id"),
     part2StartedAt: timestamp("part2_started_at", { withTimezone: true }),

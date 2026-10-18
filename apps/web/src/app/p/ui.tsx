@@ -95,6 +95,44 @@ export function Scale({
   );
 }
 
+/** A few labelled buttons, one of which can be picked. */
+export function Choice<T extends string | boolean>({
+  question,
+  hint,
+  options,
+  value,
+  onPick,
+}: {
+  question: string;
+  hint?: string;
+  options: readonly { value: T; label: string }[];
+  value: T | null;
+  onPick: (value: T) => void;
+}) {
+  return (
+    <fieldset>
+      <legend className="mb-2 font-medium">{question}</legend>
+      {hint && <p className="mb-2 text-sm text-fg/60">{hint}</p>}
+      <div className="flex flex-wrap gap-2">
+        {options.map((o) => (
+          <button
+            key={String(o.value)}
+            type="button"
+            aria-pressed={value === o.value}
+            onClick={() => onPick(o.value)}
+            className={[
+              "min-h-11 cursor-pointer rounded-xl px-6 text-base font-medium",
+              value === o.value ? "bg-fg text-canvas" : "bg-fg/10 hover:bg-fg/15",
+            ].join(" ")}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
 export function ErrorLine({ children }: { children: React.ReactNode }) {
   return <p className="text-sm text-amber-500">{children}</p>;
 }

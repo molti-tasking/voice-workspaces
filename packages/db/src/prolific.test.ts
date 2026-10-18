@@ -26,6 +26,7 @@ const USERS = ["test-pro-a", "test-pro-b", "test-pro-c", "test-pro-d"];
 const PIDS = ["test-pid-a", "test-pid-b", "test-pid-c"];
 const SESSION = "00000000-0000-4000-8000-0000000000e1";
 const T0 = new Date("2026-10-20T10:00:00Z");
+const QUESTIONNAIRE = { tlx: { mental: 60, physical: 5, temporal: 30, performance: 25, effort: 55, frustration: 15 }, sus: [4, 2, 4, 1, 4, 2, 5, 2, 4, 1], attention: 1 };
 
 const describeIfDb = (await isDatabaseReachable()) ? describe : describe.skip;
 
@@ -136,7 +137,7 @@ describeIfDb("the Prolific participant", () => {
 
   it("finishes part 1, schedules the probes with its delay, and opens part 2 then", async () => {
     await enroll(PIDS[2]!, USERS[3]!, { arm: "control" });
-    expect(await finishPart1(USERS[3]!, 5, T0)).toBeNull();
+    expect(await finishPart1(USERS[3]!, 5, QUESTIONNAIRE, T0)).toBeNull();
 
     const ended = new Date(T0.getTime() + 15 * 60_000);
     await db().insert(captureSession).values({ id: SESSION, userId: USERS[3]!, startedAt: T0, endedAt: ended });
@@ -144,14 +145,15 @@ describeIfDb("the Prolific participant", () => {
     await recordSubjectVisit({ captureSessionId: SESSION, ordinal: 1, title: "Who is at risk", startOffsetMs: 0, endOffsetMs: 60_000 });
     await recordSubjectVisit({ captureSessionId: SESSION, ordinal: 2, title: "Cooling centres", startOffsetMs: 60_000 });
 
-    const done = await finishPart1(USERS[3]!, 5, ended);
+    const done = await finishPart1(USERS[3]!, 5, QUESTIONNAIRE, ended);
     expect(done?.judgmentOfLearning).toBe(5);
+    expect(done?.questionnaire).toEqual(QUESTIONNAIRE);
     const probes = await db().select().from(recallProbe).where(eq(recallProbe.userId, USERS[3]!));
     expect(probes).toHaveLength(2);
     expect(probes[0]!.dueAt.getTime()).toBe(ended.getTime() + 20 * 3_600_000);
 
     // The first answer stands.
-    await finishPart1(USERS[3]!, 2, new Date(ended.getTime() + 1000));
+    await finishPart1(USERS[3]!, 2, QUESTIONNAIRE, new Date(ended.getTime() + 1000));
     expect((await findParticipantByPid(PIDS[2]!))?.judgmentOfLearning).toBe(5);
 
     expect((await part2StateFor(PIDS[2]!, ended)).state).toBe("too_early");
@@ -162,7 +164,7 @@ describeIfDb("the Prolific participant", () => {
 
     const id = open.state === "open" ? open.participant.id : "";
     await beginPart2(id, { studyId: "s2" }, later);
-    const closing = { tookAway: 4, ownIdeas: 5, assistantThought: 3, cardsHelped: null, rehearsed: false };
+    const closing = { tookAway: 4, ownIdeas: 5, assistantThought: 3, cardsHelped: null, rehearsed: false, noticedCards: "no" as const };
     expect(await saveClosing(id, closing, later)).toBe(false);
     expect(await saveFreeRecall(id, "older people living alone, cooling centres in the library", 4, later)).toBe(true);
     expect(await saveFreeRecall(id, "a second try", 7, later)).toBe(false);

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { FREE_RECALL_MAX_CHARS, FREE_RECALL_MIN_CHARS, type ProlificClosing } from "@voicemural/shared";
-import { Completion, ErrorLine, PrimaryButton, Scale, StudyFrame } from "../ui";
+import { Choice, Completion, ErrorLine, PrimaryButton, Scale, StudyFrame } from "../ui";
 
 /**
  * Part 2, in the browser: introduction → free recall → one card per recall
@@ -104,9 +104,24 @@ export function Part2Flow({
         />
       );
     case "done":
-      return <Completion part={2} url={completion?.url ?? null} code={completion?.code ?? null} />;
+      return (
+        <Completion
+          part={2}
+          url={completion?.url ?? null}
+          code={completion?.code ?? null}
+          next={DEBRIEF}
+        />
+      );
   }
 }
+
+/**
+ * The debrief. Part 1 said only "questions about your conversation", so that
+ * nobody rehearsed in between (partial disclosure, PROLIFIC.md); this says
+ * what was actually studied.
+ */
+const DEBRIEF =
+  "Thank you. What we did not tell you in part 1: this study is about how much people remember of a conversation with an AI assistant, and how well they can judge what they remember. We did not say so beforehand because knowing it would have changed how you talked and what you did afterwards. Half of the participants saw question cards during the conversation and half did not; we compare the two groups. If you would like your data withdrawn now that you know this, message the researchers on Prolific.";
 
 /* ------------------------------------------------------------------------- */
 
@@ -328,6 +343,7 @@ function Closing({
   const [assistantThought, setAssistantThought] = useState<number | null>(null);
   const [cardsHelped, setCardsHelped] = useState<number | null>(null);
   const [rehearsed, setRehearsed] = useState<boolean | null>(null);
+  const [noticedCards, setNoticedCards] = useState<"yes" | "no" | "unsure" | null>(null);
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -337,16 +353,18 @@ function Closing({
     ownIdeas !== null &&
     assistantThought !== null &&
     (!sparks || cardsHelped !== null) &&
-    rehearsed !== null;
+    rehearsed !== null &&
+    noticedCards !== null;
 
   async function submit() {
-    if (!complete) return;
+    if (!complete || noticedCards === null) return;
     const answers: ProlificClosing = {
       tookAway,
       ownIdeas,
       assistantThought,
       cardsHelped: sparks ? cardsHelped : null,
       rehearsed,
+      noticedCards,
       ...(comment.trim() ? { comment: comment.trim() } : {}),
     };
     setBusy(true);
@@ -363,6 +381,18 @@ function Closing({
 
   return (
     <StudyFrame eyebrow="Part 2 of 2" title="A few last questions">
+      {/* The manipulation check, first and in both arms: before anything
+          below can mention cards. */}
+      <Choice
+        question="During the conversation, did you see question cards that you could tap?"
+        options={[
+          { value: "yes", label: "Yes" },
+          { value: "no", label: "No" },
+          { value: "unsure", label: "Not sure" },
+        ]}
+        value={noticedCards}
+        onPick={setNoticedCards}
+      />
       <Scale
         question="How much did you take away from yesterday's conversation?"
         low="Nothing"
@@ -393,32 +423,16 @@ function Closing({
           onPick={setCardsHelped}
         />
       )}
-      <fieldset>
-        <legend className="mb-2 font-medium">
-          Since part 1, did you write anything down about the conversation, look the topic up, or talk it over with
-          someone?
-        </legend>
-        <p className="mb-2 text-sm text-fg/60">Please answer honestly; it does not affect your payment.</p>
-        <div className="flex gap-2">
-          {[
-            { value: true, label: "Yes" },
-            { value: false, label: "No" },
-          ].map((o) => (
-            <button
-              key={o.label}
-              type="button"
-              aria-pressed={rehearsed === o.value}
-              onClick={() => setRehearsed(o.value)}
-              className={[
-                "min-h-11 cursor-pointer rounded-xl px-6 text-base font-medium",
-                rehearsed === o.value ? "bg-fg text-canvas" : "bg-fg/10 hover:bg-fg/15",
-              ].join(" ")}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-      </fieldset>
+      <Choice
+        question="Since part 1, did you write anything down about the conversation, look the topic up, or talk it over with someone?"
+        hint="Please answer honestly; it does not affect your payment."
+        options={[
+          { value: true, label: "Yes" },
+          { value: false, label: "No" },
+        ]}
+        value={rehearsed}
+        onPick={setRehearsed}
+      />
       <label className="block">
         <span className="mb-1 block font-medium">Anything else you would like to tell us? (optional)</span>
         <textarea
