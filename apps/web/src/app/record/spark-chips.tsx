@@ -46,7 +46,6 @@ export function SparkChips({
   connected,
   speaking,
   onPull,
-  layout = "row",
 }: {
   store: ConversationStore;
   ledger: SparkLedger;
@@ -55,11 +54,6 @@ export function SparkChips({
   /** The agent is talking: nothing to pull into. */
   speaking: boolean;
   onPull: (spark: SparkRequest) => Promise<PokeResult | null>;
-  /**
-   * A scrolling row under the panels (`/record`), or a stack at the foot of
-   * the person's panel (the study, `/p`), where a row would be too narrow.
-   */
-  layout?: "row" | "stack";
 }) {
   const conversation = useSyncExternalStore(
     store.subscribe,
@@ -111,25 +105,14 @@ export function SparkChips({
   }
 
   return (
-    <div
-      className={[
-        "ph-no-capture relative shrink-0",
-        // At the foot of their panel: set off from the subjects above it.
-        layout === "stack" ? "border-t border-line px-3 pt-3 pb-3" : "",
-      ].join(" ")}
-      role="group"
-      aria-label="Sparks"
-    >
-      <ul className={layout === "stack" ? "flex flex-col gap-2" : "flex gap-2 overflow-x-auto pb-0.5"}>
+    <div className="ph-no-capture relative shrink-0" role="group" aria-label="Sparks">
+      <ul className="flex gap-2 overflow-x-auto pb-0.5">
         {sparks.map((spark) => {
           // Its own question when one has been written; the kind's label
           // until then, or if none comes.
           const question = spent.questions.get(sparkKey(spark));
           return (
-          <li
-            key={`${spark.ordinal}:${spark.kind}`}
-            className={layout === "stack" ? "min-w-0" : "min-w-0 shrink-0 basis-[min(15rem,80%)]"}
-          >
+          <li key={`${spark.ordinal}:${spark.kind}`} className="min-w-0 shrink-0 basis-[min(18rem,85%)]">
             <button
               type="button"
               onClick={() => void pull(spark)}
@@ -158,10 +141,7 @@ export function SparkChips({
           );
         })}
         {asked.map((spark) => (
-          <li
-            key={`asked:${spark.ordinal}`}
-            className={layout === "stack" ? "min-w-0" : "min-w-0 shrink-0 basis-[min(12rem,60%)]"}
-          >
+          <li key={`asked:${spark.ordinal}`} className="min-w-0 shrink-0 basis-[min(12rem,60%)]">
             <span className="flex min-h-11 w-full flex-col justify-center gap-0.5 rounded-2xl border border-line px-3 py-2 text-fg/55">
               <span className="truncate text-sm">{SPARK_LABELS[spark.kind]}</span>
               <span className="truncate text-xs">{spark.title} · asked</span>

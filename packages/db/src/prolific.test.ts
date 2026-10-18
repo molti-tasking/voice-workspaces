@@ -16,8 +16,9 @@ import {
   saveClosing,
   saveFreeRecall,
 } from "./prolific";
-import { captureSession, prolificParticipant, recallProbe, user } from "./schema";
-import { recordSubjectVisit } from "./subjects";
+import { captureSession, driveSubject, prolificParticipant, recallProbe, user } from "./schema";
+import { scheduleRecallProbes } from "./recall";
+import { recordSubjectVisit, saveSubjectSignals } from "./subjects";
 import { isDatabaseReachable } from "./testing";
 import { closeDb, getDb } from "./index";
 
@@ -109,6 +110,28 @@ describeIfDb("the Prolific participant", () => {
   it("refuses a second PID on an account that already has one", async () => {
     await enroll(PIDS[0]!, USERS[0]!);
     expect(await enroll(PIDS[1]!, USERS[0]!)).toEqual({ ok: false, reason: "other_participant" });
+  });
+
+  it("draws a participant's probe subjects at random, not the pulled ones first", async () => {
+    await enroll(PIDS[1]!, USERS[2]!, { arm: "sparks" });
+    await db().insert(captureSession).values({ id: SESSION, userId: USERS[2]!, startedAt: T0, endedAt: T0 });
+    for (const ordinal of [1, 2, 3, 4]) {
+      await recordSubjectVisit({ captureSessionId: SESSION, ordinal, title: `S${ordinal}`, startOffsetMs: ordinal * 1000 });
+    }
+    const zero = { userWords: 0, agentWords: 0, pauses: 0, pausesBefore: 0, fillers: 0, selfRepairs: 0, hedges: 0, settled: null, fade: 0, sparksShown: [] };
+    await saveSubjectSignals(
+      SESSION,
+      [1, 2, 3, 4].map((ordinal) => ({ ordinal, ...zero, sparksPulled: ordinal === 1 ? (["say_back"] as const) : [] })) as never,
+      { final: true },
+    );
+    // Always the last of the pool: a pulled-first rule would still take S1.
+    await scheduleRecallProbes(SESSION, { now: T0, random: () => 0.999 });
+    const asked = await db()
+      .select({ ordinal: driveSubject.ordinal })
+      .from(recallProbe)
+      .innerJoin(driveSubject, eq(driveSubject.id, recallProbe.driveSubjectId))
+      .where(eq(recallProbe.userId, USERS[2]!));
+    expect(asked.map((a) => a.ordinal).sort()).toEqual([2, 3, 4]);
   });
 
   it("finishes part 1, schedules the probes with its delay, and opens part 2 then", async () => {
