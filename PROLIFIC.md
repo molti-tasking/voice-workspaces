@@ -22,9 +22,11 @@ instructions that explains them) differ.
    controls work.
 4. The conversation, with the study's own agent (`study-agent.ts`): a
    conversational assistant, not the field study's quiet companion, the same
-   in both arms. On screen: the topics (theirs without words; the agent's
-   last three replies on the current topic), **the plan**, Lock / Normal /
-   Poke, and in the sparks arm the spark chips at the foot of their panel.
+   in both arms. On screen, like a chat with Claude: one conversation column
+   (their turns as bubbles, the agent's as text) in which only the current
+   topic shows its last few turns and earlier topics fold to a divider;
+   above Lock / Normal / Poke, in the sparks arm, the spark chips; and on
+   the right the task and **the plan** (`study-conversation.tsx`).
    - **The plan** is one draft the agent writes only when asked ("put that on
      the plan"), holding only what the participant decided; asked to write
      the whole thing, it offers options to choose from instead. Finish needs
@@ -36,6 +38,8 @@ instructions that explains them) differ.
      Without a question the chip keeps its generic label.
    - The agent never summarises the conversation: a recap would be retrieval
      practice in both arms. The plan is visible in both arms alike.
+   - Recall probes for participants are drawn at random in both arms (the
+     field study prefers pulled subjects, which would bias the arm comparison).
 5. One question: how much they expect to remember tomorrow (a judgement of
    learning). Then the completion code and the link back to Prolific.
 

@@ -5,9 +5,9 @@ import type { ProlificArm } from "@voicemural/shared";
 import { useCapture } from "@/components/capture-provider";
 import { DraftMarkdown } from "@/components/draft-markdown";
 import { signIn } from "@/lib/auth-client";
-import { ConversationPanels } from "../record/conversation-panels";
 import { FloorControls } from "../record/floor-controls";
 import { SparkChips } from "../record/spark-chips";
+import { StudyConversation } from "./study-conversation";
 import { Completion, ErrorLine, PrimaryButton, Scale, StudyFrame } from "./ui";
 
 /**
@@ -526,110 +526,93 @@ function Talk({
     );
   }
 
+  const hint = !isRecording
+    ? "Opening the microphone…"
+    : talk.status === "degraded"
+      ? "Souffleur is not reachable right now. Keep talking; it reconnects by itself."
+      : !timeUp
+        ? `You can finish after ${minMinutes} minutes, once your plan holds your decisions.`
+        : plan === null
+          ? "Before you finish: decide on your measures and ask Souffleur to put them on the plan."
+          : rec.elapsedMs >= targetMinutes * 60_000
+            ? "You can finish whenever you are ready."
+            : `You can finish now, or keep going to about ${targetMinutes} minutes.`;
+
+  // One column for the conversation, on the page itself, and the task and
+  // the plan beside it — the shape of a chat with Claude and its artifact.
   return (
-    <main className="no-touch-fuss mx-auto flex h-dvh w-full max-w-7xl flex-col gap-3 overflow-hidden px-4 pt-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3">
-        <p className="min-w-0 truncate font-semibold">{task.title}</p>
-        <div className="flex items-center gap-3">
-          <span className="font-mono text-sm text-fg/70" aria-live="off">
-            {isRecording ? `${minutes} min` : "Starting…"}
-          </span>
-          <button
-            type="button"
-            disabled={!isRecording || !canFinish || stopping || isBusy}
-            onClick={() => {
-              setStopping(true);
-              stopRecording();
-            }}
-            className="cursor-pointer rounded-xl bg-fg px-4 py-2 text-sm font-semibold text-canvas disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {stopping ? "Saving…" : "Finish"}
-          </button>
-        </div>
-      </header>
+    <main className="no-touch-fuss flex h-dvh w-full flex-col overflow-hidden lg:flex-row">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col px-4 pt-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <header className="mx-auto flex w-full max-w-2xl shrink-0 items-center justify-between gap-3">
+          <p className="min-w-0 truncate font-semibold">{task.title}</p>
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-sm text-fg/60" aria-live="off">
+              {isRecording ? `${minutes} min` : "Starting…"}
+            </span>
+            <button
+              type="button"
+              disabled={!isRecording || !canFinish || stopping || isBusy}
+              onClick={() => {
+                setStopping(true);
+                stopRecording();
+              }}
+              className="cursor-pointer rounded-xl bg-fg px-4 py-2 text-sm font-semibold text-canvas disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {stopping ? "Saving…" : "Finish"}
+            </button>
+          </div>
+        </header>
+        <p className="mx-auto w-full max-w-2xl shrink-0 pt-1 text-sm text-fg/55">{hint}</p>
 
-      {/* Always in view: the task is what they are talking about, and a
-          toggle to find it again is one more thing to look for mid-thought. */}
-      <div className="shrink-0 rounded-2xl border border-line bg-surface px-4 py-3 text-sm">
-        <p className="mb-1.5 text-fg/85">{task.brief}</p>
-        <ul className="grid gap-x-6 gap-y-0.5 text-fg/70 sm:grid-cols-2">
-          {task.prompts.map((p) => (
-            <li key={p} className="flex gap-1.5">
-              <span aria-hidden>·</span>
-              {p}
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      <p className="shrink-0 text-sm text-fg/60">
-        {!isRecording
-          ? "Opening the microphone…"
-          : talk.status === "degraded"
-            ? "The assistant is not reachable right now. Keep talking; it reconnects by itself."
-            : talk.status === "connecting"
-              ? "Connecting to the assistant…"
-              : !timeUp
-                ? `You can finish after ${minMinutes} minutes, once your plan holds your decisions.`
-                : plan === null
-                  ? "Before you finish: decide on your measures and ask the assistant to put them on the plan."
-                  : rec.elapsedMs >= targetMinutes * 60_000
-                    ? "You can finish whenever you are ready."
-                    : `You can finish now, or keep going to about ${targetMinutes} minutes.`}
-      </p>
-
-      <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
-        <ConversationPanels
+        <StudyConversation
           store={conversation}
           live={isRecording}
-          floor={isRecording ? (talk.floor ?? floor) : null}
-          speaker={
-            !isRecording
-              ? null
-              : hearing
-                ? "agent"
-                : talk.userSpeaking
-                  ? "user"
-                  : null
-          }
-          placeholder={
-            isRecording ? "Start talking whenever you are ready." : undefined
-          }
-          // The study's variant: them first, subjects without the words under
-          // them (a transcript on screen is something to reread), and the
-          // sparks inside their panel, beside the subjects they are about.
-          order="user-first"
-          titlesOnly
-          // …except the agent's last few replies on the current topic, so
-          // what it just said can be glanced at.
-          agentRecent={3}
-          userFooter={
-            isRecording && rec.sparksArm ? (
-              <SparkChips
-                store={conversation}
-                ledger={sparks}
-                connected={connected}
-                speaking={hearing}
-                onPull={poke}
-                layout="stack"
-              />
-            ) : null
-          }
-          className="min-h-0 flex-1 lg:flex-[2]"
+          floor={isRecording && connected ? (talk.floor ?? floor) : null}
+          speaking={isRecording && hearing}
+          listening={isRecording && !hearing && Boolean(talk.userSpeaking)}
+          className="min-h-0 flex-1"
         />
-        <PlanCard title={task.planTitle} plan={plan} />
+
+        <div className="mx-auto flex w-full max-w-2xl shrink-0 flex-col gap-3">
+          {/* Where Claude puts its suggested prompts: just above where you answer. */}
+          {isRecording && rec.sparksArm && (
+            <SparkChips
+              store={conversation}
+              ledger={sparks}
+              connected={connected}
+              speaking={hearing}
+              onPull={poke}
+            />
+          )}
+          {isRecording && (
+            <FloorControls
+              floor={floor}
+              applied={talk.floor}
+              connected={connected}
+              speaking={hearing}
+              onFloor={setFloor}
+              onPoke={poke}
+            />
+          )}
+        </div>
       </div>
 
-      {isRecording && (
-        <FloorControls
-          floor={floor}
-          applied={talk.floor}
-          connected={connected}
-          speaking={hearing}
-          onFloor={setFloor}
-          onPoke={poke}
-        />
-      )}
+      <aside className="flex max-h-[45dvh] min-h-0 shrink-0 flex-col gap-4 border-t border-line bg-surface/60 p-4 lg:max-h-none lg:w-[min(30rem,38%)] lg:border-t-0 lg:border-l">
+        {/* Always in view: the task is what they are talking about. */}
+        <div className="shrink-0 text-sm">
+          <p className="mb-1 text-xs font-medium tracking-wide text-fg/55 uppercase">The task</p>
+          <p className="mb-2 leading-relaxed text-fg/85">{task.brief}</p>
+          <ul className="space-y-0.5 text-fg/65">
+            {task.prompts.map((p) => (
+              <li key={p} className="flex gap-1.5">
+                <span aria-hidden>·</span>
+                {p}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <PlanCard title={task.planTitle} plan={plan} />
+      </aside>
     </main>
   );
 }
@@ -659,26 +642,19 @@ function PlanCard({ title, plan }: { title: string; plan: DraftCue | null }) {
   return (
     <section
       aria-label={title}
-      className="ph-no-capture flex min-h-0 flex-col overflow-hidden rounded-2xl border border-line bg-surface lg:flex-1"
+      className="ph-no-capture flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-canvas shadow-sm"
     >
-      <header className="flex h-8 shrink-0 items-center justify-between gap-2 px-3 text-xs font-medium tracking-wide text-fg/60 uppercase">
-        <span>Your plan</span>
-        {plan && (
-          <span className="font-mono normal-case tracking-normal">
-            {plan.version}
-          </span>
-        )}
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-4 py-2.5">
+        <span className="font-semibold">Your plan</span>
+        {plan && <span className="font-mono text-xs text-fg/50">{plan.version}</span>}
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
         {plan ? (
-          <DraftMarkdown
-            text={plan.text}
-            className="text-[0.95rem] leading-relaxed"
-          />
+          <DraftMarkdown text={plan.text} className="text-[0.95rem] leading-relaxed" />
         ) : (
-          <p className="pt-1 text-sm text-fg/55">
-            Nothing yet. When you have decided something, say &ldquo;put that on
-            the plan&rdquo; and the assistant writes it here.
+          <p className="text-sm text-fg/55">
+            Nothing yet. When you have decided something, say &ldquo;put that on the plan&rdquo; and Souffleur
+            writes it here.
           </p>
         )}
       </div>

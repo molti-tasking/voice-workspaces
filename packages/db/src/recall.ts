@@ -19,7 +19,8 @@ import { and, asc, eq, getDb, gte, isNotNull, isNull, lte, sql } from "./index";
  * WHICH SUBJECTS. Up to three per drive: every one they pulled a spark on, up
  * to two, and the rest of the three drawn at random from the others — so the
  * pulled and the unpulled can be compared, and so the control arm, which pulls
- * nothing, still gets three.
+ * nothing, still gets three. A Prolific participant's three are all drawn at
+ * random, because there the ARMS are compared on them.
  *
  * WHEN. `RECALL_DELAY_HOURS` after the drive ended — or, for a Prolific
  * participant, the delay their enrolment fixed (`recall_delay_hours`), so a
@@ -81,19 +82,25 @@ export async function scheduleRecallProbes(
     .from(driveSubject)
     .leftJoin(subjectSignal, eq(subjectSignal.driveSubjectId, driveSubject.id))
     .leftJoin(recallProbe, eq(recallProbe.driveSubjectId, driveSubject.id))
-    .where(eq(driveSubject.captureSessionId, captureSessionId));
+    .where(eq(driveSubject.captureSessionId, captureSessionId))
+    // A fixed order, so the draw depends on `random` alone and is reproducible.
+    .orderBy(asc(driveSubject.ordinal));
   if (subjects.length === 0 || subjects.some((s) => s.probe !== null)) return 0;
-
-  const pulled = subjects.filter((s) => (s.pulled?.length ?? 0) > 0);
-  const chosen = sample(pulled, RECALL_PULLED_PER_DRIVE, random);
-  const rest = subjects.filter((s) => !chosen.includes(s));
-  chosen.push(...sample(rest, RECALL_SUBJECTS_PER_DRIVE - chosen.length, random));
 
   const [participant] = await db
     .select({ hours: prolificParticipant.recallDelayHours })
     .from(prolificParticipant)
     .where(eq(prolificParticipant.userId, session.userId))
     .limit(1);
+
+  // A Prolific participant's subjects are drawn at random, pulled or not: the
+  // two arms are compared on these probes, and preferring pulled subjects in
+  // the sparks arm alone would compare different kinds of subject. The field
+  // study keeps the preference, which serves its within-person comparison.
+  const pulled = participant ? [] : subjects.filter((s) => (s.pulled?.length ?? 0) > 0);
+  const chosen = sample(pulled, RECALL_PULLED_PER_DRIVE, random);
+  const rest = subjects.filter((s) => !chosen.includes(s));
+  chosen.push(...sample(rest, RECALL_SUBJECTS_PER_DRIVE - chosen.length, random));
   const delayHours = participant?.hours ?? RECALL_DELAY_HOURS;
   const dueAt = new Date((session.endedAt ?? now).getTime() + delayHours * HOUR_MS);
   const inserted = await db
