@@ -71,6 +71,9 @@ describeIfDb("the Prolific study routes", () => {
     // Part 2 before part 1 is finished: refused.
     expect((await call(part2, { step: "begin", pid: PID })).status).toBe(409);
 
+    // Finishing without the questionnaire is refused.
+    expect((await call(part1, { step: "finished", judgmentOfLearning: 5 })).status).toBe(400);
+
     // The drive does not exist yet: the page is told to retry.
     expect((await call(part1, { step: "started", captureSessionId: SESSION })).status).toBe(409);
     await db.insert(captureSession).values({
@@ -102,7 +105,7 @@ describeIfDb("the Prolific study routes", () => {
       text: "older people who live alone",
     });
 
-    const finished = await call(part1, { step: "finished", judgmentOfLearning: 5 });
+    const finished = await call(part1, { step: "finished", judgmentOfLearning: 5, questionnaire: { tlx: { mental: 60, physical: 5, temporal: 30, performance: 25, effort: 55, frustration: 15 }, sus: [4, 2, 4, 1, 4, 2, 5, 2, 4, 1], attention: 1 } });
     expect(finished.status).toBe(200);
     expect(await finished.json()).toMatchObject({ completionCode: "TEST-PART1" });
 
@@ -144,7 +147,7 @@ describeIfDb("the Prolific study routes", () => {
     const closed = await call(part2, {
       step: "closing",
       pid: PID,
-      answers: { tookAway: 5, ownIdeas: 4, assistantThought: 3, cardsHelped: 6, rehearsed: false },
+      answers: { tookAway: 5, ownIdeas: 4, assistantThought: 3, cardsHelped: 6, rehearsed: false, noticedCards: "yes" },
     });
     expect(closed.status).toBe(200);
     expect(await closed.json()).toMatchObject({ completionCode: "TEST-PART2" });

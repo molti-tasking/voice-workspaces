@@ -1,22 +1,32 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { ProlificArm } from "@voicemural/shared";
+import {
+  ATTENTION_AFTER,
+  ATTENTION_ITEM,
+  SUS_ITEMS,
+  TLX_ITEMS,
+  type ProlificArm,
+  type ProlificQuestionnaire,
+  type TlxKey,
+} from "@voicemural/shared";
 import { useCapture } from "@/components/capture-provider";
 import { DraftMarkdown } from "@/components/draft-markdown";
 import { signIn } from "@/lib/auth-client";
-import { FloorControls } from "../record/floor-controls";
 import { SparkChips } from "../record/spark-chips";
 import { StudyConversation } from "./study-conversation";
 import { Completion, ErrorLine, PrimaryButton, Scale, StudyFrame } from "./ui";
 
 /**
- * Part 1, in the browser: consent → microphone → task → conversation → one
- * question → the completion code.
+ * Part 1, in the browser: consent → microphone → task → conversation → the
+ * questionnaire (judgement of learning, raw NASA-TLX, SUS) → the completion
+ * code.
  *
- * The conversation is the recorder the whole app uses (`useCapture`), with its
- * two panels, the floor controls and — in the sparks arm only — the spark
- * chips. The arm reaches this page from the server twice over: from the
+ * The conversation is the recorder the whole app uses (`useCapture`), with —
+ * in the sparks arm only — the spark chips. No floor controls: Lock / Normal /
+ * Poke are not what the study compares, and every extra control is variance
+ * between participants. The floor stays open; a pulled spark still reaches
+ * the agent through the poke request underneath. The arm reaches this page from the server twice over: from the
  * enrolment, for the instructions, and from the drive's frozen condition
  * (`recorder.sparksArm`), which is what actually shows the chips, exactly as
  * on `/record`.
@@ -34,7 +44,7 @@ interface Task {
   planTitle: string;
 }
 
-type Step = "consent" | "mic" | "brief" | "talk" | "judge" | "done";
+type Step = "consent" | "mic" | "brief" | "talk" | "questionnaire" | "done";
 
 const STARTED_RETRY_MS = 2_000;
 const STARTED_TRIES = 15;
@@ -115,13 +125,13 @@ export function Part1Flow({
           task={task}
           minMinutes={minMinutes}
           targetMinutes={targetMinutes}
-          onFinished={() => setStep("judge")}
+          onFinished={() => setStep("questionnaire")}
           onFailed={() => setStep("brief")}
         />
       );
-    case "judge":
+    case "questionnaire":
       return (
-        <Judge
+        <Questionnaire
           onDone={(result) => {
             setCompletion(result);
             setStep("done");
@@ -216,9 +226,10 @@ function Consent({
     >
       <p>
         In this study you talk with an AI voice assistant about an everyday
-        planning problem for about 15 minutes. Tomorrow we will invite you to a
-        short second part (about 10 minutes) where we ask what you remember. You
-        need a microphone, and headphones are best.
+        planning problem for about 15 minutes, then answer a few questions about
+        it. About a day later we will invite you to a short follow-up (about 10
+        minutes) with questions about your conversation. You need a microphone,
+        and headphones are best.
       </p>
       <div className="space-y-3 rounded-2xl border border-line bg-surface p-5 text-[0.95rem]">
         <p className="font-medium">What we record and why</p>
@@ -385,13 +396,20 @@ function Brief({
   targetMinutes: number;
   onStart: () => void;
 }) {
-  const { chooseSttLanguage, startRecording, isBusy } = useCapture();
+  const { chooseSttLanguage, startRecording, isBusy, floor, setFloor } = useCapture();
 
   // The study runs in English, whatever this browser chose before. Set now,
   // a render before Start, so the drive opens with it.
   useEffect(() => {
     chooseSttLanguage("en");
   }, [chooseSttLanguage]);
+
+  // And with the floor open: there is no Lock on this page to undo a lock
+  // this browser remembers from /record. Only when it differs — the choice
+  // is stored per browser.
+  useEffect(() => {
+    if (floor !== "open") setFloor("open");
+  }, [floor, setFloor]);
 
   return (
     <StudyFrame eyebrow="Part 1 of 2" title={task.title}>
@@ -416,11 +434,6 @@ function Brief({
             Your plan builds up on the right. Whenever you have decided
             something, say <strong>&ldquo;put that on the plan&rdquo;</strong>.
             You can finish once the plan holds your three measures.
-          </li>
-          <li>
-            <strong>Lock</strong> keeps the assistant quiet until you switch
-            back to <strong>Normal</strong>. <strong>Poke</strong> asks it to
-            say something now.
           </li>
           {sparks && (
             <li>
@@ -470,7 +483,6 @@ function Talk({
     conversation,
     sparks,
     floor,
-    setFloor,
     poke,
     isRecording,
     isBusy,
@@ -584,16 +596,6 @@ function Talk({
               onPull={poke}
             />
           )}
-          {isRecording && (
-            <FloorControls
-              floor={floor}
-              applied={talk.floor}
-              connected={connected}
-              speaking={hearing}
-              onFloor={setFloor}
-              onPoke={poke}
-            />
-          )}
         </div>
       </div>
 
@@ -664,23 +666,48 @@ function PlanCard({ title, plan }: { title: string; plan: DraftCue | null }) {
 
 /* ------------------------------------------------------------------------- */
 
-function Judge({
+type Page = "jol" | "tlx" | "sus";
+
+/**
+ * After the conversation, three pages: how much they expect to remember (a
+ * judgement of learning), the raw NASA-TLX (did the sparks add workload?)
+ * and the SUS with one instructed-response item among its ten. Sent once,
+ * at the end, so a half-answered questionnaire never lands.
+ */
+function Questionnaire({
   onDone,
 }: {
   onDone: (completion: { url: string | null; code: string | null }) => void;
 }) {
-  const [value, setValue] = useState<number | null>(null);
+  const [page, setPage] = useState<Page>("jol");
+  const [jol, setJol] = useState<number | null>(null);
+  const [tlx, setTlx] = useState<Partial<Record<TlxKey, number>>>({});
+  const [sus, setSus] = useState<(number | null)[]>(() => SUS_ITEMS.map(() => null));
+  const [attention, setAttention] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const tlxDone = TLX_ITEMS.every((item) => tlx[item.key] !== undefined);
+  const susDone = sus.every((x) => x !== null) && attention !== null;
+
+  function next(to: Page) {
+    setPage(to);
+    window.scrollTo({ top: 0 });
+  }
+
   async function submit() {
-    if (value === null) return;
+    if (jol === null || !tlxDone || !susDone || attention === null) return;
+    const questionnaire: ProlificQuestionnaire = {
+      tlx: tlx as ProlificQuestionnaire["tlx"],
+      sus: sus as number[],
+      attention,
+    };
     setBusy(true);
     setError(null);
     const res = await fetch("/api/prolific/part1", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ step: "finished", judgmentOfLearning: value }),
+      body: JSON.stringify({ step: "finished", judgmentOfLearning: jol, questionnaire }),
     }).catch(() => null);
     const body = (await res?.json().catch(() => null)) as {
       completionUrl?: string | null;
@@ -694,23 +721,163 @@ function Judge({
     });
   }
 
+  if (page === "jol") {
+    return (
+      <StudyFrame eyebrow="Part 1 of 2 · Questions 1 of 3" title="About the conversation">
+        <Scale
+          question="Tomorrow, how much of this conversation do you think you will remember?"
+          low="Almost nothing"
+          high="Almost everything"
+          value={jol}
+          onPick={setJol}
+        />
+        <PrimaryButton disabled={jol === null} onClick={() => next("tlx")}>
+          Continue
+        </PrimaryButton>
+      </StudyFrame>
+    );
+  }
+
+  if (page === "tlx") {
+    return (
+      <StudyFrame eyebrow="Part 1 of 2 · Questions 2 of 3" title="How demanding was it?">
+        <p className="text-fg/80">
+          Think of the whole conversation you just had. For each question, click
+          the point on the scale that fits best.
+        </p>
+        {TLX_ITEMS.map((item) => (
+          <TlxScale
+            key={item.key}
+            label={item.label}
+            question={item.question}
+            low={item.low}
+            high={item.high}
+            value={tlx[item.key] ?? null}
+            onPick={(v) => setTlx((t) => ({ ...t, [item.key]: v }))}
+          />
+        ))}
+        <PrimaryButton disabled={!tlxDone} onClick={() => next("sus")}>
+          Continue
+        </PrimaryButton>
+      </StudyFrame>
+    );
+  }
+
+  // The SUS, with the attention item after ATTENTION_AFTER of its items.
+  const rows: { key: string; text: string; value: number | null; set: (v: number) => void }[] =
+    SUS_ITEMS.map((text, i) => ({
+      key: `sus-${i}`,
+      text,
+      value: sus[i] ?? null,
+      set: (v: number) => setSus((s) => s.map((x, j) => (j === i ? v : x))),
+    }));
+  rows.splice(ATTENTION_AFTER, 0, {
+    key: "attention",
+    text: ATTENTION_ITEM,
+    value: attention,
+    set: setAttention,
+  });
+
   return (
-    <StudyFrame eyebrow="Part 1 of 2" title="One last question">
-      <Scale
-        question="Tomorrow, how much of this conversation do you think you will remember?"
-        low="Almost nothing"
-        high="Almost everything"
-        value={value}
-        disabled={busy}
-        onPick={setValue}
-      />
+    <StudyFrame eyebrow="Part 1 of 2 · Questions 3 of 3" title="Using the system">
+      <p className="text-fg/80">
+        &ldquo;The system&rdquo; is the voice assistant and the screen you just
+        used. How much do you agree with each statement?
+      </p>
+      {rows.map((row) => (
+        <Agreement key={row.key} statement={row.text} value={row.value} onPick={row.set} disabled={busy} />
+      ))}
       {error && <ErrorLine>{error}</ErrorLine>}
-      <PrimaryButton
-        disabled={value === null || busy}
-        onClick={() => void submit()}
-      >
+      <PrimaryButton disabled={!susDone || busy} onClick={() => void submit()}>
         Finish part 1
       </PrimaryButton>
     </StudyFrame>
+  );
+}
+
+/**
+ * One NASA-TLX subscale: the published 21 points, 0 to 100 in steps of 5,
+ * with no point chosen until they click one.
+ */
+function TlxScale({
+  label,
+  question,
+  low,
+  high,
+  value,
+  onPick,
+}: {
+  label: string;
+  question: string;
+  low: string;
+  high: string;
+  value: number | null;
+  onPick: (value: number) => void;
+}) {
+  const points = Array.from({ length: 21 }, (_, i) => i * 5);
+  return (
+    <fieldset>
+      <legend className="mb-0.5 font-medium">{label}</legend>
+      <p className="mb-2 text-sm text-fg/70">{question}</p>
+      <div className="flex h-10 items-stretch" role="radiogroup" aria-label={label}>
+        {points.map((p) => (
+          <button
+            key={p}
+            type="button"
+            role="radio"
+            aria-checked={value === p}
+            aria-label={`${p} of 100`}
+            onClick={() => onPick(p)}
+            className={[
+              "flex-1 cursor-pointer border-y border-l border-fg/25 last:border-r first:rounded-l-lg last:rounded-r-lg",
+              value === p ? "bg-fg" : "bg-transparent hover:bg-fg/10",
+              p === 50 ? "border-l-fg/50" : "",
+            ].join(" ")}
+          />
+        ))}
+      </div>
+      <div className="mt-1 flex justify-between text-xs text-fg/55">
+        <span>{low}</span>
+        <span>{high}</span>
+      </div>
+    </fieldset>
+  );
+}
+
+const AGREEMENT = ["Strongly disagree", "Disagree", "Neutral", "Agree", "Strongly agree"] as const;
+
+/** One statement, 1 (strongly disagree) to 5 (strongly agree). */
+function Agreement({
+  statement,
+  value,
+  disabled,
+  onPick,
+}: {
+  statement: string;
+  value: number | null;
+  disabled?: boolean;
+  onPick: (value: number) => void;
+}) {
+  return (
+    <fieldset>
+      <legend className="mb-2 font-medium">{statement}</legend>
+      <div className="grid grid-cols-5 gap-1.5">
+        {AGREEMENT.map((label, i) => (
+          <button
+            key={label}
+            type="button"
+            disabled={disabled}
+            aria-pressed={value === i + 1}
+            onClick={() => onPick(i + 1)}
+            className={[
+              "min-h-11 cursor-pointer rounded-xl px-1 text-xs leading-tight font-medium disabled:opacity-40 sm:text-sm",
+              value === i + 1 ? "bg-fg text-canvas" : "bg-fg/10 hover:bg-fg/15",
+            ].join(" ")}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </fieldset>
   );
 }

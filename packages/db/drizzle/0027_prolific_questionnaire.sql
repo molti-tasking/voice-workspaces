@@ -1,0 +1,1 @@
+ALTER TABLE "prolific_participant" ADD COLUMN "questionnaire" jsonb;

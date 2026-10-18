@@ -1,15 +1,26 @@
-import { asc, eq, getDb, inArray } from "@voicemural/db";
+import { asc, eq, getDb, inArray, sql } from "@voicemural/db";
 import { loadSessionDrafts } from "@voicemural/db/drafts";
 import { listParticipants, pseudonymFor } from "@voicemural/db/prolific";
-import { captureSession, driveSubject, recallProbe, subjectSignal } from "@voicemural/db/schema";
-import { ProlificClosing, isRealProlificPid } from "@voicemural/shared";
+import { agentTurn, captureSession, driveSubject, recallProbe, subjectSignal, utterance } from "@voicemural/db/schema";
+import {
+  ATTENTION_EXPECTED,
+  ProlificClosing,
+  ProlificQuestionnaire,
+  TLX_ITEMS,
+  isRealProlificPid,
+  rawTlx,
+  susScore,
+} from "@voicemural/shared";
 
 /**
  * The Prolific study's data, as two flat tables (PROLIFIC.md):
  *
- * - `participants`: one row per participant — arm, timings, the judgement of
- *   learning, the FINAL PLAN and the FREE RECALL TEXT, the closing answers,
- *   and the sparks they were shown and pulled across the conversation.
+ * - `participants`: one row per participant — arm, timings, how much each
+ *   side talked (time on task is a confound the arms must be compared on),
+ *   the judgement of learning, the questionnaire (raw TLX per subscale and
+ *   overall, the SUS score, whether the attention item was passed), the FINAL
+ *   PLAN and the FREE RECALL TEXT, the closing answers with the manipulation
+ *   check, and the sparks they were shown and pulled.
  * - `probes`: one row per recall probe — the subject's title (content: the
  *   free recall is scored against it), its signals, and the three answers.
  *
@@ -59,6 +70,36 @@ export async function buildProlificExport(): Promise<{ participants: Row[]; prob
         .orderBy(asc(driveSubject.captureSessionId), asc(driveSubject.ordinal))
     : [];
 
+  // How much each side talked. Their turns are the transcribed utterances;
+  // speech time is the sum of utterance spans, the agent's of its turn spans
+  // (measured where the container could, estimated otherwise — see agent_turn).
+  const words = (column: typeof utterance.text | typeof agentTurn.text) =>
+    sql<number>`coalesce(sum(coalesce(array_length(regexp_split_to_array(nullif(trim(${column}), ''), '[[:space:]]+'), 1), 0)), 0)::int`;
+  const userTalk = sessionIds.length
+    ? await db
+        .select({
+          id: utterance.captureSessionId,
+          turns: sql<number>`count(*)::int`,
+          words: words(utterance.text),
+          ms: sql<number>`coalesce(sum(${utterance.endOffsetMs} - ${utterance.startOffsetMs}), 0)::int`,
+        })
+        .from(utterance)
+        .where(inArray(utterance.captureSessionId, sessionIds))
+        .groupBy(utterance.captureSessionId)
+    : [];
+  const agentTalk = sessionIds.length
+    ? await db
+        .select({
+          id: agentTurn.captureSessionId,
+          turns: sql<number>`count(*)::int`,
+          words: words(agentTurn.text),
+          ms: sql<number>`coalesce(sum(${agentTurn.endOffsetMs} - ${agentTurn.startOffsetMs}), 0)::int`,
+        })
+        .from(agentTurn)
+        .where(inArray(agentTurn.captureSessionId, sessionIds))
+        .groupBy(agentTurn.captureSessionId)
+    : [];
+
   // The plan as it stood at the end: the draft the agent kept (study-task.ts
   // asks for exactly one), at its current version. The latest if there were
   // several; how many there were is kept too, as a check on that rule.
@@ -75,6 +116,11 @@ export async function buildProlificExport(): Promise<{ participants: Row[]; prob
     const drive = drives.find((d) => d.id === p.captureSessionId);
     const mine = subjects.filter((s) => s.captureSessionId === p.captureSessionId);
     const closing = ProlificClosing.safeParse(p.closing ?? null);
+    const questionnaire = ProlificQuestionnaire.safeParse(p.questionnaire ?? null);
+    const q = questionnaire.success ? questionnaire.data : null;
+    const tlxColumns = Object.fromEntries(TLX_ITEMS.map((item) => [`tlx_${item.key}`, q ? q.tlx[item.key] : null]));
+    const user = userTalk.find((t) => t.id === p.captureSessionId);
+    const agent = agentTalk.find((t) => t.id === p.captureSessionId);
     const minutes =
       drive?.endedAt != null ? Math.round((drive.endedAt.getTime() - drive.startedAt.getTime()) / 6_000) / 10 : null;
     return {
@@ -85,11 +131,21 @@ export async function buildProlificExport(): Promise<{ participants: Row[]; prob
       task: p.task,
       consented_at: iso(p.consentedAt),
       conversation_minutes: minutes,
+      user_turns: user?.turns ?? 0,
+      user_words: user?.words ?? 0,
+      user_speech_seconds: user ? Math.round(user.ms / 1000) : 0,
+      agent_turns: agent?.turns ?? 0,
+      agent_words: agent?.words ?? 0,
+      agent_speech_seconds: agent ? Math.round(agent.ms / 1000) : 0,
       subjects: mine.length,
       sparks_shown: mine.reduce((n, s) => n + (s.sparksShown?.length ?? 0), 0),
       sparks_pulled: mine.reduce((n, s) => n + (s.sparksPulled?.length ?? 0), 0),
       part1_completed_at: iso(p.part1CompletedAt),
       judgment_of_learning: p.judgmentOfLearning,
+      ...tlxColumns,
+      tlx_raw: q ? rawTlx(q.tlx) : null,
+      sus_score: q ? susScore(q.sus) : null,
+      attention_pass: q ? q.attention === ATTENTION_EXPECTED : null,
       plan_version: plan?.version ?? null,
       plan_drafts: plan?.drafts ?? 0,
       plan: plan?.text ?? null,
@@ -103,6 +159,7 @@ export async function buildProlificExport(): Promise<{ participants: Row[]; prob
       assistant_thought: closing.success ? closing.data.assistantThought : null,
       cards_helped: closing.success ? closing.data.cardsHelped : null,
       rehearsed: closing.success ? closing.data.rehearsed : null,
+      noticed_cards: closing.success ? closing.data.noticedCards : null,
       comment: closing.success ? (closing.data.comment ?? null) : null,
       part2_completed_at: iso(p.part2CompletedAt),
       part1_study_id: p.part1StudyId,

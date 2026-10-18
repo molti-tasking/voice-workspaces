@@ -5,8 +5,11 @@ sparks during a conversation with the voice agent change what people remember
 of it a day later, and how well they know what they remember?**
 
 Everything else is held equal between the arms: the same task, the same agent
-prompt, the same floor controls. Only the spark chips (and the one line of
-instructions that explains them) differ.
+prompt, the same screen. Only the spark chips (and the one line of
+instructions that explains them) differ. There are no Lock / Normal / Poke
+controls on the study screen: they are not what is compared, and every extra
+control is variance between participants. The floor stays open; a pulled spark
+reaches the agent through the poke request underneath.
 
 ## The two parts
 
@@ -19,14 +22,14 @@ instructions that explains them) differ.
 2. Microphone check.
 3. The task (`PROLIFIC_TASKS` in `packages/talkback/src/study-task.ts`): a
    short plan for a town council — three measures and why — and how the
-   controls work.
+   screen works.
 4. The conversation, with the study's own agent (`study-agent.ts`): a
    conversational assistant, not the field study's quiet companion, the same
    in both arms. On screen, like a chat with Claude: one conversation column
    (their turns as bubbles, the agent's as text) in which only the current
    topic shows its last few turns and earlier topics fold to a divider;
-   above Lock / Normal / Poke, in the sparks arm, the spark chips; and on
-   the right the task and **the plan** (`study-conversation.tsx`).
+   below it, in the sparks arm, the spark chips; and on the right the task
+   and **the plan** (`study-conversation.tsx`).
    - **The plan** is one draft the agent writes only when asked ("put that on
      the plan"), holding only what the participant decided; asked to write
      the whole thing, it offers options to choose from instead. Finish needs
@@ -40,8 +43,16 @@ instructions that explains them) differ.
      practice in both arms. The plan is visible in both arms alike.
    - Recall probes for participants are drawn at random in both arms (the
      field study prefers pulled subjects, which would bias the arm comparison).
-5. One question: how much they expect to remember tomorrow (a judgement of
-   learning). Then the completion code and the link back to Prolific.
+5. The questionnaire, three short pages (`ProlificQuestionnaire`):
+   - how much they expect to remember tomorrow (a judgement of learning, 1-7);
+   - the **raw NASA-TLX**: six subscales, 0-100 in steps of 5, unweighted —
+     did the sparks add workload?;
+   - the **SUS**, ten items 1-5 worded as published ("the system"), with one
+     instructed-response item after the sixth ("select Strongly disagree").
+     Not part of the score; the export marks `attention_pass`, and nobody is
+     turned away on it.
+
+   Then the completion code and the link back to Prolific.
 
 **Part 2** — `/p/recall?PROLIFIC_PID=…` (about 10 minutes), opens
 `PROLIFIC_RECALL_DELAY_HOURS` after part 1 ended. Found by PID, not by cookie,
@@ -53,10 +64,11 @@ so it works in a fresh browser.
 2. **Recall probes** for up to three subjects of their conversation
    (`recall_probe`, the same as `/recall`): confidence → their own words on it
    → how close they were → whose idea it was.
-3. **Closing questions**: what they took away, ownership, who did the
-   thinking, whether the cards helped (sparks arm only), and whether they
-   rehearsed (wrote it down, looked it up, talked it over) since part 1 — the
-   validity check.
+3. **Closing questions**: first, in both arms, whether they saw question cards
+   during the conversation (the manipulation check, `noticed_cards`); then
+   what they took away, ownership, who did the thinking, whether the cards
+   helped (sparks arm only), and whether they rehearsed (wrote it down, looked
+   it up, talked it over) since part 1 — the validity check.
 
 The server enforces the order (free recall before any probe; confidence before
 the reveal), so a reload or a hand-made request cannot change it.
@@ -80,7 +92,7 @@ PROLIFIC_RECALL_DELAY_HOURS=0   # part 2 opens straight away
 ```
 
 ```bash
-docker compose up -d && pnpm db:migrate     # adds prolific_participant (migration 0026)
+docker compose up -d && pnpm db:migrate     # prolific_participant (migrations 0026, 0027)
 pnpm talkback:up                            # the Pipecat container (TALKBACK.md)
 pnpm dev
 ```
@@ -92,13 +104,17 @@ Open, in a **private window** (one PID per browser — see below):
 
 Talk for a minute or two about the task — long enough for the agent to name a
 couple of subjects, which is what the probes and the sparks are built from.
-Finish, answer the question, then open part 2 with the same PID, in any
+Finish, answer the questionnaire, then open part 2 with the same PID, in any
 browser:
 
 - <http://localhost:3000/p/recall?PROLIFIC_PID=test-anton-1>
 
 Then `pnpm study:prolific` writes `storage/prolific-export/participants.csv`
-and `probes.csv`.
+and `probes.csv`. Besides the answers, `participants.csv` carries how much
+each side talked (`user_turns`, `user_words`, `user_speech_seconds`, and the
+same for the agent) — time on task differs between people and must be
+compared between the arms or controlled for — and the scored questionnaire
+(`tlx_*`, `tlx_raw`, `sus_score`, `attention_pass`).
 
 `?arm=` works anywhere outside production. Any short URL-safe PID is accepted;
 only 24-hex-character ones count as real, and the export marks the rest
@@ -134,6 +150,18 @@ closes the study rather than hand out one Prolific would reject.
 - Decide and pre-register how the free recall is scored: e.g. idea units from
   the task, each coded as present or absent and as originally the
   participant's or the agent's (the transcript tells which).
-- Ethics: the consent text on `/p` is a draft. Have it checked, and add the
+- Pre-register the hypotheses around what a recall test alone would not
+  predict: recall of the ideas that came from the agent, calibration (judgement
+  of learning and probe confidence against accuracy) and ownership — not
+  "sparks improve recall" in general, which the testing effect already
+  predicts. And the analysis plan: time on task and `sparks_pulled` as
+  covariates or a per-protocol check, `attention_pass` and `rehearsed` as
+  exclusion or sensitivity analyses, `noticed_cards` as the manipulation check.
+- Power: a between-subjects effect of d ≈ 0.4 needs about 100 per arm (two-sided,
+  α = .05, 80%); plan for 120–130 per arm for drop-out between the parts.
+- Ethics: the consent text does not say that part 2 tests memory (it says
+  "questions about your conversation"), so that nobody rehearses in between.
+  That is partial disclosure; have the board approve it, and debrief at the
+  end of part 2. The consent text on `/p` is a draft. Have it checked, and add the
   institution, contact and data-retention details your board requires.
 - Pay for both parts; tell people up front that there is a second part.
