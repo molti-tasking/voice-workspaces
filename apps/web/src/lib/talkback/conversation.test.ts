@@ -174,3 +174,48 @@ describe("what the sparks need from the container's messages", () => {
     expect(state.sections.map((s) => s.settled)).toEqual([true, undefined]);
   });
 });
+
+describe("keeping a subject", () => {
+  const keep = (ordinal: number, kept = true, via: "tap" | "voice" = "tap"): ConversationMessage => ({
+    type: "keep",
+    ordinal,
+    kept,
+    via,
+  });
+  const twoSubjects = () =>
+    fold(
+      user("c-1", "the heat plan"),
+      { type: "title", title: "Heat plan", ordinal: 1 },
+      user("c-2", "and the budget"),
+      { type: "title", title: "Budget", ordinal: 2 },
+    );
+
+  it("files a keep on the subject by its ordinal, with how and when it was made", () => {
+    const state = applyMessage(twoSubjects(), keep(1, true, "voice"), 1_000);
+    expect(state.sections.find((s) => s.ordinal === 1)?.kept).toEqual({ via: "voice", at: 1_000 });
+    expect(state.sections.find((s) => s.ordinal === 2)?.kept).toBeUndefined();
+  });
+
+  it("takes a keep back, and keeps the first keep when kept again", () => {
+    const kept = applyMessage(twoSubjects(), keep(2, true, "tap"), 1_000);
+    expect(applyMessage(kept, keep(2, true, "voice"), 2_000)).toBe(kept);
+    const back = applyMessage(kept, keep(2, false), 3_000);
+    expect(back.sections.find((s) => s.ordinal === 2)?.kept).toBeUndefined();
+  });
+
+  it("is not a touch: keeping a subject does not make it current or fresher", () => {
+    const before = twoSubjects();
+    const after = applyMessage(before, keep(1), 9_999);
+    expect(after.current).toBe(before.current);
+    expect(after.sections[0]?.lastAt).toBe(before.sections[0]?.lastAt);
+  });
+
+  it("ignores a keep for a subject it does not have", () => {
+    const state = twoSubjects();
+    expect(applyMessage(state, keep(7))).toBe(state);
+  });
+
+  it("never takes a keep from the container", () => {
+    expect(parseServerMessage({ type: "keep", ordinal: 1, kept: true, via: "voice" })).toBeNull();
+  });
+});

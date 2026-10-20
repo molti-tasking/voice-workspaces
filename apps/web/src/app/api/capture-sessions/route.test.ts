@@ -113,4 +113,29 @@ describeIfDb("POST /api/capture-sessions — the use case a drive begins under",
       .limit(1);
     expect(row?.at).toBeInstanceOf(Date);
   });
+
+  it("freezes an alternating spark selection to the day the drive started", async () => {
+    await getDb()
+      .update(user)
+      .set({
+        studyCondition: {
+          sparks: true,
+          sparkSelection: "alternate",
+          alternateFrom: "2026-10-15",
+          alternateStart: "chosen",
+        },
+      })
+      .where(eq(user.id, USER_ID));
+    // The 16th in UTC (the default zone): the second day, so the other mode.
+    const res = await open(SESSION_A, { startedAt: "2026-10-16T10:00:00Z" });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { studyCondition: { sparkSelection: string } };
+    expect(body.studyCondition.sparkSelection).toBe("suggested");
+    const [row] = await getDb()
+      .select({ condition: captureSession.studyCondition })
+      .from(captureSession)
+      .where(eq(captureSession.id, SESSION_A))
+      .limit(1);
+    expect((row?.condition as { sparkSelection?: string }).sparkSelection).toBe("suggested");
+  });
 });

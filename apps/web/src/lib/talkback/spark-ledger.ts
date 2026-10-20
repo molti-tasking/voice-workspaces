@@ -1,3 +1,4 @@
+import type { SparkSelection } from "@voicemural/shared";
 import type { Conversation } from "./conversation";
 import { sparksFor, type Spark, type SparkKind } from "./signals";
 
@@ -29,8 +30,11 @@ export interface SparkLedgerState {
 export interface SparkLedger {
   subscribe(listener: () => void): () => void;
   getSnapshot(): SparkLedgerState;
-  /** Work out what is on offer now. Notifies only when that changed. */
-  refresh(conversation: Conversation, now: number): void;
+  /**
+   * Work out what is on offer now. Notifies only when that changed.
+   * `selection` is the drive's `sparkSelection`: who picks the subjects.
+   */
+  refresh(conversation: Conversation, now: number, selection?: SparkSelection): void;
   /** These were on screen. Idempotent. */
   noteShown(sparks: readonly { kind: SparkKind; ordinal: number }[]): void;
   notePulled(spark: { kind: SparkKind; ordinal: number }): void;
@@ -68,8 +72,8 @@ export function createSparkLedger(): SparkLedger {
       return () => listeners.delete(listener);
     },
     getSnapshot: () => state,
-    refresh(conversation, now) {
-      const offered = sparksFor(conversation, now, new Set(state.pulled.keys()));
+    refresh(conversation, now, selection = "suggested") {
+      const offered = sparksFor(conversation, now, new Set(state.pulled.keys()), selection);
       const changed =
         offerKey(offered) !== offerKey(state.offered) ||
         offered.some((s, i) => s.title !== state.offered[i]?.title || s.reason !== state.offered[i]?.reason);

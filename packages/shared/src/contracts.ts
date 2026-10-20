@@ -95,8 +95,84 @@ export const StudyCondition = z.strictObject({
    * recall is half the question; only the chips and the spark pokes go.
    */
   sparks: z.boolean().default(false),
+  /**
+   * WHO PICKS THE SUBJECTS a spark is offered on, with `sparks` on.
+   *
+   * - `suggested`: the signals do, as the sparks first shipped (`signals.ts`).
+   * - `chosen`: the person does. They KEEP the subjects they want to hold in
+   *   their own head — a tap, or "keep this one" — and sparks are offered on
+   *   those and nothing else; Souffleur holds the rest. The deployment's
+   *   question is how choosing feels against being prompted.
+   * - `alternate`: one, then the other, day by day from `alternateFrom`, in
+   *   `STUDY_TIME_ZONE`, starting with `alternateStart`. A drive is frozen to
+   *   the day it STARTED on (`freezeStudyCondition`), so `capture_session`
+   *   only ever holds `suggested` or `chosen`.
+   */
+  sparkSelection: z.enum(["suggested", "chosen", "alternate"]).default("suggested"),
+  /** For `alternate`: its first day, `YYYY-MM-DD`. Unset, every drive is a first day. */
+  alternateFrom: z.iso.date().optional(),
+  /** For `alternate`: the first day's mode. The next day is the other one. */
+  alternateStart: z.enum(["suggested", "chosen"]).default("suggested"),
 });
 export type StudyCondition = z.infer<typeof StudyCondition>;
+
+/** What a drive actually runs under: never `alternate`. */
+export type SparkSelection = "suggested" | "chosen";
+
+/** The calendar date of `at` in `timeZone`, as `YYYY-MM-DD`. */
+export function localDate(at: Date, timeZone: string): string {
+  // en-CA formats as YYYY-MM-DD, which is what makes this a one-liner.
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(at);
+}
+
+/** Whole days from `from` to `to`, both `YYYY-MM-DD`. Negative when `to` is earlier. */
+function daysBetween(from: string, to: string): number {
+  const utc = (date: string) => {
+    const [y, m, d] = date.split("-").map(Number);
+    return Date.UTC(y!, m! - 1, d!);
+  };
+  return Math.round((utc(to) - utc(from)) / 86_400_000);
+}
+
+/**
+ * The selection a drive starting at `at` runs under.
+ *
+ * `alternate` flips every calendar day in `timeZone` — the study's day, not
+ * UTC's, or a drive at 00:30 in Copenhagen would land in yesterday's mode.
+ * A day before `alternateFrom` counts backwards, so it still alternates.
+ */
+export function sparkSelectionOn(
+  condition: Pick<StudyCondition, "sparkSelection" | "alternateFrom" | "alternateStart">,
+  at: Date,
+  timeZone: string,
+): SparkSelection {
+  if (condition.sparkSelection !== "alternate") return condition.sparkSelection;
+  const today = localDate(at, timeZone);
+  const day = daysBetween(condition.alternateFrom ?? today, today);
+  const other: SparkSelection = condition.alternateStart === "suggested" ? "chosen" : "suggested";
+  return ((day % 2) + 2) % 2 === 0 ? condition.alternateStart : other;
+}
+
+/**
+ * The condition as a drive keeps it: `alternate` replaced by the day's mode.
+ *
+ * Frozen when the drive is registered, like every other field of the
+ * condition (`capture_session.study_condition`), so a drive that runs past
+ * midnight keeps the mode it began in and the analysis never has to work the
+ * day out again.
+ */
+export function freezeStudyCondition(
+  condition: StudyCondition,
+  at: Date,
+  timeZone: string,
+): StudyCondition {
+  return { ...condition, sparkSelection: sparkSelectionOn(condition, at, timeZone) };
+}
 
 /**
  * A stored condition, resolved, never throwing.

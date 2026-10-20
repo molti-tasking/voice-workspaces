@@ -57,6 +57,7 @@ export function RecorderClient() {
     conversationId,
     conversation,
     sparks,
+    keepable,
     floor,
     setFloor,
     poke,
@@ -211,6 +212,8 @@ export function RecorderClient() {
         speaker={!isRecording ? null : hearing ? "agent" : talk.userSpeaking ? "user" : null}
         // "It is listening" is true only while it is.
         placeholder={isRecording ? PROFILE.hint : undefined}
+        // Keeping is part of the drive: after Stop the subjects are a record.
+        keepable={TALKBACK_ENABLED && isRecording && keepable}
         className={isRecording ? "min-h-0 flex-1" : "h-[65dvh] shrink-0"}
       />
 
@@ -235,6 +238,19 @@ export function RecorderClient() {
           </div>
         )}
       </div>
+
+      {TALKBACK_ENABLED && isRecording && keepable && (
+        // How keeping works, once, in plain words: on a "chosen" drive the
+        // sparks come only for what they keep, so a drive with nothing kept
+        // offers none — which should not read as broken. Voice first: the
+        // information sheet's rule is no touching the phone while driving.
+        <p className="shrink-0 text-xs leading-snug text-fg/60">
+          Say &ldquo;keep this one&rdquo; — or tap{" "}
+          <span className="font-medium text-fg/80">Keep</span> when you are not driving — for what
+          you want to hold in your own head. Souffleur holds the rest; sparks come for what you
+          keep.
+        </p>
+      )}
 
       {TALKBACK_ENABLED && isRecording && rec.sparksArm && (
         <SparkChips

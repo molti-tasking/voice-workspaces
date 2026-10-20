@@ -70,7 +70,17 @@ export interface Section {
    * judged when the subject was left. Absent until then.
    */
   settled?: boolean;
+  /**
+   * They KEPT it: marked it as theirs to hold in their own head, by a tap on
+   * the subject or by saying "keep this one" (`keepRequest` in
+   * @voicemural/shared). Absent means Souffleur holds it. With
+   * `sparkSelection: "chosen"`, sparks are offered on kept subjects only.
+   */
+  kept?: { via: KeepVia; at: number };
 }
+
+/** How a subject was kept: a tap on it, or saying so. */
+export type KeepVia = "tap" | "voice";
 
 export interface Conversation {
   /** In the order each subject first came up. */
@@ -98,7 +108,13 @@ export type ConversationMessage =
     }
   | { type: "title"; title: string; rehomeFrom?: string; ordinal?: number }
   /** What the container judged of a subject it has just left. */
-  | { type: "state"; ordinal: number; settled: boolean };
+  | { type: "state"; ordinal: number; settled: boolean }
+  /**
+   * They kept a subject, or took the keep back. Dispatched by the recorder
+   * itself — from a tap, or from a turn it heard as "keep this one" — never
+   * sent by the container, so `parseServerMessage` does not accept it.
+   */
+  | { type: "keep"; ordinal: number; kept: boolean; via: KeepVia };
 
 /**
  * A server message from the container, checked.
@@ -161,6 +177,7 @@ export function applyMessage(
   at?: number,
 ): Conversation {
   if (message.type === "state") return applyState(state, message);
+  if (message.type === "keep") return applyKeep(state, message, at ?? 0);
   const next = message.type === "title" ? applyTitle(state, message) : applyTurn(state, message);
   if (next === state || at === undefined || next.current === null) return next;
   return {
@@ -182,6 +199,26 @@ function applyState(
     ...state,
     sections: state.sections.map((s, i) => (i === at ? { ...s, settled: message.settled } : s)),
   };
+}
+
+/**
+ * A keep, or taking one back, filed by ordinal. Not a touch: `lastAt` stays,
+ * because deciding to keep a subject is not talking about it. Keeping a kept
+ * subject again changes nothing — the first keep, and how it was made, stand.
+ */
+function applyKeep(
+  state: Conversation,
+  message: Extract<ConversationMessage, { type: "keep" }>,
+  at: number,
+): Conversation {
+  const index = state.sections.findIndex((s) => s.ordinal === message.ordinal);
+  if (index === -1) return state;
+  const section = state.sections[index]!;
+  if (message.kept === (section.kept !== undefined)) return state;
+  const next: Section = message.kept
+    ? { ...section, kept: { via: message.via, at } }
+    : (({ kept: _kept, ...rest }) => rest)(section);
+  return { ...state, sections: state.sections.map((s, i) => (i === index ? next : s)) };
 }
 
 /** The ordinal a new subject gets when the container did not send one. */
