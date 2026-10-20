@@ -9,7 +9,7 @@ import { isDatabaseReachable } from "./testing";
 import { closeDb, getDb } from "./index";
 
 const USER_ID = "test-subjects-user";
-const SESSION = "00000000-0000-4000-8000-0000000000d1";
+const SESSION = "00000000-0000-4000-8000-0000000000d7";
 
 const describeIfDb = (await isDatabaseReachable()) ? describe : describe.skip;
 
@@ -94,7 +94,11 @@ describeIfDb("recordSubjectVisit", () => {
       signalsVersion: "signals-1",
     });
     await saveSubjectSignals(SESSION, [{ ...signal, userWords: 5 }], { final: false });
-    const [row] = await getDb().select().from(subjectSignal);
+    const [row] = await getDb()
+      .select({ userWords: subjectSignal.userWords, settled: subjectSignal.settled, final: subjectSignal.final, signalsVersion: subjectSignal.signalsVersion })
+      .from(subjectSignal)
+      .innerJoin(driveSubject, eq(driveSubject.id, subjectSignal.driveSubjectId))
+      .where(eq(driveSubject.captureSessionId, SESSION));
     expect(row).toMatchObject({ userWords: 90, settled: false, final: true, signalsVersion: "signals-1" });
   });
 });

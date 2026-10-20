@@ -24,7 +24,7 @@ import { closeDb, getDb } from "./index";
 
 const USERS = ["test-pro-a", "test-pro-b", "test-pro-c", "test-pro-d"];
 const PIDS = ["test-pid-a", "test-pid-b", "test-pid-c"];
-const SESSION = "00000000-0000-4000-8000-0000000000e1";
+const SESSION = "00000000-0000-4000-8000-0000000000e7";
 const T0 = new Date("2026-10-20T10:00:00Z");
 const QUESTIONNAIRE = { tlx: { mental: 60, physical: 5, temporal: 30, performance: 25, effort: 55, frustration: 15 }, sus: [4, 2, 4, 1, 4, 2, 5, 2, 4, 1], attention: 1 };
 
