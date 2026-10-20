@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { capabilitiesSection } from "./capabilities";
 import { PROACTIVITY_STANZAS, PROFILE } from "./profile";
 import {
   ANSWER_ACKNOWLEDGEMENTS,
@@ -15,7 +16,9 @@ import {
   SPARK_QUESTION_NUDGE,
   sparkQuestionText,
   SPARK_RETRY_NUDGE,
+  READING_SECTION,
   SPARK_SECTION,
+  SPARKS_NONE_ON_OFFER,
   SEARCH_WAIT_PHRASES,
   SILENCE_NUDGE,
   SILENCE_TOKEN,
@@ -27,11 +30,13 @@ import {
   extractDrafts,
   isSilence,
   pokeFallback,
+  renderSparksOnOffer,
   sparkFallback,
   sparkText,
   renderSilenceNudge,
   searchWaitPhrase,
 } from "./prompt";
+import { STUDY_SYSTEM_PROMPT } from "./study-agent";
 
 describe("composeSystemPrompt", () => {
   it("puts the output contract last, after the composed material", () => {
@@ -371,7 +376,68 @@ describe("keeping a subject (talkback-22)", () => {
     expect(SPARK_SECTION).toMatch(/never say you will remember it, note it or save it, and never test them on it/);
     // The answer guard can force a reply; the forced one stays an acknowledgement.
     expect(SPARK_SECTION).toMatch(/If a reply is required of you anyway, say only "Okay\."/);
-    expect(TALKBACK_CONFIG_VERSION).toBe("talkback-22");
+  });
+});
+
+describe("what it can do, and where its drafts are (talkback-23)", () => {
+  const drive = { board: true, webSearch: true, sparks: true, sparkSelection: "chosen" } as const;
+
+  it("lists what is true for the drive it is in", () => {
+    const all = capabilitiesSection(drive);
+    expect(all).toMatch(/^WHAT YOU CAN DO ON THIS DRIVE\n/);
+    expect(all).toMatch(/Change their task board/);
+    expect(all).toMatch(/Look things up on the web/);
+    expect(all).toMatch(/a spark comes only for a subject they keep/);
+    expect(all).toMatch(/never just "I can't"/);
+
+    const bare = capabilitiesSection({ board: false, webSearch: false, sparks: false, sparkSelection: "suggested" });
+    expect(bare).toMatch(/You cannot add, move or change their tasks/);
+    expect(bare).toMatch(/You cannot look anything up on the web/);
+    expect(bare).toMatch(/This drive has no sparks/);
+    expect(bare).not.toMatch(/Change their task board|Look things up|SPARKS ON OFFER/);
+
+    expect(capabilitiesSection({ ...drive, sparkSelection: "suggested" })).toMatch(
+      /the screen picks the subjects itself/,
+    );
+  });
+
+  it("is composed before the output contract, so the contract still wins", () => {
+    const { prompt } = composeSystemPrompt({ sections: [capabilitiesSection(drive)] });
+    expect(prompt.indexOf("WHAT YOU CAN DO ON THIS DRIVE")).toBeGreaterThan(-1);
+    expect(prompt.indexOf("WHAT YOU CAN DO ON THIS DRIVE")).toBeLessThan(prompt.indexOf("HOW YOUR REPLY IS USED"));
+  });
+
+  it("never sends them to 'this recording's page' while they are on the recorder", () => {
+    // 20 Oct 2026: "It's in your workspace and on this recording's page."
+    expect(OUTPUT_CONTRACT).not.toMatch(/this recording's page|not shown on the conversation view/);
+    expect(OUTPUT_CONTRACT).toMatch(/in the conversation view, as a line with its title where you wrote it/);
+    expect(OUTPUT_CONTRACT).toMatch(/once they stop, on that recording's own page, which opens from Conversations/);
+    expect(PROFILE.stanza).toMatch(/a draft also shows as a line in the conversation view/);
+  });
+
+  it("says why no spark is on offer, only on a drive that has them", () => {
+    expect(renderSparksOnOffer([], "chosen")).toBe(SPARKS_NONE_ON_OFFER.chosen);
+    expect(renderSparksOnOffer([], "suggested")).toBe(SPARKS_NONE_ON_OFFER.suggested);
+    expect(renderSparksOnOffer([])).toBeNull();
+    expect(renderSparksOnOffer([], null)).toBeNull();
+    expect(SPARKS_NONE_ON_OFFER.chosen).toMatch(/^SPARKS ON OFFER: none right now\./);
+    expect(renderSparksOnOffer([{ kind: "decide", subject: "Budget" }], "chosen")).toMatch(/^SPARKS ON OFFER — theirs to pull/);
+  });
+
+});
+
+describe("being read a text (talkback-24)", () => {
+  it("keeps quiet through a text being read, in both agents", () => {
+    expect(READING_SECTION).toMatch(/^WHEN THEY READ SOMETHING OUT\n/);
+    expect(READING_SECTION).toMatch(/Reply <silence> to every part of it/);
+    expect(READING_SECTION).toMatch(/this overrides answering every question and speaking when a thought lands/);
+    expect(READING_SECTION).toMatch(/say only "Go on\."/);
+    expect(SYSTEM_PROMPT).toContain(READING_SECTION);
+    expect(STUDY_SYSTEM_PROMPT).toContain(READING_SECTION);
+  });
+
+  it("is talkback-24", () => {
+    expect(TALKBACK_CONFIG_VERSION).toBe("talkback-24");
   });
 });
 

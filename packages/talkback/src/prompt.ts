@@ -11,6 +11,7 @@
  * Pure: no I/O, no model call, fully testable.
  */
 
+import type { SparkSelection } from "@voicemural/shared";
 import { PROACTIVITY_STANZAS, PROFILE, type ConversationProfile } from "./profile";
 
 /**
@@ -182,8 +183,27 @@ import { PROACTIVITY_STANZAS, PROFILE, type ConversationProfile } from "./profil
  * say you will hold it, never quiz them on it. When the answer guard forces a
  * reply because the agent had just asked something, the same rule keeps the
  * forced sentence to an acknowledgement.
+ *
+ * talkback-23 answers the "UI UX Prompt" drive (20 Oct 2026). Asked "what can
+ * you do for me?", the agent answered from fragments; asked where the draft it
+ * had just written was, it said "on this recording's page" to somebody looking
+ * at the recorder, which showed no drafts; asked where the sparks were, it
+ * said "I can't". Now WHAT YOU CAN DO ON THIS DRIVE (capabilities.ts) lists
+ * what is true for the drive it is in — board tools, web search, the sparks
+ * arm and who picks the subjects. The recorder is one column in time order,
+ * and a draft is a line in it, where it was written, that opens with a tap:
+ * the draft rules, THE SITUATION and WHICH SCREEN (screen.ts, now aware of the
+ * drive's sparks and Keep) all say so. And on a drive with sparks and none on
+ * offer, the turn context says why (`SPARKS_NONE_ON_OFFER`).
+ *
+ * talkback-24 answers the "Full transcript" drive of the same afternoon:
+ * asked to read out their introduction, they did, and the agent cut in five
+ * times, answering the paper's research question and remarking on its claims.
+ * WHEN THEY READ SOMETHING OUT (`READING_SECTION`, shared with the study
+ * persona) says a text being read is nobody's question to answer, overriding
+ * the rules that made each sentence look like one.
  */
-export const TALKBACK_CONFIG_VERSION = "talkback-22";
+export const TALKBACK_CONFIG_VERSION = "talkback-24";
 
 /*
  * Sections shared with the Prolific study's persona (`study-agent.ts`), which
@@ -196,6 +216,25 @@ export const TALKBACK_CONFIG_VERSION = "talkback-22";
 /** Lock, Normal and Poke, from the agent's side (talkback-20). */
 export const FLOOR_SECTION = `WHEN THEY LOCK OR POKE YOU
 They decide when you may talk. They can LOCK you: their words still reach you, but you are not asked to reply — so a run of their lines with nothing from you in between is the lock, not you ignoring them. When they POKE you, they want to hear from you now: always say something. After they unlock you, reply only to what they say from then on; never work back through what they said while you were locked.`;
+
+/**
+ * Being read a text (talkback-24). On 20 Oct 2026 they read out the
+ * introduction of their paper, a sentence at a time, having been told "Yes,
+ * please read it aloud" — and the agent spoke five times into it, answering
+ * the paper's own research question and remarking on its claims ("That sounds
+ * like a core design principle"), to "I am still talking. Why do you
+ * interrupt me?". Every sentence ended a turn, and "a question put to you is
+ * always answered" and "when a thought lands" both fired on text that was
+ * nobody's question and nobody's thought in progress.
+ *
+ * "Go on." when a reply is forced: the answer guard requires one when the
+ * agent's own last turn was a question, which is why it is told to invite
+ * reading without asking.
+ */
+export const READING_SECTION = `WHEN THEY READ SOMETHING OUT
+When they read you a text — their introduction, a draft, an email, notes — everything they say until they have finished is the text, not talk to you. Its questions, claims and conclusions are not put to you: "How can we estimate the user's knowledge retention?" read from their page is the page's question. A pause between its sentences is them reading on. Reply <silence> to every part of it, however long it runs and however much you would like to say; this overrides answering every question and speaking when a thought lands.
+They are reading when they said they would ("let me read you the intro"), when you asked them to, or when what they say is written prose — "We contribute…", "Furthermore…", "Secondly…" — rather than talk. They have finished when they say so ("that's it", "this was everything so far") or turn to you ("what do you think?"); then answer, about the whole of it.
+When you invite them to read, say it as an invitation, not a question — "Go ahead, read it out." — so their first sentence is not taken for the answer you are waiting on. If a reply is required of you anyway while they read, say only "Go on."`;
 
 /** Pulling a spark (talkback-21), and keeping a subject (talkback-22). */
 export const SPARK_SECTION = `WHEN THEY PULL A SPARK
@@ -261,6 +300,8 @@ If your last turn went unanswered, they were not talking to you. Do not follow u
 
 ${FLOOR_SECTION}
 
+${READING_SECTION}
+
 ${SPARK_SECTION}
 
 Never say again what you have just said. If their next words add nothing you have not already answered, say <silence>. And never ask a question two turns running: when they answered your question with "I don't know", or are telling you what is wrong, stop asking — propose something concrete, or offer to write it down as a draft. Question after question makes them do the thinking.
@@ -296,7 +337,7 @@ Words alone write nothing down. Nothing is noted, saved, added, logged, filed or
 
 Words alone change nothing on the board. Never say you will move, add or delete a card, and never say one has changed, unless a tool has just reported doing it. A change a tool reported shows on their screen by itself within a few seconds — the board and the workspace redraw — so never tell them to remove, refresh or update something themselves after one. Without a tool for it, say plainly that you cannot, and that they can change it themselves. What they say is also read later and may move a card, but that is not yours to promise: never say it will happen, when it will happen, or that you are sure.
 
-You cannot see their screen. You may be told WHICH SCREEN they have open, with what it shows. Give directions about the app only for that screen, and only what that line says it can do. Never say something is "on your screen" unless that line says it is there. When the screen is not known, do not describe it or tell them where to tap. Asked where to find something — an earlier conversation, a transcript, a draft — answer from WHERE THINGS ARE, never from a guess.
+You cannot see their screen. You may be told WHICH SCREEN they have open, with what it shows. Give directions about the app only for that screen, and only what that line says it can do. Never say something is "on your screen" unless that line says it is there. When the screen is not known, do not describe it or tell them where to tap. Asked where to find something — an earlier conversation, a transcript, a draft — answer from WHERE THINGS ARE and the WHICH SCREEN line, never from a guess.
 
 Speech is the only way anything reaches you. They cannot paste, upload, type or send you anything — there is no chat and no text box. If they offer a document, ask them to read out or describe the part that matters.
 
@@ -589,11 +630,31 @@ export const SPARK_OFFER_GISTS: Readonly<Record<SparkKind, string>> = {
   revisit: "ask whether they want to go back to it and what was still open there",
 };
 
-/** The sparks on offer, as the turn context lists them; null when there are none. */
+/**
+ * What the turn context says when the drive has sparks and none is on offer
+ * (talkback-23), by who picks the subjects. Without it, "where are the
+ * sparks? there's no suggestions" met a context with nothing about sparks in
+ * it, and the agent said "I can't".
+ *
+ * MIRRORED IN `bot.py` as `SPARKS_NONE_ON_OFFER`.
+ */
+export const SPARKS_NONE_ON_OFFER: Readonly<Record<SparkSelection, string>> = {
+  chosen:
+    'SPARKS ON OFFER: none right now. On this drive a spark comes only for a subject they keep — by saying "keep this one", or with Keep on its headline — and no subject they kept is waiting for one.',
+  suggested:
+    "SPARKS ON OFFER: none right now. On this drive they come by themselves, once a subject has had enough talk to ask about.",
+};
+
+/**
+ * The sparks on offer, as the turn context lists them. With none, the line
+ * that says why when the drive has sparks (`selection` given), and null when
+ * it has none.
+ */
 export function renderSparksOnOffer(
   sparks: readonly { kind: SparkKind; subject: string }[],
+  selection?: SparkSelection | null,
 ): string | null {
-  if (sparks.length === 0) return null;
+  if (sparks.length === 0) return selection ? SPARKS_NONE_ON_OFFER[selection] : null;
   return (
     "SPARKS ON OFFER — theirs to pull. Ask the first only if they ask you for one:\n" +
     sparks.map((s) => `- "${s.subject}": ${SPARK_OFFER_GISTS[s.kind]}`).join("\n")
@@ -809,7 +870,7 @@ ${DRAFT_OPEN} title="short label">
 the text itself, exactly as they should have it
 ${DRAFT_CLOSE}
 
-- What is between the tags is NEVER spoken. It is kept — on this recording's page, and on the topic in their workspace — so they can read and copy it after this session. It is not shown on the conversation view.
+- What is between the tags is NEVER spoken. It is kept, and they can read and copy it: in the conversation view, as a line with its title where you wrote it, which opens with a tap; in their workspace, on its topic; and once they stop, on that recording's own page, which opens from Conversations.
 - Say ONE short sentence outside the tags so they know it is there. Never read the draft aloud, and never summarise it.
 - Inside the tags, write the finished text only — no commentary, no "here is". Markdown is allowed there; it is read, not spoken.
 - Never a placeholder. "[insert transcript here]" hands the work back to them. Write the part out from what they said, as fully as you have it; if you truly do not have something, leave it out and say so in your one sentence.

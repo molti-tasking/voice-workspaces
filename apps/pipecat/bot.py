@@ -1280,14 +1280,15 @@ def parse_seeded_titles(raw: object) -> list[tuple[str, int | None]]:
 
 
 class TurnFeed:
-    """The turns, as the recorder's two panels show them.
+    """The turns, as the recorder's conversation shows them.
 
     The recorder used to show no turns at all — a title, and the trail of the
     ones before it — because reading in a car cradle was the one thing the
     person could not do. The study has moved to who has the floor, and the
-    screen with it: one panel for what the agent said, one for what they said,
-    in sections by subject, so both sides of the turn-taking are visible at a
-    glance. This is what feeds them.
+    screen with it: both sides of the conversation, in the order they were
+    said, under headlines by subject (one column since talkback-23; two panels
+    before it), so the turn-taking is visible at a glance. This is what feeds
+    it.
 
     LIVE ASR, AND ONLY TO THE SCREEN. These are the same words the agent hears
     — the only transcript that exists while it is being spoken — and they go to
@@ -1532,6 +1533,10 @@ class TopicTitle(FrameProcessor):
         # browser's own numbers on a reconnect, so a subject keeps the one its
         # sparks and its stored row already have.
         self._ordinals: dict[str, int] = {}
+        # The names they renamed subjects FROM (talkback-23), folded, by
+        # ordinal: the model may still name a subject by the title it gave it,
+        # and that must come back under theirs, not as a new subject.
+        self._renamed_from: dict[str, int] = {}
         seeded: list[str] = []
         for title, ordinal in parse_seeded_titles(titles):
             seeded.append(title)
@@ -1568,6 +1573,31 @@ class TopicTitle(FrameProcessor):
             return self._title
         return next((t for t in self._earlier if self.ordinal_of(t) == ordinal), None)
 
+    def rename(self, ordinal: int, title: str) -> bool:
+        """They renamed subject `ordinal` on their screen (talkback-23): it is
+        `title` from now on — what the model is shown as the current or an
+        earlier title, so a return comes back under their name, and what a
+        spark about it says. The ordinal stays, which is how the browser, the
+        sparks and the stored subject know it. Refused for a subject this drive
+        has not named, or a name another subject has: subjects are filed by
+        name here, and two of one name would become one."""
+        new = " ".join(title.split())[:64]
+        old = self.title_for(ordinal)
+        if not new or old is None:
+            return False
+        holder = self._ordinals.get(new.casefold())
+        if holder is not None and holder != ordinal:
+            return False
+        self._ordinals.pop(old.casefold(), None)
+        self._ordinals[new.casefold()] = ordinal
+        if old.casefold() != new.casefold():
+            self._renamed_from[old.casefold()] = ordinal
+        self._renamed_from.pop(new.casefold(), None)
+        if self._title == old:
+            self._title = new
+        self._earlier = [new if t == old else t for t in self._earlier]
+        return True
+
     def _offset(self, wall_ms: int | None) -> int | None:
         if wall_ms is None or not self._started_at_ms:
             return None
@@ -1596,6 +1626,21 @@ class TopicTitle(FrameProcessor):
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
+
+        # A rename from their screen: answered and consumed here, upstream of
+        # `Floor`, which answers the other requests. The title is never logged.
+        if isinstance(frame, RTVIClientMessageFrame) and frame.type == "rename":
+            data = frame.data if isinstance(frame.data, dict) else {}
+            ordinal, title = data.get("ordinal"), data.get("title")
+            ok = (
+                isinstance(ordinal, int)
+                and not isinstance(ordinal, bool)
+                and isinstance(title, str)
+                and self.rename(ordinal, title)
+            )
+            logger.info(f"[title] s{ordinal} renamed" if ok else "[title] rename refused")
+            await self.push_frame(RTVIServerResponseFrame(client_msg=frame, data={"renamed": ok}))
+            return
 
         if isinstance(frame, TranscriptionFrame) and frame.text.strip():
             if self._first_speech_ms is None:
@@ -1718,6 +1763,12 @@ class TopicTitle(FrameProcessor):
         title = clean_title(raw, self._title)
         if title is None:
             return
+        # A subject they renamed, named by the title it had before: theirs.
+        renamed = self._renamed_from.get(title.casefold())
+        if renamed is not None:
+            title = self.title_for(renamed) or title
+            if self._title is not None and title.casefold() == self._title.casefold():
+                return
 
         # A subject come back: the earlier title exactly, whatever case the
         # model returned it in, because the browser finds its section by it.
@@ -2368,6 +2419,17 @@ def sparks_enabled(session: dict) -> bool:
     return isinstance(condition, dict) and condition.get("sparks") is True
 
 
+def spark_selection(session: dict) -> str:
+    """Who picks the subjects the drive's sparks are on (`sparkSelection`):
+    "chosen" when they keep them, "suggested" otherwise. Frozen to the day's
+    mode when the drive was registered, so "alternate" never arrives; if it
+    did, it reads as "suggested", the rules picking."""
+    condition = (session or {}).get("studyCondition")
+    if isinstance(condition, dict) and condition.get("sparkSelection") == "chosen":
+        return "chosen"
+    return "suggested"
+
+
 def offers_enabled(session: dict) -> bool:
     """Whether this drive's condition runs the proactive engine."""
     condition = session.get("studyCondition")
@@ -2546,12 +2608,30 @@ SPARK_OFFER_GISTS = {
 }
 
 
-def render_sparks_on_offer(sparks: list[tuple[str, str]]) -> str | None:
+# What the turn context says when the drive has sparks and none is on offer,
+# by who picks the subjects (talkback-23): "where are the sparks?" met a
+# context with nothing about sparks in it, and the agent said "I can't".
+# Mirrors `SPARKS_NONE_ON_OFFER` in prompt.ts.
+SPARKS_NONE_ON_OFFER = {
+    "chosen": (
+        "SPARKS ON OFFER: none right now. On this drive a spark comes only for a subject they keep"
+        ' — by saying "keep this one", or with Keep on its headline — and no subject they kept is'
+        " waiting for one."
+    ),
+    "suggested": (
+        "SPARKS ON OFFER: none right now. On this drive they come by themselves, once a subject has"
+        " had enough talk to ask about."
+    ),
+}
+
+
+def render_sparks_on_offer(sparks: list[tuple[str, str]], selection: str | None = None) -> str | None:
     """The sparks on their screen, as the turn context lists them: `(kind,
-    title)` pairs, the first first. None when there are none. Mirrors
+    title)` pairs, the first first. With none, the line that says why when the
+    drive has sparks (`selection` given), and None when it has none. Mirrors
     `renderSparksOnOffer` in prompt.ts."""
     if not sparks:
-        return None
+        return SPARKS_NONE_ON_OFFER.get(selection) if selection else None
     return "SPARKS ON OFFER — theirs to pull. Ask the first only if they ask you for one:\n" + "\n".join(
         f'- "{title}": {SPARK_OFFER_GISTS[kind]}' for kind, title in sparks
     )
@@ -3025,6 +3105,7 @@ class Floor(FrameProcessor):
         locked: bool = False,
         subject_title: Callable[[int], str | None] | None = None,
         sparks: bool = True,
+        selection: str = "suggested",
     ):
         super().__init__()
         self._context = context
@@ -3033,6 +3114,9 @@ class Floor(FrameProcessor):
         # drive's arm offers no sparks: every spark is then a plain poke, and
         # nothing is listed to the model.
         self._subject_title = subject_title if sparks else None
+        # Who picks the sparks' subjects on this drive (`spark_selection`), so
+        # an empty offer can say why there is none.
+        self._selection = selection
         # The mode the device remembered, applied before the first word so the
         # opening offer cannot race it. Written as `at_connect` on StartFrame.
         self._locked = locked
@@ -3184,7 +3268,7 @@ class Floor(FrameProcessor):
         if self._subject_title is None:
             return None
         named = [(kind, self._subject_title(ordinal)) for kind, ordinal in self._offered]
-        return render_sparks_on_offer([(kind, title) for kind, title in named if title])
+        return render_sparks_on_offer([(kind, title) for kind, title in named if title], self._selection)
 
     # -- the poke itself ------------------------------------------------------
 
@@ -5456,6 +5540,7 @@ def build_pipeline(
         locked=locked,
         subject_title=title.title_for,
         sparks=sparks_enabled(session),
+        selection=spark_selection(session),
     )
     # Says something while a turn that has already announced itself runs long.
     # Its own processor because it needs a position in the pipeline (it speaks)

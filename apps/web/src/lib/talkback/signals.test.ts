@@ -5,7 +5,7 @@ import {
   type Conversation,
   type ConversationMessage,
 } from "./conversation";
-import { allSignals, driveContext, signalsFor, sparksFor } from "./signals";
+import { allSignals, driveContext, signalsFor, sparksFor, whyNoSparks } from "./signals";
 
 /** Messages with the clock they arrived at, in minutes from the start. */
 type Timed = [minute: number, message: ConversationMessage];
@@ -245,5 +245,25 @@ describe("sparksFor, when the person chooses (sparkSelection: chosen)", () => {
     const [signal] = allSignals(state, 0);
     expect(signal).toMatchObject({ keptVia: "voice", keptAt: 3 * 60_000 });
     expect(signal?.reasons).toContain("You're keeping this one");
+  });
+});
+
+describe("whyNoSparks: what an empty spark row says", () => {
+  const keep = (ordinal: number): ConversationMessage => ({ type: "keep", ordinal, kept: true, via: "tap" });
+
+  it("asks them to keep a subject when they choose and have kept nothing", () => {
+    const state = fold([0, title("Pilot")], [0, user(plain(30))]);
+    expect(whyNoSparks(state, new Set(), "chosen")).toBe("keep");
+  });
+
+  it("says every kept subject has had its spark once they have all been pulled", () => {
+    const state = fold([0, title("Pilot")], [0, user(plain(30))], [1, keep(1)]);
+    expect(whyNoSparks(state, new Set([1]), "chosen")).toBe("asked");
+    expect(whyNoSparks(state, new Set(), "chosen")).toBe("keep");
+  });
+
+  it("says they come with talk when the signals choose", () => {
+    const state = fold([0, title("Pilot")], [0, user(plain(30))], [1, keep(1)]);
+    expect(whyNoSparks(state, new Set(), "suggested")).toBe("talk");
   });
 });

@@ -48,6 +48,7 @@ export {
   BOARD_EDITING,
   FLOOR_OPEN_NOTE,
   OUTPUT_CONTRACT,
+  READING_SECTION,
   POKE_FALLBACKS,
   POKE_NUDGE,
   POKE_RETRY_NUDGE,
@@ -58,6 +59,7 @@ export {
   SPARK_NUDGES,
   SPARK_OFFER_GISTS,
   SPARK_RETRY_NUDGE,
+  SPARKS_NONE_ON_OFFER,
   SYSTEM_PROMPT,
   TALKBACK_CONFIG_VERSION,
   answerAcknowledgement,
@@ -94,6 +96,7 @@ export {
   type VoiceProfile,
 } from "./voice";
 export { SCREENS, isScreen, renderScreen, screenFor, type Screen } from "./screen";
+export { capabilitiesSection, type DriveCapabilities } from "./capabilities";
 export { isTimeZone, localDate, renderLocalTime, timeZoneOf } from "./clock";
 export { RECENT_DRIVES_SHOWN, renderRecentDrives, type RecentDrive } from "./recent-drives";
 export {

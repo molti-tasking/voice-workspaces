@@ -4,7 +4,7 @@ config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true }
 import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { captureSession, driveSubject, driveSubjectSegment, subjectSignal, user } from "./schema";
-import { recordSubjectVisit, saveSubjectSignals } from "./subjects";
+import { recordSubjectVisit, renameSubject, saveSubjectSignals } from "./subjects";
 import { isDatabaseReachable } from "./testing";
 import { closeDb, getDb } from "./index";
 
@@ -100,5 +100,18 @@ describeIfDb("recordSubjectVisit", () => {
       .innerJoin(driveSubject, eq(driveSubject.id, subjectSignal.driveSubjectId))
       .where(eq(driveSubject.captureSessionId, SESSION));
     expect(row).toMatchObject({ userWords: 90, settled: false, final: true, signalsVersion: "signals-1" });
+  });
+
+  it("keeps their name for a subject over the container's, and later visits leave it alone", async () => {
+    await recordSubjectVisit({ captureSessionId: SESSION, ordinal: 1, title: "CHI reviews", startOffsetMs: 0 });
+    expect(await renameSubject({ captureSessionId: SESSION, ordinal: 1, title: "  CHI 2027   reviews " })).toBe(true);
+    await recordSubjectVisit({ captureSessionId: SESSION, ordinal: 1, title: "CHI reviews", startOffsetMs: 60_000 });
+    const [row] = await getDb()
+      .select({ title: driveSubject.title })
+      .from(driveSubject)
+      .where(eq(driveSubject.captureSessionId, SESSION));
+    expect(row?.title).toBe("CHI 2027 reviews");
+    expect(await renameSubject({ captureSessionId: SESSION, ordinal: 9, title: "Nothing" })).toBe(false);
+    expect(await renameSubject({ captureSessionId: SESSION, ordinal: 1, title: "   " })).toBe(false);
   });
 });

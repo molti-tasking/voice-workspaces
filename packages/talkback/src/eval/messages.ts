@@ -28,6 +28,12 @@ export interface EvalContext {
   /** The sparks on their screen, as `Floor` keeps them from the browser (talkback-21). */
   sparks?: { kind: SparkKind; subject: string }[];
   /**
+   * The drive is in the sparks arm, and who picks the subjects: with no
+   * sparks on offer, the context then says why (talkback-23). Absent is the
+   * control arm, where nothing about sparks is said.
+   */
+  sparkSelection?: "suggested" | "chosen";
+  /**
    * The rendered task board, as `/api/realtime/context` returns it
    * (`buildBoardContext`). Was missing from the port while `Recall._compose`
    * put it first, so every eval ran against a context the container never sends.
@@ -59,7 +65,7 @@ export function composeContextBlock(context: EvalContext | undefined): string | 
   const sections: string[] = [];
   if (context.now) sections.push(context.now);
   if (context.screen) sections.push(context.screen);
-  const sparks = renderSparksOnOffer(context.sparks ?? []);
+  const sparks = renderSparksOnOffer(context.sparks ?? [], context.sparkSelection);
   if (sparks) sections.push(sparks);
   if (context.board) sections.push(context.board);
   if (context.threads?.length) {

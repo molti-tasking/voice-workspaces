@@ -318,7 +318,7 @@ fixtures, and `study:condition --set '{"sparks":true}'` flips the next drive.
 ## 6a. The field week with Keep (19 Oct 2026; supersedes §6)
 
 - **The feature.** On a `chosen` day the person keeps the subjects they want to hold in their
-  own head — a tap on Keep in their panel, or "keep this one" said aloud — and Souffleur holds
+  own head — a tap on Keep on its headline, or "keep this one" said aloud — and Souffleur holds
   the rest. Sparks are offered only on kept subjects. On a `suggested` day the signals pick, as
   in phases 1–5. The motivation to remember is theirs, not pushed on them.
 - **Design.** One week per person, `sparkSelection: "alternate"`: the mode flips by calendar
@@ -331,6 +331,12 @@ fixtures, and `study:condition --set '{"sparks":true}'` flips the next drive.
 - **Qualitative core.** The end-of-week questionnaire `/survey/week` (adapted IMI items on
   choosing, incident questions, preferred mode, interview opt-in; `pnpm study:week`), then an
   interview or focus group. `/my-week` shows each person their own week to remember it by.
+- **The screen (talkback-23, 20 Oct 2026).** The recorder is one column in time order, with
+  earlier stretches folded under their headlines; the spark row is always there in the sparks
+  arm and says why when it is empty. Opening a folded stretch is rereading, which is rehearsal
+  before the recall probe; it is not counted yet. Subjects can be renamed from their headline,
+  and the probe then asks by their name. Naming a subject is itself generating, which may help
+  recall; renames are not recorded as such yet (only the new `drive_subject.title`).
 - **Before anyone starts.** Ethics amendment for keeping, the questionnaire and the interview;
   fill the placeholders on `/study`; one pilot day in each mode.
 

@@ -52,7 +52,7 @@ interface CuePayload {
  * so it is never truncated, never aged out and never subject to the dwell
  * rules that keep the rest of the panel still.
  */
-interface DraftCue {
+export interface DraftCue {
   /** The LINEAGE id, so a rewrite replaces the card rather than adding one. */
   id: string;
   title: string;
