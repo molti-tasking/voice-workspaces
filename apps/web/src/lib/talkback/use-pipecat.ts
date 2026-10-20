@@ -511,6 +511,18 @@ export function usePipecatTalkback(options: TalkbackOptions): Talkback {
     });
   }, [connected, offered]);
 
-  if (!enabled || !captureSessionId) return { state: OFF, poke, offerSparks };
-  return { state, poke, offerSparks };
+  /* A RENAME, told to the container so the agent and the titler call the
+   * subject by their name from now on (talkback-23). Not kept for a reconnect:
+   * the titles a reconnect hands over already carry it. An older container
+   * answers with an error, which changes nothing here. */
+  const renameSubject = useCallback((ordinal: number, title: string) => {
+    const client = live.current;
+    if (!client) return;
+    client.sendClientRequest("rename", { ordinal, title }, REQUEST_TIMEOUT_MS).catch((err) => {
+      console.warn(`[talkback:pipecat] rename not sent — ${String(err)}`);
+    });
+  }, []);
+
+  if (!enabled || !captureSessionId) return { state: OFF, poke, offerSparks, renameSubject };
+  return { state, poke, offerSparks, renameSubject };
 }

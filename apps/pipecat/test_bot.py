@@ -3516,6 +3516,72 @@ def test_a_reconnect_starts_from_the_sections_the_screen_already_has(monkeypatch
     assert processor._earlier == ["Car inspection"]
 
 
+def renamed_titler(monkeypatch, replies):
+    """A titler on its second subject: "CHI reviews" (s1) left, "Web forms" (s2) current."""
+    processor = titler(monkeypatch, replies=replies)
+    processor._ordinals = {"chi reviews": 1, "web forms": 2}
+    processor._title = "Web forms"
+    processor._earlier = ["CHI reviews"]
+    return processor
+
+
+def test_a_rename_from_the_screen_is_answered_and_the_subject_keeps_its_number(monkeypatch):
+    processor = renamed_titler(monkeypatch, replies=[])
+
+    async def run():
+        await processor.process_frame(
+            request("rename", {"ordinal": 1, "title": "  CHI 2027   reviews "}), FrameDirection.DOWNSTREAM
+        )
+        await processor.process_frame(request("rename", {"ordinal": 2, "title": "chi 2027 REVIEWS"}), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(request("rename", {"ordinal": 9, "title": "Nothing"}), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(request("rename", {"ordinal": True, "title": "Bool"}), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    answers = [f.data for f in processor.pushed if isinstance(f, bot.RTVIServerResponseFrame)]
+    # Kept; a name another subject has, refused; unknown subjects, refused.
+    assert answers == [{"renamed": True}, {"renamed": False}, {"renamed": False}, {"renamed": False}]
+    # Consumed: nothing downstream sees the request.
+    assert not [f for f in processor.pushed if isinstance(f, bot.RTVIClientMessageFrame)]
+    assert processor.title_for(1) == "CHI 2027 reviews"
+    assert processor.ordinal_of("CHI 2027 reviews") == 1
+    assert processor.ordinal_of("CHI reviews") is None
+    assert processor.title == "Web forms"
+
+
+def test_a_renamed_subject_comes_back_under_their_name_by_either_name(monkeypatch):
+    for answer in ("CHI 2027 reviews", "CHI reviews"):
+        processor = renamed_titler(monkeypatch, replies=[answer])
+        assert processor.rename(1, "CHI 2027 reviews")
+
+        async def run():
+            processor._last_call -= bot.TopicTitle.CALL_AFTER_SECONDS + 1
+            await processor.process_frame(heard("back to the reviews"), FrameDirection.DOWNSTREAM)
+            await settled(processor)
+
+        asyncio.run(run())
+        (title,) = [m.data for m in messages_pushed(processor) if m.data["type"] == "title"]
+        assert title == {"type": "title", "title": "CHI 2027 reviews", "ordinal": 1}
+        # The model was shown their name among the earlier titles.
+        assert "Earlier titles: CHI 2027 reviews" in processor.asked[0][1]["content"]
+        assert "CHI reviews" not in processor.asked[0][1]["content"].replace("CHI 2027 reviews", "")
+
+
+def test_renaming_the_current_subject_is_what_the_model_is_shown_next(monkeypatch):
+    processor = renamed_titler(monkeypatch, replies=["Web forms"])
+    assert processor.rename(2, "Forms and GenAI")
+    assert processor.title == "Forms and GenAI"
+
+    async def run():
+        processor._last_call -= bot.TopicTitle.CALL_AFTER_SECONDS + 1
+        await processor.process_frame(heard("more on the forms"), FrameDirection.DOWNSTREAM)
+        await settled(processor)
+
+    asyncio.run(run())
+    assert "Current title: Forms and GenAI" in processor.asked[0][1]["content"]
+    # The model answering with the old name is still the same subject: no new title.
+    assert [m.data for m in messages_pushed(processor) if m.data["type"] == "title"] == []
+
+
 def test_their_panel_lights_while_the_vad_hears_them_and_once_per_change(monkeypatch):
     processor = titler(monkeypatch)
     processor._feed = bot.TurnFeed()
@@ -4011,6 +4077,40 @@ def test_the_sparks_on_offer_render_as_the_typescript_does():
     )
     assert bot.render_sparks_on_offer([]) is None
     assert set(bot.SPARK_OFFER_GISTS) == set(bot.SPARK_KINDS)
+
+
+def test_with_nothing_on_offer_the_sparks_arm_says_why():
+    # `SPARKS_NONE_ON_OFFER` in prompt.ts; `eval.test.ts` pins the same text.
+    assert bot.render_sparks_on_offer([], "chosen") == (
+        "SPARKS ON OFFER: none right now. On this drive a spark comes only for a subject they keep"
+        ' — by saying "keep this one", or with Keep on its headline — and no subject they kept is'
+        " waiting for one."
+    )
+    assert bot.render_sparks_on_offer([], "suggested") == (
+        "SPARKS ON OFFER: none right now. On this drive they come by themselves, once a subject has"
+        " had enough talk to ask about."
+    )
+    assert bot.render_sparks_on_offer([], None) is None
+    assert bot.render_sparks_on_offer([("decide", "Budget")], "chosen").startswith("SPARKS ON OFFER — theirs to pull")
+
+
+def test_a_floor_in_the_sparks_arm_with_nothing_offered_says_why(monkeypatch):
+    floor = floor_with(monkeypatch, subjects={1: "Intro"})
+    floor._selection = "chosen"
+    assert floor.sparks_on_offer() == bot.SPARKS_NONE_ON_OFFER["chosen"]
+
+
+def test_who_picks_the_sparks_subjects_is_read_from_the_drive():
+    assert bot.spark_selection({"studyCondition": {"sparks": True, "sparkSelection": "chosen"}}) == "chosen"
+    for session in (
+        {},
+        {"studyCondition": {"sparks": True}},
+        {"studyCondition": {"sparkSelection": "suggested"}},
+        {"studyCondition": {"sparkSelection": "alternate"}},
+        {"studyCondition": None},
+        {"degraded": True},
+    ):
+        assert bot.spark_selection(session) == "suggested"
 
 
 def test_the_browser_s_sparks_are_kept_and_listed_by_title(monkeypatch):

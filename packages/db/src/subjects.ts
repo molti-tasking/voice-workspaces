@@ -65,6 +65,32 @@ export async function recordSubjectVisit(visit: SubjectVisit): Promise<void> {
   });
 }
 
+/**
+ * Their own name for a subject, in place of the automatic one (talkback-23).
+ * The recall probe and My week read `title`, so they ask about it by the name
+ * they gave it. Only an existing subject: the container writes it first, at
+ * the title, seconds before anyone could rename it. Returns whether one was.
+ */
+export async function renameSubject(rename: {
+  captureSessionId: string;
+  ordinal: number;
+  title: string;
+}): Promise<boolean> {
+  const title = rename.title.replace(/\s+/g, " ").trim().slice(0, MAX_SUBJECT_TITLE_CHARS);
+  if (!title) return false;
+  const updated = await getDb()
+    .update(driveSubject)
+    .set({ title })
+    .where(
+      and(
+        eq(driveSubject.captureSessionId, rename.captureSessionId),
+        eq(driveSubject.ordinal, rename.ordinal),
+      ),
+    )
+    .returning({ id: driveSubject.id });
+  return updated.length > 0;
+}
+
 /** One subject's signal as the recorder posts it. See `subject_signal`. */
 export interface SubjectSignalRecord {
   ordinal: number;

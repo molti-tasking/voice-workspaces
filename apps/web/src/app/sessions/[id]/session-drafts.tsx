@@ -1,8 +1,9 @@
 "use client";
 
-import { Check, Copy, Pencil, RotateCcw } from "lucide-react";
+import { Pencil, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { CopyButton } from "@/components/copy-button";
 import { DraftMarkdown } from "@/components/draft-markdown";
 import { MAX_DRAFT_CHARS, MAX_DRAFT_TITLE_CHARS } from "@/lib/drafts";
 
@@ -82,19 +83,7 @@ function DraftCard({ draft }: { draft: SessionDraft }) {
 }
 
 function DraftView({ draft, onEdit }: { draft: SessionDraft; onEdit: () => void }) {
-  const [copied, setCopied] = useState(false);
   const { current } = draft;
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(current.text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2_000);
-    } catch {
-      // The text is on screen and selectable, so a refused clipboard costs a
-      // long-press, not the draft.
-    }
-  };
 
   return (
     <>
@@ -102,23 +91,7 @@ function DraftView({ draft, onEdit }: { draft: SessionDraft; onEdit: () => void 
         <h3 className="min-w-0 flex-1 truncate text-sm font-medium">
           {current.title || "Draft"}
         </h3>
-        <button
-          type="button"
-          onClick={() => void copy()}
-          className="flex shrink-0 items-center gap-1.5 rounded border border-[var(--color-line)] px-2.5 py-1 text-xs text-fg/65 hover:border-fg/30 hover:text-fg/90"
-        >
-          {copied ? (
-            <>
-              <Check size={13} aria-hidden />
-              Copied
-            </>
-          ) : (
-            <>
-              <Copy size={13} aria-hidden />
-              Copy
-            </>
-          )}
-        </button>
+        <CopyButton text={current.text} />
         <button
           type="button"
           onClick={onEdit}

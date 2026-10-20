@@ -14,6 +14,7 @@
  * and appear as tags in Langfuse.
  */
 
+import { capabilitiesSection } from "../capabilities";
 import { FLOOR_OPEN_NOTE, POKE_NUDGE, type SparkKind } from "../prompt";
 import { renderRecentDrives } from "../recent-drives";
 import { renderScreen } from "../screen";
@@ -133,6 +134,29 @@ const DRAFTS = [
   "",
   "draft b7e40d:\n- Suchman, Plans and Situated Actions\n- Schön, The Reflective Practitioner",
 ].join("\n");
+
+/** The draft from the "UI UX Prompt" drive (20 Oct 2026), as the drafts block shows it. */
+const UI_DRAFT = [
+  "Drafts you have written on this drive, and which you can still see:",
+  'draft 5c1e2a "UI/UX Improvement Prompt" (v1.0, written by you)',
+  "",
+  "draft 5c1e2a:\nRedesign the conversation view as one chronological column, with headlines that fold, and make the sparks easier to find.",
+].join("\n");
+
+/**
+ * The "Full transcript" drive (20 Oct 2026): asked to, they read out their
+ * paper's introduction a sentence or two at a time. These are its first lines,
+ * as heard, without the agent's interruptions in between.
+ */
+const READING_ALOUD: NonNullable<EvalCase["history"]> = [
+  { role: "user", content: "No, no, we focus now on the voice paper. I need to rephrase the introduction. Do you want me to read the current introduction to you?" },
+  { role: "assistant", content: "Yes, please read it aloud." },
+  { role: "user", content: "How do you know that you actually know something? The reasoning and generation capabilities of generative AI leads to context and knowledge for specific tasks." },
+  { role: "user", content: "Even though the users can utilize this for better performance in various scenarios, the retention suffers simultaneously." },
+  { role: "user", content: "With AI, people will produce better work without learning more. Furthermore, they also overestimate their internalization of this specific knowledge, and when removing AI access, they do worse than people who never had it." },
+  { role: "user", content: "Subsequently, generative AI raises challenges towards metacognitive sensitivity, the correctness of your own perception of your knowledge." },
+  { role: "user", content: "We focus on speech as the primary interaction modality, firstly due to the ease to produce words, and the verbal externalization can be used as a tool to strengthen knowledge, as the production effect suggests." },
+];
 
 export const CASES: EvalCase[] = [
   {
@@ -904,6 +928,107 @@ export const CASES: EvalCase[] = [
       // banned on its own.
       mustNotMention: ["top right|icon next to|next to the stop|dock at the bottom of your screen|tap(ping)? (on )?workspace now"],
     },
+  },
+  /* The "UI UX Prompt" drive, 20 Oct 2026 (talkback-23): asked what it can
+   * do, where its draft was, and where the sparks were, it answered from
+   * fragments, said "on this recording's page" to somebody on the recorder,
+   * and "I can't". The person's own words. */
+  {
+    id: "what-can-you-do-board",
+    about: "Asked what it can do, it names drafts and the board in a few words, from the list for this drive.",
+    context: { board: BOARD, screen: renderScreen("conversation") },
+    sections: [capabilitiesSection({ board: true, webSearch: false, sparks: false, sparkSelection: "suggested" })],
+    said: "Can you still take notes? What are your capabilities? What can you do for me?",
+    expect: {
+      turn: "speak",
+      mustMention: ["draft|write (it|that|them|things) down|note", "task|board"],
+      toolCall: null,
+    },
+  },
+  {
+    id: "what-can-you-do-no-board",
+    about: "Without the board tools, it does not offer to change their tasks.",
+    context: { screen: renderScreen("conversation") },
+    sections: [capabilitiesSection({ board: false, webSearch: false, sparks: false, sparkSelection: "suggested" })],
+    said: "Can you still take notes? What are your capabilities? What can you do for me?",
+    expect: {
+      turn: "speak",
+      mustMention: ["draft|write (it|that|them|things) down|note"],
+      mustNotMention: ["(i can|i'll|i will|let me) (move|add|update|change|manage)[^.]{0,30}(task|card|board)"],
+    },
+  },
+  {
+    id: "where-is-my-draft-conversation",
+    about: "Asked where the draft is while on the recorder, it says it is a line in the conversation, not \"this recording's page\".",
+    history: [
+      {
+        role: "user",
+        content: "Please read the full transcript, and give me a sufficient prompt that I can use in order to improve the UI UX of the system.",
+      },
+      { role: "assistant", content: "I've drafted a prompt for you to improve the UI/UX." },
+    ],
+    context: { screen: renderScreen("conversation"), drafts: UI_DRAFT },
+    sections: [capabilitiesSection({ board: false, webSearch: false, sparks: false, sparkSelection: "suggested" })],
+    said: "Where is it?",
+    expect: {
+      turn: "speak",
+      mustMention: ["conversation|a line|tap"],
+      mustNotMention: ["this recording'?s page", "top right|icon next to"],
+      draft: null,
+    },
+  },
+  {
+    id: "where-are-the-sparks-none",
+    about: "Asked where the sparks are when none is on offer, it says why (keep a subject), never just \"I can't\".",
+    context: {
+      screen: renderScreen("conversation", { sparks: true, keep: true }),
+      sparks: [],
+      sparkSelection: "chosen",
+    },
+    sections: [capabilitiesSection({ board: false, webSearch: false, sparks: true, sparkSelection: "chosen" })],
+    said: "Also, I wonder, where are the sparks? There's no suggestions, nothing that I could say.",
+    expect: {
+      turn: "speak",
+      mustMention: ["keep|kept"],
+      mustNotMention: ["^\\s*i can'?t\\.?\\s*$"],
+    },
+  },
+  /* Reading a text out (talkback-24): the same drive. The agent answered the
+   * research question, asked about a design goal, and remarked on a claim,
+   * each in the middle of the reading. */
+  {
+    id: "reading-aloud-question-in-text",
+    about: "A research question read out from their introduction is the text's, not a question to answer.",
+    history: READING_ALOUD,
+    said: "Therefore, we designed the study towards the following research question. How can we estimate the user's knowledge retention during voice AI interaction ideation?",
+    expect: { turn: "silent" },
+  },
+  {
+    id: "reading-aloud-claim",
+    about: "A design goal read out from the introduction is not a thought landing to remark on.",
+    history: [
+      ...READING_ALOUD,
+      { role: "user", content: "We contribute a formative study about voice interaction systems, forming different design goals. Users should be mirrored with what they know." },
+    ],
+    said: "Users should be able to choose what to train it on or not. The concept should be agent agnostic and clearly separate.",
+    expect: { turn: "silent" },
+  },
+  {
+    id: "reading-aloud-mid-sentence",
+    about: "A sentence of the text cut by a breath is them reading on.",
+    history: READING_ALOUD,
+    said: "Through a just-in-time display of these predictions, the user can choose to",
+    expect: { turn: "silent" },
+  },
+  {
+    id: "reading-aloud-finished",
+    about: "Told the reading is over, it answers about the whole text.",
+    history: [
+      ...READING_ALOUD,
+      { role: "user", content: "Does such a system raise awareness that the feeling of knowing of what was generated is higher than the knowledge retention of it?" },
+    ],
+    said: "So, this was everything I was writing in the introduction so far.",
+    expect: { turn: "speak" },
   },
   /* The "Tone of Voice" drive, 14 Oct 2026. */
   {

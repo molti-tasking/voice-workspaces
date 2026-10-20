@@ -15,7 +15,7 @@ import {
   VoicePicker,
 } from "@/components/capture-settings";
 import { RecordingBadge } from "@/components/recording-badge";
-import { ConversationPanels } from "./conversation-panels";
+import { ConversationFlow } from "./conversation-flow";
 import { FloorControls } from "./floor-controls";
 import { SparkChips } from "./spark-chips";
 import { PostDriveItems } from "./study-items";
@@ -27,17 +27,20 @@ import { PostDriveItems } from "./study-items";
  * start with.
  *
  * DURING ONE, TURN-TAKING AND NOTHING ELSE. The study has moved to who holds
- * the floor, so the screen is the conversation — the agent's turns in one
- * panel, the person's in the other, filed by subject — and exactly three
- * things to do about it: Lock (only they speak), Normal (the agent may talk
- * back) and Poke (one turn from the agent, now). Plus Stop, which has to be
- * here. The cue panel, the drafts and the transcript link are gone from this
+ * the floor, so the screen is the conversation — one column, in the order it
+ * was said, under headlines that name each stretch of it
+ * (`ConversationFlow`) — and exactly three things to do about it: Lock (only
+ * they speak), Normal (the agent may talk back) and Poke (one turn from the
+ * agent, now). Plus Stop, which has to be here, and the sparks on a drive
+ * that has them. The cue panel and the transcript link are gone from this
  * screen, and the dock with them while a drive runs: every one of them was a
- * reason to look away from the turns. Drafts are still written and kept; they
- * are on `/sessions/[id]`.
+ * reason to look away from the turns. A draft the agent writes is a line in
+ * the conversation, where it was written (talkback-23); it was off this
+ * screen entirely, and the agent's "it's on this recording's page" was heard
+ * as this page, which showed nothing.
  *
  * THE WHOLE SCREEN, NOT A PAGE. While recording the layout is the height of
- * the viewport, with the panels scrolling inside it, so the controls never
+ * the viewport, with the conversation scrolling inside it, so the controls never
  * scroll away from a thumb and the header never scrolls away from a glance.
  *
  * THE CONVERSATION OUTLIVES THE DRIVE. Stop used to take everything off the
@@ -58,9 +61,11 @@ export function RecorderClient() {
     conversation,
     sparks,
     keepable,
+    cues,
     floor,
     setFloor,
     poke,
+    renameSubject,
     isRecording,
     isBusy,
     startRecording,
@@ -182,8 +187,11 @@ export function RecorderClient() {
   return (
     <main
       className={[
+        // One centred column, and everything in it edge to edge with
+        // everything else: the conversation, its headlines, the sparks and the
+        // controls (20 Oct 2026). The whole window was too wide to read.
         "no-touch-fuss mx-auto flex w-full max-w-5xl flex-col gap-3 px-4",
-        // While recording: exactly the screen, panels scrolling inside it, and
+        // While recording: exactly the screen, the conversation scrolling inside it, and
         // no dock (app-dock-client.tsx) — the controls sit where it was. After
         // it, an ordinary page above the dock again.
         isRecording
@@ -200,20 +208,33 @@ export function RecorderClient() {
         />
       )}
 
-      <ConversationPanels
-        // Keyed by the drive: the next one starts from nothing, scrolled to
-        // its top, rather than inheriting the last one's scroll position.
+      <ConversationFlow
+        // Keyed by the drive: the next one starts from nothing rather than
+        // inheriting the last one's scroll position and opened headlines.
         key={conversationId}
         store={conversation}
         live={isRecording}
-        floor={TALKBACK_ENABLED && isRecording ? (talk.floor ?? floor) : null}
-        // The agent first: its own voice can reach the microphone, and their
-        // panel must not light up because the agent is talking.
-        speaker={!isRecording ? null : hearing ? "agent" : talk.userSpeaking ? "user" : null}
+        status={
+          TALKBACK_ENABLED && isRecording
+            ? {
+                floor: connected ? (talk.floor ?? floor) : null,
+                // The agent first: its own voice can reach the microphone.
+                speaking: hearing,
+                listening: !hearing && talk.userSpeaking,
+              }
+            : null
+        }
         // "It is listening" is true only while it is.
         placeholder={isRecording ? PROFILE.hint : undefined}
         // Keeping is part of the drive: after Stop the subjects are a record.
         keepable={TALKBACK_ENABLED && isRecording && keepable}
+        // Only in the sparks arm: the ledger is worked out in both, for the
+        // record, and the control arm must not see a sparkle on a headline.
+        sparks={TALKBACK_ENABLED && rec.sparksArm ? sparks : null}
+        drafts={cues.drafts}
+        // During the drive and after it: tidying the headlines is a thing to
+        // do once there is time to read them.
+        onRename={renameSubject}
         className={isRecording ? "min-h-0 flex-1" : "h-[65dvh] shrink-0"}
       />
 
@@ -259,6 +280,9 @@ export function RecorderClient() {
           connected={connected}
           speaking={hearing}
           onPull={poke}
+          // Always a row in the sparks arm: an empty one says why.
+          explainEmpty
+          selection={rec.sparkSelection}
         />
       )}
 

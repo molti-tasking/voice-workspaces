@@ -279,6 +279,27 @@ export function allSignals(conversation: Conversation, now: number): SubjectSign
 }
 
 /**
+ * Why nothing is on offer, when nothing is: what the spark row says instead of
+ * vanishing (talkback-23). "Where are the sparks? There's no suggestions" was
+ * asked of an empty row on a `chosen` drive where nothing had been kept.
+ *
+ * - `keep`: they choose, and no kept subject is waiting for one;
+ * - `asked`: they choose, and every subject they kept has had its spark;
+ * - `talk`: the signals choose, and no subject fits a rule yet.
+ */
+export type NoSparksReason = "keep" | "asked" | "talk";
+
+export function whyNoSparks(
+  conversation: Conversation,
+  pulled: ReadonlySet<number>,
+  selection: SparkSelection,
+): NoSparksReason {
+  if (selection !== "chosen") return "talk";
+  const kept = conversation.sections.filter((s) => s.kept && s.ordinal !== undefined);
+  return kept.length > 0 && kept.every((s) => pulled.has(s.ordinal!)) ? "asked" : "keep";
+}
+
+/**
  * The sparks to offer now: at most `MAX_SPARKS`, the most faded first, one per
  * subject, none for a subject that has had one pulled this drive.
  *

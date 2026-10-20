@@ -82,8 +82,8 @@ shown the drive's earlier titles and returns one verbatim when the
 conversation goes back to it. It never blocks a turn, and it is inert unless
 `/api/realtime/session` sent a `titlePrompt`.
 
-The person's side of the recorder's panels comes from the same processor (it
-sees every final transcript), the agent's from `AgentFeed`, which sits after
+The person's side of the recorder's conversation comes from the same processor
+(it sees every final transcript), the agent's from `AgentFeed`, which sits after
 everything that decides what is said. `Floor` and `FloorUpstream` are the lock;
 see talkback-20 below.
 
@@ -297,18 +297,19 @@ Written by the container, not the browser, so a row means the lock the agent
 obeyed rather than a tap that may never have arrived. A line of the ledger fell
 in a locked stretch when the last change at or before its offset is `locked`.
 
-**The panels.** The recorder shows both sides of the conversation, filed by
-subject (`apps/web/src/lib/talkback/conversation.ts`): `{type:"user"}` from
+**The conversation.** The recorder shows both sides of the conversation, filed
+by subject (`apps/web/src/lib/talkback/conversation.ts`): `{type:"user"}` from
 `TopicTitle`, `{type:"agent"}` from `AgentFeed` (throttled to sentence ends or
 300ms), and `{type:"title", rehomeFrom}`, which moves the turns that changed the
 subject into its section. Live ASR to the screen only: nothing here writes
 `utterance`. In memory only, like the title before it — a reload mid-drive
-starts empty, and the durable record is `/sessions/[id]`.
+starts empty, and the durable record is `/sessions/[id]`. It was two panels,
+one per speaker; since talkback-23 it is one column in time order
+(`conversation-flow.tsx`).
 
-The cue panel, the drafts and the transcript link are off the recorder, and the
-dock with them while a drive runs. Drafts are still written and kept, on the
-recording's page and on their topic; the keep section of `OUTPUT_CONTRACT` and
-WHICH SCREEN (`screen.ts`) now say so.
+The cue panel and the transcript link are off the recorder, and the dock with
+them while a drive runs. Drafts were too, until talkback-23 put each back as a
+line in the conversation.
 
 #### What the "Tone of Voice" drive changed (14 Oct 2026)
 
@@ -392,7 +393,9 @@ never left, so it is never judged.
 the browser also sends the sparks on offer as an RTVI `sparks` request
 (`{"sparks": [{kind, ordinal}]}`, whenever they change and on every connect),
 `Floor` keeps them, and `Recall` lists them right after WHICH SCREEN as
-SPARKS ON OFFER. Asked out loud — "anything I should check?", "frag mich was" —
+SPARKS ON OFFER — and, since talkback-23, with none on offer in the sparks
+arm, a line saying why (`SPARKS_NONE_ON_OFFER`). Asked out loud — "anything I
+should check?", "frag mich was" —
 the model asks the first; never otherwise. A spark asked this way is a
 `user_turn` decision, not a `poke`: the ledger has no mark for it.
 
@@ -422,9 +425,9 @@ starting with `alternateStart`. `POST /api/capture-sessions` freezes it to the
 day's concrete mode (`freezeStudyCondition`), so a drive across midnight keeps
 the mode it started in, and the export reads the mode straight off the drive.
 
-**Keeping by tap.** On a `chosen` drive, each subject's heading in their panel
-has a Keep toggle (`conversation-panels.tsx`); the hint above the panels says
-voice first, because the information sheet says the phone is not touched
+**Keeping by tap.** On a `chosen` drive, each subject's headline in the
+conversation has a Keep toggle (`conversation-flow.tsx`); the hint under the
+conversation says voice first, because the information sheet says the phone is not touched
 while driving.
 
 **Keeping by voice, in the browser.** "Keep this one", "I want to keep that",
@@ -458,6 +461,137 @@ today's mode. `/survey/week` is the end-of-week questionnaire (`week-1`):
 adapted IMI items on choosing, incident questions about one subject kept and
 one let go, and whether they would join an interview; `pnpm study:week`
 exports the closed answers, and their words only with `--text`.
+
+### talkback-23: one conversation, and what it can do
+
+The "UI UX Prompt" drive (20 Oct 2026) was about the recorder itself. The
+person read the two panels and could not follow them: "some of the things that
+I said on the bottom right, and some of the things that you answered much
+higher on the left … it's going left, right". A return to an earlier subject put
+the newest lines under its old heading, "on top of the transcript". The bar
+under each heading had its meaning only in an `aria-label`, and was read as
+"how much do I understand". In a `chosen` drive with nothing kept, the spark
+row was simply gone ("where is now the sparks?"), and the agent, asked, said
+"I can't". Asked what it could do, it answered from fragments. Asked where the
+draft it had just written was, it said "in your workspace and on this
+recording's page", to somebody looking at the recorder, which showed no drafts.
+
+**One column, in order.** Every turn gets a `seq`, the order it first arrived
+in, across both speakers and reconnects, kept through streaming updates and
+rehoming. `timeline` (`conversation.ts`) cuts the turns into runs, one
+stretch of talk on one subject each, and `ConversationFlow`
+(`apps/web/src/app/record/conversation-flow.tsx`) shows them: their words in a
+bubble on the right, the agent's as plain text on the left, a headline per run.
+A return to a subject is a new "Back to" headline at the bottom, never an
+insertion above. The current run is open; earlier ones fold to their headline,
+with how many lines they hold, and open with a tap. One centred column
+(1024px at most), with the conversation, its headlines, the sparks and the
+controls exactly edge to edge: the conversation's own padding is gone, and a
+scrollbar that takes space (macOS with a mouse) is drawn just outside the
+column instead of inside it, where it made the conversation stop short of the
+controls. The whole window, tried in between, was too wide to read. Sections are unchanged, and everything that judges a
+subject (signals, sparks, keeping, reconnect titles) still reads them.
+
+**Following, by position.** At the end, the column is pinned there instantly
+on every change; smooth scrolling restarted on every streamed fragment and
+juddered. A scroll UP stops following, as do selecting text, opening a
+stretch or a draft, and renaming; scrolling back to the end or "Now ↓" starts
+it again, and nothing resumes on a timer. The first build counted the last
+80 px as "at the end" in both directions, so a scroll up that began there
+snapped straight back down.
+
+**Text you can take.** The recorder blocks selection everywhere
+(`no-touch-fuss`), so a hand on a cradled phone selects nothing; the
+conversation opts back in, so a line can be selected, copied and dragged.
+Headlines and controls stay unselectable.
+
+**Their names for subjects.** The pencil on a headline renames the subject,
+during the drive or after it while the conversation is still on screen
+(`renameSubject` in `capture-provider.tsx`). It is three writes. The store's
+`{type: "rename"}` keeps the section's key and ordinal and changes its title;
+the store now finds a subject by ordinal first, then key, then its title, so
+the container's later messages land on it by either name. The RTVI `rename`
+request (`{ordinal, title}`) goes to `TopicTitle`, which answers it, consumes
+it, and from then on shows the model their name as the current or an earlier
+title. When the model still names the subject by its old title, that is read
+as the renamed one (`_renamed_from`), not a new subject. And
+`POST /api/capture-sessions/[id]/subjects` sets `drive_subject.title`
+(`renameSubject` in `@voicemural/db/subjects`), which the recall probe and My
+week read. A name another subject of the drive has is refused on both sides:
+the container files subjects by name. A reconnect hands the new name over
+with the rest of the titles. WHICH SCREEN says they can rename a headline and
+the agent cannot.
+
+**What they hold, in words.** Under each headline: the reasons from
+`signals.ts` ("Mostly Souffleur's words · Still open"). The bar is gone. Keep
+is on every headline of a kept subject, keyed by ordinal.
+
+**Marks.** A draft and a pulled spark are `marks` in the store (`{type:
+"mark"}`, dispatched by the recorder, never accepted from the container), each
+placed after the turn it followed: a draft after the agent's latest turn, as
+it arrives from the cue stream a few seconds after it was written; a spark
+after whatever was said last, at the tap. Not turns, so never anybody's words
+and never a touch on a subject. A draft gets one line per version the agent
+wrote ("Draft updated" for a rewrite); every line opens the same, newest text
+with Copy (`CopyButton`, shared with `/sessions/[id]`), and a folded run still
+shows its drafts. In the store rather than the view, because the recorder
+unmounts on navigation and the store does not.
+
+**The spark row says why it is empty.** In the sparks arm it is always there:
+with nothing on offer, one line — keep a subject to get one (`chosen`), each
+kept subject has had its spark, or they come once a subject has had some talk
+(`suggested`) (`whyNoSparks`). A headline whose subject has a spark on offer
+has a sparkle; the control arm gets no ledger, so no sparkle.
+
+**What the agent knows.**
+- WHAT YOU CAN DO ON THIS DRIVE (`capabilities.ts`), composed by the session
+  route from the same flags that decide each thing: board tools, web search,
+  the sparks arm, and who picks the subjects. Asked what it can do, it answers
+  from the list, in two or three items.
+- A draft's place, everywhere it is described (`OUTPUT_CONTRACT`, THE
+  SITUATION, APP_MAP): a line in the conversation view where it was written,
+  in the workspace on its topic, and after Stop on that recording's own page,
+  opened from Conversations. Never "this recording's page".
+- WHICH SCREEN describes the one column, and on a drive that has them, the
+  spark row and Keep: `renderScreen(screen, { sparks, keep })`, from the
+  drive's frozen condition in the context route.
+- In the sparks arm with none on offer, the turn context says why:
+  `SPARKS_NONE_ON_OFFER` (prompt.ts), mirrored in `bot.py`, which now knows the
+  drive's selection (`spark_selection`, passed to `Floor`).
+
+Eval cases `what-can-you-do-board`, `what-can-you-do-no-board`,
+`where-is-my-draft-conversation` and `where-are-the-sparks-none`. Not in this
+version: the interruptions mid-thought in the same drive (6:25 to 7:00), which
+need the drive's `agent_decision` and pause data first.
+
+### talkback-24: being read a text
+
+The "Full transcript" drive, the same afternoon. Asked "Do you want me to read
+the current introduction to you?", the agent said "Yes, please read it aloud",
+and then spoke five times into the reading: it answered the paper's own
+research question ("Yes, by comparing their perceived confidence…"), asked
+about a design goal, and remarked on claims ("That sounds like a core design
+principle"), to "I am still talking. Why do you interrupt me?". The ledger
+shows why it was able to: every sentence ended a turn, so it was asked to reply
+about 36 times while they read, declined most, and spoke at five. "A question
+put to you is always answered" and "when a thought lands" both fired on text
+that was nobody's question and nobody's thought in progress.
+
+WHEN THEY READ SOMETHING OUT (`READING_SECTION`, after the floor section in
+both the field agent and the study persona) says a text being read is the
+text, not talk to the agent: <silence> to every part of it until they say they
+have finished or turn to it, overriding those two rules. It also says to invite
+reading without asking, because the answer guard forces a reply to the first
+sentence after an agent question, and gives "Go on." for when a reply is forced
+anyway. Eval cases `reading-aloud-question-in-text`, `reading-aloud-claim`,
+`reading-aloud-mid-sentence` and `reading-aloud-finished`, from the drive's own
+words: without the section the first two failed every run; with it, all four
+pass 3 of 3.
+
+Not in this version: anything in the container. The turn-taking still asks the
+model at every end of a sentence; a reading mode the container enforces, as
+`Floor` enforces a Lock, would make that the system's decision, which is the
+study's own question.
 
 ### Which voice
 
@@ -560,9 +694,10 @@ a self-hosted one keeps them at AU. Same line as `STT_PROVIDER`.
 
 Ask for something to take away — "draft me an email to William", "write me a
 prompt for that", "note that down" — and the model wraps it in `<draft
-title="...">...</draft>`. The body is never spoken. It is stored and shown with
-a Copy button on the recording's page (no longer on the recorder; see
-talkback-20). Ask to change it — "make it shorter", "warmer", "fix the name" —
+title="...">...</draft>`. The body is never spoken. It is stored, shown on the
+recorder as a line in the conversation where it was written, which opens to the
+text with Copy (talkback-23), and on the recording's page with its versions and
+an editor. Ask to change it — "make it shorter", "warmer", "fix the name" —
 and it comes back as `<draft revises="3f9a2c" …>`, a new VERSION of the same
 draft rather than a second card.
 
@@ -588,8 +723,8 @@ participant's own words whenever they resembled something they had asked for.
 
 **Durable on purpose.** The container POSTs to `/api/realtime/draft`
 (ticket-authorised, ownership re-resolved), and both readers come from
-Postgres — the live panel via `/api/record/cues`, and `/sessions/[id]`
-afterwards. That matters most for `driving`, where `displayAllowed` is false and
+Postgres — the recorder's draft lines via `/api/record/cues`, and
+`/sessions/[id]` afterwards. That matters most for `driving`, where `displayAllowed` is false and
 the cue stream never opens: a draft asked for at 110 km/h is written, stored,
 and waiting at the desk. It is also the one panel that is tappable, which the
 cue panel's no-tap rule explicitly is not — there is no voice equivalent of

@@ -90,4 +90,10 @@ export interface Talkback {
    * loud. Kept and re-sent on every connect; the latest list wins.
    */
   offerSparks: (sparks: readonly SparkRequest[]) => void;
+  /**
+   * Tell the agent they renamed a subject, so it and the titler use their
+   * name from now on. Fire and forget: a reconnect hands the new name over
+   * with the rest of the titles anyway.
+   */
+  renameSubject: (ordinal: number, title: string) => void;
 }

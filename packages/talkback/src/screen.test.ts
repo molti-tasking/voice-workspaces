@@ -44,6 +44,41 @@ describe("screen", () => {
     expect(renderScreen("conversation")).toMatch(/named automatically.*cannot move anything between them/);
   });
 
+  it("says a draft is a line in the conversation, never 'this recording's page'", () => {
+    // 20 Oct 2026: "It's in your workspace and on this recording's page",
+    // said to somebody looking at the recorder, which showed no drafts.
+    const line = renderScreen("conversation");
+    expect(line).toMatch(/A draft you write shows in it as a line with its title/);
+    expect(line).not.toMatch(/this recording's page/);
+    for (const s of [...SCREENS, null]) {
+      expect(renderScreen(s)).toMatch(/A draft from the drive running now is a line in the conversation view/);
+    }
+  });
+
+  it("describes the conversation as one column in order, and returns at the bottom", () => {
+    const line = renderScreen("conversation");
+    expect(line).toMatch(/one column, in the order it was said/);
+    expect(line).toMatch(/new headline at the bottom/);
+    expect(line).not.toMatch(/two panels/);
+  });
+
+  it("says they can rename a headline, and the agent cannot", () => {
+    const line = renderScreen("conversation");
+    expect(line).toMatch(/you do not name them/);
+    expect(line).toMatch(/they can rename one with the pencil beside it/);
+  });
+
+  it("names the sparks row and Keep only on a drive that has them", () => {
+    const plain = renderScreen("conversation");
+    expect(plain).not.toMatch(/sparks|Keep/);
+    const chosen = renderScreen("conversation", { sparks: true, keep: true });
+    expect(chosen).toMatch(/a row of sparks/);
+    expect(chosen).toMatch(/Each headline has Keep/);
+    expect(renderScreen("conversation", { sparks: true })).not.toMatch(/Keep/);
+    // Other screens are the same on every drive.
+    expect(renderScreen("workspace", { sparks: true, keep: true })).toBe(renderScreen("workspace"));
+  });
+
   it("says it does not know rather than guessing", () => {
     expect(renderScreen(null)).toMatch(/not known/);
     expect(renderScreen("../../etc")).toMatch(/not known/);

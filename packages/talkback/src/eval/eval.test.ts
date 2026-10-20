@@ -284,6 +284,16 @@ describe("the turn messages, which mirror bot.py", () => {
     expect(composeContextBlock({ sparks: [] })).toBeNull();
   });
 
+  it("say why none is on offer on a drive with sparks, in the text bot.py renders", () => {
+    // Pinned on both sides: `test_bot.py` has the same text.
+    expect(composeContextBlock({ sparks: [], sparkSelection: "chosen" })).toContain(
+      'SPARKS ON OFFER: none right now. On this drive a spark comes only for a subject they keep — by saying "keep this one", or with Keep on its headline — and no subject they kept is waiting for one.',
+    );
+    expect(composeContextBlock({ sparks: [], sparkSelection: "suggested" })).toContain(
+      "SPARKS ON OFFER: none right now. On this drive they come by themselves, once a subject has had enough talk to ask about.",
+    );
+  });
+
   it("put the board ahead of everything, as Recall._compose does", () => {
     const block = composeContextBlock({
       board: "Their task board right now:\n- [doing] ethics form",

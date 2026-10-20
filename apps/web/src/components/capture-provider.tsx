@@ -29,6 +29,7 @@ import { useVoice } from "@/lib/recorder/voice-store";
 import {
   createConversationStore,
   currentTitle,
+  draftMajor,
   titlesForReconnect,
   type ConversationStore,
 } from "@/lib/talkback/conversation";
@@ -67,10 +68,11 @@ export interface CaptureContextValue {
    */
   conversationId: string | null;
   /**
-   * Both sides of this drive's conversation, by subject — what the recorder's
-   * two panels show. A store rather than a value, because it changes every few
-   * hundred milliseconds while the agent talks and only the panels need to
-   * hear about that; read it with `useSyncExternalStore`. Replaced when the
+   * Both sides of this drive's conversation, by subject and in order, with the
+   * drafts and pulled sparks placed in it — what the recorder shows. A store
+   * rather than a value, because it changes every few hundred milliseconds
+   * while the agent talks and only the conversation needs to hear about that;
+   * read it with `useSyncExternalStore`. Replaced when the
    * next drive starts, and kept after this one ends, like the rest of the view.
    */
   conversation: ConversationStore;
@@ -99,8 +101,16 @@ export interface CaptureContextValue {
    */
   poke: (spark?: SparkRequest) => Promise<PokeResult | null>;
   /**
-   * What the record screen shows under the title: cues and the drafts written
-   * on this drive. Frozen at Stop and kept, like the title.
+   * Rename a subject: their own name for it, on the screen, on the stored
+   * subject (the recall probe and My week ask by it) and to the agent, which
+   * calls it that from then on (talkback-23). Works after Stop too, while the
+   * conversation is still on screen. False when the conversation refused it:
+   * empty, or a name another subject of this drive already has.
+   */
+  renameSubject: (ordinal: number, title: string) => boolean;
+  /**
+   * The drafts written on this drive, which the conversation opens where they
+   * were written, and the cues. Frozen at Stop and kept, like the title.
    *
    * Held here, not on `/record`, for the reason the recorder is: state that
    * belongs to the drive must not belong to a route. On the page it was
@@ -197,6 +207,7 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     state: talkback,
     poke,
     offerSparks,
+    renameSubject: tellRename,
   } = useTalkback({
     captureSessionId: recorder.currentSessionId,
     enabled: TALKBACK_ENABLED && isRecording,
@@ -309,6 +320,18 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     enabled: isRecording && PROFILE.displayAllowed,
   });
 
+  // Each draft as a line in the conversation, after the turn that wrote it
+  // (talkback-23). Handed in whenever the drafts change: the store places each
+  // version the agent wrote once and ignores it after, so nothing is kept here.
+  useEffect(() => {
+    for (const draft of cues.drafts) {
+      conversation.dispatch({
+        type: "mark",
+        mark: { kind: "draft", draftId: draft.id, major: draftMajor(draft.version) },
+      });
+    }
+  }, [cues.drafts, conversation]);
+
   // Which screen they have open, reported on every navigation during a drive
   // so the agent can stop describing screens it cannot see. Fire and forget:
   // a missed report means the agent is told the screen is not known, which is
@@ -361,6 +384,30 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     return () => document.removeEventListener("visibilitychange", onHide);
   }, [isRecording, keepSignals]);
 
+  const renameSubject = useCallback(
+    (ordinal: number, title: string) => {
+      const before = conversation.getSnapshot();
+      conversation.dispatch({ type: "rename", ordinal, title });
+      const renamed = conversation.getSnapshot();
+      if (renamed === before) return false;
+      const name = renamed.sections.find((s) => s.ordinal === ordinal)?.title;
+      if (!name) return false;
+      tellRename(ordinal, name);
+      // Fire and forget, like the signals: the name on screen and with the
+      // agent stands whether or not this lands. Never logged — it is content.
+      if (conversationId) {
+        void fetch(`/api/capture-sessions/${conversationId}/subjects`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ordinal, title: name }),
+          keepalive: true,
+        }).catch(() => undefined);
+      }
+      return true;
+    },
+    [conversation, conversationId, tellRename],
+  );
+
   const stopRecording = useCallback(() => {
     keepSignals(true);
     void stop();
@@ -378,6 +425,7 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       floor,
       setFloor,
       poke,
+      renameSubject,
       cues,
       isRecording,
       isBusy,
@@ -401,6 +449,7 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       floor,
       setFloor,
       poke,
+      renameSubject,
       cues,
       isRecording,
       isBusy,

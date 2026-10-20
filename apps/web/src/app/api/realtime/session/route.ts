@@ -18,6 +18,7 @@ import {
   WEB_SEARCH_TOOL,
   asSttLanguage,
   asVoiceId,
+  capabilitiesSection,
   composeSystemPrompt,
   foldSummary,
   loadDriveSoFarText,
@@ -146,6 +147,8 @@ export async function POST(req: Request) {
   const participant = await findParticipantByUser(payload.userId).catch(() => null);
   const studyTask = studyTaskFor(participant?.task);
   const searchSection = webSearch ? [webSearchSection(new Date(), timeZoneOf(row.deviceInfo))] : [];
+  // Frozen to the day's concrete mode when the drive was registered.
+  const condition = resolveStudyCondition(row.studyCondition).condition;
   // A participant talks to the study's own agent (study-agent.ts): a
   // conversational assistant at a desk, the same in both arms, with the task
   // on top. No board and no earlier drives — a participant has neither.
@@ -160,6 +163,15 @@ export async function POST(req: Request) {
         sections: [
           ...(boardEditable ? [BOARD_EDITING] : []),
           ...searchSection,
+          // What it can do on THIS drive, from the same flags that decide it
+          // (capabilities.ts): asked "what can you do?", it answered from
+          // fragments, and could not say why there were no sparks.
+          capabilitiesSection({
+            board: boardEditable,
+            webSearch,
+            sparks: condition.sparks,
+            sparkSelection: condition.sparkSelection === "chosen" ? "chosen" : "suggested",
+          }),
           ...(recentDrives ? [recentDrives] : []),
         ],
       });
@@ -226,7 +238,7 @@ export async function POST(req: Request) {
       // defaults. A drive from before conditions existed reads as the
       // defaults, which is what it ran under unless the container's
       // PROACTIVE_OFFERS said otherwise.
-      studyCondition: resolveStudyCondition(row.studyCondition).condition,
+      studyCondition: condition,
       // OpenAI-format function tools for the container to register as they
       // are. Board tools only when the board is on, and then the prompt says
       // nothing about editing it either; every call comes back to

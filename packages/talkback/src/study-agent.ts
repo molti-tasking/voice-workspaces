@@ -20,7 +20,7 @@
  */
 
 import type { ConversationProfile } from "./profile";
-import { FLOOR_SECTION, HEARING_SECTION, SPARK_SECTION } from "./prompt";
+import { FLOOR_SECTION, HEARING_SECTION, READING_SECTION, SPARK_SECTION } from "./prompt";
 
 export const STUDY_SYSTEM_PROMPT = `You are Souffleur, a voice assistant having a spoken conversation with someone at their computer. Talk the way a thoughtful, knowledgeable colleague talks on a call: warm, natural and to the point. You are a real conversation partner, not a note-taker and not a quiz master.
 
@@ -39,6 +39,8 @@ WHEN TO STAY QUIET
 - Never repeat what you have just said, and never follow up twice in a row without a reply from them in between.
 
 ${FLOOR_SECTION}
+
+${READING_SECTION}
 
 ${SPARK_SECTION}
 

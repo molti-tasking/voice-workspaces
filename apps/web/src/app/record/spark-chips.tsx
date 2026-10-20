@@ -2,8 +2,9 @@
 
 import { Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import type { SparkSelection } from "@voicemural/shared";
 import { EMPTY_CONVERSATION, type ConversationStore } from "@/lib/talkback/conversation";
-import type { Spark, SparkKind } from "@/lib/talkback/signals";
+import { whyNoSparks, type NoSparksReason, type Spark, type SparkKind } from "@/lib/talkback/signals";
 import { EMPTY_LEDGER, sparkKey, type SparkLedger } from "@/lib/talkback/spark-ledger";
 import type { SparkRequest } from "@/lib/talkback/types";
 import type { PokeResult } from "@/lib/talkback/use-talkback";
@@ -30,11 +31,23 @@ import { POKE_NOTES } from "./floor-controls";
  */
 
 /** What each kind asks, as a chip says it. The agent words the real question. */
-const SPARK_LABELS: Record<SparkKind, string> = {
+export const SPARK_LABELS: Record<SparkKind, string> = {
   say_back: "Say it back in your own words",
   decide: "Decide it now",
   unsure: "What makes you unsure?",
   revisit: "Go back to it",
+};
+
+/**
+ * What the row says when nothing is on offer, instead of vanishing
+ * (talkback-23): an empty row read as "where are the sparks? there's no
+ * suggestions", and on a drive where they choose, nothing is on offer until
+ * they keep something.
+ */
+const NO_SPARKS: Record<NoSparksReason, string> = {
+  keep: "No sparks yet — keep a subject to get one on it.",
+  asked: "No sparks left — each subject you kept has had its spark.",
+  talk: "No sparks yet — they come once a subject has had some talk.",
 };
 
 /** How long what became of a pull stays under the chips. */
@@ -46,6 +59,8 @@ export function SparkChips({
   connected,
   speaking,
   onPull,
+  explainEmpty = false,
+  selection = "suggested",
 }: {
   store: ConversationStore;
   ledger: SparkLedger;
@@ -54,6 +69,10 @@ export function SparkChips({
   /** The agent is talking: nothing to pull into. */
   speaking: boolean;
   onPull: (spark: SparkRequest) => Promise<PokeResult | null>;
+  /** Say why when nothing is on offer, rather than showing no row at all. */
+  explainEmpty?: boolean;
+  /** Who picks the subjects on this drive, for saying why there are none. */
+  selection?: SparkSelection;
 }) {
   const conversation = useSyncExternalStore(
     store.subscribe,
@@ -88,7 +107,11 @@ export function SparkChips({
     return () => window.clearTimeout(timer);
   }, [note]);
 
-  if (sparks.length === 0 && asked.length === 0 && !note) return null;
+  if (sparks.length === 0 && asked.length === 0 && !note && !explainEmpty) return null;
+  const none =
+    explainEmpty && sparks.length === 0
+      ? NO_SPARKS[whyNoSparks(conversation, new Set(spent.pulled.keys()), selection)]
+      : null;
 
   async function pull(spark: Spark) {
     setPulling(true);
@@ -97,7 +120,14 @@ export function SparkChips({
       const result = await onPull({ kind: spark.kind, ordinal: spark.ordinal, ...(question ? { question } : {}) });
       // Taken only if the poke was: an agent already talking, or another poke
       // under way, has not asked it.
-      if (result === "fired" || result === "armed") ledger.notePulled(spark);
+      if (result === "fired" || result === "armed") {
+        ledger.notePulled(spark);
+        // And in the conversation, before the question it asks.
+        store.dispatch({
+          type: "mark",
+          mark: { kind: "spark", ordinal: spark.ordinal, spark: spark.kind, ...(question ? { question } : {}) },
+        });
+      }
       setNote(result ? POKE_NOTES[result] : "Could not reach it");
     } finally {
       setPulling(false);
@@ -107,6 +137,12 @@ export function SparkChips({
   return (
     <div className="ph-no-capture relative shrink-0" role="group" aria-label="Sparks">
       <ul className="flex gap-2 overflow-x-auto pb-0.5">
+        {none && (
+          <li className="flex min-h-11 min-w-0 shrink-0 basis-[min(22rem,90%)] items-center gap-1.5 text-sm text-fg/60">
+            <Sparkles size={14} aria-hidden className="shrink-0 text-fg/40" />
+            <span>{none}</span>
+          </li>
+        )}
         {sparks.map((spark) => {
           // Its own question when one has been written; the kind's label
           // until then, or if none comes.
