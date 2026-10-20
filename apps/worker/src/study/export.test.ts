@@ -181,8 +181,11 @@ async function seed() {
     fade: 0.6,
     sparksShown: ["say_back"],
     sparksPulled: ["say_back"],
+    kept: true,
+    keptVia: "voice",
+    keptAt: new Date("2026-09-10T07:10:00Z"),
     final: true,
-    signalsVersion: "signals-1",
+    signalsVersion: "signals-2",
   });
   await db.insert(schema.agentDecision).values({
     captureSessionId: SESSION,
@@ -264,7 +267,7 @@ describeIfDb("study export", () => {
   it("carries the sparks by ordinal: visits, signals, the spark a poke carried, and recall", async () => {
     const records = await exportParticipant(USER_ID);
     const of = (type: string) => records.filter((r) => r.type === type);
-    expect(records[0]).toMatchObject({ exportVersion: 4 });
+    expect(records[0]).toMatchObject({ exportVersion: 5 });
     expect(of("drive_subject")).toEqual([
       {
         type: "drive_subject",
@@ -283,6 +286,9 @@ describeIfDb("study export", () => {
       pausesBefore: 1,
       settled: false,
       sparksPulled: ["say_back"],
+      kept: true,
+      keptVia: "voice",
+      keptAt: "2026-09-10T07:10:00.000Z",
     });
     expect(of("agent_decision").find((d) => d.trigger === "poke")).toMatchObject({
       subjectKey: "s1",

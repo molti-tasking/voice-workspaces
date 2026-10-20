@@ -19,8 +19,10 @@ import { and, asc, eq, getDb, gte, isNotNull, isNull, lte, sql } from "./index";
  * WHICH SUBJECTS. Up to three per drive: every one they pulled a spark on, up
  * to two, and the rest of the three drawn at random from the others — so the
  * pulled and the unpulled can be compared, and so the control arm, which pulls
- * nothing, still gets three. A Prolific participant's three are all drawn at
- * random, because there the ARMS are compared on them.
+ * nothing, still gets three. On a drive where they kept subjects, the kept
+ * ones take the pulled ones' place, and the rest are still drawn from what
+ * Souffleur held. A Prolific participant's three are all drawn at random,
+ * because there the ARMS are compared on them.
  *
  * WHEN. `RECALL_DELAY_HOURS` after the drive ended — or, for a Prolific
  * participant, the delay their enrolment fixed (`recall_delay_hours`), so a
@@ -77,6 +79,7 @@ export async function scheduleRecallProbes(
     .select({
       id: driveSubject.id,
       pulled: subjectSignal.sparksPulled,
+      kept: subjectSignal.kept,
       probe: recallProbe.id,
     })
     .from(driveSubject)
@@ -97,8 +100,15 @@ export async function scheduleRecallProbes(
   // two arms are compared on these probes, and preferring pulled subjects in
   // the sparks arm alone would compare different kinds of subject. The field
   // study keeps the preference, which serves its within-person comparison.
-  const pulled = participant ? [] : subjects.filter((s) => (s.pulled?.length ?? 0) > 0);
-  const chosen = sample(pulled, RECALL_PULLED_PER_DRIVE, random);
+  //
+  // A drive where they KEPT subjects (`sparkSelection: chosen`) prefers the
+  // kept ones instead, and the rest of the three still come from what
+  // Souffleur held — so a probe asks about both, which is what lets the
+  // interview compare keeping with handing over.
+  const kept = subjects.filter((s) => s.kept === true);
+  const pulled = subjects.filter((s) => (s.pulled?.length ?? 0) > 0);
+  const preferred = participant ? [] : kept.length > 0 ? kept : pulled;
+  const chosen = sample(preferred, RECALL_PULLED_PER_DRIVE, random);
   const rest = subjects.filter((s) => !chosen.includes(s));
   chosen.push(...sample(rest, RECALL_SUBJECTS_PER_DRIVE - chosen.length, random));
   const delayHours = participant?.hours ?? RECALL_DELAY_HOURS;

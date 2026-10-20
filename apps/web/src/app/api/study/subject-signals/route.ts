@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { captureSession, eq, getDb, sparkKindEnum } from "@voicemural/db";
+import { captureSession, eq, getDb, keepViaEnum, sparkKindEnum } from "@voicemural/db";
 import { scheduleRecallProbes } from "@voicemural/db/recall";
 import { saveSubjectSignals } from "@voicemural/db/subjects";
 import { currentUserId } from "@/lib/session";
@@ -10,8 +10,8 @@ export const dynamic = "force-dynamic";
 
 /**
  * Keep what the recorder worked out about each subject of a drive: whose
- * words, how sure they sounded, settled or open, and the sparks it showed and
- * the ones pulled (apps/web/src/lib/talkback/signals.ts).
+ * words, how sure they sounded, settled or open, the sparks it showed and the
+ * ones pulled, and whether they kept it (apps/web/src/lib/talkback/signals.ts).
  *
  * Posted at Stop (`final`) and as a best effort when the page is hidden mid-
  * drive. Counts, a boolean, a number and enums only — no title, no words —
@@ -43,6 +43,11 @@ const Body = z.object({
         fade: z.number().min(0).max(1),
         sparksShown: z.array(SparkKind).max(4),
         sparksPulled: z.array(SparkKind).max(4),
+        // Whether they kept it in their own head, how, and when (epoch ms).
+        // Optional, so an older recorder still posts.
+        kept: z.boolean().optional(),
+        keptVia: z.enum(keepViaEnum.enumValues).nullable().optional(),
+        keptAt: z.number().int().min(0).nullable().optional(),
       }),
     )
     .max(200),
@@ -67,7 +72,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
-  const result = await saveSubjectSignals(captureSessionId, subjects, { final, signalsVersion });
+  const result = await saveSubjectSignals(
+    captureSessionId,
+    subjects.map(({ keptAt, ...subject }) => ({
+      ...subject,
+      keptAt: keptAt ? new Date(keptAt) : null,
+    })),
+    { final, signalsVersion },
+  );
   if (final) await scheduleRecallProbes(captureSessionId);
   return NextResponse.json({ ok: true, ...result }, { headers: { "Cache-Control": "no-store" } });
 }

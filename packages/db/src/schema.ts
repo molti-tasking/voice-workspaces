@@ -1077,8 +1077,16 @@ export const driveSubjectSegmentRelations = relations(driveSubjectSegment, ({ on
 }));
 
 /**
+ * How a subject was kept: a tap on Keep, or "keep this one" said aloud
+ * (`keepRequest` in @voicemural/shared, heard by the recorder).
+ */
+export const keepViaEnum = pgEnum("keep_via", ["tap", "voice"]);
+
+/**
  * What the recorder worked out about one subject, as the browser last posted
- * it: counts, a judgement, the sparks it showed and the ones pulled.
+ * it: counts, a judgement, the sparks it showed and the ones pulled, and
+ * whether the person KEPT it — chose to hold it in their own head rather than
+ * leave it to Souffleur (`sparkSelection: chosen`).
  *
  * Posted at Stop, and as a best effort when the page is hidden; the last write
  * wins, and `final` says whether it came from Stop. Kept with the arm off too
@@ -1107,6 +1115,12 @@ export const subjectSignal = pgTable(
     fade: real("fade").notNull(),
     sparksShown: sparkKindEnum("sparks_shown").array().notNull().default(sql`'{}'`),
     sparksPulled: sparkKindEnum("sparks_pulled").array().notNull().default(sql`'{}'`),
+    /** They kept it in their own head. False: Souffleur holds it. */
+    kept: boolean("kept").notNull().default(false),
+    /** How: a tap or a spoken "keep this one". Null when not kept. */
+    keptVia: keepViaEnum("kept_via"),
+    /** When they kept it. A timing, like every other here. Null when not kept. */
+    keptAt: timestamp("kept_at", { withTimezone: true }),
     final: boolean("final").notNull().default(false),
     /** `SIGNALS_VERSION` of the rules that computed it. */
     signalsVersion: text("signals_version"),

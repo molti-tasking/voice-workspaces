@@ -29,8 +29,18 @@ describe("what leaves the phone about each subject", () => {
         settled: false,
         sparksShown: ["unsure"],
         sparksPulled: ["unsure"],
+        kept: false,
+        keptVia: null,
+        keptAt: null,
       }),
     ]);
+    expect(JSON.stringify(body)).not.toContain("SECRET");
+  });
+
+  it("says whether they kept a subject, how and when", () => {
+    const kept = applyMessage(conversation, { type: "keep", ordinal: 1, kept: true, via: "voice" }, 5_000);
+    const body = subjectSignalsBody("s-1", kept, createSparkLedger().getSnapshot(), 0, true);
+    expect(body.subjects[0]).toMatchObject({ kept: true, keptVia: "voice", keptAt: 5_000 });
     expect(JSON.stringify(body)).not.toContain("SECRET");
   });
 });

@@ -20,8 +20,8 @@ import { closeDb, getDb } from "./index";
 
 const USER_ID = "test-recall-user";
 const OTHER_ID = "test-recall-other";
-const SESSION = "00000000-0000-4000-8000-0000000000f1";
-const CHUNK = "00000000-0000-4000-8000-0000000000f2";
+const SESSION = "00000000-0000-4000-8000-000000000071";
+const CHUNK = "00000000-0000-4000-8000-000000000072";
 const ENDED = new Date("2026-10-01T08:30:00Z");
 const DUE = new Date(ENDED.getTime() + RECALL_DELAY_HOURS * 3_600_000);
 
@@ -105,6 +105,26 @@ describeIfDb("the recall probe", () => {
     expect(due).toHaveLength(3);
     expect(await loadDueProbes(USER_ID, new Date(DUE.getTime() - 1))).toEqual([]);
     expect(await countDueProbes(USER_ID, DUE)).toBe(3);
+  });
+
+  it("prefers the subjects they kept, and still asks about one Souffleur held", async () => {
+    const zero = { userWords: 0, agentWords: 0, pauses: 0, pausesBefore: 0, fillers: 0, selfRepairs: 0, hedges: 0, settled: null, fade: 0, sparksShown: [], sparksPulled: [] };
+    // Subjects 3 and 4 kept; the pulled spark on 2 no longer decides.
+    await saveSubjectSignals(
+      SESSION,
+      [
+        { ordinal: 1, ...zero },
+        { ordinal: 2, ...zero, sparksPulled: ["say_back"] },
+        { ordinal: 3, ...zero, kept: true, keptVia: "tap", keptAt: ENDED },
+        { ordinal: 4, ...zero, kept: true, keptVia: "voice", keptAt: ENDED },
+      ],
+      { final: true },
+    );
+    expect(await scheduleRecallProbes(SESSION, { random: () => 0 })).toBe(3);
+    const titles = (await loadDueProbes(USER_ID, DUE)).map((p) => p.title);
+    expect(titles).toEqual(expect.arrayContaining(["Budget", "Flights"]));
+    // The third is one they did not keep.
+    expect(titles.filter((t) => t === "Car inspection" || t === "Paper intro")).toHaveLength(1);
   });
 
   it("schedules a drive Stop never reached the first time due probes are looked up", async () => {
