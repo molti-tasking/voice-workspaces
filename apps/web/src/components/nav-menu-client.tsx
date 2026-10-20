@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BookmarkCheck,
   ListTree,
   LogOut,
   MessagesSquare,
@@ -20,7 +21,8 @@ import { Link } from "./nav-link";
  * Everything that is not one of the dock's two surfaces.
  *
  * Three readings of the whole corpus — the ledger end to end, topics over
- * time, what the system has learned to do — plus the study sheet. None of them
+ * time, what the system has learned to do — plus the participant's own week
+ * and the study sheet. None of them
  * is somewhere a participant goes mid-task, which is exactly why they are here
  * and not in the dock.
  *
@@ -36,6 +38,8 @@ const LINKS: { href: string; label: string; hint: string; Icon: LucideIcon }[] =
   { href: "/timeline", label: "Timeline", hint: "Every drive, read end to end", Icon: ListTree },
   { href: "/trajectory", label: "Trajectory", hint: "Topics over time", Icon: Waypoints },
   { href: "/repertoire", label: "Repertoire", hint: "What it has learned to do", Icon: Sparkles },
+  // The field week's own page: what they kept, and on which days they picked.
+  { href: "/my-week", label: "My week", hint: "What you kept, day by day", Icon: BookmarkCheck },
 ];
 
 export type AccountUser = {

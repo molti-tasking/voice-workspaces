@@ -18,7 +18,8 @@
     "./memory": "./src/memory.ts",
     "./subjects": "./src/subjects.ts",
     "./recall": "./src/recall.ts",
-    "./prolific": "./src/prolific.ts"
+    "./prolific": "./src/prolific.ts",
+    "./week": "./src/week.ts"
   },
   "scripts": {
     "generate": "drizzle-kit generate",

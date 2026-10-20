@@ -1,12 +1,22 @@
 import { NextResponse } from "next/server";
 import { and, eq, getDb, surveyResponse } from "@voicemural/db";
-import { SurveyAnswers, SurveyKey, SurveyResponseUpsert, type SurveyResponseView } from "@voicemural/shared";
+import {
+  SURVEY_ANSWERS,
+  SurveyKey,
+  SurveyResponseUpsert,
+  emptyAnswers,
+  type SurveyResponseView,
+} from "@voicemural/shared";
 import { currentUserId } from "@/lib/session";
 
 export const runtime = "nodejs";
 
 /**
  * One person's answers to one survey, read back and written whole.
+ *
+ * Two surveys today: `initial` (`/survey`) and the end-of-week questionnaire
+ * `week` (`/survey/week`). Each document is checked against its own survey's
+ * shape (`SurveyResponseUpsert` is a union on the key).
  *
  * WHOLE, every time. The form on `/survey` holds the document and saves it as
  * one piece — a draft on blur, the final on Send — so there is nothing to
@@ -48,10 +58,10 @@ export async function GET(req: Request) {
   // Re-validated on the way out: a document written by an older page against
   // a shape this one no longer understands renders as far as it parses,
   // rather than crashing the form on a field nobody can see.
-  const answers = SurveyAnswers.safeParse(row.answers);
-  const view: SurveyResponseView = {
+  const answers = SURVEY_ANSWERS[survey].safeParse(row.answers);
+  const view: SurveyResponseView<unknown> = {
     version: row.version,
-    answers: answers.success ? answers.data : { moments: [] },
+    answers: answers.success ? answers.data : emptyAnswers(survey),
     submittedAt: row.submittedAt?.toISOString() ?? null,
     updatedAt: row.updatedAt.toISOString(),
   };

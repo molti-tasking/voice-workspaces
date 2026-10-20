@@ -107,6 +107,25 @@ describeIfDb("/api/survey", () => {
     expect(view.answers.again).toBe("If it remembered Tuesday.");
   });
 
+  it("keeps the end-of-week questionnaire as its own document, in its own shape", async () => {
+    await put({ survey: "initial", version: "initial-1", answers: { moments: [MOMENT] } });
+    const week = {
+      ratings: { choice_own: 6, choice_had_to: 2 },
+      keptIncident: "The budget, because I wanted to know the number myself.",
+      preferred: "i_pick",
+    };
+    expect((await put({ survey: "week", version: "week-1", answers: week, submit: true })).status).toBe(200);
+
+    const view = await (await get("week")).json();
+    expect(view.answers).toEqual(week);
+    expect(view.submittedAt).toEqual(expect.any(String));
+    // The initial survey is untouched by it.
+    expect((await (await get("initial")).json()).answers.moments).toHaveLength(1);
+    expect(
+      (await put({ survey: "week", version: "week-1", answers: { ratings: { choice_own: 9 } } })).status,
+    ).toBe(400);
+  });
+
   it("rejects a body the contract does not know", async () => {
     expect((await put({ survey: "initial", version: "initial-1", answers: { moments: "no" } })).status).toBe(400);
     expect((await put({ survey: "exit", version: "initial-1", answers: { moments: [] } })).status).toBe(400);
