@@ -407,6 +407,58 @@ probe** (`/recall`, `recall_probe`): 48 h later, up to three of the drive's
 subjects, every pulled one first. Numbers and an enum only; what they recall
 is never stored.
 
+### talkback-22: keeping
+
+Sparks first shipped with the recorder deciding which subjects to offer them
+on. Keeping lets the person decide instead: they **keep** the subjects they
+want to hold in their own head, Souffleur holds the rest, and sparks come only
+for what they kept. The choice is theirs so that the motivation to remember is
+too.
+
+**Who picks is a condition.** `studyCondition.sparkSelection` is `suggested`
+(the signals pick, as before), `chosen` (they keep), or `alternate`: one, then
+the other, by calendar day in `STUDY_TIME_ZONE`, from `alternateFrom`,
+starting with `alternateStart`. `POST /api/capture-sessions` freezes it to the
+day's concrete mode (`freezeStudyCondition`), so a drive across midnight keeps
+the mode it started in, and the export reads the mode straight off the drive.
+
+**Keeping by tap.** On a `chosen` drive, each subject's heading in their panel
+has a Keep toggle (`conversation-panels.tsx`); the hint above the panels says
+voice first, because the information sheet says the phone is not touched
+while driving.
+
+**Keeping by voice, in the browser.** "Keep this one", "I want to keep that",
+"das will ich behalten" — and "don't keep this one" to take it back — are
+recognised in their own turns by `keepRequest` (`packages/shared/src/keep.ts`):
+the WHOLE turn must be the command, after fillers and a little courtesy, so
+"keep this simple" never counts. "Remember this" deliberately does not: said to
+the agent it asks the agent to hold it, the opposite of keeping. The recorder
+acts on a turn once it has settled — no longer the newest line, or unchanged
+for 1.5 s (`keep-watcher.ts`) — and confirms with the `kept` earcon (two short
+rising notes; `unkept` falls). No container change: the browser already has
+every turn filed by subject.
+
+**The agent lets it pass.** WHEN THEY KEEP A SUBJECT, inside `SPARK_SECTION`:
+reply `<silence>`, never say you will remember, note or save it, never test
+them on it; and if a reply is required — `AnswerGuard` forces one when the
+agent's last turn was a question — say only "Okay." Eval cases
+`keep-this-one-en` and `keep-this-one-de`.
+
+**What is kept.** `subject_signal.kept`, `kept_via` (tap | voice) and
+`kept_at` (migration 0028), posted at Stop with the rest of the signals
+(`signals-2`; a keep command is not counted as words or hesitation). The
+recall probe prefers kept subjects, up to two, and still draws one from what
+Souffleur held, so the two can be compared. The export (v5) carries the three
+fields by ordinal; `study:metrics` (v3) counts keeps by tap and voice and pools
+the sparks group separately over the two modes (`sparksByMode`).
+
+**What the person sees.** `/my-week`: their drives of the last seven days by
+day, which mode each day ran in, and per subject whether they kept it, and
+today's mode. `/survey/week` is the end-of-week questionnaire (`week-1`):
+adapted IMI items on choosing, incident questions about one subject kept and
+one let go, and whether they would join an interview; `pnpm study:week`
+exports the closed answers, and their words only with `--text`.
+
 ### Which voice
 
 Three ElevenLabs voices are offered on the recorder, from the catalogue in
