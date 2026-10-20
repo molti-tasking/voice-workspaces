@@ -1,21 +1,19 @@
 "use client";
 
-import { Check, Plus, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Plus, Trash2 } from "lucide-react";
+import { useCallback } from "react";
 import {
   AFTERWARDS,
   MOMENT_ATTENTION,
   MOMENT_PLACES,
   SURVEY_VERSION,
-  emptySurveyAnswers,
   type Afterwards,
   type MomentAttention,
   type MomentPlace,
-  type SurveyAnswers,
   type SurveyMoment,
-  type SurveyResponseView,
 } from "@voicemural/shared";
-import { Chips, Field, MultiChips, Scale } from "./fields";
+import { Chips, Field, MultiChips, SaveState, Scale } from "./fields";
+import { useSurveyDocument } from "./use-survey-document";
 
 /**
  * The form: a list of moments, each asked about in the same depth, then three
@@ -29,12 +27,8 @@ import { Chips, Field, MultiChips, Scale } from "./fields";
  *
  * ## How it saves
  *
- * The whole document, every time, a second after the last edit — not per
- * field, and not on a button, because a form on a phone is left mid-sentence
- * when the bus arrives. Send does the same write with `submit: true`. A saved
- * draft loads back on the next visit, from the server rather than from
- * localStorage, so the phone and the laptop see the same half-finished
- * answers.
+ * The whole document, a second after the last edit, and loaded back on the
+ * next visit: `useSurveyDocument`, which the end-of-week form shares.
  *
  * ## Nothing is required
  *
@@ -44,76 +38,8 @@ import { Chips, Field, MultiChips, Scale } from "./fields";
  * opened by mistake.
  */
 
-const SURVEY = "initial" as const;
-const SAVE_AFTER_MS = 1000;
-
-type Status = "loading" | "idle" | "saving" | "saved" | "sent" | "error";
-
 export function SurveyForm() {
-  const [answers, setAnswers] = useState<SurveyAnswers>(emptySurveyAnswers);
-  const [status, setStatus] = useState<Status>("loading");
-  const [submittedAt, setSubmittedAt] = useState<string | null>(null);
-  // The edit that is waiting to be saved, so a save never runs on the render
-  // it was scheduled in, and Send saves what is on screen rather than what
-  // the last timer saw.
-  const dirty = useRef(false);
-  const timer = useRef<number | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`/api/survey?survey=${SURVEY}`, { cache: "no-store" });
-        if (!res.ok) throw new Error(String(res.status));
-        const view = (await res.json()) as SurveyResponseView | null;
-        if (cancelled) return;
-        if (view) {
-          setAnswers(view.answers);
-          setSubmittedAt(view.submittedAt);
-        }
-        setStatus(view?.submittedAt ? "sent" : "idle");
-      } catch {
-        if (!cancelled) setStatus("error");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const save = useCallback(
-    async (next: SurveyAnswers, submit: boolean) => {
-      setStatus("saving");
-      try {
-        const res = await fetch("/api/survey", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ survey: SURVEY, version: SURVEY_VERSION, answers: next, submit }),
-        });
-        if (!res.ok) throw new Error(String(res.status));
-        const body = (await res.json()) as { submittedAt: string | null };
-        dirty.current = false;
-        setSubmittedAt(body.submittedAt);
-        setStatus(body.submittedAt ? "sent" : "saved");
-      } catch {
-        setStatus("error");
-      }
-    },
-    [],
-  );
-
-  const update = useCallback(
-    (patch: (prev: SurveyAnswers) => SurveyAnswers) => {
-      setAnswers((prev) => {
-        const next = patch(prev);
-        dirty.current = true;
-        if (timer.current) window.clearTimeout(timer.current);
-        timer.current = window.setTimeout(() => void save(next, false), SAVE_AFTER_MS);
-        return next;
-      });
-    },
-    [save],
-  );
+  const { answers, status, submittedAt, update, send } = useSurveyDocument("initial", SURVEY_VERSION);
 
   const updateMoment = useCallback(
     (id: string, patch: Partial<SurveyMoment>) =>
@@ -132,11 +58,6 @@ export function SurveyForm() {
 
   const removeMoment = (id: string) =>
     update((prev) => ({ ...prev, moments: prev.moments.filter((m) => m.id !== id) }));
-
-  const send = () => {
-    if (timer.current) window.clearTimeout(timer.current);
-    void save(answers, true);
-  };
 
   if (status === "loading") {
     return <p className="text-sm text-fg/60">Loading what you saved…</p>;
@@ -342,20 +263,3 @@ const AFTERWARDS_LABELS: Record<Afterwards, string> = {
   transcript: "The transcript",
   nothing: "Nothing",
 };
-
-function SaveState({ status, submittedAt }: { status: Status; submittedAt: string | null }) {
-  if (status === "error") {
-    return <p className="text-sm text-red-300">Could not save. Check the connection and try again.</p>;
-  }
-  if (status === "saving") return <p className="text-sm text-fg/60">Saving…</p>;
-  if (status === "sent" && submittedAt) {
-    return (
-      <p className="flex items-center gap-1.5 text-sm text-emerald-200">
-        <Check size={14} aria-hidden />
-        Sent. Thank you — you can still change anything and send again.
-      </p>
-    );
-  }
-  if (status === "saved") return <p className="text-sm text-fg/60">Saved.</p>;
-  return null;
-}

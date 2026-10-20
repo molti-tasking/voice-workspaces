@@ -10,6 +10,7 @@
  *   pnpm study:condition --user <id> --set '<json>'       the condition for their NEXT drives (or --clear)
  *   pnpm study:condition --user <id>                      print the template and recent drives
  *   pnpm study:prolific [--out <dir>]                     the Prolific study: participants.csv and probes.csv (PROLIFIC.md)
+ *   pnpm study:week [--out <dir>] [--text]                the end-of-week questionnaire: week.csv (and week-texts.jsonl)
  *
  * WHY SETTERS AT ALL, when `board_enabled_at` is set with SQL. A condition is
  * JSON, and a hand-written JSON typo in `user.study_condition` does not fail:
@@ -35,6 +36,7 @@ import { exportParticipant, studyParticipants } from "../study/export";
 import { participantMetrics } from "../study/metrics";
 import { buildProlificExport, toCsv } from "../study/prolific-export";
 import { pendingReview, recordReview } from "../study/review";
+import { loadWeekResponses, weekRows, weekTexts } from "../study/week-survey";
 
 function flag(name: string): string | undefined {
   const at = process.argv.indexOf(`--${name}`);
@@ -269,6 +271,31 @@ async function runProlific(): Promise<void> {
   console.log(`${join(outDir, "probes.csv")}  ${probes.length} probes`);
 }
 
+/**
+ * The end-of-week questionnaire (`/survey/week`). The closed answers always;
+ * their words only with `--text`, which is a deliberate act — see
+ * week-survey.ts. Under the gitignored `storage/` unless told otherwise.
+ */
+async function runWeek(): Promise<void> {
+  const outDir = flag("out")
+    ? resolve(flag("out")!)
+    : new URL("../../../../storage/week-survey", import.meta.url).pathname;
+  const responses = await loadWeekResponses();
+  if (responses.length === 0) {
+    console.log("nobody has opened the end-of-week questionnaire yet");
+    return;
+  }
+  await mkdir(outDir, { recursive: true });
+  await writeFile(join(outDir, "week.csv"), toCsv(weekRows(responses)));
+  const sent = responses.filter((r) => r.submittedAt !== null).length;
+  console.log(`${join(outDir, "week.csv")}  ${responses.length} responses, ${sent} sent`);
+  if (has("text")) {
+    const file = join(outDir, "week-texts.jsonl");
+    await writeFile(file, weekTexts(responses).map((r) => JSON.stringify(r)).join("\n") + "\n");
+    console.log(`${file}  their words — do not share the file`);
+  }
+}
+
 async function main(): Promise<void> {
   switch (process.argv[2]) {
     case "export":
@@ -283,9 +310,11 @@ async function main(): Promise<void> {
       return runCondition();
     case "prolific":
       return runProlific();
+    case "week":
+      return runWeek();
     default:
       throw new Error(
-        "usage: study-admin <export|metrics|review|participant|condition|prolific> [--user <id>] …",
+        "usage: study-admin <export|metrics|review|participant|condition|prolific|week> [--user <id>] …",
       );
   }
 }

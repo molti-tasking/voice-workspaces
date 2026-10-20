@@ -1,5 +1,8 @@
 "use client";
 
+import { Check } from "lucide-react";
+import type { SaveStatus } from "./use-survey-document";
+
 /**
  * The inputs both survey pages are built from.
  *
@@ -157,4 +160,22 @@ export function Scale({
       </div>
     </fieldset>
   );
+}
+
+/** Where the save is, beside Send. */
+export function SaveState({ status, submittedAt }: { status: SaveStatus; submittedAt: string | null }) {
+  if (status === "error") {
+    return <p className="text-sm text-red-300">Could not save. Check the connection and try again.</p>;
+  }
+  if (status === "saving") return <p className="text-sm text-fg/60">Saving…</p>;
+  if (status === "sent" && submittedAt) {
+    return (
+      <p className="flex items-center gap-1.5 text-sm text-emerald-200">
+        <Check size={14} aria-hidden />
+        Sent. Thank you — you can still change anything and send again.
+      </p>
+    );
+  }
+  if (status === "saved") return <p className="text-sm text-fg/60">Saved.</p>;
+  return null;
 }
