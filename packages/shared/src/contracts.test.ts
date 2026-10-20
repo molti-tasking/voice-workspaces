@@ -18,7 +18,7 @@ describe("StudyCondition", () => {
       proactiveOffers: true,
       agendaOffers: false,
       voiceMacroOffers: false,
-      sparks: false,
+      sparks: true,
       sparkSelection: "suggested",
       alternateStart: "suggested",
     };
@@ -32,7 +32,7 @@ describe("StudyCondition", () => {
       proactiveOffers: true,
       agendaOffers: true,
       voiceMacroOffers: false,
-      sparks: false,
+      sparks: true,
       sparkSelection: "suggested",
       alternateStart: "suggested",
     });

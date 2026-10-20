@@ -593,6 +593,29 @@ model at every end of a sentence; a reading mode the container enforces, as
 `Floor` enforces a Lock, would make that the system's decision, which is the
 study's own question.
 
+### The conversation mirror
+
+`/record` shows a drive three ways, switched by one row of buttons above it
+and remembered per browser: **Conversation** (the column in order,
+talkback-23), and the mirror in two layouts, **Mirror** (a track) and
+**Bubbles** (`conversation-mirror.tsx`). The mirror shows the conversation, not
+the words: each topic once, on the side of whoever's words it mostly is (the
+person's, or Souffleur's), the one being talked about drawn larger, one left a
+while ago with a dashed outline, and a spark on offer as an amber dot. Places
+never change and nothing animates. A focus strip under it holds the words —
+a few points per side for the topic being talked about, or for one tapped —
+and pulls that topic's spark (`pullSpark`, shared with the chips).
+
+The points come from `/api/realtime/mirror` (`mirror.ts` in this package):
+the recorder sends a topic's title and lines once they have stood still for
+2.5 s, and gets back up to three points per side, or null and keeps what it
+had. Nothing is stored. No container change: topics, sides and sparks are all
+worked out in the browser from what it already receives.
+
+Sparks are on by default since this change (`StudyCondition.sparks`), so
+every drive is the same app; a condition with `sparks: false` still turns
+them off.
+
 ### Which voice
 
 Three ElevenLabs voices are offered on the recorder, from the catalogue in

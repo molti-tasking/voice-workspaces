@@ -15,7 +15,9 @@ import {
   VoicePicker,
 } from "@/components/capture-settings";
 import { RecordingBadge } from "@/components/recording-badge";
+import { useLocalValue, writeLocalValue } from "@/lib/local-value";
 import { ConversationFlow } from "./conversation-flow";
+import { ConversationMirror } from "./conversation-mirror";
 import { FloorControls } from "./floor-controls";
 import { SparkChips } from "./spark-chips";
 import { PostDriveItems } from "./study-items";
@@ -73,6 +75,10 @@ export function RecorderClient() {
   } = useCapture();
   const hearing = talk.status === "speaking";
   const connected = talk.status === "listening" || talk.status === "speaking";
+  // How the conversation is shown: in order, word for word, or as the mirror
+  // in one of its two layouts. A choice of this browser, kept across drives.
+  const stored = useLocalValue(VIEW_KEY);
+  const view: View = VIEWS.some((v) => v.id === stored) ? (stored as View) : "conversation";
 
   // Setup until the first drive of this page load; the conversation from then
   // on. `ended` is that conversation once nothing is capturing any more.
@@ -208,35 +214,52 @@ export function RecorderClient() {
         />
       )}
 
-      <ConversationFlow
-        // Keyed by the drive: the next one starts from nothing rather than
-        // inheriting the last one's scroll position and opened headlines.
-        key={conversationId}
-        store={conversation}
-        live={isRecording}
-        status={
-          TALKBACK_ENABLED && isRecording
-            ? {
-                floor: connected ? (talk.floor ?? floor) : null,
-                // The agent first: its own voice can reach the microphone.
-                speaking: hearing,
-                listening: !hearing && talk.userSpeaking,
-              }
-            : null
-        }
-        // "It is listening" is true only while it is.
-        placeholder={isRecording ? PROFILE.hint : undefined}
-        // Keeping is part of the drive: after Stop the subjects are a record.
-        keepable={TALKBACK_ENABLED && isRecording && keepable}
-        // Only in the sparks arm: the ledger is worked out in both, for the
-        // record, and the control arm must not see a sparkle on a headline.
-        sparks={TALKBACK_ENABLED && rec.sparksArm ? sparks : null}
-        drafts={cues.drafts}
-        // During the drive and after it: tidying the headlines is a thing to
-        // do once there is time to read them.
-        onRename={renameSubject}
-        className={isRecording ? "min-h-0 flex-1" : "h-[65dvh] shrink-0"}
-      />
+      <ViewSwitch view={view} />
+
+      {view !== "conversation" ? (
+        <ConversationMirror
+          // Keyed by the drive, like the conversation: its points start empty.
+          key={conversationId}
+          store={conversation}
+          sparks={TALKBACK_ENABLED && rec.sparksArm ? sparks : null}
+          layout={view}
+          captureSessionId={conversationId}
+          live={isRecording}
+          canPull={TALKBACK_ENABLED && isRecording && connected && !hearing}
+          onPull={poke}
+          className={isRecording ? "min-h-0 flex-1" : "h-[65dvh] shrink-0"}
+        />
+      ) : (
+        <ConversationFlow
+          // Keyed by the drive: the next one starts from nothing rather than
+          // inheriting the last one's scroll position and opened headlines.
+          key={conversationId}
+          store={conversation}
+          live={isRecording}
+          status={
+            TALKBACK_ENABLED && isRecording
+              ? {
+                  floor: connected ? (talk.floor ?? floor) : null,
+                  // The agent first: its own voice can reach the microphone.
+                  speaking: hearing,
+                  listening: !hearing && talk.userSpeaking,
+                }
+              : null
+          }
+          // "It is listening" is true only while it is.
+          placeholder={isRecording ? PROFILE.hint : undefined}
+          // Keeping is part of the drive: after Stop the subjects are a record.
+          keepable={TALKBACK_ENABLED && isRecording && keepable}
+          // Only in the sparks arm: the ledger is worked out in both, for the
+          // record, and the control arm must not see a sparkle on a headline.
+          sparks={TALKBACK_ENABLED && rec.sparksArm ? sparks : null}
+          drafts={cues.drafts}
+          // During the drive and after it: tidying the headlines is a thing to
+          // do once there is time to read them.
+          onRename={renameSubject}
+          className={isRecording ? "min-h-0 flex-1" : "h-[65dvh] shrink-0"}
+        />
+      )}
 
       <div className="shrink-0 space-y-3 text-sm">
         <Notices />
@@ -273,7 +296,8 @@ export function RecorderClient() {
         </p>
       )}
 
-      {TALKBACK_ENABLED && isRecording && rec.sparksArm && (
+      {/* In the mirror, a spark is a dot on its topic and pulled from the strip. */}
+      {TALKBACK_ENABLED && isRecording && rec.sparksArm && view === "conversation" && (
         <SparkChips
           store={conversation}
           ledger={sparks}
@@ -297,6 +321,45 @@ export function RecorderClient() {
         />
       )}
     </main>
+  );
+}
+
+const VIEW_KEY = "souffleur.record-view";
+
+type View = "conversation" | "track" | "bubbles";
+
+const VIEWS: { id: View; label: string }[] = [
+  { id: "conversation", label: "Conversation" },
+  { id: "track", label: "Mirror" },
+  { id: "bubbles", label: "Bubbles" },
+];
+
+/**
+ * Conversation, Mirror or Bubbles: the same drive, shown three ways. One row
+ * of equal targets, so switching is one tap during a drive and after it.
+ */
+function ViewSwitch({ view }: { view: View }) {
+  return (
+    <div
+      role="group"
+      aria-label="Show the conversation as"
+      className="flex shrink-0 rounded-2xl bg-fg/[0.06] p-1"
+    >
+      {VIEWS.map(({ id, label }) => (
+        <button
+          key={id}
+          type="button"
+          aria-pressed={view === id}
+          onClick={() => writeLocalValue(VIEW_KEY, id)}
+          className={[
+            "min-h-10 flex-1 cursor-pointer rounded-xl text-sm transition-colors",
+            view === id ? "bg-surface font-semibold text-fg shadow-sm" : "text-fg/65 hover:text-fg",
+          ].join(" ")}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }
 

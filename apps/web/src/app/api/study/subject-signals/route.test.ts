@@ -18,7 +18,7 @@ vi.mock("@/lib/session", () => ({
 }));
 
 const { closeDb, eq, getDb } = await import("@voicemural/db");
-const { captureSession, recallProbe, subjectSignal, user } = await import("@voicemural/db/schema");
+const { captureSession, driveSubject, recallProbe, subjectSignal, user } = await import("@voicemural/db/schema");
 const { recordSubjectVisit } = await import("@voicemural/db/subjects");
 const { isDatabaseReachable } = await import("@voicemural/db/testing");
 const { POST } = await import("./route");
@@ -26,6 +26,15 @@ const { POST } = await import("./route");
 const describeIfDb = (await isDatabaseReachable()) ? describe : describe.skip;
 
 const SESSION = "00000000-0000-4000-8000-00000000c301";
+
+/** This drive's signals only: a local database holds real drives' rows too. */
+function signalsOfThisDrive() {
+  return getDb()
+    .select({ kept: subjectSignal.kept, via: subjectSignal.keptVia, at: subjectSignal.keptAt })
+    .from(subjectSignal)
+    .innerJoin(driveSubject, eq(driveSubject.id, subjectSignal.driveSubjectId))
+    .where(eq(driveSubject.captureSessionId, SESSION));
+}
 
 async function seed(owner = USER_ID) {
   const db = getDb();
@@ -77,7 +86,7 @@ describeIfDb("POST /api/study/subject-signals", () => {
     const res = await send({ captureSessionId: SESSION, final: true, signalsVersion: "signals-1", subjects: [subject] });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ saved: 1, skipped: 0 });
-    expect(await getDb().select({ id: subjectSignal.id }).from(subjectSignal)).toHaveLength(1);
+    expect(await signalsOfThisDrive()).toHaveLength(1);
     expect(await getDb().select().from(recallProbe).where(eq(recallProbe.userId, USER_ID))).toHaveLength(1);
   });
 
@@ -103,17 +112,13 @@ describeIfDb("POST /api/study/subject-signals", () => {
       final: true,
       subjects: [{ ...subject, kept: true, keptVia: "voice", keptAt: at }],
     });
-    const [kept] = await getDb()
-      .select({ kept: subjectSignal.kept, via: subjectSignal.keptVia, at: subjectSignal.keptAt })
-      .from(subjectSignal);
+    const [kept] = await signalsOfThisDrive();
     expect(kept).toEqual({ kept: true, via: "voice", at: new Date(at) });
 
     // A "how" without the keep is not a keep.
     await seed();
     await send({ captureSessionId: SESSION, final: true, subjects: [{ ...subject, kept: false, keptVia: "tap", keptAt: at }] });
-    const [held] = await getDb()
-      .select({ kept: subjectSignal.kept, via: subjectSignal.keptVia, at: subjectSignal.keptAt })
-      .from(subjectSignal);
+    const [held] = await signalsOfThisDrive();
     expect(held).toEqual({ kept: false, via: null, at: null });
   });
 });
