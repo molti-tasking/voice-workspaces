@@ -15,10 +15,12 @@ import {
   SPARK_QUESTION_NUDGE,
   sparkQuestionText,
   SPARK_RETRY_NUDGE,
+  SPARK_SECTION,
   SEARCH_WAIT_PHRASES,
   SILENCE_NUDGE,
   SILENCE_TOKEN,
   SYSTEM_PROMPT,
+  TALKBACK_CONFIG_VERSION,
   answerAcknowledgement,
   cleanReply,
   composeSystemPrompt,
@@ -357,6 +359,19 @@ describe("sparks (talkback-21), which bot.py mirrors", () => {
     expect(SPARK_RETRY_NUDGE).toBe(
       `(They pulled a spark about "{subject}" for you to ask them, and ${SILENCE_TOKEN} is not available. Ask its question now, in one short sentence, and do not answer it yourself.)`,
     );
+  });
+});
+
+describe("keeping a subject (talkback-22)", () => {
+  it("lets a keep pass, and never has the agent take on holding it", () => {
+    expect(SPARK_SECTION).toMatch(/WHEN THEY KEEP A SUBJECT/);
+    expect(SYSTEM_PROMPT).toContain(SPARK_SECTION);
+    expect(SPARK_SECTION).toMatch(/"keep this one".*"das will ich behalten"/);
+    expect(SPARK_SECTION).toMatch(/so reply <silence>/);
+    expect(SPARK_SECTION).toMatch(/never say you will remember it, note it or save it, and never test them on it/);
+    // The answer guard can force a reply; the forced one stays an acknowledgement.
+    expect(SPARK_SECTION).toMatch(/If a reply is required of you anyway, say only "Okay\."/);
+    expect(TALKBACK_CONFIG_VERSION).toBe("talkback-22");
   });
 });
 

@@ -849,6 +849,38 @@ export const CASES: EvalCase[] = [
       ],
     },
   },
+  /* Keeping (talkback-22). On a drive where they choose what to hold
+   * themselves, "keep this one" marks the subject and the screen confirms it
+   * with a tone. The agent must let it pass: never take the holding on itself
+   * ("I'll remember that"), never quiz them on what they kept. */
+  {
+    id: "keep-this-one-en",
+    about: "Told \"keep this one\", it lets it pass, and never says it will remember or note it.",
+    history: [
+      { role: "user", content: "The budget. The hardware comes out of the travel money, so the second trip is about four hundred." },
+      { role: "assistant", content: "That leaves the Aarhus trip covered if the train is booked early." },
+    ],
+    said: "Keep this one.",
+    expect: {
+      turn: "either",
+      mustNotMention: [
+        "remember|saved|noted|note that|i'll keep|i will keep|keeping it for you|got it down",
+        "\\?",
+      ],
+    },
+  },
+  {
+    id: "keep-this-one-de",
+    about: "On a German drive, \"das will ich behalten\" passes without the agent taking the holding on itself.",
+    history: [
+      { role: "user", content: "Der Ethikantrag. Der Interviewteil braucht einen eigenen Absatz, und die Einwilligung kommt vor die Aufnahme." },
+    ],
+    said: "Das will ich behalten.",
+    expect: {
+      turn: "either",
+      mustNotMention: ["merke ich mir|gemerkt|gespeichert|notiert|notier|halte ich fest|behalte ich", "\\?"],
+    },
+  },
   /* 14 Oct 2026, on the conversation view with no dock: asked where the
    * workspace was, the agent placed it in "the menu at the top right", then at
    * "the icon next to the stop button", and was told four times it did not
