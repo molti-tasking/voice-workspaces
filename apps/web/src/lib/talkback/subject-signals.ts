@@ -1,10 +1,11 @@
-import type { Conversation } from "./conversation";
+import type { Conversation, KeepVia } from "./conversation";
 import { SIGNALS_VERSION, allSignals, type SparkKind } from "./signals";
 import type { SparkLedgerState } from "./spark-ledger";
 
 /**
  * What leaves the phone about each subject of a drive: counts, a judgement, a
- * score and the sparks shown and pulled, keyed by ordinal. No title, no words.
+ * score, the sparks shown and pulled, and whether they kept it, keyed by
+ * ordinal. No title, no words.
  * Posted to `/api/study/subject-signals` at Stop (`final`) and, as a best
  * effort, when the page is hidden mid-drive. See `subject_signal`.
  */
@@ -25,6 +26,10 @@ export interface SubjectSignalsBody {
     fade: number;
     sparksShown: SparkKind[];
     sparksPulled: SparkKind[];
+    /** Whether they kept it in their own head; how; and when (epoch ms). */
+    kept: boolean;
+    keptVia: KeepVia | null;
+    keptAt: number | null;
   }[];
 }
 
@@ -54,6 +59,9 @@ export function subjectSignalsBody(
         fade: Math.round(s.fade * 1000) / 1000,
         sparksShown: [...(ledger.shown.get(s.ordinal!) ?? [])],
         sparksPulled: pulled ? [pulled] : [],
+        kept: s.keptVia !== null,
+        keptVia: s.keptVia,
+        keptAt: s.keptAt,
       };
     }),
   };

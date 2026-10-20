@@ -95,4 +95,25 @@ describeIfDb("POST /api/study/subject-signals", () => {
     expect((await send({ captureSessionId: SESSION, final: false, subjects: [titled] })).status).toBe(200);
     expect((await send({ captureSessionId: SESSION, final: false, subjects: [{ ...subject, fade: 3 }] })).status).toBe(400);
   });
+
+  it("keeps whether they kept a subject, how and when — all three or none", async () => {
+    const at = Date.UTC(2026, 9, 19, 9, 30);
+    await send({
+      captureSessionId: SESSION,
+      final: true,
+      subjects: [{ ...subject, kept: true, keptVia: "voice", keptAt: at }],
+    });
+    const [kept] = await getDb()
+      .select({ kept: subjectSignal.kept, via: subjectSignal.keptVia, at: subjectSignal.keptAt })
+      .from(subjectSignal);
+    expect(kept).toEqual({ kept: true, via: "voice", at: new Date(at) });
+
+    // A "how" without the keep is not a keep.
+    await seed();
+    await send({ captureSessionId: SESSION, final: true, subjects: [{ ...subject, kept: false, keptVia: "tap", keptAt: at }] });
+    const [held] = await getDb()
+      .select({ kept: subjectSignal.kept, via: subjectSignal.keptVia, at: subjectSignal.keptAt })
+      .from(subjectSignal);
+    expect(held).toEqual({ kept: false, via: null, at: null });
+  });
 });

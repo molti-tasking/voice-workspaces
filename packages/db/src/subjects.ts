@@ -1,4 +1,4 @@
-import { driveSubject, driveSubjectSegment, sparkKindEnum, subjectSignal } from "./schema";
+import { driveSubject, driveSubjectSegment, keepViaEnum, sparkKindEnum, subjectSignal } from "./schema";
 import { and, eq, getDb, sql } from "./index";
 
 /**
@@ -79,6 +79,10 @@ export interface SubjectSignalRecord {
   fade: number;
   sparksShown: (typeof sparkKindEnum.enumValues)[number][];
   sparksPulled: (typeof sparkKindEnum.enumValues)[number][];
+  /** Kept in their own head; how; when. Absent from an older recorder: not kept. */
+  kept?: boolean;
+  keptVia?: (typeof keepViaEnum.enumValues)[number] | null;
+  keptAt?: Date | null;
 }
 
 /**
@@ -111,9 +115,13 @@ export async function saveSubjectSignals(
       skipped += 1;
       continue;
     }
-    const { ordinal: _ordinal, ...counts } = signal;
+    const { ordinal: _ordinal, kept, keptVia, keptAt, ...counts } = signal;
     const values = {
       ...counts,
+      // A keep is all three or none: no "kept" without how, no how without it.
+      kept: kept === true,
+      keptVia: kept === true ? (keptVia ?? null) : null,
+      keptAt: kept === true ? (keptAt ?? null) : null,
       driveSubjectId,
       final: options.final,
       signalsVersion: options.signalsVersion ?? null,

@@ -77,8 +77,12 @@ import { isCorrection, isRepeatRequest, isSelfRepair, normalise } from "./steera
 /**
  * 2 adds the `sparks` group (talkback-21). It should have gone to 2 when
  * `floorControl` was added to Tier 3 and did not; this bump covers both.
+ *
+ * 3 adds keeping (signals-2): `kept`, `keptBy` and `recallKept` in `sparks`,
+ * and the participant's `sparksByMode` — the same group pooled separately over
+ * the days Souffleur suggested and the days they chose.
  */
-export const METRICS_VERSION = 2;
+export const METRICS_VERSION = 3;
 
 export interface MetricsOptions {
   /**
@@ -365,13 +369,20 @@ export interface Sparks {
   agentShare: number | null;
   /** Their cues (pauses, fillers, self-repairs, hedges) per 100 of their words, pooled. */
   hesitationPer100: number | null;
+  /** Subjects they chose to keep in their own head, and how they said so. */
+  kept: number;
+  keptBy: Record<KeepVia, number>;
   /** Recall probes answered, and confidence minus self-rated accuracy, averaged. */
   recallAnswered: number;
   recallBias: number | null;
+  /** Of the probes answered, those about a subject they had kept. */
+  recallKept: number;
   provenance: Record<RecallProvenance, number>;
 }
 
 type SparkKind = "say_back" | "decide" | "unsure" | "revisit";
+type KeepVia = "tap" | "voice";
+type SparkMode = "suggested" | "chosen";
 type RecallProvenance = "mine" | "souffleur" | "both" | "unsure";
 
 export interface SessionMetrics {
@@ -427,6 +438,13 @@ export interface ParticipantMetrics {
   tier3: Tier3Participant;
   /** Pooled across drives; `pulled / drives` is pulled per drive. */
   sparks: Sparks & { drives: number };
+  /**
+   * The same, pooled separately over the drives Souffleur picked the subjects
+   * for (`suggested`) and the drives they picked them themselves (`chosen`),
+   * by each drive's frozen `sparkSelection`. A drive from before keeping
+   * existed has none and counts as suggested, which is what it was.
+   */
+  sparksByMode: Record<SparkMode, Sparks & { drives: number }>;
 }
 
 /* --- the computation -------------------------------------------------------- */
@@ -830,7 +848,22 @@ export async function participantMetrics(
     }),
     tier3: await participantTier3(userId, now, options.timeZone ?? defaultTimeZone()),
     sparks: { drives: perSession.length, ...(await sparksBySession(sessionIds, true)).get("*")! },
+    sparksByMode: {
+      suggested: await sparksPooled(perSession.filter((s) => sparkMode(s.studyCondition) === "suggested")),
+      chosen: await sparksPooled(perSession.filter((s) => sparkMode(s.studyCondition) === "chosen")),
+    },
   };
+}
+
+/** Which mode a drive ran in, from its frozen condition. */
+function sparkMode(condition: unknown): SparkMode {
+  const selection = (condition as { sparkSelection?: unknown } | null)?.sparkSelection;
+  return selection === "chosen" ? "chosen" : "suggested";
+}
+
+async function sparksPooled(sessions: SessionMetrics[]): Promise<Sparks & { drives: number }> {
+  const pooled = await sparksBySession(sessions.map((s) => s.sessionId), true);
+  return { drives: sessions.length, ...pooled.get("*")! };
 }
 
 function emptySparks(): Sparks {
@@ -843,8 +876,11 @@ function emptySparks(): Sparks {
     settledShare: null,
     agentShare: null,
     hesitationPer100: null,
+    kept: 0,
+    keptBy: { tap: 0, voice: 0 },
     recallAnswered: 0,
     recallBias: null,
+    recallKept: 0,
     provenance: { mine: 0, souffleur: 0, both: 0, unsure: 0 },
   };
 }
@@ -875,6 +911,7 @@ async function sparksBySession(
         cues: sql<number>`(${subjectSignal.pauses} + ${subjectSignal.fillers} + ${subjectSignal.selfRepairs} + ${subjectSignal.hedges})::int`,
         settled: subjectSignal.settled,
         shown: sql<number>`coalesce(array_length(${subjectSignal.sparksShown}, 1), 0)::int`,
+        keptVia: subjectSignal.keptVia,
       })
       .from(subjectSignal)
       .innerJoin(driveSubject, eq(driveSubject.id, subjectSignal.driveSubjectId))
@@ -899,9 +936,11 @@ async function sparksBySession(
         confidence: recallProbe.confidence,
         selfAccuracy: recallProbe.selfAccuracy,
         provenance: recallProbe.provenance,
+        kept: subjectSignal.kept,
       })
       .from(recallProbe)
       .innerJoin(driveSubject, eq(driveSubject.id, recallProbe.driveSubjectId))
+      .leftJoin(subjectSignal, eq(subjectSignal.driveSubjectId, driveSubject.id))
       .where(
         and(inArray(driveSubject.captureSessionId, sessionIds), isNotNull(recallProbe.answeredAt)),
       ),
@@ -925,6 +964,10 @@ async function sparksBySession(
     total.user += s.userWords;
     total.agent += s.agentWords;
     total.cues += s.cues;
+    if (s.keptVia) {
+      sparks.kept += 1;
+      sparks.keptBy[s.keptVia] += 1;
+    }
     if (s.settled !== null) {
       total.judged += 1;
       if (s.settled) total.settled += 1;
@@ -939,6 +982,7 @@ async function sparksBySession(
     const { sparks, total } = bucket(p.sessionId);
     sparks.recallAnswered += 1;
     total.bias += (p.confidence ?? 0) - (p.selfAccuracy ?? 0);
+    if (p.kept) sparks.recallKept += 1;
     if (p.provenance) sparks.provenance[p.provenance] += 1;
   }
   for (const [key, sparks] of out) {

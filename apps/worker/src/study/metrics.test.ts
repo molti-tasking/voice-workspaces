@@ -308,7 +308,17 @@ async function seed() {
     .returning({ id: schema.driveSubject.id });
   const signal = { pauses: 2, pausesBefore: 0, fillers: 0, selfRepairs: 1, hedges: 1, fade: 0.5 };
   await db.insert(schema.subjectSignal).values([
-    { driveSubjectId: subjects[0]!.id, userWords: 80, agentWords: 20, settled: true, sparksShown: [], ...signal },
+    {
+      driveSubjectId: subjects[0]!.id,
+      userWords: 80,
+      agentWords: 20,
+      settled: true,
+      sparksShown: [],
+      kept: true,
+      keptVia: "tap",
+      keptAt: new Date("2026-09-19T09:05:00Z"),
+      ...signal,
+    },
     {
       driveSubjectId: subjects[1]!.id,
       userWords: 20,
@@ -367,12 +377,23 @@ describeIfDb("participantMetrics", () => {
       settledShare: 0.5,
       agentShare: 0.5,
       hesitationPer100: 8,
+      kept: 1,
+      keptBy: { tap: 1, voice: 0 },
       recallAnswered: 1,
       recallBias: 3,
+      // The probe was about the subject Souffleur held, not the kept one.
+      recallKept: 0,
       provenance: { souffleur: 1 },
     });
-    expect(metrics.sparks).toMatchObject({ drives: 1, subjects: 2, recallBias: 3 });
-    expect(metrics.metricsVersion).toBe(2);
+    expect(metrics.sparks).toMatchObject({ drives: 1, subjects: 2, recallBias: 3, kept: 1 });
+    expect(metrics.metricsVersion).toBe(3);
+  });
+
+  it("pools the sparks by the mode each drive ran in", () => {
+    // The seeded drive carries no sparkSelection: from before keeping, so
+    // Souffleur suggested.
+    expect(metrics.sparksByMode.suggested).toMatchObject({ drives: 1, subjects: 2, kept: 1 });
+    expect(metrics.sparksByMode.chosen).toMatchObject({ drives: 0, subjects: 0, recallBias: null });
   });
 
   it("splits response latency by whether a tool ran", () => {

@@ -62,8 +62,13 @@ import { KEPT_AFTER_SESSIONS, foldBoard, judge } from "@voicemural/workspace";
  * and the offsets of its visits, never its title — `subject_signal` (counts,
  * settled, fade, the sparks shown and pulled), `recall_probe` (confidence,
  * self-rated accuracy, whose idea, the delay), and `sparkKind` on a decision.
+ *
+ * 5 adds keeping (signals-2): `kept`, `keptVia` (tap or voice) and `keptAt` on
+ * a `subject_signal` — whether the person chose to hold that subject in their
+ * own head. Which mode the drive ran in is the session's frozen
+ * `studyCondition.sparkSelection`, already "suggested" or "chosen" by day.
  */
-export const EXPORT_VERSION = 4;
+export const EXPORT_VERSION = 5;
 
 export type ExportRecord = { type: string } & Record<string, unknown>;
 
@@ -370,6 +375,9 @@ export async function exportParticipant(
             fade: subjectSignal.fade,
             sparksShown: subjectSignal.sparksShown,
             sparksPulled: subjectSignal.sparksPulled,
+            kept: subjectSignal.kept,
+            keptVia: subjectSignal.keptVia,
+            keptAt: subjectSignal.keptAt,
             final: subjectSignal.final,
             signalsVersion: subjectSignal.signalsVersion,
           })
@@ -388,9 +396,15 @@ export async function exportParticipant(
           .map((v) => ({ startOffsetMs: v.startOffsetMs, endOffsetMs: v.endOffsetMs })),
       });
     }
-    for (const { subjectId, ...signal } of signals) {
+    for (const { subjectId, keptAt, ...signal } of signals) {
       const subject = subjectById.get(subjectId)!;
-      out.push({ type: "subject_signal", sessionId: subject.sessionId, ordinal: subject.ordinal, ...signal });
+      out.push({
+        type: "subject_signal",
+        sessionId: subject.sessionId,
+        ordinal: subject.ordinal,
+        ...signal,
+        keptAt: iso(keptAt),
+      });
     }
 
     /* Directions and what they fired ----------------------------------------- */
