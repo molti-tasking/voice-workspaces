@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { part2StateFor } from "@voicemural/db/prolific";
 import { loadDueProbes, scheduleRecallProbes } from "@voicemural/db/recall";
 import { ProlificPid, ProlificRef } from "@voicemural/shared";
 import { studyTaskFor } from "@voicemural/talkback/study-task";
-import { completionCodeFor, completionUrlFor, prolificConfig } from "@/lib/study/prolific-config";
+import { completionCodeFor, completionUrlFor, prolificConfig, prolificEnabled } from "@/lib/study/prolific-config";
 import { Completion, StudyFrame } from "../ui";
 import { Part2Flow } from "./part2-flow";
 
@@ -28,6 +29,7 @@ function first(value: string | string[] | undefined): string | undefined {
  * Found by PID, not by cookie: part 2 may open in another browser.
  */
 export default async function ProlificPart2Page({ searchParams }: { searchParams: Promise<Search> }) {
+  if (!prolificEnabled()) notFound();
   const params = await searchParams;
   if (!prolificConfig().configured) {
     return (

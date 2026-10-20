@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { enrollParticipant } from "@voicemural/db/prolific";
 import { ProlificEnroll } from "@voicemural/shared";
 import { currentUserId } from "@/lib/session";
-import { prolificConfig } from "@/lib/study/prolific-config";
+import { prolificConfig, prolificEnabled } from "@/lib/study/prolific-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +18,7 @@ export const dynamic = "force-dynamic";
  * browser, and part 1 does not start over.
  */
 export async function POST(req: Request) {
+  if (!prolificEnabled()) return NextResponse.json({ error: "not_found" }, { status: 404 });
   const userId = await currentUserId(req);
   if (!userId) return NextResponse.json({ error: "unauthorised" }, { status: 401 });
 
