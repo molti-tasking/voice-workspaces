@@ -215,7 +215,7 @@ me."_ Unprompted support must **offer and never assign**. A declined offer must 
 
    | Change                     | Bump                                                              | Also                                             |
    | -------------------------- | ----------------------------------------------------------------- | ------------------------------------------------ |
-   | Talk-back prompt           | `TALKBACK_CONFIG_VERSION` (`prompt.ts`, now `"talkback-21"`)      |                                                  |
+   | Talk-back prompt           | `TALKBACK_CONFIG_VERSION` (`prompt.ts`, now `"talkback-22"`)      |                                                  |
    | Extraction prompt or input | `PROMPT_VERSION` (`packages/workspace/src/extract.ts`, now `"4"`) | Update the fingerprint test in `extract.test.ts` |
    | Classifier or macro prompt | `CLASSIFY_PROMPT_VERSION` / `MACRO_PROMPT_VERSION`                |                                                  |
 

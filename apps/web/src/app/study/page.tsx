@@ -24,6 +24,13 @@ import { itemsForPhase } from "@voicemural/shared";
  *    no talk of a repertoire. Telling someone we are counting the capabilities
  *    they create is the fastest way to make the count meaningless.
  *
+ * WHAT IT DOES SAY about keeping (19 Oct 2026, the field week): that some
+ * days Souffleur picks what its questions are about and on the others they
+ * do, by keeping subjects — the mechanics, so that a choice is possible at
+ * all, but not what we expect choosing to do. Keeping, the end-of-week
+ * questionnaire and the interview or focus group are new since the ethics
+ * application and go into its amendment before anyone reads this.
+ *
  * The privacy boundary is a study design decision, not a courtesy. Participants
  * are recruited from people who know the research team, and someone who thinks
  * their supervisor might hear the tape does not think out loud — which would
@@ -47,7 +54,7 @@ const STUDY = {
   researcher: "«Researcher name»",
   email: "«contact email»",
   phone: "«contact phone»",
-  days: 10,
+  days: 7,
   /** "on our own servers", or "by «provider», under a contract that …". */
   transcription: "«where speech is turned into text»",
   compensation: "«amount, paid on completion»",
@@ -67,6 +74,10 @@ const PHRASES: [string, string][] = [
   [
     "Interview me",
     "It starts asking you one question at a time instead of listening quietly. “Stop interviewing” ends it.",
+  ],
+  [
+    "Keep this one",
+    "On the days you pick: marks the subject you are on as yours to hold in your own head. Two short rising notes say it heard. “Don't keep this one” takes it back.",
   ],
 ];
 
@@ -97,7 +108,16 @@ export default function StudyPage() {
         <List>
           <li>Roughly {STUDY.days} days of ordinary commuting.</li>
           <li>Three quick taps once you have parked, after each drive.</li>
-          <li>One conversation with us at the end, about 45 minutes.</li>
+          <li>
+            Now and then, a couple of days after a drive, a few questions about
+            what you talked about — about a minute each, whenever the app
+            offers them.
+          </li>
+          <li>A short questionnaire at the end of the week, about 10 minutes.</li>
+          <li>
+            If you are up for it, one conversation with us afterwards — on your
+            own or in a small group — about 45 minutes.
+          </li>
         </List>
       </Section>
 
@@ -200,7 +220,34 @@ export default function StudyPage() {
         </p>
       </Section>
 
-      <Section n={5} title="Nobody reads your drives">
+      <Section n={5} title="What you keep, and what Souffleur holds">
+        <p>
+          While you talk, Souffleur notices the subjects you move between, and
+          can offer short questions about them — to say one back in your own
+          words, to decide it, to say what makes you unsure. You pull one when
+          you want it; it never asks one on its own.
+        </p>
+        <p>
+          The days take turns. On some, <strong>Souffleur picks</strong> which
+          subjects to offer questions about. On the others,{" "}
+          <strong>you pick</strong>: you keep the subjects you want to hold in
+          your own head, and Souffleur holds the rest for you. There is no right
+          number to keep, and keeping nothing is a fine day.
+        </p>
+        <List>
+          <li>
+            <strong>While driving, keep by voice only:</strong> say &ldquo;keep
+            this one&rdquo;. Tapping Keep on the screen is for when you are not
+            driving.
+          </li>
+          <li>
+            <Code>/my-week</Code> shows which kind of day it is, and what you
+            kept, day by day.
+          </li>
+        </List>
+      </Section>
+
+      <Section n={6} title="Nobody reads your drives">
         <p>
           You know us — which is exactly why it is built this way. Someone who
           suspects a colleague might hear the recording does not think out loud,
@@ -222,13 +269,16 @@ export default function StudyPage() {
           <li>
             <strong>What we see</strong> is counts and timings — how long you
             recorded, when you asked for something, whether it worked, what you
-            named the things you made. Not what you talked about.
+            named the things you made, how many subjects you kept and how. Not
+            what you talked about, and not what the subjects were.
           </li>
           <li>
             <strong>What you hand us</strong> is the three numbers after each
-            drive, anything you mark as shareable, and whatever you show us in the
-            final conversation. Quotes in a paper can only come from the last two,
-            are anonymised, and go past you first.
+            drive, the numbers you tap about past drives, the end-of-week
+            questionnaire, anything you mark as shareable, and whatever you show
+            us in the final conversation. Quotes in a paper can only come from the
+            questionnaire, what you mark and the conversation, are anonymised, and
+            go past you first.
           </li>
           <li>
             <strong>Passengers and phone calls are still recorded</strong> while
@@ -244,7 +294,7 @@ export default function StudyPage() {
         </p>
       </Section>
 
-      <Section n={6} title="If it breaks, and how to stop">
+      <Section n={7} title="If it breaks, and how to stop">
         <p>
           It will break. It is a research prototype: recordings fail to upload,
           transcripts garble words, it reacts to things you never asked it to
@@ -259,8 +309,8 @@ export default function StudyPage() {
             {STUDY.compensation}.
           </li>
           <li>
-            You can skip any drive, any question, and anything in the final
-            conversation.
+            You can skip any drive, any question, the questionnaire, and
+            anything in the final conversation.
           </li>
           <li>
             You can have everything deleted, up until the results are written up,
