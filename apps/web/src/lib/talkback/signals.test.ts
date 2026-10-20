@@ -201,3 +201,49 @@ describe("sparksFor", () => {
     expect(sparksFor(state, 0)).toEqual([]);
   });
 });
+
+describe("sparksFor, when the person chooses (sparkSelection: chosen)", () => {
+  const keep = (ordinal: number, via: "tap" | "voice" = "tap"): ConversationMessage => ({
+    type: "keep",
+    ordinal,
+    kept: true,
+    via,
+  });
+
+  it("offers nothing on a subject they did not keep, however much a rule fits it", () => {
+    // Mostly the agent's words: suggested would offer say_back here.
+    const state = fold([0, title("Intro")], [0, user(plain(10))], [0, agent(plain(50))]);
+    expect(sparksFor(state, 0, new Set(), "suggested")).toHaveLength(1);
+    expect(sparksFor(state, 0, new Set(), "chosen")).toEqual([]);
+  });
+
+  it("offers a spark on every kept subject: the rule that fits, or else say it back", () => {
+    const state = fold(
+      [0, title("Budget")],
+      [0, user(plain(70))],
+      [1, settled(1, false)],
+      [1, title("Pilot")],
+      [1, user(plain(30))],
+      [2, keep(1)],
+      [2, keep(2, "voice")],
+    );
+    const sparks = sparksFor(state, 2 * 60_000, new Set(), "chosen");
+    expect(sparks.map((s) => [s.title, s.kind]).sort()).toEqual([
+      ["Budget", "decide"],
+      ["Pilot", "say_back"],
+    ]);
+    expect(sparks.find((s) => s.title === "Pilot")?.reason).toBe("You're keeping this one");
+  });
+
+  it("drops a kept subject's spark once it has been pulled, like any other", () => {
+    const state = fold([0, title("Pilot")], [0, user(plain(30))], [1, keep(1)]);
+    expect(sparksFor(state, 0, new Set([1]), "chosen")).toEqual([]);
+  });
+
+  it("says which subjects were kept, and how, in the signals", () => {
+    const state = fold([0, title("Pilot")], [0, user(plain(30))], [3, keep(1, "voice")]);
+    const [signal] = allSignals(state, 0);
+    expect(signal).toMatchObject({ keptVia: "voice", keptAt: 3 * 60_000 });
+    expect(signal?.reasons).toContain("You're keeping this one");
+  });
+});

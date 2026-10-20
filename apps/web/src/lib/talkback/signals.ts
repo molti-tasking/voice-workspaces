@@ -25,11 +25,17 @@
  * and frozen with `SIGNALS_VERSION` before the study.
  */
 
-import { countFillers, countHedges, countSelfRepairs } from "@voicemural/shared";
+import {
+  countFillers,
+  countHedges,
+  countSelfRepairs,
+  keepRequest,
+  type SparkSelection,
+} from "@voicemural/shared";
 // The prompt's own list (talkback-21), so a kind the container cannot ask is a
 // type error here. Type-only: nothing of the package reaches the browser.
 import type { SparkKind } from "@voicemural/talkback";
-import type { Conversation, Section, Turn } from "./conversation";
+import type { Conversation, KeepVia, Section, Turn } from "./conversation";
 
 export type { SparkKind };
 
@@ -37,7 +43,7 @@ export type { SparkKind };
  * Bump on any change to a threshold or a rule below. Stored with every
  * `subject_signal`, so the study can tell which rules a drive saw.
  */
-export const SIGNALS_VERSION = "signals-1";
+export const SIGNALS_VERSION = "signals-2";
 
 /** Below this many words in a subject, whose words they were is not shown. */
 export const MIN_WORDS_FOR_SHARE = 40;
@@ -88,6 +94,10 @@ export interface SubjectSignal {
   settled: boolean | null;
   /** 0-1, from a fixed formula. Ranks sparks; never shown. */
   fade: number;
+  /** They kept it, and how; null: Souffleur holds it. */
+  keptVia: KeepVia | null;
+  /** When they kept it, as epoch ms; null when not kept. */
+  keptAt: number | null;
   /** One short line per signal, in plain words. Never a number. */
   reasons: string[];
 }
@@ -122,11 +132,16 @@ function userWordsIn(turn: Turn): number {
   return Math.max(0, words(turn.text) - countFillers(turn.text));
 }
 
+/** "Keep this one" is about keeping the subject, not part of it: never counted. */
+function isKeepCommand(turn: Turn): boolean {
+  return turn.who === "user" && keepRequest(turn.text) !== null;
+}
+
 function hesitationRateOf(section: Section): number | null {
   let userWords = 0;
   let cues = 0;
   for (const turn of section.turns) {
-    if (turn.who !== "user") continue;
+    if (turn.who !== "user" || isKeepCommand(turn)) continue;
     userWords += userWordsIn(turn);
     cues += (turn.pauses ?? 0) + countFillers(turn.text) + countSelfRepairs(turn.text) + countHedges(turn.text);
   }
@@ -194,6 +209,7 @@ export function signalsFor(section: Section, drive: DriveContext): SubjectSignal
   let pausesBefore = 0;
   let sinceAgent = 0;
   for (const turn of section.turns) {
+    if (isKeepCommand(turn)) continue;
     if (turn.who === "agent") {
       agentWords += words(turn.text);
       sinceAgent = 0;
@@ -229,6 +245,7 @@ export function signalsFor(section: Section, drive: DriveContext): SubjectSignal
   else if (settled === false) reasons.push("Still open");
   if (hesitation === "high") reasons.push("You paused over this more than usual");
   else if (hesitation === "low") reasons.push("You sounded sure here");
+  if (section.kept) reasons.push("You're keeping this one");
 
   return {
     key: section.key,
@@ -247,6 +264,8 @@ export function signalsFor(section: Section, drive: DriveContext): SubjectSignal
     hesitation,
     settled,
     fade,
+    keptVia: section.kept?.via ?? null,
+    keptAt: section.kept?.at ?? null,
     reasons,
   };
 }
@@ -270,11 +289,20 @@ export function allSignals(conversation: Conversation, now: number): SubjectSign
  * - decide: judged open, and they have said enough about it to decide;
  * - unsure: they hesitated over it more than usual for them;
  * - revisit: left, among the three most faded, and never come back to.
+ *
+ * WHO PICKS THE SUBJECTS is `selection` (`StudyCondition.sparkSelection`):
+ *
+ * - `suggested`: the rules above pick them, over every subject;
+ * - `chosen`: the person did, by keeping them. Only kept subjects get a spark,
+ *   and every kept subject gets one: the first rule that fits, or else
+ *   `say_back` — keeping it was the request to practise it. A drive where they
+ *   kept nothing offers nothing, which is the point.
  */
 export function sparksFor(
   conversation: Conversation,
   now: number,
   pulled: ReadonlySet<number> = new Set(),
+  selection: SparkSelection = "suggested",
 ): Spark[] {
   const signals = allSignals(conversation, now);
   const topFaded = new Set(
@@ -288,6 +316,7 @@ export function sparksFor(
   const sparks: (Spark & { fade: number })[] = [];
   for (const signal of signals) {
     if (signal.ordinal === null || signal.title === null || pulled.has(signal.ordinal)) continue;
+    if (selection === "chosen" && signal.keptVia === null) continue;
     const spark = (kind: SparkKind, reason: string) =>
       sparks.push({
         kind,
@@ -313,6 +342,8 @@ export function sparksFor(
       (visits.get(signal.key) ?? 1) <= 1
     ) {
       spark("revisit", "Left a while ago, and not come back to");
+    } else if (selection === "chosen") {
+      spark("say_back", "You're keeping this one");
     }
   }
   return sparks

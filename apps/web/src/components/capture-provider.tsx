@@ -21,6 +21,7 @@ import {
   type ConditionOverride,
   type ToggleableFlag,
 } from "@/lib/recorder/condition-store";
+import { earcon } from "@/lib/recorder/earcon";
 import { useFloorPreference, type Floor } from "@/lib/recorder/floor-store";
 import { useSttLanguage } from "@/lib/recorder/language-store";
 import { useRecorder } from "@/lib/recorder/use-recorder";
@@ -31,6 +32,7 @@ import {
   titlesForReconnect,
   type ConversationStore,
 } from "@/lib/talkback/conversation";
+import { createKeepWatcher } from "@/lib/talkback/keep-watcher";
 import { createSparkLedger, sparkKey, type SparkLedger } from "@/lib/talkback/spark-ledger";
 import { postSubjectSignals, subjectSignalsBody } from "@/lib/talkback/subject-signals";
 import type { SparkRequest } from "@/lib/talkback/types";
@@ -45,6 +47,9 @@ import { useTalkback, type PokeResult, type TalkbackState } from "@/lib/talkback
  */
 export const TALKBACK_ENABLED =
   process.env.NEXT_PUBLIC_TALKBACK_ENABLED === "true";
+
+/** How often a "keep this one" that has not been acted on yet is looked at again. */
+const KEEP_CHECK_MS = 500;
 
 /** How often the sparks on offer are worked out again with no new talk: a subject fades with time. */
 const SPARK_REFRESH_MS = 30_000;
@@ -74,6 +79,11 @@ export interface CaptureContextValue {
    * conversation they are about and replaced with it. See `spark-ledger.ts`.
    */
   sparks: SparkLedger;
+  /**
+   * The running drive lets them KEEP subjects — its spark selection is
+   * `chosen` — so each subject shows Keep, and "keep this one" is heard.
+   */
+  keepable: boolean;
   /** What the conversation is about now, from `conversation`. Kept after Stop. */
   title: string | null;
   /**
@@ -201,9 +211,17 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
   // render, so a conversation that changes every few hundred milliseconds
   // does not re-render everything that reads this context; and on a clock
   // too, because a subject fades with time and not only with talk.
+  // The control arm offers nothing, by screen or by voice — the signals are
+  // still worked out, and kept at Stop, because whether they predict recall
+  // is half the question.
+  const sparksArm = recorder.sparksArm;
+  // Who picks the subjects the sparks are on: the signals, or the person, who
+  // KEEPS the ones they want to hold in their own head (`signals.ts`).
+  const sparkSelection = recorder.sparkSelection;
+  const keepable = sparksArm && sparkSelection === "chosen";
   useEffect(() => {
     if (!isRecording) return;
-    const refresh = () => sparks.refresh(conversation.getSnapshot(), Date.now());
+    const refresh = () => sparks.refresh(conversation.getSnapshot(), Date.now(), sparkSelection);
     refresh();
     const unsubscribe = conversation.subscribe(refresh);
     const timer = window.setInterval(refresh, SPARK_REFRESH_MS);
@@ -211,11 +229,35 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       unsubscribe();
       window.clearInterval(timer);
     };
-  }, [isRecording, conversation, sparks]);
-  // The control arm offers nothing, by screen or by voice — the signals are
-  // still worked out, and kept at Stop, because whether they predict recall
-  // is half the question.
-  const sparksArm = recorder.sparksArm;
+  }, [isRecording, conversation, sparks, sparkSelection]);
+
+  // KEEPING BY VOICE: "keep this one", with the phone untouched. Heard in their
+  // own turns (`keep-watcher.ts`), filed on the subject it was said under, and
+  // confirmed with a short tone rather than by the agent, which is told to let
+  // it pass (SPARK_SECTION). On a clock as well as on every change, because a
+  // keep command is only acted on once it has stood for a moment.
+  useEffect(() => {
+    if (!isRecording || !keepable) return;
+    const watcher = createKeepWatcher();
+    const check = () => {
+      for (const action of watcher.observe(conversation.getSnapshot(), Date.now())) {
+        conversation.dispatch({
+          type: "keep",
+          ordinal: action.ordinal,
+          kept: action.request === "keep",
+          via: "voice",
+        });
+        earcon(action.request === "keep" ? "kept" : "unkept");
+      }
+    };
+    check();
+    const unsubscribe = conversation.subscribe(check);
+    const timer = window.setInterval(check, KEEP_CHECK_MS);
+    return () => {
+      unsubscribe();
+      window.clearInterval(timer);
+    };
+  }, [isRecording, keepable, conversation]);
 
   // EACH SPARK ITS OWN QUESTION, in the sparks arm: written once per spark
   // from that subject's lines (`/api/realtime/spark-question`), shown on the
@@ -331,6 +373,7 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       conversationId,
       conversation,
       sparks,
+      keepable,
       title,
       floor,
       setFloor,
@@ -353,6 +396,7 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       conversationId,
       conversation,
       sparks,
+      keepable,
       title,
       floor,
       setFloor,

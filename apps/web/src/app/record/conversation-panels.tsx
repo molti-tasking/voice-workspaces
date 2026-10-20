@@ -1,6 +1,6 @@
 "use client";
 
-import { Lock } from "lucide-react";
+import { BookmarkCheck, BookmarkPlus, Lock } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -73,6 +73,7 @@ export function ConversationPanels({
   floor,
   speaker,
   placeholder,
+  keepable = false,
   className = "",
 }: {
   store: ConversationStore;
@@ -84,9 +85,18 @@ export function ConversationPanels({
   speaker: Speaker | null;
   /** Shown in their panel until anything has been said. */
   placeholder?: string;
+  /**
+   * Each subject in their panel offers Keep: the drive's sparks are on the
+   * subjects they choose to hold in their own head (`sparkSelection: chosen`).
+   */
+  keepable?: boolean;
   className?: string;
 }) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, () => EMPTY_CONVERSATION);
+  const keep = useCallback(
+    (ordinal: number, kept: boolean) => store.dispatch({ type: "keep", ordinal, kept, via: "tap" }),
+    [store],
+  );
   const still = useReducedMotion();
   // What is drawn — whose words, settled, the reasons — does not depend on the
   // clock, only the sparks' ranking does; so no ticking time here.
@@ -231,6 +241,7 @@ export function ConversationPanels({
         onTouched={touched}
         onScrolled={scrolled}
         signals={signals}
+        onKeep={keepable ? keep : undefined}
         emptyText={empty ? (placeholder ?? null) : null}
       />
 
@@ -261,6 +272,7 @@ function Panel({
   onScrolled,
   badge,
   signals,
+  onKeep,
   emptyText,
 }: {
   who: Speaker;
@@ -275,6 +287,8 @@ function Panel({
   badge?: React.ReactNode;
   /** Each subject's signals, drawn under its heading. Their panel only. */
   signals?: Map<string, SubjectSignal>;
+  /** Keep a subject, or take the keep back. Their panel only, and only when the drive allows it. */
+  onKeep?: (ordinal: number, kept: boolean) => void;
   emptyText: string | null;
 }) {
   const touch = () => onTouched(panelRef.current);
@@ -327,20 +341,29 @@ function Panel({
                   in view. The current one resolves in from a blur — again on
                   every return to it, which is what the key is for — and the
                   others recede, as the trail under the old title did. */}
-              <h3 className="sticky top-0 z-10 -mx-3 bg-surface/95 px-3 py-1.5 backdrop-blur">
-                <span
-                  key={isCurrent ? `${section.key}:${returns}` : section.key}
-                  className={[
-                    "block truncate tracking-tight",
-                    isCurrent
-                      ? "vm-title text-lg font-semibold text-fg"
-                      : "text-sm font-medium text-fg/45",
-                  ].join(" ")}
-                >
-                  {section.title ?? "…"}
+              <h3 className="sticky top-0 z-10 -mx-3 flex items-start gap-2 bg-surface/95 px-3 py-1.5 backdrop-blur">
+                <span className="block min-w-0 flex-1">
+                  <span
+                    key={isCurrent ? `${section.key}:${returns}` : section.key}
+                    className={[
+                      "block truncate tracking-tight",
+                      isCurrent
+                        ? "vm-title text-lg font-semibold text-fg"
+                        : "text-sm font-medium text-fg/45",
+                    ].join(" ")}
+                  >
+                    {section.title ?? "…"}
+                  </span>
+                  {signals?.has(section.key) && (
+                    <SubjectMarks signal={signals.get(section.key)!} current={isCurrent} />
+                  )}
                 </span>
-                {signals?.has(section.key) && (
-                  <SubjectMarks signal={signals.get(section.key)!} current={isCurrent} />
+                {onKeep && section.ordinal !== undefined && section.title !== null && (
+                  <KeepToggle
+                    kept={section.kept !== undefined}
+                    title={section.title}
+                    onToggle={(kept) => onKeep(section.ordinal!, kept)}
+                  />
                 )}
               </h3>
               {turns.length > 0 && (
@@ -422,6 +445,37 @@ function SubjectMarks({ signal, current }: { signal: SubjectSignal; current: boo
         </span>
       )}
     </span>
+  );
+}
+
+/**
+ * Keep: hold this subject in your own head. Tapped again, the keep is taken
+ * back and Souffleur holds it. The person's choice, made where the subject
+ * is — never preselected, and nothing happens on its own.
+ */
+function KeepToggle({
+  kept,
+  title,
+  onToggle,
+}: {
+  kept: boolean;
+  title: string;
+  onToggle: (kept: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={kept}
+      aria-label={kept ? `Kept: ${title}. Tap to let Souffleur hold it` : `Keep ${title} in your own head`}
+      onClick={() => onToggle(!kept)}
+      className={[
+        "flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-3 text-xs font-medium tracking-wide uppercase transition-colors",
+        kept ? "bg-fg/12 text-fg ring-1 ring-fg/25" : "text-fg/60 ring-1 ring-fg/15 hover:text-fg/80",
+      ].join(" ")}
+    >
+      {kept ? <BookmarkCheck size={14} aria-hidden /> : <BookmarkPlus size={14} aria-hidden />}
+      {kept ? "Kept" : "Keep"}
+    </button>
   );
 }
 

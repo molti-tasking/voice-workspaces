@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { and, captureSession, desc, eq, getDb, user } from "@voicemural/db";
-import { CaptureSessionCreate, resolveStudyCondition } from "@voicemural/shared";
+import { CaptureSessionCreate, freezeStudyCondition, resolveStudyCondition } from "@voicemural/shared";
 import { asSttLanguage } from "@voicemural/talkback/language";
 import { asVoiceId } from "@voicemural/talkback/voice";
 import { capture, sessionIdFrom } from "@/lib/analytics/server";
@@ -128,6 +128,11 @@ export async function POST(req: Request) {
       });
     }
   }
+
+  // `sparkSelection: "alternate"` becomes the day's mode, on the day the drive
+  // STARTED in the study's time zone, and is frozen like the rest: a drive past
+  // midnight keeps the mode it began in.
+  condition = freezeStudyCondition(condition, startedAt, process.env.STUDY_TIME_ZONE || "UTC");
 
   // Conflict-safe rather than check-then-insert: two concurrent creates of
   // the same id (a client retry racing its own timed-out request) would else

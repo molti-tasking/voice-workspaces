@@ -12,7 +12,8 @@
  * gave the same feedback from the other end — the participant could not tell
  * that recording had started.
  *
- * So there are three earcons, and there will not be a fourth:
+ * So there are three earcons for the drive itself, and there will not be a
+ * fourth:
  *
  * - `started`   two rising notes. Recording has begun.
  * - `stopped`   two falling notes, the same interval inverted, so the pair is
@@ -22,6 +23,13 @@
  *               the status pills only ever show when it is BROKEN — and the
  *               difference between "it is recording" and "it can hear me" is
  *               the difference the participant was actually unsure about.
+ *
+ * And one pair for the person's own choice, heard only on a drive where they
+ * pick what to keep (`sparkSelection: "chosen"`), when they say so aloud:
+ *
+ * - `kept`      two quick notes rising, above the transport pair. "Keep this
+ *               one" was heard and the subject is now theirs.
+ * - `unkept`    the same two falling. "Don't keep this one" was heard.
  *
  * WHY NOT SPEECH. A spoken "recording started" needs the TTS, the network and
  * the container, so it would arrive seconds late and be absent exactly when
@@ -51,7 +59,7 @@ export interface Note {
   hz: number;
 }
 
-export type EarconName = "started" | "stopped" | "ready";
+export type EarconName = "started" | "stopped" | "ready" | "kept" | "unkept";
 
 /**
  * The three earcons, as data.
@@ -72,6 +80,19 @@ export const EARCONS: Record<EarconName, readonly Note[]> = {
     { atMs: 120, durationMs: 150, hz: 880 },
   ],
   ready: [{ atMs: 0, durationMs: 90, hz: 1_568 }],
+  // A subject kept by voice ("keep this one"): two quick notes rising, above
+  // `started` so the two are not confused, and quieter than either transport
+  // control — it confirms a choice, it does not change what is recording.
+  kept: [
+    { atMs: 0, durationMs: 70, hz: 1_175 },
+    { atMs: 80, durationMs: 90, hz: 1_568 },
+  ],
+  // Taking a keep back: the same two notes falling, as `stopped` is to
+  // `started`.
+  unkept: [
+    { atMs: 0, durationMs: 70, hz: 1_568 },
+    { atMs: 80, durationMs: 90, hz: 1_175 },
+  ],
 };
 
 /** Peak gain per earcon. `ready` is deliberately under the transport pair. */
@@ -79,6 +100,8 @@ export const PEAK_GAIN: Record<EarconName, number> = {
   started: 0.12,
   stopped: 0.12,
   ready: 0.06,
+  kept: 0.07,
+  unkept: 0.07,
 };
 
 /** How long an earcon lasts end to end, in ms. Pure; used by the tests. */
@@ -98,6 +121,8 @@ export const HAPTICS: Record<EarconName, readonly number[]> = {
   started: [40, 60, 40],
   stopped: [90],
   ready: [],
+  kept: [25],
+  unkept: [25],
 };
 
 /**

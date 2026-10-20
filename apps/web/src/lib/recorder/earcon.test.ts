@@ -16,7 +16,7 @@ import {
  * become an event in the car, and that the quiet one stays quiet.
  */
 
-const NAMES: EarconName[] = ["started", "stopped", "ready"];
+const NAMES: EarconName[] = ["started", "stopped", "ready", "kept", "unkept"];
 
 describe("earcons", () => {
   it("makes start and stop the same two notes in opposite order", () => {
@@ -67,5 +67,19 @@ describe("earcons", () => {
     expect(HAPTICS.started.length).toBeGreaterThan(0);
     expect(HAPTICS.stopped.length).toBeGreaterThan(0);
     expect(HAPTICS.ready).toHaveLength(0);
+  });
+
+  it("confirms a kept subject quietly, and not with the start's notes", () => {
+    // A choice confirmed, not a transport control: quieter than start and
+    // stop, and its notes are not theirs, so it cannot be heard as either.
+    expect(PEAK_GAIN.kept).toBeLessThan(PEAK_GAIN.started);
+    expect(EARCONS.kept.map((n) => n.hz)).not.toEqual(EARCONS.started.map((n) => n.hz));
+    expect(EARCONS.kept[0]!.hz).toBeLessThan(EARCONS.kept[1]!.hz);
+  });
+
+  it("takes a keep back with the same two notes falling", () => {
+    const up = EARCONS.kept.map((n) => n.hz);
+    expect(EARCONS.unkept.map((n) => n.hz)).toEqual([...up].reverse());
+    expect(PEAK_GAIN.unkept).toBe(PEAK_GAIN.kept);
   });
 });
