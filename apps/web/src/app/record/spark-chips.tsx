@@ -50,6 +50,37 @@ const NO_SPARKS: Record<NoSparksReason, string> = {
   talk: "No sparks yet — they come once a subject has had some talk.",
 };
 
+/**
+ * Pull one spark: a poke that carries it, with its own question when one has
+ * been written. Taken only if the poke was — an agent already talking, or
+ * another poke under way, has not asked it — and then marked in the ledger and
+ * in the conversation, before the question it asks. Shared by the chips and the
+ * mirror (`conversation-mirror.tsx`).
+ */
+export async function pullSpark(
+  spark: Spark,
+  {
+    onPull,
+    ledger,
+    store,
+  }: {
+    onPull: (spark: SparkRequest) => Promise<PokeResult | null>;
+    ledger: SparkLedger;
+    store: ConversationStore;
+  },
+): Promise<PokeResult | null> {
+  const question = ledger.getSnapshot().questions.get(sparkKey(spark));
+  const result = await onPull({ kind: spark.kind, ordinal: spark.ordinal, ...(question ? { question } : {}) });
+  if (result === "fired" || result === "armed") {
+    ledger.notePulled(spark);
+    store.dispatch({
+      type: "mark",
+      mark: { kind: "spark", ordinal: spark.ordinal, spark: spark.kind, ...(question ? { question } : {}) },
+    });
+  }
+  return result;
+}
+
 /** How long what became of a pull stays under the chips. */
 const NOTE_MS = 2500;
 
@@ -116,18 +147,7 @@ export function SparkChips({
   async function pull(spark: Spark) {
     setPulling(true);
     try {
-      const question = spent.questions.get(sparkKey(spark));
-      const result = await onPull({ kind: spark.kind, ordinal: spark.ordinal, ...(question ? { question } : {}) });
-      // Taken only if the poke was: an agent already talking, or another poke
-      // under way, has not asked it.
-      if (result === "fired" || result === "armed") {
-        ledger.notePulled(spark);
-        // And in the conversation, before the question it asks.
-        store.dispatch({
-          type: "mark",
-          mark: { kind: "spark", ordinal: spark.ordinal, spark: spark.kind, ...(question ? { question } : {}) },
-        });
-      }
+      const result = await pullSpark(spark, { onPull, ledger, store });
       setNote(result ? POKE_NOTES[result] : "Could not reach it");
     } finally {
       setPulling(false);

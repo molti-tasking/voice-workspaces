@@ -162,3 +162,9 @@ export {
   type SparkLine,
 } from "./spark-question";
 export { SPARK_QUESTION_NUDGE, sparkQuestionText } from "./prompt";
+export {
+  MIRROR_MAX_BULLETS,
+  mirrorMessages,
+  parseMirrorBullets,
+  type MirrorBullets,
+} from "./mirror";
