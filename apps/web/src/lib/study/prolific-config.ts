@@ -14,6 +14,17 @@ import { DEFAULT_STUDY_TASK, type StudyTaskId } from "@voicemural/talkback/study
 
 const isProduction = process.env.NODE_ENV === "production";
 
+/**
+ * Whether the Prolific study runs at all. Off unless `PROLIFIC_ENABLED` is
+ * "true", here as in production: it was parked (19 Oct 2026) for the field
+ * week with Keep, so `/p`, `/p/recall` and `/api/prolific/*` answer 404 and
+ * nobody lands in it from an old link. Its code and tables stay as they are;
+ * switching it back on is this variable and nothing else (PROLIFIC.md).
+ */
+export function prolificEnabled(): boolean {
+  return process.env.PROLIFIC_ENABLED === "true";
+}
+
 function numberFrom(name: string, fallback: number, min: number, max: number): number {
   const raw = process.env[name]?.trim();
   if (!raw) return fallback;

@@ -16,6 +16,8 @@ const SESSION = "00000000-0000-4000-8000-00000000d401";
 
 // Part 2 opens immediately, so one test can walk through both parts.
 process.env.PROLIFIC_RECALL_DELAY_HOURS = "0";
+// Parked by default (`prolificEnabled`); these tests run it.
+process.env.PROLIFIC_ENABLED = "true";
 
 vi.mock("@/lib/session", () => ({
   currentUserId: async () => USER_ID,
@@ -55,6 +57,17 @@ describeIfDb("the Prolific study routes", () => {
   afterAll(async () => {
     await getDb().delete(user).where(eq(user.id, USER_ID));
     await closeDb();
+  });
+
+  it("answers 404 on every route while the study is parked", async () => {
+    process.env.PROLIFIC_ENABLED = "";
+    try {
+      for (const route of [enroll, part1, part2]) {
+        expect((await call(route, { pid: PID })).status).toBe(404);
+      }
+    } finally {
+      process.env.PROLIFIC_ENABLED = "true";
+    }
   });
 
   it("walks through both parts", async () => {

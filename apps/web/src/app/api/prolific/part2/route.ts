@@ -8,7 +8,7 @@ import {
 import { answerRecallProbe, loadProbeSpeech, rateRecallConfidence } from "@voicemural/db/recall";
 import { ProlificPart2 } from "@voicemural/shared";
 import { keptIndices } from "@voicemural/talkback";
-import { completionCodeFor, completionUrlFor } from "@/lib/study/prolific-config";
+import { completionCodeFor, completionUrlFor, prolificEnabled } from "@/lib/study/prolific-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,6 +27,7 @@ export const dynamic = "force-dynamic";
  * database enforces that, as on `/api/recall/[id]`).
  */
 export async function POST(req: Request) {
+  if (!prolificEnabled()) return NextResponse.json({ error: "not_found" }, { status: 404 });
   const parsed = ProlificPart2.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid_body", issues: parsed.error.issues }, { status: 400 });

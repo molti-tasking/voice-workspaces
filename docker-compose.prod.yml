@@ -104,8 +104,14 @@ services:
       # Who may open researcher-only pages (the findings survey's results).
       # Comma-separated user ids; unset, those pages are a 404 for everyone.
       - RESEARCHER_USER_IDS=${RESEARCHER_USER_IDS:-}
-      # The Prolific recall study at /p (PROLIFIC.md). Without both completion
-      # codes the study pages say it is not open; everything else defaults.
+      # The study's calendar day, an IANA name (e.g. Europe/Copenhagen); unset
+      # is UTC. A drive's spark mode alternates by this day when its condition
+      # says `sparkSelection: "alternate"`, and /my-week groups drives by it.
+      - STUDY_TIME_ZONE=${STUDY_TIME_ZONE:-}
+      # The Prolific recall study at /p (PROLIFIC.md). PARKED: /p, /p/recall
+      # and /api/prolific answer 404 unless PROLIFIC_ENABLED is true. Without
+      # both completion codes the study pages say it is not open.
+      - PROLIFIC_ENABLED=${PROLIFIC_ENABLED:-false}
       - PROLIFIC_COMPLETION_CODE_PART1=${PROLIFIC_COMPLETION_CODE_PART1:-}
       - PROLIFIC_COMPLETION_CODE_PART2=${PROLIFIC_COMPLETION_CODE_PART2:-}
       - PROLIFIC_RECALL_DELAY_HOURS=${PROLIFIC_RECALL_DELAY_HOURS:-20}
@@ -154,6 +160,9 @@ services:
       - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
       - POSTHOG_CAPTURE_AI_CONTENT=${POSTHOG_CAPTURE_AI_CONTENT:-true}
       - WORKSPACE_BATCH_SIZE=${WORKSPACE_BATCH_SIZE:-8}
+      # The study's calendar day, for `pnpm study:metrics` run in here; the
+      # same value as web's.
+      - STUDY_TIME_ZONE=${STUDY_TIME_ZONE:-}
     volumes:
       # Same volume as web: the web app writes chunks, the worker reads them.
       # Both images run as uid 1001, which is what makes the shared mount work.

@@ -1,5 +1,11 @@
 # The Prolific recall study
 
+> **Parked (19 Oct 2026).** The sparks question moved to a one-week field
+> deployment with Keep (TALKBACK.md, "talkback-22: keeping"). Everything below
+> still works and is kept as it was, but `/p`, `/p/recall` and
+> `/api/prolific/*` answer 404 unless `PROLIFIC_ENABLED=true` — locally and in
+> production (`prolificEnabled` in `apps/web/src/lib/study/prolific-config.ts`).
+
 An online, between-subjects version of the sparks question: **does offering
 sparks during a conversation with the voice agent change what people remember
 of it a day later, and how well they know what they remember?**

@@ -3,7 +3,7 @@ import { captureSession, eq, getDb } from "@voicemural/db";
 import { finishPart1, markConversationStarted } from "@voicemural/db/prolific";
 import { ProlificPart1 } from "@voicemural/shared";
 import { currentUserId } from "@/lib/session";
-import { completionCodeFor, completionUrlFor } from "@/lib/study/prolific-config";
+import { completionCodeFor, completionUrlFor, prolificEnabled } from "@/lib/study/prolific-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,6 +15,7 @@ export const dynamic = "force-dynamic";
  * code — the only place a browser learns it.
  */
 export async function POST(req: Request) {
+  if (!prolificEnabled()) return NextResponse.json({ error: "not_found" }, { status: 404 });
   const userId = await currentUserId(req);
   if (!userId) return NextResponse.json({ error: "unauthorised" }, { status: 401 });
 

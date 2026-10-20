@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { findParticipantByUser } from "@voicemural/db/prolific";
 import { PROLIFIC_ARMS, ProlificPid, ProlificRef, type ProlificArm } from "@voicemural/shared";
 import { PROLIFIC_TASKS } from "@voicemural/talkback/study-task";
 import { currentUser } from "@/lib/session";
-import { completionCodeFor, completionUrlFor, prolificConfig } from "@/lib/study/prolific-config";
+import { completionCodeFor, completionUrlFor, prolificConfig, prolificEnabled } from "@/lib/study/prolific-config";
 import { Part1Flow } from "./part1-flow";
 import { Completion, StudyFrame } from "./ui";
 
@@ -29,6 +30,7 @@ function first(value: string | string[] | undefined): string | undefined {
  * can walk through either one.
  */
 export default async function ProlificPart1Page({ searchParams }: { searchParams: Promise<Search> }) {
+  if (!prolificEnabled()) notFound();
   const params = await searchParams;
   const config = prolificConfig();
 
