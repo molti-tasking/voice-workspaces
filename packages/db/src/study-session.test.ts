@@ -4,7 +4,7 @@ config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true }
 import { eq, inArray, like } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { blocksFor, SESSION_ORDERS, SESSION_VERSION } from "@voicemural/shared";
-import { captureSession, studyBlock, studySession, user } from "./schema";
+import { captureSession, studyBlock, studyMoment, studySession, user } from "./schema";
 import {
   ARM_TTL_MS,
   armBlock,
@@ -18,6 +18,7 @@ import {
   linkArmedBlock,
   saveBlockAnswers,
   saveFinal,
+  saveMoment,
 } from "./study-session";
 import { isDatabaseReachable } from "./testing";
 import { closeDb, getDb } from "./index";
@@ -190,6 +191,31 @@ describeIfDb("the display study's session", () => {
     }
     expect(await blockLinked("test-ss-a", 0, DRIVES[1]!)).toBe(true);
     expect((await findSessionByUser("test-ss-a"))!.blocks[0]!.attempts).toBe(2);
+  });
+
+  it("files a moment with the block's current drive, once", async () => {
+    const { session } = await make(1);
+    await claimSession({ code: session.inviteCode!, userId: "test-ss-a" });
+    const esm = { kind: "esm" as const, ordinal: 0, item: "esm_follow", shownOffsetMs: 106_000, answeredOffsetMs: 108_000, value: 5, text: null };
+    expect(await saveMoment("test-ss-a", 0, esm)).toBe("no_drive");
+
+    await armBlock("test-ss-a", 0, T0);
+    await drive("test-ss-a", DRIVES[0]!);
+    await linkArmedBlock((await armedBlockFor("test-ss-a", T0))!, DRIVES[0]!);
+    expect(await saveMoment("test-ss-a", 0, esm)).toBe("saved");
+    expect(await saveMoment("test-ss-a", 0, { ...esm, value: 1 })).toBe("duplicate");
+
+    // A restarted block's new drive starts its moments over.
+    await armBlock("test-ss-a", 0, T0);
+    await drive("test-ss-a", DRIVES[1]!);
+    await linkArmedBlock((await armedBlockFor("test-ss-a", T0))!, DRIVES[1]!);
+    expect(await saveMoment("test-ss-a", 0, { ...esm, value: 3 })).toBe("saved");
+
+    const rows = await db().select().from(studyMoment).where(inArray(studyMoment.captureSessionId, DRIVES));
+    expect(rows.map((r) => [r.captureSessionId, r.value]).sort()).toEqual([
+      [DRIVES[0], 5],
+      [DRIVES[1], 3],
+    ]);
   });
 
   it("finishes and answers a block only once it has a drive, and keeps the first answer", async () => {

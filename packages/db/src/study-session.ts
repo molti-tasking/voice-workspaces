@@ -7,9 +7,10 @@ import {
   type BlockAnswers,
   type ConversationDisplay,
   type SessionFinal,
+  type SessionMoment,
   type SessionProgress,
 } from "@voicemural/shared";
-import { studyBlock, studySession, user } from "./schema";
+import { studyBlock, studyMoment, studySession, user } from "./schema";
 import { getDb } from "./index";
 
 /**
@@ -315,6 +316,36 @@ export async function finishBlock(userId: string, position: number, now = new Da
     .set({ finishedAt: now })
     .where(and(eq(studyBlock.id, block.id), isNull(studyBlock.finishedAt)));
   return true;
+}
+
+export type MomentResult = "saved" | "duplicate" | "no_drive";
+
+/**
+ * Something that happened during the block's conversation, filed with the
+ * block's current drive. The first one sent for a kind and ordinal stands: a
+ * retry is a duplicate, not a second answer. Accepted after Finish too — a
+ * prompt can expire, and a resumption end unanswered, as the drive closes.
+ */
+export async function saveMoment(userId: string, position: number, moment: SessionMoment): Promise<MomentResult> {
+  const block = await ownBlock(userId, position);
+  if (!block?.captureSessionId) return "no_drive";
+  const inserted = await getDb()
+    .insert(studyMoment)
+    .values({
+      blockId: block.id,
+      captureSessionId: block.captureSessionId,
+      kind: moment.kind,
+      ordinal: moment.ordinal,
+      item: moment.item,
+      shownOffsetMs: moment.shownOffsetMs,
+      answeredOffsetMs: moment.answeredOffsetMs,
+      value: moment.value,
+      text: moment.text,
+      meta: moment.meta ?? {},
+    })
+    .onConflictDoNothing({ target: [studyMoment.captureSessionId, studyMoment.kind, studyMoment.ordinal] })
+    .returning({ id: studyMoment.id });
+  return inserted.length > 0 ? "saved" : "duplicate";
 }
 
 export type AnswerResult = "saved" | "no_block" | "not_finished";
