@@ -24,7 +24,8 @@ export type ModelRole =
   | "transcribe_live"
   | "converse"
   | "summarise"
-  | "embed";
+  | "embed"
+  | "judge";
 
 const ROLE_ENV: Record<ModelRole, string> = {
   transcribe: "MODEL_TRANSCRIBE",
@@ -34,6 +35,7 @@ const ROLE_ENV: Record<ModelRole, string> = {
   converse: "MODEL_CONVERSE",
   summarise: "MODEL_SUMMARISE",
   embed: "MODEL_EMBED",
+  judge: "MODEL_JUDGE",
 };
 
 /**
@@ -63,10 +65,17 @@ const ROLE_ENV: Record<ModelRole, string> = {
  * three survives to turn forty and the ledger cannot correct it. The call is
  * small (about ninety words out), so the cost of the better model is trivial
  * next to the conversation call it rides alongside.
+ *
+ * `judge` scores the display study's summaries and resumptions offline
+ * (`pnpm study:judge`). It falls back to `fast` because that is the model
+ * hosted at the university, which is what the session's consent names for
+ * reading their words; a judge on any other host is a choice to make on
+ * purpose, by setting MODEL_JUDGE.
  */
 const ROLE_FALLBACK: Partial<Record<ModelRole, ModelRole>> = {
   transcribe_live: "transcribe",
   summarise: "converse",
+  judge: "fast",
 };
 
 export function modelFor(role: ModelRole): string {

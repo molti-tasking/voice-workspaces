@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LiteLLMError } from "./config";
+import { LiteLLMError, modelFor } from "./config";
 
 describe("LiteLLMError.retryable", () => {
   const at = (status: number, body: string) =>
@@ -28,5 +28,23 @@ describe("LiteLLMError.retryable", () => {
 
   it("still retries a 500 that merely mentions audio in passing", () => {
     expect(at(500, "audio backend timed out")).toBe(true);
+  });
+});
+
+describe("the judge's model", () => {
+  it("is MODEL_JUDGE, or the fast model when that is unset", () => {
+    const saved = { judge: process.env.MODEL_JUDGE, fast: process.env.MODEL_FAST };
+    try {
+      process.env.MODEL_FAST = "cavi/gemma3:12b";
+      delete process.env.MODEL_JUDGE;
+      expect(modelFor("judge")).toBe("cavi/gemma3:12b");
+      process.env.MODEL_JUDGE = "cavi/qwen3:32b";
+      expect(modelFor("judge")).toBe("cavi/qwen3:32b");
+    } finally {
+      for (const [key, value] of [["MODEL_JUDGE", saved.judge], ["MODEL_FAST", saved.fast]] as const) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 });
