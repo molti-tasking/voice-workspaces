@@ -118,7 +118,7 @@ async function iceServers(): Promise<RTCIceServer[]> {
 }
 
 export function usePipecatTalkback(options: TalkbackOptions): Talkback {
-  const { captureSessionId, enabled, floor } = options;
+  const { captureSessionId, enabled, floor, paused = false } = options;
   const [state, setState] = useState<TalkbackState>(OFF);
 
   // The latest options, for the connection to read when it needs them rather
@@ -243,11 +243,12 @@ export function usePipecatTalkback(options: TalkbackOptions): Talkback {
               ticket,
               captureSessionId,
               floor: latest.current.floor,
+              paused: latest.current.paused === true,
               titles: latest.current.titles(),
             },
           },
         }),
-        enableMic: true,
+        enableMic: latest.current.paused !== true,
         enableCam: false,
         callbacks: {
           onBotStartedSpeaking: () => patch({ status: "speaking" }),
@@ -459,6 +460,20 @@ export function usePipecatTalkback(options: TalkbackOptions): Talkback {
       current = false;
     };
   }, [connected, floor]);
+
+  /* THE DISPLAY STUDY'S PAUSE, kept in step like the floor: its microphone
+   * off, so nothing said during the game reaches the agent, and the container
+   * told, so nothing is said to them. Only the talk-back's own capture: the
+   * recorder's track is its own (see the second-capture note above), so the
+   * drive keeps recording. */
+  useEffect(() => {
+    const client = live.current;
+    if (!connected || !client) return;
+    client.enableMic(!paused);
+    client.sendClientRequest("pause", { paused }, REQUEST_TIMEOUT_MS).catch((err) => {
+      console.warn(`[talkback:pipecat] pause not applied — ${String(err)}`);
+    });
+  }, [connected, paused]);
 
   const poke = useCallback(async (spark?: SparkRequest): Promise<PokeResult | null> => {
     const client = live.current;
