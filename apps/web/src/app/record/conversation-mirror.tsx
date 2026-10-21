@@ -2,6 +2,8 @@
 
 import { AudioLines, Sparkles, UserRound } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+// A type only: the package index pulls in server code.
+import type { MirrorBullets } from "@voicemural/talkback";
 import { EMPTY_CONVERSATION, type ConversationStore, type Speaker } from "@/lib/talkback/conversation";
 import { mirrorTopics, type MirrorTopic } from "@/lib/talkback/mirror";
 import { allSignals, type Spark } from "@/lib/talkback/signals";
@@ -54,6 +56,7 @@ export function ConversationMirror({
   sparks,
   layout,
   captureSessionId,
+  fixedPoints,
   live,
   canPull,
   onPull,
@@ -65,6 +68,11 @@ export function ConversationMirror({
   layout: MirrorLayout;
   /** The drive the points are written for. */
   captureSessionId: string | null;
+  /**
+   * Points given rather than written, by topic title — the simulated
+   * conversation (`/record/demo`), where there is no AI to write them.
+   */
+  fixedPoints?: ReadonlyMap<string, MirrorBullets>;
   /** The drive is running. */
   live: boolean;
   /** A pulled spark can reach the agent now. */
@@ -91,7 +99,12 @@ export function ConversationMirror({
   // talk moves on, its words — and so its side — stay as they were.
   const topics = useMemo(() => mirrorTopics(conversation, signals, offered), [conversation, signals, offered]);
 
-  const bullets = useMirrorBullets(conversation, captureSessionId);
+  const written = useMirrorBullets(conversation, fixedPoints ? null : captureSessionId);
+  const pointsOf = (topic: MirrorTopic): TopicBullets | null => {
+    if (!fixedPoints) return written.get(topic.key) ?? null;
+    const given = fixedPoints.get(topic.title);
+    return given ? { bullets: given, pending: false } : null;
+  };
 
   // What was offered is part of the record (`subject_signal.sparks_shown`).
   useEffect(() => {
@@ -121,7 +134,7 @@ export function ConversationMirror({
         <FocusStrip
           key={focus.key}
           topic={focus}
-          bullets={bullets.get(focus.key) ?? null}
+          bullets={pointsOf(focus)}
           question={focus.spark ? (ledger.questions.get(sparkKey(focus.spark)) ?? null) : null}
           canPull={canPull && sparks !== null}
           onPull={(spark) => (sparks ? pullSpark(spark, { onPull, ledger: sparks, store }) : Promise.resolve(null))}

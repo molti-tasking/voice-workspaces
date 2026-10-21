@@ -1,0 +1,19 @@
+import type { Metadata } from "next";
+import { DemoClient } from "./demo-client";
+
+/**
+ * A simulated conversation: the recorder's three views of a drive — the
+ * conversation in order, the mirror and its bubbles — fed a scripted
+ * conversation (`demo-conversation.ts`), with no microphone, no voice
+ * container and no AI. For showing the interfaces when the AI is down, and for
+ * demos. Nothing is sent or saved.
+ */
+
+export const metadata: Metadata = {
+  title: "Simulated conversation",
+  robots: { index: false, follow: false },
+};
+
+export default function DemoPage() {
+  return <DemoClient />;
+}

@@ -15,12 +15,13 @@ import {
   VoicePicker,
 } from "@/components/capture-settings";
 import { RecordingBadge } from "@/components/recording-badge";
-import { useLocalValue, writeLocalValue } from "@/lib/local-value";
+import { aiHealthProblem, useAiHealth } from "@/lib/ai-health";
 import { ConversationFlow } from "./conversation-flow";
 import { ConversationMirror } from "./conversation-mirror";
 import { FloorControls } from "./floor-controls";
 import { SparkChips } from "./spark-chips";
 import { PostDriveItems } from "./study-items";
+import { ViewSwitch, useRecordView } from "./view-switch";
 
 /**
  * The recorder screen.
@@ -77,8 +78,10 @@ export function RecorderClient() {
   const connected = talk.status === "listening" || talk.status === "speaking";
   // How the conversation is shown: in order, word for word, or as the mirror
   // in one of its two layouts. A choice of this browser, kept across drives.
-  const stored = useLocalValue(VIEW_KEY);
-  const view: View = VIEWS.some((v) => v.id === stored) ? (stored as View) : "conversation";
+  const view = useRecordView();
+  // Whether the AI proxy answers (`/api/health/ai`): a pill when it does not,
+  // and before a drive the reason and a way to see the screens anyway.
+  const aiProblem = aiHealthProblem(useAiHealth());
 
   // Setup until the first drive of this page load; the conversation from then
   // on. `ended` is that conversation once nothing is capturing any more.
@@ -116,6 +119,7 @@ export function RecorderClient() {
             and the stop refuse to. */}
         <div className="flex min-w-0 items-center justify-end gap-2">
           <StatusPills
+            ai={aiProblem}
             pending={rec.pendingUploads}
             uploading={rec.uploading}
             recording={isRecording}
@@ -184,6 +188,19 @@ export function RecorderClient() {
         </div>
 
         <footer className="w-full max-w-md space-y-3 text-sm">
+          {aiProblem && (
+            <Notice tone="warn" title="The AI server is not available">
+              <div className="space-y-2">
+                <p>A conversation would get no answers right now. {aiProblem}</p>
+                <Link
+                  href="/record/demo"
+                  className="inline-block rounded bg-fg/10 px-3 py-1.5 font-medium text-fg hover:bg-fg/20"
+                >
+                  Try a simulated conversation
+                </Link>
+              </div>
+            </Notice>
+          )}
           <Notices />
         </footer>
       </main>
@@ -324,45 +341,6 @@ export function RecorderClient() {
   );
 }
 
-const VIEW_KEY = "souffleur.record-view";
-
-type View = "conversation" | "track" | "bubbles";
-
-const VIEWS: { id: View; label: string }[] = [
-  { id: "conversation", label: "Conversation" },
-  { id: "track", label: "Mirror" },
-  { id: "bubbles", label: "Bubbles" },
-];
-
-/**
- * Conversation, Mirror or Bubbles: the same drive, shown three ways. One row
- * of equal targets, so switching is one tap during a drive and after it.
- */
-function ViewSwitch({ view }: { view: View }) {
-  return (
-    <div
-      role="group"
-      aria-label="Show the conversation as"
-      className="flex shrink-0 rounded-2xl bg-fg/[0.06] p-1"
-    >
-      {VIEWS.map(({ id, label }) => (
-        <button
-          key={id}
-          type="button"
-          aria-pressed={view === id}
-          onClick={() => writeLocalValue(VIEW_KEY, id)}
-          className={[
-            "min-h-10 flex-1 cursor-pointer rounded-xl text-sm transition-colors",
-            view === id ? "bg-surface font-semibold text-fg shadow-sm" : "text-fg/65 hover:text-fg",
-          ].join(" ")}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 /**
  * What can go wrong with capture itself, said where it is seen. The same on
  * every phase of the screen, because none of it waits for a phase.
@@ -457,12 +435,15 @@ function Ratings({
 }
 
 function StatusPills({
+  ai,
   pending,
   uploading,
   recording,
   talkback,
   memory,
 }: {
+  /** What is wrong with the AI server, or null when it answers. */
+  ai: string | null;
   pending: number;
   uploading: boolean;
   recording: boolean;
@@ -476,6 +457,8 @@ function StatusPills({
           pill: the panels filling with what is said is the evidence, and a car
           dashboard should not carry an indicator for every subsystem that is
           fine. */}
+      {/* Before and during a drive: without the AI there are no answers. */}
+      {ai && <Pill label="AI offline" tone="warn" title={ai} />}
       {talkback === "degraded" && <Pill label="talk offline" tone="warn" />}
       {talkback === "connecting" && <Pill label="talk…" tone="warn" />}
       {/* Connected but amnesiac. Distinct from "talk offline" because the
@@ -493,13 +476,13 @@ function StatusPills({
   );
 }
 
-function Pill({ label, tone }: { label: string; tone: "ok" | "warn" }) {
+function Pill({ label, tone, title }: { label: string; tone: "ok" | "warn"; title?: string }) {
   return (
     // Shrinks to an ellipsis rather than overflowing: wrapping only helps
     // when there are several pills, and one pill wider than the space left
     // beside the stop spilled over what sat next to it (390px, "talk…").
     <span
-      title={label}
+      title={title ?? label}
       className={[
         "min-w-0 max-w-full truncate whitespace-nowrap rounded-full px-2 py-0.5 font-mono",
         tone === "ok"

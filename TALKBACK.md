@@ -616,6 +616,19 @@ Sparks are on by default since this change (`StudyCondition.sparks`), so
 every drive is the same app; a condition with `sparks: false` still turns
 them off.
 
+**When the AI is down.** `/api/health/ai` asks the LiteLLM proxy for its
+model list with the key, without following redirects (`checkLiteLLM` in
+@voicemural/llm), and says why it cannot be used: moved, key refused, an
+error, no answer, not configured. A proxy that moved host answers with a
+redirect, and a cross-host redirect drops the Authorization header, so every
+real call fails with a 401 that looks like a bad key — which is what
+`litellm.stream.cavi.au.dk` → `ai.cavi.au.dk` did on 20 Oct 2026. The
+recorder polls it: an "AI offline" pill in the header, and before a drive the
+reason and a link to `/record/demo`, a simulated conversation
+(`demo-conversation.ts`) played into all three views with given points and
+a scripted agent that asks pulled sparks — no microphone, no AI, nothing
+saved. It is reachable by URL for demos too.
+
 ### Which voice
 
 Three ElevenLabs voices are offered on the recorder, from the catalogue in
