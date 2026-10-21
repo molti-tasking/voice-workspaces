@@ -306,7 +306,7 @@ export async function buildSessionExport(options: { text?: boolean } = {}): Prom
 }
 
 /** Every row with every column, in the order of the row that has the most (a talked block's). */
-function sameColumns(rows: Row[]): Row[] {
+export function sameColumns(rows: Row[]): Row[] {
   const widest = rows.reduce<Row>((w, r) => (Object.keys(r).length > Object.keys(w).length ? r : w), {});
   const columns = [...new Set([...Object.keys(widest), ...rows.flatMap((r) => Object.keys(r))])];
   return rows.map((r) => Object.fromEntries(columns.map((c) => [c, r[c] ?? null])));

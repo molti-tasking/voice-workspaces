@@ -206,3 +206,43 @@ export function toCsv(rows: Row[]): string {
   };
   return [headers.join(","), ...rows.map((r) => headers.map((h) => cell(r[h] ?? null)).join(","))].join("\n") + "\n";
 }
+
+/**
+ * Read back what `toCsv` wrote: RFC 4180, quoted fields with commas, quotes
+ * and newlines in them. Every value comes back as a string, an empty one as
+ * null — it is for joining files on their ids, not for typing them.
+ */
+export function fromCsv(text: string): Row[] {
+  const records: string[][] = [];
+  let field = "";
+  let record: string[] = [];
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (c === '"') quoted = false;
+      else field += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ",") {
+      record.push(field);
+      field = "";
+    } else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      record.push(field);
+      records.push(record);
+      field = "";
+      record = [];
+    } else field += c;
+  }
+  if (field !== "" || record.length > 0) {
+    record.push(field);
+    records.push(record);
+  }
+  const [headers, ...rows] = records;
+  if (!headers) return [];
+  return rows.map((r) => Object.fromEntries(headers.map((h, i) => [h, r[i] === undefined || r[i] === "" ? null : r[i]!])));
+}
+
