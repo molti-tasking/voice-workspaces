@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { and, asc, desc, eq, gt, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import {
   SESSION_ORDERS,
   SESSION_VERSION,
@@ -10,7 +10,17 @@ import {
   type SessionMoment,
   type SessionProgress,
 } from "@voicemural/shared";
-import { studyBlock, studyMoment, studySession, user } from "./schema";
+import {
+  agentDecision,
+  agentTurn,
+  driveSubject,
+  driveSubjectSegment,
+  studyBlock,
+  studyMoment,
+  studySession,
+  user,
+  utterance,
+} from "./schema";
 import { getDb } from "./index";
 
 /**
@@ -382,4 +392,95 @@ export async function saveFinal(userId: string, final: SessionFinal, now = new D
     .set({ final: { ...final, version: SESSION_VERSION }, completedAt: now })
     .where(and(eq(studySession.id, state.session.id), isNull(studySession.completedAt), isNotNull(studySession.consentedAt)));
   return "saved";
+}
+
+/* ---------------------------------------------------------------------------
+ * Reading a block's drive back, for the export and the judge
+ * ------------------------------------------------------------------------- */
+
+export type StudyMoment = typeof studyMoment.$inferSelect;
+
+/** One line of a drive, either side's, on its clock. */
+export interface DriveLine {
+  who: "user" | "agent";
+  startMs: number;
+  endMs: number;
+  text: string;
+  /** For an agent turn a pulled spark asked for: the spark's kind. */
+  spark: string | null;
+}
+
+/**
+ * Everything said in a drive, both sides, in order: their utterances from
+ * the ledger and the agent's turns, with the turns a pulled spark asked for
+ * marked — the plain transcript has no sparks, so a comparison of the views'
+ * conversations may want them apart. On a tie the person comes first.
+ */
+export async function loadDriveLines(captureSessionId: string): Promise<DriveLine[]> {
+  const db = getDb();
+  const [theirs, agents, sparked] = await Promise.all([
+    db
+      .select({ startMs: utterance.startOffsetMs, endMs: utterance.endOffsetMs, text: utterance.text })
+      .from(utterance)
+      .where(eq(utterance.captureSessionId, captureSessionId)),
+    db
+      .select({ id: agentTurn.id, startMs: agentTurn.startOffsetMs, endMs: agentTurn.endOffsetMs, text: agentTurn.text })
+      .from(agentTurn)
+      .where(eq(agentTurn.captureSessionId, captureSessionId)),
+    db
+      .select({ turnId: agentDecision.agentTurnId, kind: agentDecision.sparkKind })
+      .from(agentDecision)
+      .where(
+        and(
+          eq(agentDecision.captureSessionId, captureSessionId),
+          isNotNull(agentDecision.sparkKind),
+          isNotNull(agentDecision.agentTurnId),
+        ),
+      ),
+  ]);
+  const sparkOf = new Map(sparked.map((d) => [d.turnId, d.kind]));
+  const lines: DriveLine[] = [
+    ...theirs.map((u) => ({ who: "user" as const, ...u, spark: null })),
+    ...agents.map((a) => ({
+      who: "agent" as const,
+      startMs: a.startMs,
+      endMs: a.endMs,
+      text: a.text,
+      spark: sparkOf.get(a.id) ?? null,
+    })),
+  ];
+  return lines.sort((a, b) => a.startMs - b.startMs || (a.who === b.who ? 0 : a.who === "user" ? -1 : 1));
+}
+
+/** One visit to a subject of a drive: open (`endMs` null) while the talk was still on it. */
+export interface SubjectVisitRow {
+  ordinal: number;
+  title: string;
+  startMs: number;
+  endMs: number | null;
+}
+
+/** The visits to a drive's subjects, in order. Titles are content: for the researchers' files only. */
+export async function loadSubjectVisits(captureSessionId: string): Promise<SubjectVisitRow[]> {
+  return getDb()
+    .select({
+      ordinal: driveSubject.ordinal,
+      title: driveSubject.title,
+      startMs: driveSubjectSegment.startOffsetMs,
+      endMs: driveSubjectSegment.endOffsetMs,
+    })
+    .from(driveSubjectSegment)
+    .innerJoin(driveSubject, eq(driveSubject.id, driveSubjectSegment.driveSubjectId))
+    .where(eq(driveSubject.captureSessionId, captureSessionId))
+    .orderBy(asc(driveSubjectSegment.startOffsetMs));
+}
+
+/** The moments of these drives, each drive's in the order they were shown. */
+export async function loadMoments(captureSessionIds: readonly string[]): Promise<StudyMoment[]> {
+  if (captureSessionIds.length === 0) return [];
+  return getDb()
+    .select()
+    .from(studyMoment)
+    .where(inArray(studyMoment.captureSessionId, [...captureSessionIds]))
+    .orderBy(asc(studyMoment.captureSessionId), asc(studyMoment.shownOffsetMs));
 }
