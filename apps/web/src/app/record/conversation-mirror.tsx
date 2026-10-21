@@ -158,11 +158,15 @@ function Track({
   onChoose: (key: string) => void;
 }) {
   const end = useRef<HTMLDivElement>(null);
+  const active = useRef<HTMLLIElement>(null);
   const count = topics.length;
-  // A new topic is at the bottom: keep it in view.
+  const activeKey = topics.find((t) => t.active)?.key ?? null;
+  // Keep the topic being talked about in view: a new one is at the bottom, a
+  // return can be far up the track.
   useEffect(() => {
-    end.current?.scrollIntoView({ block: "end" });
-  }, [count]);
+    if (active.current) active.current.scrollIntoView({ block: "nearest" });
+    else end.current?.scrollIntoView({ block: "end" });
+  }, [count, activeKey]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -177,6 +181,7 @@ function Track({
           {topics.map((topic) => (
             <li
               key={topic.key}
+              ref={topic.active ? active : undefined}
               className="relative grid grid-cols-[minmax(0,1fr)_28px_minmax(0,1fr)] items-center"
             >
               {topic.side === "user" ? (
@@ -215,13 +220,14 @@ function Bubbles({
   onChoose: (key: string) => void;
 }) {
   return (
-    <div className="grid min-h-0 flex-1 grid-rows-2 gap-3">
+    // Each panel as tall as its topics need, the two scrolling together.
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
       {(["user", "agent"] as const).map((side) => (
         <section
           key={side}
           aria-label={side === "user" ? "Your topics" : "Souffleur's topics"}
           className={[
-            "relative min-h-0 overflow-y-auto rounded-3xl p-3",
+            "relative min-h-36 shrink-0 rounded-3xl p-3",
             side === "user" ? "bg-amber-500/[0.07]" : "bg-sky-500/[0.07]",
           ].join(" ")}
         >

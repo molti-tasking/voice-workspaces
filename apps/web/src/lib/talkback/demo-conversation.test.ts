@@ -11,20 +11,27 @@ describe("the simulated conversation", () => {
     return applyMessage(state, step.message, at);
   }, EMPTY_CONVERSATION);
 
-  it("names four topics and comes back to one of them", () => {
+  it("names seven topics and comes back to two of them", () => {
     expect(final.sections.map((s) => s.title)).toEqual([
       "Weekend in Denmark",
       "Destinations",
       "Getting there",
       "Paper deadline",
+      "Budget",
+      "Things to do in Aarhus",
+      "Weather",
     ]);
-    expect(timeline(final).filter((run) => run.isReturn)).toHaveLength(1);
+    expect(timeline(final).filter((run) => run.isReturn).map((run) => run.title)).toEqual([
+      "Destinations",
+      "Weekend in Denmark",
+    ]);
   });
 
   it("ends with sparks on offer, so the views have something to show", () => {
     const kinds = sparksFor(final, at).map((spark) => `${spark.kind}:${spark.title}`);
-    expect(kinds).toContain("say_back:Destinations");
-    expect(kinds).toContain("decide:Getting there");
+    expect(kinds).toEqual(
+      expect.arrayContaining(["decide:Getting there", "say_back:Destinations", "say_back:Things to do in Aarhus"]),
+    );
   });
 
   it("has the mirror's points for every topic it names", () => {
