@@ -56,6 +56,21 @@ export const CaptureUseCase = z.enum(["think_aloud", "draft", "recall"]);
 export type CaptureUseCase = z.infer<typeof CaptureUseCase>;
 
 /**
+ * The ways a drive's conversation can be shown on the phone, as the display
+ * study compares them (the study session, `/study/session`):
+ *
+ * - `transcript`: every line as it was said, the way a voice assistant's chat
+ *   shows a voice conversation — the control.
+ * - `conversation`: the column in order with topic headlines and signals
+ *   (`ConversationFlow`).
+ * - `track`, `bubbles`: the conversation mirror's two layouts
+ *   (`ConversationMirror`).
+ */
+export const CONVERSATION_DISPLAYS = ["transcript", "conversation", "track", "bubbles"] as const;
+export const ConversationDisplay = z.enum(CONVERSATION_DISPLAYS);
+export type ConversationDisplay = z.infer<typeof ConversationDisplay>;
+
+/**
  * The behaviours the field study varies, for one drive.
  *
  * Researcher-set on `user.study_condition`, copied RESOLVED onto
@@ -115,6 +130,13 @@ export const StudyCondition = z.strictObject({
   alternateFrom: z.iso.date().optional(),
   /** For `alternate`: the first day's mode. The next day is the other one. */
   alternateStart: z.enum(["suggested", "chosen"]).default("suggested"),
+  /**
+   * How the conversation is shown during the drive. `choice`: as the person
+   * picked it on the recorder (Conversation, Mirror, Bubbles), which is what
+   * every drive did before the display study. Anything else is forced, and the
+   * recorder hides its switch — set per block by the study session.
+   */
+  display: z.enum(["choice", ...CONVERSATION_DISPLAYS]).default("choice"),
 });
 export type StudyCondition = z.infer<typeof StudyCondition>;
 
