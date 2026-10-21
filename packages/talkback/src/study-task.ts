@@ -13,6 +13,8 @@
  * differ. Pure, so the pages and the session route share one copy.
  */
 
+import { isSessionTaskId, type SessionTaskId } from "@voicemural/shared";
+
 export interface StudyTask {
   id: string;
   /** Shown above the conversation as a reminder. */
@@ -90,4 +92,98 @@ export function isStudyTaskId(value: unknown): value is StudyTaskId {
 /** A stored task id as its task, or null for an id no longer in the catalogue. */
 export function studyTaskFor(id: string | null | undefined): StudyTask | null {
   return isStudyTaskId(id) ? PROLIFIC_TASKS[id] : null;
+}
+
+/**
+ * The display study's four tasks (`SESSION_TASK_IDS` in @voicemural/shared),
+ * one per conversation of a session.
+ *
+ * MADE TO BE COMPARABLE. Each is an everyday plan nobody needs expertise
+ * for, with three parts that become separate topics in about five minutes, a
+ * constraint or two that the conversation has to come back to, and room for
+ * ideas from both sides. The squares cross them with the views, so a task
+ * that is easier than the others costs balance, not validity — but the
+ * closer they are, the less noise.
+ *
+ * No plan to write, unlike the Prolific task: what they worked out is asked
+ * afterwards, in their own words, and a plan on the screen would be a
+ * summary the views do not all show.
+ */
+export interface SessionTask {
+  id: string;
+  /** Shown at the top of the conversation as a reminder. */
+  title: string;
+  /** What they read before starting: the problem, in plain words. */
+  brief: string;
+  /** The parts worth covering, shown as a checklist they may ignore. */
+  prompts: readonly string[];
+  /** Composed into the agent's system prompt (see `/api/realtime/session`). */
+  agentSection: string;
+}
+
+/** Shared by the four: the setting, and what the agent must NOT do for the measures to hold. */
+const SESSION_SETTING = `THIS CONVERSATION IS PART OF A STUDY
+They are a study participant working through the everyday problem below by talking it over with you, for about five minutes. Let them lead and do the deciding; you bring ideas, knowledge and an honest view.
+
+- Stay on the problem. If they drift far from it, one short nudge back is fine.
+- Never summarise the conversation or list what has been covered, and never offer to: not at the end, not after a pause, not when asked "where were we?" — then name only the part they were on, in a few words, and let them carry on.
+- If they ask whether they are done or how long to go on, say the page tells them when they can finish.`;
+
+function sessionSection(problem: string): string {
+  return `${SESSION_SETTING}
+
+THE PROBLEM
+${problem} There is no right answer, and they are not experts.`;
+}
+
+export const SESSION_TASKS = {
+  trip: {
+    id: "trip",
+    title: "A weekend away for four",
+    brief:
+      "You and three friends want to get away for a weekend next month. You have about 150 euros each for everything, and one of you does not drive. " +
+      "Work out where to go, how all four of you get there, and where to stay, by talking it over with the assistant.",
+    prompts: ["Where, and why there?", "How do all four of you get there?", "Where do you stay, and what do you leave out?"],
+    agentSection: sessionSection(
+      "They and three friends want a weekend away next month, with about 150 euros each for everything, and one of the four does not drive. Where to go, how all four get there, and where to stay are the parts of it.",
+    ),
+  },
+  birthday: {
+    id: "birthday",
+    title: "A 40th birthday dinner",
+    brief:
+      "A close friend turns 40 in three weeks, and you are organising a dinner for twelve people. One guest is vegan, and the budget is about 40 euros a head. " +
+      "Work out where to hold it, what to eat, and one thing that makes the evening special, by talking it over with the assistant.",
+    prompts: ["At home, or somewhere else?", "What do you serve, with one guest vegan?", "What makes the evening special?"],
+    agentSection: sessionSection(
+      "A close friend of theirs turns 40 in three weeks, and they are organising a dinner for twelve people, one of them vegan, at about 40 euros a head. Where to hold it, what to serve, and one thing that makes the evening special are the parts of it.",
+    ),
+  },
+  move: {
+    id: "move",
+    title: "Moving to a new flat",
+    brief:
+      "You are moving to a flat across town in four weeks. You work full time, you have no car, and the new flat is on the third floor with no lift. " +
+      "Work out how you pack, how your things get there, and what to sort out before the day, by talking it over with the assistant.",
+    prompts: ["How and when do you pack?", "How do your things get there?", "What must be sorted before the day?"],
+    agentSection: sessionSection(
+      "They are moving to a flat across town in four weeks. They work full time, have no car, and the new flat is on the third floor with no lift. How and when to pack, how their things get there, and what to sort out before the day are the parts of it.",
+    ),
+  },
+  dinners: {
+    id: "dinners",
+    title: "A week of family dinners",
+    brief:
+      "You are planning next week's dinners for a family of four, with two children who are picky eaters, about 70 euros for the whole week, and little time to cook on weekdays. " +
+      "Work out the meals, the shopping, and what to cook ahead, by talking it over with the assistant.",
+    prompts: ["Which meals, with two picky eaters?", "How do you shop for 70 euros?", "What can you cook ahead?"],
+    agentSection: sessionSection(
+      "They are planning next week's dinners for a family of four, with two children who are picky eaters, about 70 euros for the whole week, and little time to cook on weekdays. The meals, the shopping, and what to cook ahead are the parts of it.",
+    ),
+  },
+} as const satisfies Record<SessionTaskId, SessionTask>;
+
+/** A block's stored task id as its task, or null for an id not in the catalogue. */
+export function sessionTaskFor(id: string | null | undefined): SessionTask | null {
+  return isSessionTaskId(id) ? SESSION_TASKS[id] : null;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SCREENS, renderScreen, screenFor } from "./screen";
+import { APP_MAP, SCREENS, STUDY_SCREEN, renderScreen, screenFor } from "./screen";
 
 describe("screen", () => {
   it("names a route coarsely, never passing a raw URL on", () => {
@@ -97,5 +97,11 @@ describe("screen", () => {
     expect(renderScreen("conversation", { display: "conversation", sparks: true })).toBe(
       renderScreen("conversation", { sparks: true }),
     );
+  });
+
+  it("gives the display study one line for every view, naming none and pointing nowhere", () => {
+    expect(STUDY_SCREEN).not.toMatch(/transcript|headline|topic|circle|bubble|mirror|map|spark/i);
+    expect(STUDY_SCREEN).not.toContain(APP_MAP);
+    expect(STUDY_SCREEN).toMatch(/Do not describe what is on it/);
   });
 });
