@@ -21,6 +21,7 @@ describe("StudyCondition", () => {
       sparks: true,
       sparkSelection: "suggested",
       alternateStart: "suggested",
+      display: "choice",
     };
     expect(StudyCondition.parse({})).toEqual(today);
     expect(resolveStudyCondition(null)).toEqual({ ok: true, condition: today });
@@ -35,7 +36,14 @@ describe("StudyCondition", () => {
       sparks: true,
       sparkSelection: "suggested",
       alternateStart: "suggested",
+      display: "choice",
     });
+  });
+
+  it("forces one of the four displays, or leaves the person's choice", () => {
+    expect(StudyCondition.parse({ display: "transcript" }).display).toBe("transcript");
+    expect(StudyCondition.parse({}).display).toBe("choice");
+    expect(StudyCondition.safeParse({ display: "orb" }).success).toBe(false);
   });
 
   it("refuses a misspelt field instead of quietly running the control arm", () => {
