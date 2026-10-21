@@ -11,6 +11,8 @@
  *   pnpm study:condition --user <id>                      print the template and recent drives
  *   pnpm study:prolific [--out <dir>]                     the Prolific study: participants.csv and probes.csv (PROLIFIC.md)
  *   pnpm study:week [--out <dir>] [--text]                the end-of-week questionnaire: week.csv (and week-texts.jsonl)
+ *   pnpm study:session invite [--ref F07] [--order 0-3]   a display-study session: prints its link
+ *   pnpm study:session list                               every session and how far it got
  *
  * WHY SETTERS AT ALL, when `board_enabled_at` is set with SQL. A condition is
  * JSON, and a hand-written JSON typo in `user.study_condition` does not fail:
@@ -31,7 +33,8 @@ config({ path: new URL("../../../../.env", import.meta.url).pathname, quiet: tru
 
 import { closeDb, desc, eq, getDb } from "@voicemural/db";
 import { captureSession, user } from "@voicemural/db/schema";
-import { StudyCondition } from "@voicemural/shared";
+import { createSession, listSessions } from "@voicemural/db/study-session";
+import { SESSION_ORDERS, StudyCondition } from "@voicemural/shared";
 import { exportParticipant, studyParticipants } from "../study/export";
 import { participantMetrics } from "../study/metrics";
 import { buildProlificExport, toCsv } from "../study/prolific-export";
@@ -296,6 +299,44 @@ async function runWeek(): Promise<void> {
   }
 }
 
+/**
+ * The display study's sessions (`study_session`). `invite` makes one, with
+ * the next order in turn unless `--order` pins it, and prints the link to
+ * send; whoever consents on it first takes part as a fresh guest. The base of
+ * the link is `STUDY_SESSION_BASE_URL`, else `BETTER_AUTH_URL`.
+ */
+async function runSession(): Promise<void> {
+  const sub = process.argv[3];
+  if (sub === "invite") {
+    const order = flag("order");
+    if (order !== undefined && !/^[0-9]+$/.test(order)) throw new Error(`--order takes 0 to ${SESSION_ORDERS - 1}`);
+    const { session, blocks } = await createSession({
+      ref: flag("ref"),
+      orderIndex: order === undefined ? undefined : Number(order) % SESSION_ORDERS,
+    });
+    const base = (process.env.STUDY_SESSION_BASE_URL || process.env.BETTER_AUTH_URL || "http://localhost:3000").replace(/\/$/, "");
+    console.log(`${session.ref}  order ${session.orderIndex}: ${blocks.map((b) => `${b.display}/${b.task}`).join(", ")}`);
+    console.log(`${base}/study/session?code=${session.inviteCode}`);
+    return;
+  }
+  if (sub === "list") {
+    for (const { session, blocks } of await listSessions()) {
+      const answered = blocks.filter((b) => b.answeredAt).length;
+      const state = session.completedAt
+        ? "complete"
+        : session.consentedAt
+          ? `${answered}/4 answered`
+          : session.userId
+            ? "claimed"
+            : "not opened";
+      const restarts = blocks.reduce((n, b) => n + Math.max(0, b.attempts - 1), 0);
+      console.log(`${session.ref.padEnd(8)} order ${session.orderIndex}  ${state}${restarts ? `  (${restarts} restarted)` : ""}`);
+    }
+    return;
+  }
+  throw new Error("usage: study-admin session <invite [--ref F07] [--order 0-3] | list>");
+}
+
 async function main(): Promise<void> {
   switch (process.argv[2]) {
     case "export":
@@ -312,9 +353,11 @@ async function main(): Promise<void> {
       return runProlific();
     case "week":
       return runWeek();
+    case "session":
+      return runSession();
     default:
       throw new Error(
-        "usage: study-admin <export|metrics|review|participant|condition|prolific|week> [--user <id>] …",
+        "usage: study-admin <export|metrics|review|participant|condition|prolific|week|session> [--user <id>] …",
       );
   }
 }
