@@ -41,6 +41,7 @@
     "study:review": "pnpm --filter @voicemural/worker study review",
     "study:prolific": "pnpm --filter @voicemural/worker study prolific",
     "study:week": "pnpm --filter @voicemural/worker study week",
+    "study:session": "pnpm --filter @voicemural/worker study session",
     "lint:fix": "turbo run lint -- --fix",
     "deadcode": "knip"
   },
