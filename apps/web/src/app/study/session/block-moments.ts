@@ -76,6 +76,8 @@ export function useBlockMoments({
   const lastShown = useRef<number | null>(null);
   const resumedAt = useRef<number | null>(null);
   const gameShown = useRef(0);
+  /** No quiet moment came for the first prompt before the game did. */
+  const missedBefore = useRef(false);
   const probeShown = useRef(0);
   const awaitingWords = useRef<number | null>(null);
 
@@ -138,6 +140,12 @@ export function useBlockMoments({
 
       if (where === "talk" && gameDue({ elapsedMs: at, quietMs: quiet, timings: t })) {
         expirePrompt("interrupted");
+        // The prompt before the game is the "before" of a before-and-after:
+        // shown after it, it would be neither. Skipped, and said so.
+        if (!shown.current.has(0)) {
+          shown.current.add(0);
+          missedBefore.current = true;
+        }
         pause(true);
         gameShown.current = at;
         go("game");
@@ -193,7 +201,7 @@ export function useBlockMoments({
         answeredOffsetMs: at,
         value: null,
         text: null,
-        meta: { ...stats },
+        meta: { ...stats, promptBeforeMissed: missedBefore.current },
       });
       probeShown.current = at;
       go("probe");
