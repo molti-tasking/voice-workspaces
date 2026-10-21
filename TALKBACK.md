@@ -627,7 +627,12 @@ recorder polls it: an "AI offline" pill in the header, and before a drive the
 reason and a link to `/record/demo`, a simulated conversation
 (`demo-conversation.ts`) played into all three views with given points and
 a scripted agent that asks pulled sparks — no microphone, no AI, nothing
-saved. It is reachable by URL for demos too.
+saved. It is reachable by URL for demos too. The script is a weekend being
+planned, about a minute long: seven topics on both sides, two returns, a
+stretch they hesitate over, one subject left open and three settled. With the
+sound on (`demo-voice.ts`), the browser's own speech synthesis reads it in
+two voices, one for the person and one for Souffleur, and each line is waited
+out before the next — no audio files, no AI.
 
 ### Which voice
 
