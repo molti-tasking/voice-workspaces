@@ -2910,7 +2910,7 @@ class FloorRecorder:
         self.questions_cleared += 1
 
 
-def floor_with(monkeypatch, *, locked=False, recorder=None, subjects=None):
+def floor_with(monkeypatch, *, locked=False, paused=False, recorder=None, subjects=None):
     """A bare `Floor` whose pushes are collected and whose timers are logged.
 
     The poke's own push is a real task, so a test can await it; the armed
@@ -2922,6 +2922,7 @@ def floor_with(monkeypatch, *, locked=False, recorder=None, subjects=None):
         context,
         recorder or FloorRecorder(),
         locked=locked,
+        paused=paused,
         subject_title=(subjects or {}).get,
     )
     floor.pushed = []
@@ -3266,6 +3267,90 @@ def test_the_engine_offers_nothing_into_a_lock(monkeypatch):
 
     asyncio.run(run())
     assert engine._context.messages == []
+
+
+def test_a_pause_cuts_the_agent_off_asks_for_no_reply_and_refuses_pokes(monkeypatch):
+    # The display study's interruption: they are playing a game, not talking.
+    recorder = FloorRecorder()
+    floor = floor_with(monkeypatch, recorder=recorder)
+
+    async def run():
+        await floor.process_frame(bot.BotStartedSpeakingFrame(), FrameDirection.UPSTREAM)
+        await floor.process_frame(request("pause", {"paused": True}), FrameDirection.DOWNSTREAM)
+        await floor.process_frame(bot.LLMContextFrame(context=floor._context), FrameDirection.DOWNSTREAM)
+        await floor.process_frame(request("poke"), FrameDirection.DOWNSTREAM)
+        await settle_tasks()
+
+    asyncio.run(run())
+    assert floor.interruptions == 1
+    # Whatever it asked, the answer is not coming.
+    assert recorder.questions_cleared == 1
+    assert runs_from(floor) == []
+    assert answers_from(floor) == [{"paused": True, "floor": "open"}, {"poke": "paused", "floor": "open"}]
+    assert not floor.allows_upstream_run()
+    assert floor.held
+    # Not a floor change: the study page records the pause on the drive's clock.
+    assert recorder.floors == [("poke", False)]
+
+
+def test_after_a_pause_the_agent_does_not_recap_and_waits_for_them(monkeypatch):
+    floor = floor_with(monkeypatch)
+
+    async def pause_and_resume():
+        await floor.process_frame(request("pause", {"paused": True}), FrameDirection.DOWNSTREAM)
+        await floor.process_frame(request("pause", {"paused": False}), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(pause_and_resume())
+    assert nudges(floor) == [bot.PAUSE_RESUME_NOTE]
+    # Back, but nothing unprompted until they have spoken.
+    assert floor.held
+
+    async def they_speak():
+        await floor.process_frame(bot.UserStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+        await floor.process_frame(bot.LLMContextFrame(context=floor._context), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(they_speak())
+    assert not floor.held
+    assert len(runs_from(floor)) == 1
+
+
+def test_a_reconnect_during_the_pause_starts_paused(monkeypatch):
+    floor = floor_with(monkeypatch, paused=True)
+
+    async def run():
+        await floor.process_frame(bot.LLMContextFrame(context=floor._context), FrameDirection.DOWNSTREAM)
+        # The page re-sends its pause after the connect: no change.
+        await floor.process_frame(request("pause", {"paused": True}), FrameDirection.DOWNSTREAM)
+        await floor.process_frame(request("pause", {"paused": "yes"}), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(run())
+    assert runs_from(floor) == []
+    assert nudges(floor) == []
+    assert answers_from(floor) == [{"paused": True, "floor": "open"}] * 2
+
+
+def test_the_engine_offers_nothing_while_paused_or_before_they_are_back(monkeypatch):
+    class Held:
+        locked = False
+        held = True
+
+    engine = offers_with(monkeypatch)
+    engine._floor = Held()
+
+    async def run():
+        await engine._fire(engine._delay, opening=False)
+        await engine._fire(2.5, opening=True)
+
+    asyncio.run(run())
+    assert engine._context.messages == []
+
+
+def test_the_pause_note_is_word_for_word_prompt_ts():
+    assert bot.PAUSE_RESUME_NOTE == (
+        "(They stepped away from the conversation for a minute and are back now. Do not recap, "
+        "summarise or remind them where things stood, and do not speak first: wait for them, and "
+        "respond only to what they say next.)"
+    )
 
 
 def test_a_declined_poke_is_refused_re_run_and_marked_apart_from_answers():

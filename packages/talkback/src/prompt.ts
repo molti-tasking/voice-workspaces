@@ -526,6 +526,16 @@ export const POKE_FALLBACKS: Readonly<Record<string, string>> = {
  */
 export const FLOOR_OPEN_NOTE = `(They have unlocked you: you may reply again from their next words. Do not work back through what they said while you were locked — respond only to what they say next, if it wants a reply.)`;
 
+/**
+ * Put in front of the model when the display study's interruption ends: the
+ * person was taken away to play a game for a minute (`Floor` in bot.py,
+ * "pause"). How they pick the conversation up again is the measure, so the
+ * agent must neither recap where things stood nor speak first.
+ *
+ * MIRRORED IN `bot.py` as `PAUSE_RESUME_NOTE`.
+ */
+export const PAUSE_RESUME_NOTE = `(They stepped away from the conversation for a minute and are back now. Do not recap, summarise or remind them where things stood, and do not speak first: wait for them, and respond only to what they say next.)`;
+
 /* ---------------------------------------------------------------------------
  * Sparks: a question about one subject, pulled by the person
  * ------------------------------------------------------------------------- */

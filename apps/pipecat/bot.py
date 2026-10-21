@@ -2525,6 +2525,15 @@ FLOOR_OPEN_NOTE = (
     "work back through what they said while you were locked — respond only to "
     "what they say next, if it wants a reply.)"
 )
+# Mirrors PAUSE_RESUME_NOTE in packages/talkback/src/prompt.ts — change one,
+# change both. Put in front of the model when the display study's interruption
+# ends (`Floor`, "pause"): how they pick the conversation up again is what the
+# study measures, so the agent must neither recap nor speak first.
+PAUSE_RESUME_NOTE = (
+    "(They stepped away from the conversation for a minute and are back now. Do "
+    "not recap, summarise or remind them where things stood, and do not speak "
+    "first: wait for them, and respond only to what they say next.)"
+)
 
 # --- Sparks: a question about one subject, pulled by the person --------------
 #
@@ -2845,6 +2854,11 @@ class Offers(FrameProcessor):
         if self._floor is not None and self._floor.locked:
             logger.info("[offers] locked — no unprompted turn")
             return
+        # Paused for the display study's interruption, or back from it and
+        # not yet spoken: whoever picks the conversation up, it is them.
+        if self._floor is not None and self._floor.held:
+            logger.info("[offers] paused — no unprompted turn")
+            return
 
         if opening:
             self._opened = True
@@ -3081,6 +3095,15 @@ class Floor(FrameProcessor):
     which is how the toggle on the recorder shows the lock the agent is
     actually under rather than the one that was tapped. Every change is
     written to `floor_event` as the container applied it.
+
+    PAUSE is the display study's interruption (`{"paused": true | false}`):
+    the person is taken away from the conversation for a minute to play a
+    game. Like Lock it cuts off a reply and asks for none, and unlike Lock it
+    also refuses pokes — nobody is looking at the conversation to poke from.
+    When it ends the model is told not to recap (`PAUSE_RESUME_NOTE`), and no
+    unprompted turn is offered until they have spoken: how they pick the
+    thread up is the measure. Not a `floor_event`: the study page records the
+    pause and the resumption on the drive's clock itself.
     """
 
     # A poke that has started but whose completion never reports back — an LLM
@@ -3103,6 +3126,7 @@ class Floor(FrameProcessor):
         recorder: "TurnRecorder | None" = None,
         *,
         locked: bool = False,
+        paused: bool = False,
         subject_title: Callable[[int], str | None] | None = None,
         sparks: bool = True,
         selection: str = "suggested",
@@ -3110,6 +3134,11 @@ class Floor(FrameProcessor):
         super().__init__()
         self._context = context
         self._recorder = recorder
+        # The display study's interruption is on: a reconnect during it starts
+        # paused, from the offer, so not even the opening is said.
+        self._paused = paused
+        # Back from a pause, and they have not spoken yet.
+        self._awaiting_return = False
         # What a spark's ordinal names: `TopicTitle.title_for`. None when the
         # drive's arm offers no sparks: every spark is then a plain poke, and
         # nothing is listed to the model.
@@ -3151,9 +3180,17 @@ class Floor(FrameProcessor):
     def floor(self) -> str:
         return "locked" if self._locked else "open"
 
+    @property
+    def held(self) -> bool:
+        """No unprompted turn: paused, or back from a pause and not yet spoken."""
+        return self._paused or self._awaiting_return
+
     def allows_upstream_run(self) -> bool:
         """Whether a completion asked for from downstream (a tool's follow-up)
-        may run: always under Normal, and under Lock only inside a poke."""
+        may run: never while paused, always under Normal, and under Lock only
+        inside a poke."""
+        if self._paused:
+            return False
         return not self._locked or self._poke == "running"
 
     def note_generating(self, generating: bool) -> None:
@@ -3226,6 +3263,25 @@ class Floor(FrameProcessor):
             logger.info("[floor] open — the agent may talk back")
             self._context.add_message({"role": "user", "content": FLOOR_OPEN_NOTE})
 
+    async def _pause(self, paused: bool) -> None:
+        if paused == self._paused:
+            # Re-sent after every connect, like the floor.
+            return
+        self._paused = paused
+        if paused:
+            logger.info("[floor] paused — they are away from the conversation")
+            self._awaiting_return = False
+            if self._recorder is not None:
+                self._recorder.clear_question()
+            self._clear_poke()
+            if self._bot_speaking or self._generating:
+                await self.broadcast_interruption()
+                self._generating = False
+        else:
+            logger.info("[floor] resumed — waiting for them to pick it up")
+            self._awaiting_return = True
+            self._context.add_message({"role": "user", "content": PAUSE_RESUME_NOTE})
+
     def _resolve_spark(
         self, spark: tuple[str, int] | None, question: str | None = None
     ) -> tuple[str, int, str, str | None] | None:
@@ -3246,6 +3302,9 @@ class Floor(FrameProcessor):
         the browser."""
         if self._recorder is not None:
             self._recorder.record_floor("poke")
+        if self._paused:
+            logger.info("[floor] poked while paused — nothing to do")
+            return "paused"
         if self._bot_speaking:
             logger.info("[floor] poked while speaking — nothing to do")
             return "speaking"
@@ -3376,8 +3435,14 @@ class Floor(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, RTVIClientMessageFrame) and frame.type in ("floor", "poke", "sparks"):
+        if isinstance(frame, RTVIClientMessageFrame) and frame.type in ("floor", "poke", "sparks", "pause"):
             data = frame.data if isinstance(frame.data, dict) else {}
+            if frame.type == "pause":
+                wanted = data.get("paused")
+                if isinstance(wanted, bool):
+                    await self._pause(wanted)
+                await self._answer(frame, {"paused": self._paused, "floor": self.floor})
+                return
             if frame.type == "sparks":
                 # The sparks on their screen, replaced whole each time they
                 # change. At most three, as the screen shows; anything
@@ -3403,6 +3468,9 @@ class Floor(FrameProcessor):
             if self._recorder is not None:
                 self._recorder.record_floor(self.floor, at_connect=True)
         elif isinstance(frame, LLMContextFrame) and direction == FrameDirection.DOWNSTREAM:
+            if self._paused:
+                logger.info("[floor] paused — no reply asked for")
+                return
             if self._locked and self._poke != "running":
                 if self._poke == "armed":
                     # Their turn has ended and asked for a reply; the poke they
@@ -3419,6 +3487,9 @@ class Floor(FrameProcessor):
             self._vad_speaking = False
         elif isinstance(frame, UserStartedSpeakingFrame):
             self._user_turn = True
+            if self._awaiting_return and not self._paused:
+                logger.info("[floor] they picked the conversation up again")
+                self._awaiting_return = False
         elif isinstance(frame, UserStoppedSpeakingFrame):
             self._user_turn = False
         elif isinstance(frame, BotStartedSpeakingFrame):
@@ -5357,14 +5428,16 @@ def build_pipeline(
     capture_session_id: str | None = None,
     *,
     locked: bool = False,
+    paused: bool = False,
     titles: list | None = None,
 ) -> PipelineWorker:
     """Assemble one drive's pipeline.
 
-    `locked` and `titles` come from the browser with the offer: the floor it
-    remembers, applied before the first word, and the sections it already has,
-    so a reconnect files a returning subject where it was. See `Floor`,
-    `TopicTitle`.
+    `locked`, `paused` and `titles` come from the browser with the offer: the
+    floor it remembers, applied before the first word; whether the display
+    study's interruption is on, for a reconnect during it; and the sections
+    it already has, so a reconnect files a returning subject where it was.
+    See `Floor`, `TopicTitle`.
 
     `session` is the bootstrap from `/api/realtime/session` — the prompt, the
     summary instruction, the voice and any seed summary. Fetched once by the
@@ -5538,6 +5611,7 @@ def build_pipeline(
         context,
         recorder,
         locked=locked,
+        paused=paused,
         subject_title=title.title_for,
         sparks=sparks_enabled(session),
         selection=spark_selection(session),
@@ -5806,6 +5880,7 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
     # Display state, so unauthenticated is fine — bounded, because this route
     # is public and a list is a list someone could make long.
     locked = request_data.get("floor") == "locked"
+    paused = request_data.get("paused") is True
     # Bare titles from an older web app, `{title, ordinal}` from a newer one.
     # Checked by `parse_seeded_titles` in `TopicTitle`.
     titles = request_data.get("titles") if isinstance(request_data.get("titles"), list) else None
@@ -5816,7 +5891,7 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
     session = await asyncio.to_thread(fetch_session, ticket)
 
     worker = build_pipeline(
-        connection, ticket, session, capture_session_id, locked=locked, titles=titles
+        connection, ticket, session, capture_session_id, locked=locked, paused=paused, titles=titles
     )
 
     async def run():

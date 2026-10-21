@@ -5,6 +5,7 @@ import {
   ANSWER_ACKNOWLEDGEMENTS,
   ANSWER_RETRY_NUDGE,
   FLOOR_OPEN_NOTE,
+  PAUSE_RESUME_NOTE,
   OPENING_NUDGE,
   OUTPUT_CONTRACT,
   POKE_FALLBACKS,
@@ -297,6 +298,13 @@ describe("the floor: Lock, Normal and Poke (talkback-20), which bot.py mirrors",
 
   it("keeps an unlocked agent from answering the whole locked stretch", () => {
     expect(FLOOR_OPEN_NOTE).toMatch(/Do not work back through what they said while you were locked/);
+  });
+
+  it("keeps the agent from recapping, or speaking first, after the display study's pause", () => {
+    // Pinned word for word: bot.py's test pins the same text.
+    expect(PAUSE_RESUME_NOTE).toBe(
+      "(They stepped away from the conversation for a minute and are back now. Do not recap, summarise or remind them where things stood, and do not speak first: wait for them, and respond only to what they say next.)",
+    );
   });
 
   it("keeps the poke's last resort out of question form, and short", () => {
