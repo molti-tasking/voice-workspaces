@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { and, captureSession, desc, eq, getDb, user } from "@voicemural/db";
+import { armedBlockFor, linkArmedBlock } from "@voicemural/db/study-session";
 import { CaptureSessionCreate, freezeStudyCondition, resolveStudyCondition } from "@voicemural/shared";
 import { asSttLanguage } from "@voicemural/talkback/language";
 import { asVoiceId } from "@voicemural/talkback/voice";
@@ -129,6 +130,22 @@ export async function POST(req: Request) {
     }
   }
 
+  // A block of the display study (`study_block`), when the session page armed
+  // one for this account's next drive: the block's display is forced onto the
+  // drive, with the sparks in every view but the plain transcript, and the two
+  // are linked once the drive exists. Decided here, like the rest of the
+  // condition, so no browser can name its own view. Fails open to an ordinary
+  // drive, which the page notices (`linked`) and starts over.
+  const block = await armedBlockFor(userId).catch(() => null);
+  if (block) {
+    condition = {
+      ...condition,
+      display: block.display,
+      sparks: block.display !== "transcript",
+      sparkSelection: "suggested",
+    };
+  }
+
   // `sparkSelection: "alternate"` becomes the day's mode, on the day the drive
   // STARTED in the study's time zone, and is frozen like the rest: a drive past
   // midnight keeps the mode it began in.
@@ -182,6 +199,16 @@ export async function POST(req: Request) {
       id,
       resumed: true,
       studyCondition: resolveStudyCondition(row.studyCondition).condition,
+    });
+  }
+
+  if (block && !(await linkArmedBlock(block, id).catch(() => false))) {
+    // Another drive took the arm first (a second tab): this one runs under the
+    // block's condition but is not the block, and the page will say so.
+    console.error("a study block was armed, but another drive claimed it first", {
+      userId,
+      captureSessionId: id,
+      position: block.position,
     });
   }
 

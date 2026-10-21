@@ -24,7 +24,10 @@ vi.mock("@/lib/session", () => ({
 }));
 
 const { closeDb, eq, getDb } = await import("@voicemural/db");
-const { captureSession, user } = await import("@voicemural/db/schema");
+const { captureSession, studySession, user } = await import("@voicemural/db/schema");
+const { armBlock, claimSession, createSession, findBlockByCaptureSession } = await import(
+  "@voicemural/db/study-session"
+);
 const { isDatabaseReachable } = await import("@voicemural/db/testing");
 const { POST } = await import("./route");
 
@@ -33,8 +36,11 @@ const describeIfDb = (await isDatabaseReachable()) ? describe : describe.skip;
 const SESSION_A = "00000000-0000-4000-8000-0000000e1a01";
 const SESSION_B = "00000000-0000-4000-8000-0000000e1a02";
 
+const STUDY_REF = "TST-CS-1";
+
 async function seed() {
   const db = getDb();
+  await db.delete(studySession).where(eq(studySession.ref, STUDY_REF));
   await db.delete(user).where(eq(user.id, USER_ID));
   await db.insert(user).values({ id: USER_ID, name: "U", email: `${USER_ID}@test.local` });
 }
@@ -68,6 +74,7 @@ describeIfDb("POST /api/capture-sessions — the use case a drive begins under",
   beforeEach(seed);
 
   afterAll(async () => {
+    await getDb().delete(studySession).where(eq(studySession.ref, STUDY_REF));
     await getDb().delete(user).where(eq(user.id, USER_ID));
     await closeDb();
   });
@@ -137,5 +144,24 @@ describeIfDb("POST /api/capture-sessions — the use case a drive begins under",
       .where(eq(captureSession.id, SESSION_A))
       .limit(1);
     expect((row?.condition as { sparkSelection?: string }).sparkSelection).toBe("suggested");
+  });
+
+  it("forces an armed study block's display onto the next drive, and links the two", async () => {
+    // Order 1 opens on the conversation column; the third block is the transcript.
+    const { session, blocks } = await createSession({ ref: STUDY_REF, orderIndex: 1 });
+    await claimSession({ code: session.inviteCode!, userId: USER_ID, allowAccounts: true });
+    expect(blocks[0]!.display).toBe("conversation");
+
+    expect(await armBlock(USER_ID, 0)).toBe("armed");
+    const res = await open(SESSION_A);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { studyCondition: { display: string; sparks: boolean } };
+    expect(body.studyCondition).toMatchObject({ display: "conversation", sparks: true });
+    expect(await findBlockByCaptureSession(SESSION_A)).toMatchObject({ position: 0, display: "conversation" });
+
+    // The arm is spent: the next drive is an ordinary one.
+    const next = (await (await open(SESSION_B)).json()) as { studyCondition: { display: string } };
+    expect(next.studyCondition.display).toBe("choice");
+    expect(await findBlockByCaptureSession(SESSION_B)).toBeNull();
   });
 });

@@ -2,15 +2,16 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { captureSession, eq, getDb } from "@voicemural/db";
 import { boardEnabledAt } from "@voicemural/db/board";
+import { currentScreen } from "@voicemural/db/display";
 import {
   pendingConfirmation,
   settleInvocation,
   type PendingConfirmation,
 } from "@voicemural/db/repertoire";
+import { findBlockByCaptureSession } from "@voicemural/db/study-session";
 import { resolveSpokenAnswer, resolveStudyCondition, type SpokenAnswer } from "@voicemural/shared";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
-import { currentScreen } from "@voicemural/db/display";
-import { buildTurnContext, renderLocalTime, renderScreen, timeZoneOf } from "@voicemural/talkback";
+import { STUDY_SCREEN, buildTurnContext, renderLocalTime, renderScreen, timeZoneOf } from "@voicemural/talkback";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -116,9 +117,17 @@ export async function POST(req: Request) {
   // Checked per turn rather than once per drive: a researcher switching the
   // board on mid-drive should not have to wait for the next one, and it is a
   // primary-key read.
-  const boardOn = (await boardEnabledAt(payload.userId).catch(() => null)) !== null;
+  // A block of the display study: no board, nothing from earlier drives (the
+  // session's other blocks are on this account), and one line for the screen
+  // whatever the view, so the agent stays the same in all four. Fails open to
+  // an ordinary drive.
+  const block = await findBlockByCaptureSession(payload.captureSessionId).catch(() => null);
+  const boardOn = !block && (await boardEnabledAt(payload.userId).catch(() => null)) !== null;
   const [{ passages, threads, board, drafts }, { settled, pending }, screen] = await Promise.all([
-    buildTurnContext(payload.userId, payload.captureSessionId, parsed.data.said, { board: boardOn }),
+    buildTurnContext(payload.userId, payload.captureSessionId, parsed.data.said, {
+      board: boardOn,
+      memory: !block,
+    }),
     settleThenReadPending(payload.captureSessionId, parsed.data.said, parsed.data.answering),
     // Fails open to "not known", which is itself an instruction not to
     // describe the screen.
@@ -157,7 +166,7 @@ export async function POST(req: Request) {
       drafts: drafts.text,
       pending,
       settled,
-      screen: renderScreen(screen, onScreen),
+      screen: block ? STUDY_SCREEN : renderScreen(screen, onScreen),
       // `now` is the date and time where they are, rendered as their words
       // arrive (`renderLocalTime`). The agent had no clock at all and guessed
       // one — see clock.ts.

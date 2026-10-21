@@ -4,12 +4,15 @@ import { and, captureSession, desc, eq, getDb, lt } from "@voicemural/db";
 import { boardEnabledAt } from "@voicemural/db/board";
 import { nextDraftSeq } from "@voicemural/db/drafts";
 import { findParticipantByUser } from "@voicemural/db/prolific";
+import { findBlockByCaptureSession } from "@voicemural/db/study-session";
 import { resolveStudyCondition } from "@voicemural/shared";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import {
   BOARD_EDITING,
   BOARD_TOOLS,
   RECENT_DRIVES_SHOWN,
+  SESSION_PROFILE,
+  SESSION_SYSTEM_PROMPT,
   SETTLED_PROMPT,
   STUDY_PROFILE,
   STUDY_SYSTEM_PROMPT,
@@ -24,6 +27,7 @@ import {
   loadDriveSoFarText,
   nativeVoicesByLanguage,
   renderRecentDrives,
+  sessionTaskFor,
   studyTaskFor,
   summaryPromptFor,
   timeZoneOf,
@@ -146,6 +150,12 @@ export async function POST(req: Request) {
   // and a missing task shows up in the export as an off-topic drive.
   const participant = await findParticipantByUser(payload.userId).catch(() => null);
   const studyTask = studyTaskFor(participant?.task);
+  // A block of the display study talks to the session's own agent about the
+  // block's task (study-agent.ts): the same agent for every view, with no
+  // tools, no web search and nothing from the session's other blocks. Fails
+  // open to the ordinary agent, as the Prolific task does.
+  const block = await findBlockByCaptureSession(payload.captureSessionId).catch(() => null);
+  const sessionTask = sessionTaskFor(block?.task);
   const searchSection = webSearch ? [webSearchSection(new Date(), timeZoneOf(row.deviceInfo))] : [];
   // Frozen to the day's concrete mode when the drive was registered.
   const condition = resolveStudyCondition(row.studyCondition).condition;
@@ -153,7 +163,13 @@ export async function POST(req: Request) {
   // conversational assistant at a desk, the same in both arms, with the task
   // on top. No board and no earlier drives — a participant has neither.
   // Everyone else gets the field study's agent, unchanged.
-  const composed = studyTask
+  const composed = sessionTask
+    ? composeSystemPrompt({
+        base: SESSION_SYSTEM_PROMPT,
+        profile: SESSION_PROFILE,
+        sections: [sessionTask.agentSection],
+      })
+    : studyTask
     ? composeSystemPrompt({
         base: STUDY_SYSTEM_PROMPT,
         profile: STUDY_PROFILE,
@@ -243,11 +259,13 @@ export async function POST(req: Request) {
       // are. Board tools only when the board is on, and then the prompt says
       // nothing about editing it either; every call comes back to
       // /api/realtime/board.
-      tools: [...(boardEditable && !studyTask ? BOARD_TOOLS : []), ...(webSearch ? [WEB_SEARCH_TOOL] : [])],
+      tools: sessionTask
+        ? []
+        : [...(boardEditable && !studyTask ? BOARD_TOOLS : []), ...(webSearch ? [WEB_SEARCH_TOOL] : [])],
       // Which of those is the search, so the container can route it to
       // /api/realtime/search, speak its announcement and play the cue —
       // without a tool name hard-coded in Python. Null when not offered.
-      webSearchTool: webSearch ? WEB_SEARCH_TOOL.function.name : null,
+      webSearchTool: webSearch && !sessionTask ? WEB_SEARCH_TOOL.function.name : null,
     },
     { headers: { "Cache-Control": "no-store" } },
   );
