@@ -651,9 +651,11 @@ function KeepToggle({
  * One line under the conversation: who has the floor this second. Turn-taking
  * is what the study is about, so this is the one thing on the screen worth
  * catching from the corner of an eye — and in one column there is no panel to
- * light up.
+ * light up. Every display draws this same line (`ConversationDisplay`), so
+ * the display study compares what is shown of the conversation, not whether
+ * the screen says who is talking.
  */
-function StatusLine({ status }: { status: FlowStatus }) {
+export function StatusLine({ status }: { status: FlowStatus }) {
   const { floor, speaking, listening } = status;
   return (
     <p className="flex h-7 w-full shrink-0 items-center gap-2 text-sm text-fg/55 select-none">

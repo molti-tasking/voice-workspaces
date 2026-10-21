@@ -131,6 +131,8 @@ export async function POST(req: Request) {
   const onScreen = {
     sparks: condition.sparks,
     keep: condition.sparks && condition.sparkSelection === "chosen",
+    // A display the drive forces (the display study); otherwise their choice.
+    ...(condition.display !== "choice" ? { display: condition.display } : {}),
   };
 
   return NextResponse.json(
