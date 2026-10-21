@@ -13,6 +13,7 @@
  *   pnpm study:week [--out <dir>] [--text]                the end-of-week questionnaire: week.csv (and week-texts.jsonl)
  *   pnpm study:session invite [--ref F07] [--order 0-3]   a display-study session: prints its link
  *   pnpm study:session list                               every session and how far it got
+ *   pnpm study:session export [--out <dir>] [--text]      sessions.csv, blocks.csv, moments.csv (and transcripts.jsonl)
  *
  * WHY SETTERS AT ALL, when `board_enabled_at` is set with SQL. A condition is
  * JSON, and a hand-written JSON typo in `user.study_condition` does not fail:
@@ -39,6 +40,7 @@ import { exportParticipant, studyParticipants } from "../study/export";
 import { participantMetrics } from "../study/metrics";
 import { buildProlificExport, toCsv } from "../study/prolific-export";
 import { pendingReview, recordReview } from "../study/review";
+import { buildSessionExport } from "../study/session-export";
 import { loadWeekResponses, weekRows, weekTexts } from "../study/week-survey";
 
 function flag(name: string): string | undefined {
@@ -334,7 +336,31 @@ async function runSession(): Promise<void> {
     }
     return;
   }
-  throw new Error("usage: study-admin session <invite [--ref F07] [--order 0-3] | list>");
+  if (sub === "export") {
+    // Under the gitignored `storage/`, like the other exports. Their words are
+    // in it (summaries, probes, reasons; transcripts with --text): the
+    // session's consent says the researchers read them, and nobody else does.
+    const outDir = flag("out")
+      ? resolve(flag("out")!)
+      : new URL("../../../../storage/study-session", import.meta.url).pathname;
+    const out = await buildSessionExport({ text: has("text") });
+    await mkdir(outDir, { recursive: true });
+    for (const [name, rows] of [
+      ["sessions.csv", out.sessions],
+      ["blocks.csv", out.blocks],
+      ["moments.csv", out.moments],
+    ] as const) {
+      await writeFile(join(outDir, name), toCsv(rows));
+      console.log(`${join(outDir, name)}  ${rows.length} rows`);
+    }
+    if (has("text")) {
+      const file = join(outDir, "transcripts.jsonl");
+      await writeFile(file, out.transcripts.map((t) => JSON.stringify(t)).join("\n") + (out.transcripts.length ? "\n" : ""));
+      console.log(`${file}  ${out.transcripts.length} conversations — their words; do not share the file`);
+    }
+    return;
+  }
+  throw new Error("usage: study-admin session <invite [--ref F07] [--order 0-3] | list | export [--out <dir>] [--text]>");
 }
 
 async function main(): Promise<void> {
