@@ -14,6 +14,9 @@
  *   pnpm study:session invite [--ref F07] [--order 0-3]   a display-study session: prints its link
  *   pnpm study:session list                               every session and how far it got
  *   pnpm study:session export [--out <dir>] [--text]      sessions.csv, blocks.csv, moments.csv (and transcripts.jsonl)
+ *   pnpm study:judge [--role judge] [--repeats 2] [--blind-check] [--keep-spark-turns] [--limit n] [--langfuse] [--out <dir>]
+ *                                                         the blind judge: items.jsonl, scores.csv, and key.csv apart
+ *   pnpm study:judge --join [--out <dir>]                 joined.csv: the scores with the view of each item
  *
  * WHY SETTERS AT ALL, when `board_enabled_at` is set with SQL. A condition is
  * JSON, and a hand-written JSON typo in `user.study_condition` does not fail:
@@ -27,7 +30,8 @@
  * (comma-separated) — the researcher's own pilot account, where reading the
  * words is the point.
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { config } from "dotenv";
 config({ path: new URL("../../../../.env", import.meta.url).pathname, quiet: true });
@@ -35,12 +39,16 @@ config({ path: new URL("../../../../.env", import.meta.url).pathname, quiet: tru
 import { closeDb, desc, eq, getDb } from "@voicemural/db";
 import { captureSession, user } from "@voicemural/db/schema";
 import { createSession, listSessions } from "@voicemural/db/study-session";
+import { chat, type ModelRole } from "@voicemural/llm";
 import { SESSION_ORDERS, StudyCondition } from "@voicemural/shared";
+import { flushLangfuse, langfuseConfig, startLangfuse, traceTurn, type Langfuse } from "@voicemural/talkback/eval/langfuse";
+import { STUDY_JUDGE_VERSION } from "@voicemural/talkback/eval/study-judge";
 import { exportParticipant, studyParticipants } from "../study/export";
 import { participantMetrics } from "../study/metrics";
-import { buildProlificExport, toCsv } from "../study/prolific-export";
+import { buildProlificExport, fromCsv, toCsv } from "../study/prolific-export";
 import { pendingReview, recordReview } from "../study/review";
 import { buildSessionExport } from "../study/session-export";
+import { buildJudgeItems, joinScores, langfuseAllowed, loadJudgeBlocks, runJudge, type JudgeItem } from "../study/session-judge";
 import { loadWeekResponses, weekRows, weekTexts } from "../study/week-survey";
 
 function flag(name: string): string | undefined {
@@ -363,6 +371,123 @@ async function runSession(): Promise<void> {
   throw new Error("usage: study-admin session <invite [--ref F07] [--order 0-3] | list | export [--out <dir>] [--text]>");
 }
 
+const JUDGE_ROLES: readonly ModelRole[] = ["judge", "fast", "reasoning", "converse"];
+
+/**
+ * The display study's blind judge (session-judge.ts). Writes the key first
+ * and apart (key.csv: which block each item id is), then the blinded items
+ * (items.jsonl: exactly what the judge is sent), then the scores
+ * (scores.csv: by item id only). `--join` is the one step that reads the key
+ * with the scores, into joined.csv, and says how often the blind check named
+ * the right view.
+ */
+async function runStudyJudge(): Promise<void> {
+  const outDir = flag("out")
+    ? resolve(flag("out")!)
+    : new URL("../../../../storage/study-judge", import.meta.url).pathname;
+
+  if (has("join")) {
+    const scores = fromCsv(await readFile(join(outDir, "scores.csv"), "utf8"));
+    const key = fromCsv(await readFile(join(outDir, "key.csv"), "utf8"));
+    const joined = joinScores(scores, key);
+    await writeFile(join(outDir, "joined.csv"), toCsv(joined));
+    console.log(`${join(outDir, "joined.csv")}  ${joined.length} rows`);
+    const blind = joined.filter((r) => r.kind === "blind" && r.guessed_right !== undefined && r.guessed_right !== null);
+    if (blind.length > 0) {
+      const right = blind.filter((r) => r.guessed_right === true).length;
+      console.log(`blind check: ${right} of ${blind.length} guessed the view (${Math.round((right / blind.length) * 100)}%; chance is 25%)`);
+    }
+    return;
+  }
+
+  const role = (flag("role") ?? "judge") as ModelRole;
+  if (!JUDGE_ROLES.includes(role)) throw new Error(`--role takes ${JUDGE_ROLES.join(", ")}`);
+  const repeats = Number(flag("repeats") ?? 1);
+  if (!Number.isInteger(repeats) || repeats < 1 || repeats > 5) throw new Error("--repeats takes 1 to 5");
+  const limit = flag("limit") === undefined ? Infinity : Number(flag("limit"));
+
+  let salt = process.env.STUDY_JUDGE_SALT;
+  if (!salt) {
+    salt = randomBytes(16).toString("hex");
+    console.warn("⚠ STUDY_JUDGE_SALT is not set: this run's item ids will not match another run's.");
+  }
+
+  let langfuse: Langfuse | null = null;
+  if (has("langfuse")) {
+    const config = langfuseConfig();
+    if (!config) throw new Error("--langfuse needs LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY.");
+    if (!langfuseAllowed(config)) {
+      throw new Error(
+        `--langfuse would send participants' words to ${config.baseUrl}. ` +
+          "Name its host in STUDY_JUDGE_LANGFUSE_HOSTS if that instance may see them.",
+      );
+    }
+    langfuse = startLangfuse(config);
+  }
+
+  const blocks = await loadJudgeBlocks();
+  const { items: all, key } = buildJudgeItems(blocks, {
+    salt,
+    repeats,
+    keepSparkTurns: has("keep-spark-turns"),
+    blindCheck: has("blind-check"),
+  });
+  const items = all.slice(0, limit);
+  await mkdir(outDir, { recursive: true });
+  await writeFile(join(outDir, "key.csv"), toCsv(key));
+  await writeFile(
+    join(outDir, "items.jsonl"),
+    items.map((i) => JSON.stringify({ id: i.id, kind: i.kind, messages: i.messages })).join("\n") + (items.length ? "\n" : ""),
+  );
+  console.log(`${blocks.length} blocks, ${items.length} items to judge with the ${role} model — key.csv is the only file that names a block`);
+
+  const run = `study-judge-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  const call = async (item: JudgeItem) => {
+    const startedAt = new Date();
+    const result = await chat(item.messages, {
+      role,
+      json: true,
+      temperature: null,
+      maxTokens: 900,
+      metadata: { generation_name: "study-judge", tags: ["study-judge", item.kind] },
+    });
+    if (langfuse) {
+      // The run and the item, never the block or its view.
+      traceTurn(langfuse, {
+        name: "study-judge",
+        sessionId: run,
+        tags: ["study-judge", item.kind],
+        version: STUDY_JUDGE_VERSION,
+        input: item.messages,
+        output: result.content,
+        metadata: { kind: item.kind, item: item.id },
+        generations: [
+          {
+            name: "judge",
+            model: result.resolvedModel,
+            input: item.messages,
+            output: result.content,
+            startedAt,
+            latencyMs: result.latencyMs,
+            usage: { input: result.usage.promptTokens, output: result.usage.completionTokens },
+          },
+        ],
+        scores: [],
+        startedAt,
+      });
+    }
+    return { content: result.content, model: result.resolvedModel, latencyMs: result.latencyMs };
+  };
+  const scores = await runJudge(items, call, (row, done) => {
+    if (row.error) console.warn(`  ${done}/${items.length} ${row.kind} ${row.id}: ${row.error}`);
+    else if (done % 10 === 0 || done === items.length) console.log(`  ${done}/${items.length}`);
+  });
+  await writeFile(join(outDir, "scores.csv"), toCsv(scores));
+  if (langfuse) await flushLangfuse(langfuse);
+  const failed = scores.filter((r) => r.error).length;
+  console.log(`${join(outDir, "scores.csv")}  ${scores.length} scored${failed ? `, ${failed} failed` : ""}. Join with --join.`);
+}
+
 async function main(): Promise<void> {
   switch (process.argv[2]) {
     case "export":
@@ -381,9 +506,11 @@ async function main(): Promise<void> {
       return runWeek();
     case "session":
       return runSession();
+    case "judge":
+      return runStudyJudge();
     default:
       throw new Error(
-        "usage: study-admin <export|metrics|review|participant|condition|prolific|week|session> [--user <id>] …",
+        "usage: study-admin <export|metrics|review|participant|condition|prolific|week|session|judge> [--user <id>] …",
       );
   }
 }
