@@ -83,4 +83,19 @@ describe("screen", () => {
     expect(renderScreen(null)).toMatch(/not known/);
     expect(renderScreen("../../etc")).toMatch(/not known/);
   });
+
+  it("describes the display a drive forces, and only what that display has", () => {
+    const transcript = renderScreen("conversation", { display: "transcript", sparks: false });
+    expect(transcript).toMatch(/plain transcript.*no headlines, no topics, no sparks/);
+    expect(transcript).not.toMatch(/row of sparks|Keep|pencil/);
+    const track = renderScreen("conversation", { display: "track", sparks: true });
+    expect(track).toMatch(/map of topics/);
+    expect(track).toMatch(/written automatically from what was said, not by you/);
+    expect(track).not.toMatch(/row of sparks/);
+    expect(renderScreen("conversation", { display: "bubbles", sparks: true })).toMatch(/circles in one panel/);
+    // Forced to the column, it reads exactly as the recorder's own view.
+    expect(renderScreen("conversation", { display: "conversation", sparks: true })).toBe(
+      renderScreen("conversation", { sparks: true }),
+    );
+  });
 });
