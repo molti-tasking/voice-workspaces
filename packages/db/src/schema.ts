@@ -2254,3 +2254,53 @@ export const studyBlock = pgTable(
     uniqueIndex("study_block_capture_uq").on(t.captureSessionId),
   ],
 );
+
+/** What a moment of a block's conversation is (`MOMENT_KINDS` in @voicemural/shared). */
+export const studyMomentKindEnum = pgEnum("study_moment_kind", ["esm", "game", "probe", "resume"]);
+
+/**
+ * Something that happened during a block's conversation, on its drive's
+ * clock (ms since `capture_session.started_at`): a one-tap prompt and its
+ * answer, the interruption game, the "where were you?" typed after it, and
+ * the resumption — from the moment the conversation came back to their first
+ * words. `SessionMoment` in @voicemural/shared.
+ *
+ * ONE ROW PER MOMENT AND DRIVE, the first one sent standing: a retry after a
+ * dead zone must not record a prompt twice, and a restarted block's new drive
+ * starts its moments over without colliding with the old one's.
+ *
+ * Offsets from the phone's clock, not the server's: the page stamps each with
+ * the time since the drive started, which is the one clock the moment, the
+ * ledger's utterances and the agent's turns can all be read against.
+ */
+export const studyMoment = pgTable(
+  "study_moment",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    blockId: uuid("block_id")
+      .notNull()
+      .references(() => studyBlock.id, { onDelete: "cascade" }),
+    captureSessionId: uuid("capture_session_id")
+      .notNull()
+      .references(() => captureSession.id, { onDelete: "cascade" }),
+    kind: studyMomentKindEnum("kind").notNull(),
+    /** Its place among the block's moments of this kind. */
+    ordinal: integer("ordinal").notNull(),
+    /** What it asked or was: `esm_follow`, `tic_tac_toe`, `where_were_we`, `first_speech`. */
+    item: text("item").notNull(),
+    shownOffsetMs: integer("shown_offset_ms").notNull(),
+    /** Null: never answered — a prompt that expired, or no words before Finish. */
+    answeredOffsetMs: integer("answered_offset_ms"),
+    /** A prompt's 1-7. */
+    value: integer("value"),
+    /** What they typed after the game. */
+    text: text("text"),
+    /** The game's rounds and results; a prompt's slot. */
+    meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("study_moment_once_uq").on(t.captureSessionId, t.kind, t.ordinal),
+    index("study_moment_block_idx").on(t.blockId),
+  ],
+);

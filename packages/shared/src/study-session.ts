@@ -76,20 +76,47 @@ export function blocksFor(orderIndex: number): SessionBlockPlan[] {
   }));
 }
 
-/** How long each conversation runs, in ms of recording. */
+/**
+ * When things happen in a conversation, in ms of recording (the drive's
+ * clock, which runs on through the game).
+ */
 export interface SessionTimings {
-  /** Finish is offered from here. */
+  /** Finish is offered from here, once the game is done. */
   talkMinMs: number;
   /** The page suggests wrapping up from here. */
   talkTargetMs: number;
   /** The conversation ends here by itself. */
   talkCapMs: number;
+  /** The game interrupts at the first quiet moment from here… */
+  gameEarliestMs: number;
+  /** …and here at the latest, quiet or not. */
+  gameLatestMs: number;
+  /** Rounds go on until the game has lasted this long… */
+  gameMinMs: number;
+  /** …and the round under way is cut off here. */
+  gameCapMs: number;
+  /** The first "how easy is it to follow?", before the game. */
+  esmFollowMs: number;
+  /** The second, this long after they are back from the game. */
+  esmAfterResumeMs: number;
+  /** "How much effort does it take?", late in the conversation. */
+  esmEffortMs: number;
+  /** No two of those closer together than this. */
+  esmSpacingMs: number;
 }
 
 export const SESSION_TIMINGS: SessionTimings = {
   talkMinMs: 4 * 60_000,
   talkTargetMs: 5 * 60_000,
   talkCapMs: 7 * 60_000,
+  gameEarliestMs: 135_000,
+  gameLatestMs: 180_000,
+  gameMinMs: 60_000,
+  gameCapMs: 75_000,
+  esmFollowMs: 105_000,
+  esmAfterResumeMs: 60_000,
+  esmEffortMs: 270_000,
+  esmSpacingMs: 20_000,
 };
 
 /**
@@ -98,12 +125,135 @@ export const SESSION_TIMINGS: SessionTimings = {
  */
 export function scaledTimings(fast: number): SessionTimings {
   const by = Number.isFinite(fast) ? Math.min(60, Math.max(1, fast)) : 1;
-  return {
-    talkMinMs: Math.round(SESSION_TIMINGS.talkMinMs / by),
-    talkTargetMs: Math.round(SESSION_TIMINGS.talkTargetMs / by),
-    talkCapMs: Math.round(SESSION_TIMINGS.talkCapMs / by),
-  };
+  return Object.fromEntries(
+    Object.entries(SESSION_TIMINGS).map(([key, ms]) => [key, Math.round(ms / by)]),
+  ) as unknown as SessionTimings;
 }
+
+/**
+ * How long both sides must have been quiet for the game to take its moment:
+ * a pause between turns, not the middle of a sentence. Not sped up — it is
+ * about speech, not about the session's length.
+ */
+export const GAME_QUIET_MS = 1_500;
+
+/** Whether the game should interrupt now: a quiet moment once it may, or the deadline. */
+export function gameDue(input: { elapsedMs: number; quietMs: number; timings: SessionTimings }): boolean {
+  const { elapsedMs, quietMs, timings } = input;
+  if (elapsedMs >= timings.gameLatestMs) return true;
+  return elapsedMs >= timings.gameEarliestMs && quietMs >= GAME_QUIET_MS;
+}
+
+/* ---------------------------------------------------------------------------
+ * Experience sampling: one tap, during the conversation
+ * ------------------------------------------------------------------------- */
+
+/** The questions asked during a conversation, 1 to 7 with one tap. */
+export const ESM_ITEMS = {
+  esm_follow: {
+    question: "Right now, how easy is it to follow the conversation?",
+    low: "Very hard",
+    high: "Very easy",
+  },
+  esm_effort: {
+    question: "Right now, how much effort does keeping up take?",
+    low: "Very little",
+    high: "A great deal",
+  },
+} as const;
+export type EsmItem = keyof typeof ESM_ITEMS;
+
+/** A prompt not answered within this is put away, and stored as unanswered. Not sped up. */
+export const ESM_EXPIRY_MS = 10_000;
+/** It waits for both sides to have been quiet this long, so it never lands mid-sentence. */
+export const ESM_QUIET_MS = 1_000;
+
+export interface EsmSlot {
+  /** Its place in the conversation: the moment's ordinal. */
+  ordinal: number;
+  item: EsmItem;
+  /** When it is due, on the drive's clock; null until it can be known (after the game). */
+  dueMs: number | null;
+}
+
+/**
+ * The three prompts of a conversation: how easy it is to follow, before the
+ * game and again a minute after it — the contrast the interruption is for —
+ * and the effort it takes, late on.
+ *
+ * Both later ones wait for them to be back. The effort prompt also comes
+ * after the second follow one: due at a fixed time, it could land the moment
+ * they returned, on top of the resumption being measured.
+ */
+export function esmSlots(timings: SessionTimings, resumedAtMs: number | null): EsmSlot[] {
+  const followAgain = resumedAtMs === null ? null : resumedAtMs + timings.esmAfterResumeMs;
+  return [
+    { ordinal: 0, item: "esm_follow", dueMs: timings.esmFollowMs },
+    { ordinal: 1, item: "esm_follow", dueMs: followAgain },
+    {
+      ordinal: 2,
+      item: "esm_effort",
+      dueMs: followAgain === null ? null : Math.max(timings.esmEffortMs, followAgain + timings.esmSpacingMs),
+    },
+  ];
+}
+
+/**
+ * The prompt to show now, if any: the earliest one due and not yet shown,
+ * in a quiet moment, never while something else is on the screen (`busy`:
+ * the game, the question after it), and not too soon after the last one.
+ */
+export function esmDue(input: {
+  elapsedMs: number;
+  quietMs: number;
+  busy: boolean;
+  shown: ReadonlySet<number>;
+  lastShownMs: number | null;
+  resumedAtMs: number | null;
+  timings: SessionTimings;
+}): EsmSlot | null {
+  const { elapsedMs, quietMs, busy, shown, lastShownMs, resumedAtMs, timings } = input;
+  if (busy || quietMs < ESM_QUIET_MS) return null;
+  if (lastShownMs !== null && elapsedMs - lastShownMs < timings.esmSpacingMs) return null;
+  const due = esmSlots(timings, resumedAtMs)
+    .filter((s) => !shown.has(s.ordinal) && s.dueMs !== null && s.dueMs <= elapsedMs)
+    .sort((a, b) => a.dueMs! - b.dueMs!);
+  return due[0] ?? null;
+}
+
+/* ---------------------------------------------------------------------------
+ * Moments: what happened when, on the drive's clock
+ * ------------------------------------------------------------------------- */
+
+/**
+ * What a moment is:
+ * - `esm`: a one-tap prompt (`item` is its question; `value` 1-7, or null
+ *   when it expired).
+ * - `game`: the interruption, from the pause to the end of its last round.
+ * - `probe`: "where were you?", typed straight after the game.
+ * - `resume`: back in the conversation; answered at their first words.
+ */
+export const MOMENT_KINDS = ["esm", "game", "probe", "resume"] as const;
+export type MomentKind = (typeof MOMENT_KINDS)[number];
+
+const Offset = z.number().int().min(0).max(4 * 3_600_000);
+
+/** One moment, as the page sends it. The first one sent for a kind and ordinal stands. */
+export const SessionMoment = z.strictObject({
+  kind: z.enum(MOMENT_KINDS),
+  ordinal: z.number().int().min(0).max(9),
+  item: z.string().regex(/^[a-z_]{1,32}$/),
+  shownOffsetMs: Offset,
+  /** Null: never answered — an expired prompt, or no words before Finish. */
+  answeredOffsetMs: Offset.nullable(),
+  value: z.number().int().min(0).max(1000).nullable(),
+  text: z.string().trim().max(2000).nullable(),
+  meta: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+});
+export type SessionMoment = z.infer<typeof SessionMoment>;
+
+/** What they type after the game, before they see the conversation again. */
+export const PROBE_QUESTION = "Just before the game, what were you talking about, and where had you got to?";
 
 /** The secret in an invite link. Long enough not to be guessed. */
 export const SessionCode = z.string().regex(/^[A-Za-z0-9_-]{16,64}$/);
@@ -188,6 +338,8 @@ export const SessionStep = z.discriminatedUnion("step", [
   z.object({ step: z.literal("linked"), position: Position, captureSessionId: z.uuid() }),
   /** They finished the conversation. */
   z.object({ step: z.literal("finished"), position: Position }),
+  /** Something that happened during the conversation (`SessionMoment`). */
+  z.object({ step: z.literal("moment"), position: Position, moment: SessionMoment }),
   z.object({ step: z.literal("answers"), position: Position, answers: BlockAnswers }),
   z.object({ step: z.literal("final"), final: SessionFinal }),
 ]);

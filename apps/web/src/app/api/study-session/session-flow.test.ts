@@ -86,6 +86,8 @@ describeIfDb("the display study's session routes", () => {
     expect((await call(step, { step: "arm", position: 1 })).status).toBe(409);
     expect((await call(step, { step: "answers", position: 0, answers: ANSWERS })).status).toBe(409);
     expect((await call(step, { step: "finished", position: 0 })).status).toBe(409);
+    const early = { kind: "esm", ordinal: 0, item: "esm_follow", shownOffsetMs: 1_000, answeredOffsetMs: null, value: null, text: null };
+    expect((await call(step, { step: "moment", position: 0, moment: early })).status).toBe(409);
   });
 
   it("runs every block's drive under its own view, with the session's agent", async () => {
@@ -115,6 +117,11 @@ describeIfDb("the display study's session routes", () => {
       expect(turn.screen).toBe(STUDY_SCREEN);
       expect(turn.passages).toEqual([]);
       expect(turn.board).toBeNull();
+
+      const moment = { kind: "game", ordinal: 0, item: "tic_tac_toe", shownOffsetMs: 140_000, answeredOffsetMs: 205_000, value: null, text: null, meta: { rounds: 4 } };
+      expect((await call(step, { step: "moment", position, moment })).status).toBe(200);
+      // A retry is fine, and changes nothing.
+      expect((await call(step, { step: "moment", position, moment: { ...moment, meta: { rounds: 9 } } })).status).toBe(200);
 
       expect((await call(step, { step: "finished", position })).status).toBe(200);
       if (position < 3) {
