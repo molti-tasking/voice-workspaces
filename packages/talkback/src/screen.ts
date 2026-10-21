@@ -139,6 +139,15 @@ export const APP_MAP =
   "WHERE THINGS ARE: Workspace (their topics, tasks and filed drafts) and Conversations (every past recording, newest first, named by what it was about, with a search over everything they said; each opens that recording's page, with its transcript and drafts). A draft from the drive running now is a line in the conversation view, where it was written, and on its topic in Workspace; once they stop, it is also on that recording's page. Timeline reads every transcript end to end. On every other screen the dock at the bottom leads to Workspace and Conversations, and on a wide screen Conversations and Timeline are in the menu at the top right. The conversation view is the recorder itself, and while it records it has no dock and no menu: those places open once they stop the recording. From the conversation view, say exactly that and never point them at a button there. Point them there by those names; there is no other place to look.";
 
 /**
+ * The display study's conversation page (`/study/session`), as one line —
+ * THE SAME FOR EVERY VIEW the session compares. The agent is the constant
+ * there and must not learn which view they have (`SESSION_SYSTEM_PROMPT`),
+ * so nothing here names one. No app map either: the page leads nowhere.
+ */
+export const STUDY_SCREEN =
+  "WHICH SCREEN: the study's conversation page on their phone. Do not describe what is on it, refer to it, or tell them where to look or tap.";
+
+/**
  * The line for the turn context. Always something: "not known" is itself the
  * instruction not to describe a screen. `drive` says what the conversation
  * view has on it on this drive; other screens are the same for every drive.

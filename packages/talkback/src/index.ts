@@ -95,7 +95,7 @@ export {
   voicesForPicker,
   type VoiceProfile,
 } from "./voice";
-export { SCREENS, isScreen, renderScreen, screenFor, type Screen } from "./screen";
+export { SCREENS, STUDY_SCREEN, isScreen, renderScreen, screenFor, type Screen } from "./screen";
 export { capabilitiesSection, type DriveCapabilities } from "./capabilities";
 export { isTimeZone, localDate, renderLocalTime, timeZoneOf } from "./clock";
 export { RECENT_DRIVES_SHOWN, renderRecentDrives, type RecentDrive } from "./recent-drives";
@@ -149,12 +149,15 @@ export { containment, isEcho, keptIndices, withoutEcho } from "./echo";
 export {
   DEFAULT_STUDY_TASK,
   PROLIFIC_TASKS,
+  SESSION_TASKS,
   isStudyTaskId,
+  sessionTaskFor,
   studyTaskFor,
+  type SessionTask,
   type StudyTask,
   type StudyTaskId,
 } from "./study-task";
-export { STUDY_PROFILE, STUDY_SYSTEM_PROMPT } from "./study-agent";
+export { SESSION_PROFILE, SESSION_SYSTEM_PROMPT, STUDY_PROFILE, STUDY_SYSTEM_PROMPT } from "./study-agent";
 export {
   SPARK_QUESTION_MAX_CHARS,
   cleanSparkQuestion,

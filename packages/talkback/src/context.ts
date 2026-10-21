@@ -101,16 +101,25 @@ export async function buildTurnContext(
      * since the agent can now edit it, must not have one edited either.
      */
     board?: boolean;
+    /**
+     * Whether to search their earlier drives. Off for the display study's
+     * blocks: on one account the four follow each other, and the second must
+     * not be handed what was said in the first.
+     */
+    memory?: boolean;
   } = {},
 ): Promise<TurnContext> {
   const showBoard = options.board ?? true;
+  const searchEarlier = options.memory ?? true;
   // Four arms in parallel. The board fold is pure CPU over ops already in
   // Postgres, so it costs one query rather than a model call, and running it
   // alongside the two searches keeps it off the turn's critical path. The
   // drafts are one indexed read of this drive's own rows.
   const [lexical, memory, ops, drafts] = await Promise.all([
-    searchTranscripts(userId, said, { excludeSessionId: captureSessionId }),
-    recallFromMemory(userId, said, { excludeSessionId: captureSessionId }),
+    searchEarlier ? searchTranscripts(userId, said, { excludeSessionId: captureSessionId }) : Promise.resolve([]),
+    searchEarlier
+      ? recallFromMemory(userId, said, { excludeSessionId: captureSessionId })
+      : Promise.resolve({ passages: [], threads: [] }),
     showBoard ? loadOps(userId) : Promise.resolve([]),
     /* Fails open to nothing. An agent that cannot see its own drafts writes a
      * new one instead of a revision, which is the behaviour before this

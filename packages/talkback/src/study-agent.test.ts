@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { SESSION_TASK_IDS } from "@voicemural/shared";
 import { PROACTIVITY_STANZAS, PROFILE } from "./profile";
 import {
   FLOOR_SECTION,
@@ -8,8 +10,8 @@ import {
   SYSTEM_PROMPT,
   composeSystemPrompt,
 } from "./prompt";
-import { STUDY_PROFILE, STUDY_SYSTEM_PROMPT } from "./study-agent";
-import { PROLIFIC_TASKS } from "./study-task";
+import { SESSION_PROFILE, SESSION_SYSTEM_PROMPT, STUDY_PROFILE, STUDY_SYSTEM_PROMPT } from "./study-agent";
+import { PROLIFIC_TASKS, SESSION_TASKS, sessionTaskFor } from "./study-task";
 
 describe("the study's agent", () => {
   const composed = composeSystemPrompt({
@@ -44,5 +46,50 @@ describe("the study's agent", () => {
     expect(field.prompt.startsWith(SYSTEM_PROMPT)).toBe(true);
     expect(field.prompt).toContain(PROACTIVITY_STANZAS[PROFILE.proactivity]);
     expect(field.prompt).not.toContain("You are Souffleur, a voice assistant");
+  });
+});
+
+describe("the display study's agent", () => {
+  const composed = composeSystemPrompt({
+    base: SESSION_SYSTEM_PROMPT,
+    profile: SESSION_PROFILE,
+    sections: [SESSION_TASKS.trip.agentSection],
+  });
+
+  it("leaves the Prolific study's agent byte for byte as its data were collected under", () => {
+    expect(createHash("sha256").update(STUDY_SYSTEM_PROMPT).digest("hex")).toBe(
+      "dfa0d9b778e599857638349fe84528dc9160c6b7bbad3b053866c79d4c627756",
+    );
+  });
+
+  it("handles the floor, the sparks and the transcription with the field agent's own words", () => {
+    for (const section of [FLOOR_SECTION, SPARK_SECTION, HEARING_SECTION]) expect(composed.prompt).toContain(section);
+  });
+
+  it("is someone on a phone, who writes nothing down and never talks about the screen", () => {
+    expect(SESSION_SYSTEM_PROMPT + SESSION_PROFILE.stanza).toMatch(/holding their phone/);
+    expect(SESSION_SYSTEM_PROMPT + SESSION_PROFILE.stanza).not.toMatch(/computer|desk|driving|the plan below/i);
+    expect(SESSION_SYSTEM_PROMPT).toContain("You cannot see it: never describe it");
+    expect(SESSION_SYSTEM_PROMPT).toContain("cannot write anything down");
+    expect(composed.maxReplyWords).toBe(60);
+    expect(composed.proactivity).toBe("forthcoming");
+  });
+
+  it("keeps the output contract last, and the task before it", () => {
+    expect(composed.prompt.endsWith(OUTPUT_CONTRACT)).toBe(true);
+    expect(composed.prompt.indexOf("THE PROBLEM")).toBeLessThan(composed.prompt.indexOf(OUTPUT_CONTRACT));
+  });
+
+  it("has one task per id, each of three parts and a similar length", () => {
+    expect(Object.keys(SESSION_TASKS).sort()).toEqual([...SESSION_TASK_IDS].sort());
+    const lengths = Object.values(SESSION_TASKS).map((t) => t.brief.length);
+    for (const task of Object.values(SESSION_TASKS)) {
+      expect(task.prompts).toHaveLength(3);
+      expect(task.agentSection).toContain("Never summarise the conversation");
+      expect(task.agentSection).not.toMatch(/draft|plan titled/i);
+    }
+    expect(Math.max(...lengths) / Math.min(...lengths)).toBeLessThan(1.25);
+    expect(sessionTaskFor("move")).toBe(SESSION_TASKS.move);
+    expect(sessionTaskFor("heat")).toBeNull();
   });
 });
