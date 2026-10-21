@@ -10,11 +10,13 @@ import { DemoTalk, LiveTalk } from "./block-talk";
 import { FinalRanking } from "./final-ranking";
 import { PostBlock } from "./post-block";
 import { DISPLAY_COPY, spokenDuration } from "./session-copy";
+import { TicTacToe } from "./tic-tac-toe";
 
 /**
  * The display study's session, in the browser: consent → microphone → how
- * it works → four times (brief → conversation → questions), with a break
- * halfway → the four views ranked → done.
+ * it works → one practice round of the game → four times (brief →
+ * conversation → questions), with a break halfway → the four views ranked →
+ * done.
  *
  * The order of the blocks and their views come from the server, fixed when
  * the invite was made; the page only walks through them. Each step it tells
@@ -38,6 +40,7 @@ type Step =
   | { at: "consent" }
   | { at: "mic"; then: SessionResume }
   | { at: "intro" }
+  | { at: "practice" }
   | { at: "brief" | "talk" | "answers"; position: number }
   | { at: "break" }
   | { at: "final" }
@@ -125,7 +128,20 @@ export function SessionFlow({
     case "mic":
       return <MicCheck eyebrow="Before you start" onReady={() => go(stepFor(step.then))} />;
     case "intro":
-      return <Intro blocks={blocks.length} timings={timings} onContinue={() => go({ at: "brief", position: 0 })} />;
+      return <Intro blocks={blocks.length} timings={timings} onContinue={() => go({ at: "practice" })} />;
+    case "practice":
+      // Once, unhurried, so the first interruption is not also the first time
+      // they see the game.
+      return (
+        <TicTacToe
+          eyebrow="Before you start"
+          title="Try the game"
+          note="Once in every conversation, this game interrupts you for about a minute. Play one round now."
+          minMs={0}
+          capMs={PRACTICE_CAP_MS}
+          onDone={() => go({ at: "brief", position: 0 })}
+        />
+      );
     case "brief": {
       const block = blocks[step.position]!;
       const start = () => go({ at: "talk", position: block.position });
@@ -163,7 +179,8 @@ export function SessionFlow({
         <PostBlock
           key={position}
           eyebrow={eyebrow(position)}
-          hadGame={false}
+          // Finish waits for the game, so every conversation has had one.
+          hadGame
           onSubmit={async (answers) => {
             if (!(await send({ step: "answers", position, answers }))) return false;
             const last = position === blocks.length - 1;
@@ -317,6 +334,11 @@ function Intro({ blocks, timings, onContinue }: { blocks: number; timings: Sessi
           have to.
         </li>
         <li>
+          Once in each conversation, a short game takes over the screen for about a minute. When it is over, carry on
+          where you left off. Now and then a one-tap question about how it is going appears at the bottom of the
+          screen.
+        </li>
+        <li>
           You can finish each conversation after {spokenDuration(timings.talkMinMs)}. At{" "}
           {spokenDuration(timings.talkCapMs)} it ends by itself.
         </li>
@@ -327,6 +349,9 @@ function Intro({ blocks, timings, onContinue }: { blocks: number; timings: Sessi
     </StudyFrame>
   );
 }
+
+/** The practice round is one round; this only stops a page left open from waiting forever. */
+const PRACTICE_CAP_MS = 3 * 60_000;
 
 /** How often the brief renews its block's arm while they read. */
 const REARM_MS = 10 * 60_000;
