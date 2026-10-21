@@ -2150,3 +2150,107 @@ export const prolificParticipant = pgTable(
     index("prolific_participant_user_idx").on(t.userId),
   ],
 );
+
+/* ---------------------------------------------------------------------------
+ * The display study: one session, four conversations
+ * ------------------------------------------------------------------------- */
+
+/** Where a session's participant came from: a researcher's invite link, or Prolific (later). */
+export const studySessionSourceEnum = pgEnum("study_session_source", ["invite", "prolific"]);
+
+/**
+ * One participant's sitting of the display study (`study-session.ts` in
+ * @voicemural/shared): four short conversations, each about another task and
+ * shown another way on the phone, then the four views ranked.
+ *
+ * WHY NOT `prolific_participant`. That study is one drive per participant;
+ * this one is four, compared within the person, so the drives hang off
+ * `study_block` below instead of off the participant.
+ *
+ * CREATED BEFORE ANYONE OPENS IT. A researcher makes an invite
+ * (`pnpm study:session invite`), which writes this row with its order and its
+ * four blocks; the link carries `invite_code`. Whoever consents first on it
+ * claims it for their account — a fresh guest, by default, so the study's
+ * drives never reach anybody's own workspace, memory or field-study export.
+ *
+ * TEXT IS KEPT, in `study_block.summary` and in `final`: what they write is
+ * the study's measure, and the consent page says so.
+ */
+export const studySession = pgTable(
+  "study_session",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** The pseudonym the analysis knows them by (F01, F02, …). Never a name. */
+    ref: text("ref").notNull(),
+    source: studySessionSourceEnum("source").notNull().default("invite"),
+    /** The secret in the invite link. */
+    inviteCode: text("invite_code"),
+    /** For `source = prolific`, which the payments need. */
+    prolificPid: text("prolific_pid"),
+    /** The account that claimed the invite; null until somebody has. */
+    userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+    /** Every display within the person. The Prolific study may compare between people. */
+    design: text("design").$type<"within">().notNull().default("within"),
+    /** Which of the balanced orders (`blocksFor`), fixed when the invite is made. */
+    orderIndex: integer("order_index").notNull(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    consentedAt: timestamp("consented_at", { withTimezone: true }),
+    /** The ranking at the end, validated by `SessionFinal`. */
+    final: jsonb("final").$type<Record<string, unknown>>(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("study_session_ref_uq").on(t.ref),
+    uniqueIndex("study_session_invite_uq").on(t.inviteCode),
+    uniqueIndex("study_session_pid_uq").on(t.prolificPid),
+    index("study_session_user_idx").on(t.userId),
+  ],
+);
+
+/**
+ * One conversation of a session: which display and task it has, the drive it
+ * was, and what they answered after it.
+ *
+ * HOW A DRIVE BECOMES A BLOCK. The page ARMS the block just before it starts
+ * the recorder; `/api/capture-sessions` finds the armed block when the drive
+ * registers, forces the block's display onto the drive's frozen condition and
+ * links the two. The browser never sends a condition, so a page cannot run a
+ * block under the wrong view. A block whose conversation broke off is armed
+ * again (`attempts`) and links the new drive; the old one stays recorded.
+ */
+export const studyBlock = pgTable(
+  "study_block",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => studySession.id, { onDelete: "cascade" }),
+    /** 0 to 3, in the order they are done. */
+    position: integer("position").notNull(),
+    /** `ConversationDisplay` in @voicemural/shared. */
+    display: text("display").$type<"transcript" | "conversation" | "track" | "bubbles">().notNull(),
+    /** `SessionTaskId` in @voicemural/shared. */
+    task: text("task").notNull(),
+    /** The drive that is this block's conversation: the latest one armed. */
+    captureSessionId: uuid("capture_session_id").references(() => captureSession.id, {
+      onDelete: "set null",
+    }),
+    /** Set by the page just before a drive starts, cleared when the drive claims it. */
+    armedAt: timestamp("armed_at", { withTimezone: true }),
+    /** How many drives it linked: its conversation's starts. More than one: a reload, or a failed microphone. */
+    attempts: integer("attempts").notNull().default(0),
+    /** When they finished the conversation. */
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    /** In two or three sentences: what they worked out and what is still open. */
+    summary: text("summary"),
+    /** The ratings and the open answer, validated by `BlockAnswers` (less the summary). */
+    answers: jsonb("answers").$type<Record<string, unknown>>(),
+    answeredAt: timestamp("answered_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("study_block_position_uq").on(t.sessionId, t.position),
+    uniqueIndex("study_block_capture_uq").on(t.captureSessionId),
+  ],
+);
