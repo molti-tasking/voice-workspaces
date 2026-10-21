@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { SparkSelection } from "@voicemural/shared";
+import { ConversationDisplay, type SparkSelection } from "@voicemural/shared";
 import { capture } from "@/lib/analytics/client";
  import { earcon } from "./earcon";
 import {
@@ -99,6 +99,18 @@ export interface RecorderState {
    * until the server has answered — like `sparksArm`, the safe thing to show.
    */
   sparkSelection: SparkSelection;
+  /**
+   * How the running drive's conversation must be shown, when the server forced
+   * it (`study_condition.display`, set per block by the study session). Null:
+   * the person's own choice, and also until the server has answered.
+   */
+  display: ConversationDisplay | null;
+  /**
+   * When the running drive started, as epoch ms — the zero of its clock
+   * (`capture_session.started_at`), so the screen can stamp what it shows on
+   * the same clock as the ledger. Null before the first drive.
+   */
+  startedAt: number | null;
 }
 
 /**
@@ -184,6 +196,8 @@ export function useRecorder() {
     lastSessionMs: 0,
     sparksArm: false,
     sparkSelection: "suggested",
+    display: null,
+    startedAt: null,
   });
 
   const runningRef = useRef(false);
@@ -453,7 +467,7 @@ export function useRecorder() {
     await saveRegistration(registration);
 
     // Not the last drive's arm while this one's is on its way.
-    patch({ sparksArm: false, sparkSelection: "suggested" });
+    patch({ sparksArm: false, sparkSelection: "suggested", display: null, startedAt: meta.startedAt });
     try {
       const res = await fetch("/api/capture-sessions", {
         method: "POST",
@@ -465,10 +479,12 @@ export function useRecorder() {
       if (res.ok) {
         await deleteRegistration(meta.captureSessionId);
         const body = (await res.json().catch(() => null)) as {
-          studyCondition?: { sparks?: unknown; sparkSelection?: unknown };
+          studyCondition?: { sparks?: unknown; sparkSelection?: unknown; display?: unknown };
         } | null;
+        const display = ConversationDisplay.safeParse(body?.studyCondition?.display);
         patch({
           sparksArm: body?.studyCondition?.sparks === true,
+          display: display.success ? display.data : null,
           // Frozen per drive on the server, so never `alternate` here; anything
           // else unknown reads as the shipped behaviour.
           sparkSelection: body?.studyCondition?.sparkSelection === "chosen" ? "chosen" : "suggested",

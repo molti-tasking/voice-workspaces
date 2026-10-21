@@ -16,8 +16,7 @@ import {
 } from "@/components/capture-settings";
 import { RecordingBadge } from "@/components/recording-badge";
 import { aiHealthProblem, useAiHealth } from "@/lib/ai-health";
-import { ConversationFlow } from "./conversation-flow";
-import { ConversationMirror } from "./conversation-mirror";
+import { ConversationDisplay } from "./conversation-display";
 import { FloorControls } from "./floor-controls";
 import { SparkChips } from "./spark-chips";
 import { PostDriveItems } from "./study-items";
@@ -77,8 +76,11 @@ export function RecorderClient() {
   const hearing = talk.status === "speaking";
   const connected = talk.status === "listening" || talk.status === "speaking";
   // How the conversation is shown: in order, word for word, or as the mirror
-  // in one of its two layouts. A choice of this browser, kept across drives.
-  const view = useRecordView();
+  // in one of its two layouts. A choice of this browser, kept across drives —
+  // unless the drive's study condition forces one, as the display study does,
+  // and then there is no choice to offer.
+  const chosen = useRecordView();
+  const view = rec.display ?? chosen;
   // Whether the AI proxy answers (`/api/health/ai`): a pill when it does not,
   // and before a drive the reason and a way to see the screens anyway.
   const aiProblem = aiHealthProblem(useAiHealth());
@@ -231,52 +233,43 @@ export function RecorderClient() {
         />
       )}
 
-      <ViewSwitch view={view} />
+      {rec.display === null && <ViewSwitch view={chosen} />}
 
-      {view !== "conversation" ? (
-        <ConversationMirror
-          // Keyed by the drive, like the conversation: its points start empty.
-          key={conversationId}
-          store={conversation}
-          sparks={TALKBACK_ENABLED && rec.sparksArm ? sparks : null}
-          layout={view}
-          captureSessionId={conversationId}
-          live={isRecording}
-          canPull={TALKBACK_ENABLED && isRecording && connected && !hearing}
-          onPull={poke}
-          className={isRecording ? "min-h-0 flex-1" : "h-[65dvh] shrink-0"}
-        />
-      ) : (
-        <ConversationFlow
-          // Keyed by the drive: the next one starts from nothing rather than
-          // inheriting the last one's scroll position and opened headlines.
-          key={conversationId}
-          store={conversation}
-          live={isRecording}
-          status={
-            TALKBACK_ENABLED && isRecording
-              ? {
-                  floor: connected ? (talk.floor ?? floor) : null,
-                  // The agent first: its own voice can reach the microphone.
-                  speaking: hearing,
-                  listening: !hearing && talk.userSpeaking,
-                }
-              : null
-          }
-          // "It is listening" is true only while it is.
-          placeholder={isRecording ? PROFILE.hint : undefined}
+      <ConversationDisplay
+        // Keyed by the drive: the next one starts from nothing rather than
+        // inheriting the last one's scroll position, opened headlines and points.
+        key={conversationId}
+        display={view}
+        store={conversation}
+        status={
+          TALKBACK_ENABLED && isRecording
+            ? {
+                floor: connected ? (talk.floor ?? floor) : null,
+                // The agent first: its own voice can reach the microphone.
+                speaking: hearing,
+                listening: !hearing && talk.userSpeaking,
+              }
+            : null
+        }
+        // Only in the sparks arm: the ledger is worked out in both, for the
+        // record, and the control arm must not see a sparkle on a headline.
+        sparks={TALKBACK_ENABLED && rec.sparksArm ? sparks : null}
+        live={isRecording}
+        captureSessionId={conversationId}
+        canPull={TALKBACK_ENABLED && isRecording && connected && !hearing}
+        onPull={poke}
+        // "It is listening" is true only while it is.
+        placeholder={isRecording ? PROFILE.hint : undefined}
+        flow={{
           // Keeping is part of the drive: after Stop the subjects are a record.
-          keepable={TALKBACK_ENABLED && isRecording && keepable}
-          // Only in the sparks arm: the ledger is worked out in both, for the
-          // record, and the control arm must not see a sparkle on a headline.
-          sparks={TALKBACK_ENABLED && rec.sparksArm ? sparks : null}
-          drafts={cues.drafts}
+          keepable: TALKBACK_ENABLED && isRecording && keepable,
+          drafts: cues.drafts,
           // During the drive and after it: tidying the headlines is a thing to
           // do once there is time to read them.
-          onRename={renameSubject}
-          className={isRecording ? "min-h-0 flex-1" : "h-[65dvh] shrink-0"}
-        />
-      )}
+          onRename: renameSubject,
+        }}
+        className={isRecording ? "min-h-0 flex-1" : "h-[65dvh] shrink-0"}
+      />
 
       <div className="shrink-0 space-y-3 text-sm">
         <Notices />
@@ -300,7 +293,7 @@ export function RecorderClient() {
         )}
       </div>
 
-      {TALKBACK_ENABLED && isRecording && keepable && (
+      {TALKBACK_ENABLED && isRecording && keepable && view === "conversation" && (
         // How keeping works, once, in plain words: on a "chosen" drive the
         // sparks come only for what they keep, so a drive with nothing kept
         // offers none — which should not read as broken. Voice first: the
