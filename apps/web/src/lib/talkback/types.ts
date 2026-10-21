@@ -61,6 +61,12 @@ export interface TalkbackOptions {
   enabled: boolean;
   /** The floor the person chose. Sent with the offer, and again on every change. */
   floor: Floor;
+  /**
+   * The display study's interruption is on: the agent says nothing and is
+   * not listened to (its microphone is off). Sent with the offer, so a
+   * reconnect during it starts paused, and again on every change.
+   */
+  paused?: boolean;
   /** Where the turns and titles the container pushes go. */
   onMessage: (message: ConversationMessage) => void;
   /** The sections the screen already has, for a reconnect. See `titlesForReconnect`. */

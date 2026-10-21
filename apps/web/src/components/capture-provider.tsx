@@ -137,6 +137,14 @@ export interface CaptureContextValue {
   sttLanguage: string | null;
   chooseSttLanguage: (next: string | null) => void;
 
+  /**
+   * The display study's interruption: the agent is silenced and stops
+   * listening while the recording goes on (`pause` in bot.py). For the
+   * running drive only — the next one always starts unpaused.
+   */
+  agentPaused: boolean;
+  pauseAgent: (paused: boolean) => void;
+
   /** Start a drive with whatever is currently selected. Safe to call twice. */
   startRecording: () => void;
   stopRecording: () => void;
@@ -203,6 +211,18 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
   // Armed with the recording, for the whole drive — there is no separate
   // gesture to enter it. Everything it does is downstream of the microphone
   // stream the recorder publishes, so capture is unaffected either way.
+  // Paused for one drive only: kept with the drive it was asked on, so the
+  // next drive reads unpaused without anything having to remember to undo it.
+  const [pause, setPause] = useState<{ sessionId: string | null; paused: boolean }>({
+    sessionId: null,
+    paused: false,
+  });
+  const agentPaused = pause.paused && pause.sessionId === recorder.currentSessionId;
+  const pauseAgent = useCallback(
+    (paused: boolean) => setPause({ sessionId: recorder.currentSessionId, paused }),
+    [recorder.currentSessionId],
+  );
+
   const {
     state: talkback,
     poke,
@@ -212,6 +232,7 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     captureSessionId: recorder.currentSessionId,
     enabled: TALKBACK_ENABLED && isRecording,
     floor,
+    paused: agentPaused,
     onMessage: conversation.dispatch,
     titles: () => titlesForReconnect(conversation.getSnapshot()),
   });
@@ -435,6 +456,8 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       chooseVoice,
       sttLanguage,
       chooseSttLanguage,
+      agentPaused,
+      pauseAgent,
       startRecording,
       stopRecording,
     }),
@@ -459,6 +482,8 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       chooseVoice,
       sttLanguage,
       chooseSttLanguage,
+      agentPaused,
+      pauseAgent,
       startRecording,
       stopRecording,
     ],
