@@ -150,14 +150,14 @@ describeIfDb("POST /api/capture-sessions — the use case a drive begins under",
     // Cell 1 is the topic map.
     const { session, blocks } = await createSession({ ref: STUDY_REF, orderIndex: 1 });
     await claimSession({ code: session.inviteCode!, userId: USER_ID, allowAccounts: true });
-    expect(blocks[0]!.display).toBe("track");
+    expect(blocks[0]!.display).toBe("topics");
 
     expect(await armBlock(USER_ID, 0)).toBe("armed");
     const res = await open(SESSION_A);
     expect(res.status).toBe(201);
     const body = (await res.json()) as { studyCondition: { display: string; sparks: boolean } };
-    expect(body.studyCondition).toMatchObject({ display: "track", sparks: false });
-    expect(await findBlockByCaptureSession(SESSION_A)).toMatchObject({ position: 0, display: "track" });
+    expect(body.studyCondition).toMatchObject({ display: "topics", sparks: false });
+    expect(await findBlockByCaptureSession(SESSION_A)).toMatchObject({ position: 0, display: "topics" });
 
     // The arm is spent: the next drive is an ordinary one.
     const next = (await (await open(SESSION_B)).json()) as { studyCondition: { display: string } };

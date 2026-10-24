@@ -20,7 +20,8 @@
     "./recall": "./src/recall.ts",
     "./prolific": "./src/prolific.ts",
     "./week": "./src/week.ts",
-    "./study-session": "./src/study-session.ts"
+    "./study-session": "./src/study-session.ts",
+    "./conversation": "./src/conversation.ts"
   },
   "scripts": {
     "generate": "drizzle-kit generate",

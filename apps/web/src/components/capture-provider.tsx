@@ -31,9 +31,11 @@ import {
   currentTitle,
   draftMajor,
   titlesForReconnect,
+  type ConversationMessage,
   type ConversationStore,
 } from "@/lib/talkback/conversation";
 import { createKeepWatcher } from "@/lib/talkback/keep-watcher";
+import { replayConversation, seedMessages, type DriveRecord } from "@/lib/talkback/replay";
 import { createSparkLedger, sparkKey, type SparkLedger } from "@/lib/talkback/spark-ledger";
 import { postSubjectSignals, subjectSignalsBody } from "@/lib/talkback/subject-signals";
 import type { SparkRequest } from "@/lib/talkback/types";
@@ -147,6 +149,12 @@ export interface CaptureContextValue {
 
   /** Start a drive with whatever is currently selected. Safe to call twice. */
   startRecording: () => void;
+  /**
+   * Start a drive that continues a past conversation: it opens with that
+   * conversation on screen, the agent is told what was said in it, and the
+   * new drive is stored as its continuation (`continues_id`).
+   */
+  continueRecording: (fromCaptureSessionId: string) => void;
   stopRecording: () => void;
 }
 
@@ -197,9 +205,18 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
   const [conversation, setConversation] = useState(createConversationStore);
   const [sparks, setSparks] = useState(createSparkLedger);
   const [conversationFor, setConversationFor] = useState(conversationId);
+  // A past conversation waiting to be put on screen for the drive that
+  // continues it (`continueRecording`): it goes into that drive's new store,
+  // before the container says anything.
+  const [seed, setSeed] = useState<ConversationMessage[] | null>(null);
   if (conversationFor !== conversationId) {
     setConversationFor(conversationId);
-    setConversation(createConversationStore());
+    const next = createConversationStore();
+    if (seed && conversationId !== null && conversationId === recorder.currentSessionId) {
+      for (const message of seed) next.dispatch(message);
+      setSeed(null);
+    }
+    setConversation(next);
     setSparks(createSparkLedger());
   }
   const title = useSyncExternalStore(
@@ -376,6 +393,23 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     void start(voiceId, sttLanguage, conditionOverride);
   }, [start, voiceId, sttLanguage, conditionOverride]);
 
+  const continueRecording = useCallback(
+    (from: string) => {
+      void (async () => {
+        // What was said, to put back on screen. Fails open: the drive still
+        // continues the conversation (the agent is told on the server), it
+        // just starts with an empty screen.
+        const drives = await fetch(`/api/conversations/${from}`)
+          .then((res) => (res.ok ? (res.json() as Promise<{ drives: DriveRecord[] }>) : null))
+          .then((body) => body?.drives ?? null)
+          .catch(() => null);
+        if (drives) setSeed(seedMessages(replayConversation(drives)));
+        await start(voiceId, sttLanguage, conditionOverride, from);
+      })();
+    },
+    [start, voiceId, sttLanguage, conditionOverride],
+  );
+
   // What the recorder worked out about each subject, kept at Stop — with the
   // arm on or off, because whether the signals predict recall is half the
   // question — and as a best effort whenever the page is hidden mid-drive,
@@ -459,6 +493,7 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       agentPaused,
       pauseAgent,
       startRecording,
+      continueRecording,
       stopRecording,
     }),
     [
@@ -485,6 +520,7 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       agentPaused,
       pauseAgent,
       startRecording,
+      continueRecording,
       stopRecording,
     ],
   );

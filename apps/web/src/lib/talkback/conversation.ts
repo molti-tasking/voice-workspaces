@@ -56,6 +56,12 @@ export interface Turn {
   pauses?: number;
   /** Of those, the ones before the turn began: thinking before speaking. */
   pausesBefore?: number;
+  /**
+   * When it was said, in ms on the conversation's own clock — known for a
+   * conversation read back from storage (`replay.ts`), where it labels the
+   * time bar. Absent live.
+   */
+  at?: number;
 }
 
 export interface Section {
@@ -126,12 +132,22 @@ export type Mark =
       /** The question as written for this subject, when there was one. */
       question?: string;
       after: number;
+    }
+  | {
+      /**
+       * `continued:{after}`: the conversation was picked up again here, on a
+       * later drive (`/record?continue=`). Everything before it was said then.
+       */
+      key: string;
+      kind: "continued";
+      after: number;
     };
 
 /** A mark as the recorder hands it in; the store places it. */
 export type MarkInput =
   | { kind: "draft"; draftId: string; major: number }
-  | { kind: "spark"; ordinal: number; spark: SparkKind; question?: string };
+  | { kind: "spark"; ordinal: number; spark: SparkKind; question?: string }
+  | { kind: "continued" };
 
 export interface Conversation {
   /** In the order each subject first came up. */
@@ -165,6 +181,8 @@ export type ConversationMessage =
       interrupted?: boolean;
       pauses?: number;
       pausesBefore?: number;
+      /** Only from storage (`replay.ts`): see `Turn.at`. */
+      at?: number;
     }
   | { type: "title"; title: string; rehomeFrom?: string; ordinal?: number }
   /** What the container judged of a subject it has just left. */
@@ -305,9 +323,6 @@ function applyKeep(
  * because it is pulled the moment they tap.
  */
 function applyMark(state: Conversation, input: MarkInput): Conversation {
-  const key =
-    input.kind === "draft" ? `draft:${input.draftId}:${input.major}` : `spark:${input.ordinal}`;
-  if (state.marks.some((m) => m.key === key)) return state;
   let after = -1;
   for (const section of state.sections) {
     for (const turn of section.turns) {
@@ -315,7 +330,14 @@ function applyMark(state: Conversation, input: MarkInput): Conversation {
       after = Math.max(after, turn.seq);
     }
   }
-  return { ...state, marks: [...state.marks, { ...input, key, after }] };
+  const key =
+    input.kind === "draft"
+      ? `draft:${input.draftId}:${input.major}`
+      : input.kind === "spark"
+        ? `spark:${input.ordinal}`
+        : `continued:${after}`;
+  if (state.marks.some((m) => m.key === key)) return state;
+  return { ...state, marks: [...state.marks, { ...input, key, after } as Mark] };
 }
 
 /** The longest title a rename keeps: what the container keeps of a title it is handed. */
@@ -373,6 +395,7 @@ function applyTurn(
     ...(message.type === "user" && message.pausesBefore
       ? { pausesBefore: message.pausesBefore }
       : {}),
+    ...(message.at !== undefined ? { at: message.at } : {}),
   };
 
   // A turn already on screen is updated where it is, even if the subject has

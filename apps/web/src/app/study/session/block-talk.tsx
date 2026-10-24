@@ -2,16 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SESSION_TIMINGS, type ConversationDisplay, type SessionMoment, type SessionTimings } from "@voicemural/shared";
-import type { MirrorBullets } from "@voicemural/talkback";
+import type { ConversationDigest } from "@voicemural/talkback/digest";
 import { useCapture } from "@/components/capture-provider";
-import type { ConversationStore } from "@/lib/talkback/conversation";
-import { DEMO_POINTS, DEMO_STEPS } from "@/lib/talkback/demo-conversation";
+import type { Conversation, ConversationStore } from "@/lib/talkback/conversation";
+import { DEMO_STEPS, demoDigest } from "@/lib/talkback/demo-conversation";
 import { useScriptedConversation } from "@/lib/talkback/use-scripted-conversation";
-import type { PokeResult } from "@/lib/talkback/use-talkback";
 import { ErrorLine, PrimaryButton, StudyFrame } from "../../p/ui";
 import { AgentNameProvider } from "../../record/agent-name-context";
-import { ConversationDisplay as Display } from "../../record/conversation-display";
-import type { FlowStatus } from "../../record/conversation-flow";
+import { ConversationView } from "../../record/views/conversation-view";
+import type { FlowStatus } from "../../record/views/status-line";
 import { useBlockMoments, type BlockMoments } from "./block-moments";
 import { EsmPrompt } from "./interruption";
 import { clock, spokenDuration } from "./session-copy";
@@ -304,7 +303,7 @@ export function DemoTalk({
         status={null}
         live
         captureSessionId={null}
-        fixedPoints={DEMO_POINTS}
+        fixedDigest={demoDigest}
       />
     </Interrupted>
   );
@@ -365,11 +364,6 @@ function ReturnShield() {
 
 function noop(): void {}
 
-/** Nothing to pull: the session has no sparks. */
-async function noPull(): Promise<PokeResult | null> {
-  return null;
-}
-
 function TalkScreen({
   eyebrow,
   block,
@@ -385,7 +379,7 @@ function TalkScreen({
   status,
   live,
   captureSessionId,
-  fixedPoints,
+  fixedDigest,
 }: {
   eyebrow: string;
   block: SessionBlockView;
@@ -404,7 +398,7 @@ function TalkScreen({
   status: FlowStatus | null;
   live: boolean;
   captureSessionId: string | null;
-  fixedPoints?: ReadonlyMap<string, MirrorBullets>;
+  fixedDigest?: (conversation: Conversation) => ConversationDigest;
 }) {
   const canFinish = elapsedMs !== null && elapsedMs >= timings.talkMinMs && gameDone && !finishing;
   const hint =
@@ -463,18 +457,17 @@ function TalkScreen({
 
       {/* No name for the agent: "Souffleur" is the field app's, and a named system is its researchers' own. */}
       <AgentNameProvider name="the assistant">
-        <Display
-          display={display}
+        <ConversationView
+          view={display}
           store={store}
           status={status}
-          sparks={null}
           live={live}
           captureSessionId={captureSessionId}
-          canPull={false}
-          onPull={noPull}
-          fixedPoints={fixedPoints}
+          {...(fixedDigest ? { fixedDigest } : {})}
           placeholder={live ? "Talk whenever you are ready." : undefined}
-          flow={{ drafts: [] }}
+          // Not in the study: going back in time is a control only some
+          // conversations would use, and the resumption is what is measured.
+          timeBar={false}
           className="min-h-0 flex-1"
         />
       </AgentNameProvider>

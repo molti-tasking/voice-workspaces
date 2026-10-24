@@ -40,8 +40,11 @@ describe("StudyCondition", () => {
     });
   });
 
-  it("forces one of the four displays, or leaves the person's choice", () => {
-    expect(StudyCondition.parse({ display: "transcript" }).display).toBe("transcript");
+  it("forces one of the five views, or leaves the person's choice", () => {
+    expect(StudyCondition.parse({ display: "uptake" }).display).toBe("uptake");
+    // A drive frozen before the views were renamed reads as the successor.
+    expect(StudyCondition.parse({ display: "transcript" }).display).toBe("chat");
+    expect(StudyCondition.parse({ display: "track" }).display).toBe("topics");
     expect(StudyCondition.parse({}).display).toBe("choice");
     expect(StudyCondition.safeParse({ display: "orb" }).success).toBe(false);
   });

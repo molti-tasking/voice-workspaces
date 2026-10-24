@@ -35,12 +35,13 @@ export function isSessionTaskId(value: unknown): value is SessionTaskId {
 }
 
 /**
- * The views the session compares: the plain transcript, the baseline — the
- * way a voice assistant's chat shows a voice conversation — and the mirror's
- * two layouts. The column view (`conversation`) is the field app's, and not
- * one of them.
+ * The views the session compares, each one step from the last: the chat, the
+ * baseline — the way a voice assistant's chat shows a voice conversation —
+ * then the topic line (structure instead of words), then the topic line with
+ * uptake (whether the assistant's ideas have become theirs). `now` and `open`
+ * are the app's, and not compared here.
  */
-export const SESSION_DISPLAYS = ["transcript", "track", "bubbles"] as const satisfies readonly ConversationDisplay[];
+export const SESSION_DISPLAYS = ["chat", "topics", "uptake"] as const satisfies readonly ConversationDisplay[];
 export type SessionDisplay = (typeof SESSION_DISPLAYS)[number];
 
 export function isSessionDisplay(value: unknown): value is SessionDisplay {
