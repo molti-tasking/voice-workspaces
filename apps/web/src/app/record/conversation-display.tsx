@@ -13,9 +13,10 @@ import { ConversationMirror } from "./conversation-mirror";
 import { ConversationTranscript } from "./conversation-transcript";
 
 /**
- * One drive's conversation, shown one of the four ways the display study
- * compares (`ConversationDisplay` in @voicemural/shared): the plain
- * transcript, the column in order, or the mirror as a track or as bubbles.
+ * One drive's conversation, shown one of four ways (`ConversationDisplay` in
+ * @voicemural/shared): the plain transcript, the column in order, or the
+ * mirror as a track or as bubbles — three of which the display study
+ * compares.
  * Used by the recorder (its own choice, or the one a drive forces) and the
  * simulated conversation, so both draw the same thing for the same display.
  *
