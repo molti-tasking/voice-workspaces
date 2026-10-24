@@ -11,8 +11,7 @@ import {
   BOARD_EDITING,
   BOARD_TOOLS,
   RECENT_DRIVES_SHOWN,
-  SESSION_PROFILE,
-  SESSION_SYSTEM_PROMPT,
+  SESSION_OPENING_NUDGE,
   SETTLED_PROMPT,
   STUDY_PROFILE,
   STUDY_SYSTEM_PROMPT,
@@ -22,6 +21,7 @@ import {
   asSttLanguage,
   asVoiceId,
   capabilitiesSection,
+  composeSessionPrompt,
   composeSystemPrompt,
   foldSummary,
   loadDriveSoFarText,
@@ -164,11 +164,7 @@ export async function POST(req: Request) {
   // on top. No board and no earlier drives — a participant has neither.
   // Everyone else gets the field study's agent, unchanged.
   const composed = sessionTask
-    ? composeSystemPrompt({
-        base: SESSION_SYSTEM_PROMPT,
-        profile: SESSION_PROFILE,
-        sections: [sessionTask.agentSection],
-      })
+    ? composeSessionPrompt(sessionTask)
     : studyTask
     ? composeSystemPrompt({
         base: STUDY_SYSTEM_PROMPT,
@@ -205,6 +201,11 @@ export async function POST(req: Request) {
       // An older web app that does not send this leaves the container's
       // `TopicTitle` inert, which is the right failure — no board, no calls.
       titlePrompt: TITLE_PROMPT,
+      // The opening turn's instruction, where it is not the field agent's: the
+      // display study's session has no drive and no background to offer a
+      // next step from (SESSION_OPENING_NUDGE). Null, the container keeps its
+      // own OPENING_NUDGE, which is also what an older web app gets.
+      openingNudge: sessionTask ? SESSION_OPENING_NUDGE : null,
       // Whether a subject the talk has just left was settled, judged in the
       // container when it is left and pushed to the recorder like the title.
       // Absent, the container makes no such call (`TopicTitle._judge`).

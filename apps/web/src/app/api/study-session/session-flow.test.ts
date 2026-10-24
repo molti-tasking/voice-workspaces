@@ -33,7 +33,7 @@ const { studySession, user } = await import("@voicemural/db/schema");
 const { createSession } = await import("@voicemural/db/study-session");
 const { isDatabaseReachable } = await import("@voicemural/db/testing");
 const { issueTicket } = await import("@voicemural/shared/realtime-ticket");
-const { SESSION_SYSTEM_PROMPT, STUDY_SCREEN } = await import("@voicemural/talkback");
+const { SESSION_OPENING_NUDGE, SESSION_SYSTEM_PROMPT, SPEECH_ONLY_CONTRACT, STUDY_SCREEN } = await import("@voicemural/talkback");
 const enroll = (await import("./enroll/route")).POST;
 const step = (await import("./route")).POST;
 const openDrive = (await import("../capture-sessions/route")).POST;
@@ -104,9 +104,13 @@ describeIfDb("the display study's session routes", () => {
         systemPrompt: string;
         tools: unknown[];
         webSearchTool: string | null;
+        openingNudge: string | null;
       };
       expect(setup.systemPrompt.startsWith(SESSION_SYSTEM_PROMPT)).toBe(true);
       expect(setup.systemPrompt).toContain("THE PROBLEM");
+      expect(setup.systemPrompt.endsWith(SPEECH_ONLY_CONTRACT)).toBe(true);
+      expect(setup.systemPrompt).not.toMatch(/souffleur/i);
+      expect(setup.openingNudge).toBe(SESSION_OPENING_NUDGE);
       expect(setup.tools).toEqual([]);
       expect(setup.webSearchTool).toBeNull();
       const turn = (await (await call(realtimeContext, { ticket, said: "what did we decide last time?" })).json()) as {

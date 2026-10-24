@@ -3,15 +3,25 @@ import { describe, expect, it } from "vitest";
 import { SESSION_TASK_IDS } from "@voicemural/shared";
 import { PROACTIVITY_STANZAS, PROFILE } from "./profile";
 import {
+  DRAFT_OPEN,
   FLOOR_SECTION,
   HEARING_SECTION,
+  OPENING_NUDGE,
   OUTPUT_CONTRACT,
   READING_SECTION,
   SPARK_SECTION,
+  SPEECH_ONLY_CONTRACT,
   SYSTEM_PROMPT,
   composeSystemPrompt,
 } from "./prompt";
-import { SESSION_PROFILE, SESSION_SYSTEM_PROMPT, STUDY_PROFILE, STUDY_SYSTEM_PROMPT } from "./study-agent";
+import {
+  SESSION_OPENING_NUDGE,
+  SESSION_PROFILE,
+  SESSION_SYSTEM_PROMPT,
+  STUDY_PROFILE,
+  STUDY_SYSTEM_PROMPT,
+  composeSessionPrompt,
+} from "./study-agent";
 import { PROLIFIC_TASKS, SESSION_TASKS, sessionTaskFor } from "./study-task";
 
 describe("the study's agent", () => {
@@ -51,11 +61,7 @@ describe("the study's agent", () => {
 });
 
 describe("the display study's agent", () => {
-  const composed = composeSystemPrompt({
-    base: SESSION_SYSTEM_PROMPT,
-    profile: SESSION_PROFILE,
-    sections: [SESSION_TASKS.trip.agentSection],
-  });
+  const composed = composeSessionPrompt(SESSION_TASKS.trip);
 
   it("leaves the Prolific study's agent byte for byte as its data were collected under", () => {
     expect(createHash("sha256").update(STUDY_SYSTEM_PROMPT).digest("hex")).toBe(
@@ -77,9 +83,22 @@ describe("the display study's agent", () => {
     expect(composed.proactivity).toBe("forthcoming");
   });
 
-  it("keeps the output contract last, and the task before it", () => {
-    expect(composed.prompt.endsWith(OUTPUT_CONTRACT)).toBe(true);
-    expect(composed.prompt.indexOf("THE PROBLEM")).toBeLessThan(composed.prompt.indexOf(OUTPUT_CONTRACT));
+  it("ends with the speech-only contract, after the task, and says nothing about drafts", () => {
+    expect(composed.prompt.endsWith(SPEECH_ONLY_CONTRACT)).toBe(true);
+    expect(composed.prompt.indexOf("THE PROBLEM")).toBeLessThan(composed.prompt.indexOf(SPEECH_ONLY_CONTRACT));
+    expect(composed.prompt).not.toContain(DRAFT_OPEN);
+    expect(composed.prompt).not.toMatch(/the drafts from this drive|somebody driving|WHEN THEY ASK FOR SOMETHING TO KEEP/);
+  });
+
+  it("has no name of its own, and says it is the study's assistant if asked", () => {
+    expect(composed.prompt).not.toMatch(/souffleur/i);
+    expect(SESSION_SYSTEM_PROMPT).toContain("say you are the assistant for this study");
+  });
+
+  it("opens without a drive or a background to offer a next step from", () => {
+    expect(SESSION_OPENING_NUDGE).not.toBe(OPENING_NUDGE);
+    expect(SESSION_OPENING_NUDGE).not.toMatch(/drive|background/i);
+    expect(SESSION_OPENING_NUDGE).toMatch(/one short sentence/);
   });
 
   it("has one task per id, each of three parts and a similar length", () => {
