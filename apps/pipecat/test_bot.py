@@ -1581,6 +1581,33 @@ def test_the_opening_turn_uses_its_own_instruction_and_seeds_the_block(monkeypat
     assert "drive is just starting" in context.messages[0]["content"]
 
 
+def test_the_opening_turn_says_what_the_web_app_sent_when_it_sent_one(monkeypatch):
+    # The display study's session has no drive to start: its opening comes
+    # with the session, and the field agent's stays the default.
+    context = FakeContext()
+    engine = bot.Offers(context, FakeRecall(), {"openingNudge": "(Greet them.)"})
+
+    async def fire():
+        async def now(_secs):
+            return None
+
+        monkeypatch.setattr(bot.asyncio, "sleep", now)
+        await engine._fire(2.5, opening=True)
+
+    asyncio.run(fire())
+    assert context.messages[0]["content"] == "(Greet them.)"
+    assert bot.Offers(FakeContext(), FakeRecall(), {"openingNudge": None})._opening_nudge == bot.OPENING_NUDGE
+    assert bot.Offers(FakeContext(), FakeRecall(), {"openingNudge": "  "})._opening_nudge == bot.OPENING_NUDGE
+
+
+def test_the_field_agent_s_opening_matches_prompt_ts_word_for_word():
+    assert bot.OPENING_NUDGE == (
+        "(The drive is just starting and they have not spoken yet. Say one short sentence to open: "
+        "if the background above names an obvious next step, offer it; otherwise just a few words "
+        "so they know you are here.)"
+    )
+
+
 def test_firing_tells_the_recorder_the_moment_is_an_offer(monkeypatch):
     recorder = bot.TurnRecorder(ticket=None, started_at_ms=None)
     engine = bot.Offers(FakeContext(), FakeRecall(), {}, recorder)

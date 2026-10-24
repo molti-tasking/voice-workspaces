@@ -2784,6 +2784,11 @@ class Offers(FrameProcessor):
         self._delay = PROACTIVE_AFTER_SECS.get(
             session.get("proactivity") or "quiet", PROACTIVE_AFTER_SECS["quiet"]
         )
+        # The opening turn's instruction, when the web app sends its own: the
+        # display study's session has no drive to start and no background to
+        # offer a next step from. Absent — the field app, an older web app, a
+        # degraded connection — it is OPENING_NUDGE.
+        self._opening_nudge = (session.get("openingNudge") or "").strip() or OPENING_NUDGE
         self._task: asyncio.Task | None = None
         # True from the moment the agent speaks until the driver's next words.
         self._awaiting_user = False
@@ -2862,7 +2867,7 @@ class Offers(FrameProcessor):
 
         if opening:
             self._opened = True
-            instruction = OPENING_NUDGE
+            instruction = self._opening_nudge
             # A reconnect can know where the drive stood: materialise the
             # block from the seed summary so "pick up where you left off?" is
             # possible. A no-op on a drive that already has one.

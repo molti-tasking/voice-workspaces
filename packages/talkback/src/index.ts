@@ -159,7 +159,14 @@ export {
   type StudyTask,
   type StudyTaskId,
 } from "./study-task";
-export { SESSION_PROFILE, SESSION_SYSTEM_PROMPT, STUDY_PROFILE, STUDY_SYSTEM_PROMPT } from "./study-agent";
+export {
+  SESSION_OPENING_NUDGE,
+  SESSION_PROFILE,
+  SESSION_SYSTEM_PROMPT,
+  STUDY_PROFILE,
+  STUDY_SYSTEM_PROMPT,
+  composeSessionPrompt,
+} from "./study-agent";
 export {
   SPARK_QUESTION_MAX_CHARS,
   cleanSparkQuestion,

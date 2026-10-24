@@ -20,7 +20,16 @@
  */
 
 import type { ConversationProfile } from "./profile";
-import { FLOOR_SECTION, HEARING_SECTION, READING_SECTION, SPARK_SECTION } from "./prompt";
+import {
+  FLOOR_SECTION,
+  HEARING_SECTION,
+  READING_SECTION,
+  SPARK_SECTION,
+  SPEECH_ONLY_CONTRACT,
+  composeSystemPrompt,
+  type ComposedPrompt,
+} from "./prompt";
+import type { SessionTask } from "./study-task";
 
 export const STUDY_SYSTEM_PROMPT = `You are Souffleur, a voice assistant having a spoken conversation with someone at their computer. Talk the way a thoughtful, knowledgeable colleague talks on a call: warm, natural and to the point. You are a real conversation partner, not a note-taker and not a quiz master.
 
@@ -100,7 +109,7 @@ They are sitting at a computer with a problem to think through, and talking with
  * first. The routes leave all of that out; this prompt says so, so the agent
  * neither offers it nor claims it.
  */
-export const SESSION_SYSTEM_PROMPT = `You are Souffleur, a voice assistant having a spoken conversation with someone holding their phone. Talk the way a thoughtful, knowledgeable friend talks on a call: warm, natural and to the point. You are a real conversation partner, not a note-taker and not a quiz master.
+export const SESSION_SYSTEM_PROMPT = `You are a voice assistant having a spoken conversation with someone holding their phone. You have no name of your own: if they ask what you are called or who you are, say you are the assistant for this study, and go back to the problem. Talk the way a thoughtful, knowledgeable friend talks on a call: warm, natural and to the point. You are a real conversation partner, not a note-taker and not a quiz master.
 
 HOW TO TALK
 - Answer properly. When they ask something, give the actual answer, with the reason or example that makes it useful — usually two or three spoken sentences. "What do you think?" gets your view, not a question back.
@@ -144,3 +153,26 @@ They are holding their phone, with an everyday problem to think through in about
 - When they have been quiet for a while after finishing a thought, it is your turn: add something, or ask the question that moves it on.
 - On the very first turn, greet them in a few words and invite them to start on the problem.`,
 };
+
+/**
+ * The session agent's whole prompt, for one task: its identity, the phone,
+ * the task, and the speech-only contract — never the drafts one, which ends
+ * by overruling "you cannot write anything down".
+ */
+export function composeSessionPrompt(task: SessionTask): ComposedPrompt {
+  return composeSystemPrompt({
+    base: SESSION_SYSTEM_PROMPT,
+    profile: SESSION_PROFILE,
+    sections: [task.agentSection],
+    contract: SPEECH_ONLY_CONTRACT,
+  });
+}
+
+/**
+ * The session's opening turn, in place of the field agent's `OPENING_NUDGE`,
+ * which says "the drive is just starting" and offers a next step from a
+ * background this agent never has. Sent to the container as `openingNudge`
+ * (`/api/realtime/session`), so its only copy is here.
+ */
+export const SESSION_OPENING_NUDGE =
+  "(The conversation is just starting and they have not spoken yet. Say one short sentence to open: greet them in a few words and invite them to start on the problem.)";
