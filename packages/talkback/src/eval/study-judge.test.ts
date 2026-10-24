@@ -34,8 +34,10 @@ describe("what the judge reads", () => {
     for (const prompt of [SUMMARY_PROMPT, RESUMPTION_PROMPT]) {
       expect(prompt).not.toMatch(/transcript view|bubble|circle|headline|mirror|spark|timeline|screen|phone showed/i);
     }
-    // Only the blind check describes them, which is the point of it.
-    expect(BLIND_PROMPT).toMatch(/A —[\s\S]*D —/);
+    expect(RESUMPTION_PROMPT).not.toMatch(/note|probe_accuracy/i);
+    // Only the blind check describes them, which is the point of it: the three, with nothing to tap.
+    expect(BLIND_PROMPT).toMatch(/A —[\s\S]*C —/);
+    expect(BLIND_PROMPT).not.toMatch(/D —|tap/);
   });
 
   it("puts the conversation and their words in the user turn, the rubric in the system turn", () => {
@@ -43,9 +45,9 @@ describe("what the judge reads", () => {
     const summary = summaryMessages({ lines, summary: "We took the train." });
     expect(summary[0]).toEqual({ role: "system", content: SUMMARY_PROMPT });
     expect(summary[1]!.content).toContain("=== THEIR SUMMARY ===\nWe took the train.");
-    const resumption = resumptionMessages({ before: lines, note: "", after: lines });
-    expect(resumption[1]!.content).toContain("=== THEIR NOTE ===\n(nothing)");
-    expect(resumption[1]!.content).toContain("[1] Person: Train.");
+    const resumption = resumptionMessages({ before: lines, after: lines });
+    expect(resumption[1]!.content).not.toContain("THEIR NOTE");
+    expect(resumption[1]!.content).toContain("=== AFTER ===\n[1] Person: Train.");
     expect(blindMessages({ lines })[0]!.content).toBe(BLIND_PROMPT);
   });
 });
@@ -79,25 +81,24 @@ describe("reading the judge's answers", () => {
   });
 
   it("reads a resumption judgement, and ignores a line it was never shown", () => {
-    const raw = '{"probe_accuracy": 4, "resumed_same_topic": "Yes", "first_on_topic_line": 2, "asked_assistant": false, "reason": "Back on trains."}';
+    const raw = '{"resumed_same_topic": "Yes", "first_on_topic_line": 2, "asked_assistant": false, "reason": "Back on trains."}';
     expect(parseResumptionJudgement(raw, 5)).toEqual({
-      probeAccuracy: 4,
       resumedSameTopic: "yes",
       firstOnTopicLine: 2,
       askedAssistant: false,
       reason: "Back on trains.",
     });
-    const odd = '{"probe_accuracy": 1, "resumed_same_topic": "kind of", "first_on_topic_line": 9, "asked_assistant": "true"}';
+    const odd = '{"resumed_same_topic": "kind of", "first_on_topic_line": 9, "asked_assistant": "true"}';
     expect(parseResumptionJudgement(odd, 5)).toMatchObject({
       resumedSameTopic: "unclear",
       firstOnTopicLine: null,
       askedAssistant: true,
     });
-    expect(parseResumptionJudgement('{"probe_accuracy": 2, "first_on_topic_line": null}', 3).firstOnTopicLine).toBeNull();
+    expect(parseResumptionJudgement('{"first_on_topic_line": null}', 3).firstOnTopicLine).toBeNull();
   });
 
-  it("reads the blind guess as one of the four letters", () => {
+  it("reads the blind guess as one of the three letters", () => {
     expect(parseBlindGuess('{"guess": "c", "confidence": 2}')).toEqual({ guess: "C", confidence: 2 });
-    expect(() => parseBlindGuess('{"guess": "E", "confidence": 2}')).toThrow(/not an option/);
+    expect(() => parseBlindGuess('{"guess": "D", "confidence": 2}')).toThrow(/not an option/);
   });
 });

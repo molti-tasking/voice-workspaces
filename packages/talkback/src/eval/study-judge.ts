@@ -8,7 +8,7 @@
  * a view scrubbed (`scrubViewWords`). Which block an item was is kept apart
  * from the scores and joined back only at the end. The one exception is the
  * blind check, which asks the judge to guess the view and so has to describe
- * the four — a guess no better than a quarter right is what blind means.
+ * the three — a guess no better than a third right is what blind means.
  *
  * Pure: the worker makes the calls (apps/worker/src/study/session-judge.ts).
  */
@@ -16,7 +16,7 @@
 import type { ChatMessage } from "@voicemural/llm";
 
 /** Bump when a rubric changes enough that scores should not be pooled. */
-export const STUDY_JUDGE_VERSION = "study-judge-1";
+export const STUDY_JUDGE_VERSION = "study-judge-2";
 
 export interface JudgeLine {
   who: "Person" | "Assistant";
@@ -56,37 +56,34 @@ Do not reward length, polish or spelling: a short summary with the key points ri
 Reply with ONLY a JSON object of this shape, nothing else:
 {"key_points": [{"point": "…", "in_summary": "present" | "partial" | "absent"}], "invented": 0, "coverage": 1-5, "accuracy": 1-5, "specificity": 1-5, "reason": "one sentence"}`;
 
-export const RESUMPTION_PROMPT = `You are scoring how a person picked a conversation with a voice assistant back up after an interruption. Partway through, they were taken away for about a minute to play a game. Straight after it, before they could see the conversation again, they typed where they thought they had been. Then they went back to talking.
+export const RESUMPTION_PROMPT = `You are scoring how a person picked a conversation with a voice assistant back up after an interruption. Partway through, they were taken away for about a minute to play a game. When it ended, the conversation came straight back, and they went on talking with nothing to remind them where they had been.
 
-You will see BEFORE (the end of the conversation before the interruption), THEIR NOTE (what they typed) and AFTER (the conversation after it, with numbered lines). The conversation was transcribed by machine; expect errors.
+You will see BEFORE (the end of the conversation before the interruption) and AFTER (the conversation after it, with numbered lines). The conversation was transcribed by machine; expect errors.
 
-probe_accuracy — from 1 to 5, how well their note matches what was being discussed just before the interruption: 5 names the topic and where it stood, 1 is wrong or "I don't remember".
 resumed_same_topic — "yes" if the Person's first words after the interruption continue the topic that was open just before it, "no" if they start on something else, "unclear" if you cannot tell.
 first_on_topic_line — the number of the first AFTER line in which the Person is back on that topic, or null if they never return to it.
 asked_assistant — true if the Person asks the assistant where they were or what had been said.
 
 Reply with ONLY a JSON object of this shape, nothing else:
-{"probe_accuracy": 1-5, "resumed_same_topic": "yes" | "no" | "unclear", "first_on_topic_line": 3 | null, "asked_assistant": true | false, "reason": "one sentence"}`;
+{"resumed_same_topic": "yes" | "no" | "unclear", "first_on_topic_line": 3 | null, "asked_assistant": true | false, "reason": "one sentence"}`;
 
 /** The blind check's options, in a fixed order; the key maps a guess back to a view. */
 export const BLIND_OPTIONS = {
   A: "transcript",
-  B: "conversation",
-  C: "track",
-  D: "bubbles",
+  B: "track",
+  C: "bubbles",
 } as const;
 export type BlindLetter = keyof typeof BLIND_OPTIONS;
 
-export const BLIND_PROMPT = `A person had this conversation with a voice assistant while their phone showed it in one of four ways:
+export const BLIND_PROMPT = `A person had this conversation with a voice assistant while their phone showed it in one of three ways:
 A — every line, word for word, like a chat.
-B — the lines in order, grouped under a short headline for each topic, with suggested questions to tap.
-C — only the topics, along a line, on the side of whoever brought each up, with a few short points for one topic and questions to tap.
-D — only the topics, as circles in two panels, with a few short points for one topic and questions to tap.
+B — only the topics, along a line, on the side of whoever brought each up, with a few short points for one topic.
+C — only the topics, as circles in two panels, with a few short points for one topic.
 
 From the conversation alone, which do you think it was? If nothing in it tells you, guess.
 
 Reply with ONLY a JSON object of this shape, nothing else:
-{"guess": "A" | "B" | "C" | "D", "confidence": 1-5}`;
+{"guess": "A" | "B" | "C", "confidence": 1-5}`;
 
 export function summaryMessages(input: { lines: readonly JudgeLine[]; summary: string }): ChatMessage[] {
   return [
@@ -98,16 +95,17 @@ export function summaryMessages(input: { lines: readonly JudgeLine[]; summary: s
   ];
 }
 
-export function resumptionMessages(input: {
-  before: readonly JudgeLine[];
-  note: string;
-  after: readonly JudgeLine[];
-}): ChatMessage[] {
+/**
+ * The resumption from the conversation alone. What they wrote afterwards
+ * about where they had been is not shown: written once they had picked the
+ * conversation up, it is their account of the resumption, not a measure of it.
+ */
+export function resumptionMessages(input: { before: readonly JudgeLine[]; after: readonly JudgeLine[] }): ChatMessage[] {
   return [
     { role: "system", content: RESUMPTION_PROMPT },
     {
       role: "user",
-      content: `=== BEFORE ===\n${renderLines(input.before)}\n\n=== THEIR NOTE ===\n${input.note || "(nothing)"}\n\n=== AFTER ===\n${renderLines(input.after, { numbered: true })}`,
+      content: `=== BEFORE ===\n${renderLines(input.before)}\n\n=== AFTER ===\n${renderLines(input.after, { numbered: true })}`,
     },
   ];
 }
@@ -191,7 +189,6 @@ export function parseSummaryJudgement(raw: string): SummaryJudgement {
 }
 
 export interface ResumptionJudgement {
-  probeAccuracy: number;
   resumedSameTopic: "yes" | "no" | "unclear";
   /** Within the AFTER lines the judge was shown, from 1; null if never. */
   firstOnTopicLine: number | null;
@@ -205,7 +202,6 @@ export function parseResumptionJudgement(raw: string, afterLines: number): Resum
   const line = parsed.first_on_topic_line;
   const at = line === null || line === undefined || line === "null" ? null : Number(line);
   return {
-    probeAccuracy: scoreOf(parsed, "probe_accuracy"),
     resumedSameTopic: same === "yes" || same === "no" ? same : "unclear",
     // A line it was not shown is no answer.
     firstOnTopicLine: at !== null && Number.isInteger(at) && at >= 1 && at <= afterLines ? at : null,

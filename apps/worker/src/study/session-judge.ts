@@ -7,6 +7,7 @@ import {
   type StudyMoment,
 } from "@voicemural/db/study-session";
 import type { ChatMessage } from "@voicemural/llm";
+import { SESSION_DESIGN } from "@voicemural/shared";
 import { keptIndices } from "@voicemural/talkback";
 import {
   BLIND_OPTIONS,
@@ -131,7 +132,7 @@ function shuffled<T>(items: T[], random: () => number): T[] {
 /**
  * The items to judge, in a shuffled order, and the key to them. A summary
  * item for every block with a summary, a resumption item for every block
- * with a game and a probe, and — with `blindCheck` — a guess at the view
+ * with a game and something said after it, and — with `blindCheck` — a guess at the view
  * for every block. Each `repeats` times, for the judge's reliability.
  */
 export function buildJudgeItems(
@@ -144,15 +145,14 @@ export function buildJudgeItems(
   for (const block of blocks) {
     const lines = judgeLinesOf(block);
     if (lines.all.length === 0) continue;
-    const probe = block.moments.find((m) => m.kind === "probe");
     const made: { kind: ItemKind; messages: ChatMessage[]; afterLines?: number }[] = [];
     if (block.summary) {
       made.push({ kind: "summary", messages: summaryMessages({ lines: lines.all, summary: scrubViewWords(block.summary) }) });
     }
-    if (probe && lines.after.length > 0) {
+    if (lines.after.length > 0) {
       made.push({
         kind: "resumption",
-        messages: resumptionMessages({ before: lines.before, note: scrubViewWords(probe.text ?? ""), after: lines.after }),
+        messages: resumptionMessages({ before: lines.before, after: lines.after }),
         afterLines: lines.after.length,
       });
     }
@@ -201,7 +201,6 @@ export function scoreRow(item: JudgeItem, answer: JudgeAnswer): Row {
       const j = parseResumptionJudgement(answer.content, item.afterLines ?? 0);
       return {
         ...head,
-        probe_accuracy: j.probeAccuracy,
         resumed_same_topic: j.resumedSameTopic,
         first_on_topic_line: j.firstOnTopicLine,
         asked_assistant: j.askedAssistant,
@@ -261,12 +260,18 @@ export function joinScores(scores: readonly Row[], key: readonly Row[]): Row[] {
   );
 }
 
-/** Every answered block with a drive, as the judge's items are made from. */
+/**
+ * Every answered block with a drive, as the judge's items are made from —
+ * this design's only: session-1's blocks were judged by another rubric, with
+ * a note this one never sees and a fourth view.
+ */
 export async function loadJudgeBlocks(): Promise<JudgeBlock[]> {
   const all = await listSessions();
-  const blocks = all.flatMap(({ session, blocks }) =>
-    blocks.filter((b) => b.captureSessionId && b.answeredAt).map((b) => ({ ref: session.ref, block: b })),
-  );
+  const blocks = all
+    .filter(({ session }) => session.design === SESSION_DESIGN)
+    .flatMap(({ session, blocks }) =>
+      blocks.filter((b) => b.captureSessionId && b.answeredAt).map((b) => ({ ref: session.ref, block: b })),
+    );
   const moments = await loadMoments(blocks.map((b) => b.block.captureSessionId!));
   const out: JudgeBlock[] = [];
   for (const { ref, block } of blocks) {
