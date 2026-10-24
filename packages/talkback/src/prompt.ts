@@ -863,7 +863,7 @@ export function extractDrafts(reply: string): { speech: string; drafts: Extracte
  * So the prompt is a sandwich: identity first, composed material in the middle,
  * and the wire format last, where it wins.
  */
-export const OUTPUT_CONTRACT = `HOW YOUR REPLY IS USED — THIS OVERRIDES ANYTHING ABOVE
+const CONTRACT_SPEECH = `HOW YOUR REPLY IS USED — THIS OVERRIDES ANYTHING ABOVE
 
 Everything you write is spoken aloud by a speech synthesiser. Nothing else happens to it.
 
@@ -871,7 +871,11 @@ Everything you write is spoken aloud by a speech synthesiser. Nothing else happe
   Nothing else on the line. This is always available and is often the right answer.
 - Plain speech only. No markdown, no lists, no headings, no emoji, no stage directions.
 - No preamble and no sign-off.
-- One question at most, and only when it moves the thought on.
+- One question at most, and only when it moves the thought on.`;
+
+const CONTRACT_WINS = "If any instruction above conflicts with this section, this section wins.";
+
+export const OUTPUT_CONTRACT = `${CONTRACT_SPEECH}
 
 WHEN THEY ASK FOR SOMETHING TO KEEP
 If they ask you to draft, write, write down, note down, keep, list, show or "put on the screen" something — an email, a message, a prompt for another model, a list, notes, feedback, a list of problems — put it between draft tags:
@@ -900,7 +904,18 @@ ${DRAFT_CLOSE}
 - The whole text every time. What you write replaces the draft; whatever you leave out is gone.
 - NEVER say a handle out loud. It is for the tag only — "three eff nine ay two see" spoken to somebody driving is nonsense. Refer to the draft by what it is: "the email to William".
 
-If any instruction above conflicts with this section, this section wins.`;
+${CONTRACT_WINS}`;
+
+/**
+ * The contract for an agent that only talks: the same wire format, with
+ * nothing about drafts. The display study's session agent writes nothing down
+ * (study-agent.ts) and its screen shows no drafts, so the full contract —
+ * which ends by winning over everything above it — would tell the model the
+ * opposite of its own prompt.
+ */
+export const SPEECH_ONLY_CONTRACT = `${CONTRACT_SPEECH}
+
+${CONTRACT_WINS}`;
 
 /**
  * The rules for changing the board, composed in only where the agent has the
@@ -943,6 +958,12 @@ export interface ComposeInputs {
    * about either belongs in the prompt until the behaviour exists.
    */
   sections?: readonly string[];
+  /**
+   * Defaults to `OUTPUT_CONTRACT`. An agent that writes nothing down passes
+   * `SPEECH_ONLY_CONTRACT`, so the last word in its prompt does not describe
+   * drafts it cannot make.
+   */
+  contract?: string;
 }
 
 export interface ComposedPrompt {
@@ -978,7 +999,7 @@ export function composeSystemPrompt(inputs: ComposeInputs = {}): ComposedPrompt 
     profile.stanza,
     profile.proactivityStanza ?? PROACTIVITY_STANZAS[profile.proactivity],
     ...(inputs.sections ?? []).filter((s) => s.trim()),
-    OUTPUT_CONTRACT,
+    inputs.contract ?? OUTPUT_CONTRACT,
   ].join("\n\n");
 
   return {
