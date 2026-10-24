@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { ConversationDisplay, SessionResume, SessionStep, SessionTimings } from "@voicemural/shared";
+import type { SessionDisplay, SessionResume, SessionStep, SessionTimings } from "@voicemural/shared";
 import { useCapture } from "@/components/capture-provider";
 import { signIn } from "@/lib/auth-client";
 import { MicCheck } from "../../p/mic-check";
@@ -14,13 +14,12 @@ import { TicTacToe } from "./tic-tac-toe";
 
 /**
  * The display study's session, in the browser: consent → microphone → how
- * it works → one practice round of the game → four times (brief →
- * conversation → questions), with a break halfway → the four views ranked →
- * done.
+ * it works → one practice round of the game → the brief → the conversation →
+ * its questions → the last questions → done.
  *
- * The order of the blocks and their views come from the server, fixed when
- * the invite was made; the page only walks through them. Each step it tells
- * the server about is first-one-stands there, so a reload picks up where the
+ * The conversation's view and task come from the server, fixed when the
+ * invite was made; the page only walks through them. Each step it tells the
+ * server about is first-one-stands there, so a reload picks up where the
  * server says (`resumeAt`) and never records anything twice.
  *
  * `demo` is the walkthrough (`?demo=1`): the same pages, with the simulated
@@ -29,7 +28,7 @@ import { TicTacToe } from "./tic-tac-toe";
 
 export interface SessionBlockView {
   position: number;
-  display: ConversationDisplay;
+  display: SessionDisplay;
   task: { title: string; brief: string; prompts: string[] };
 }
 
@@ -41,20 +40,22 @@ type Step =
   | { at: "mic"; then: SessionResume }
   | { at: "intro" }
   | { at: "practice" }
-  | { at: "brief" | "talk" | "answers"; position: number }
-  | { at: "break" }
+  | { at: "brief" | "talk" | "answers" }
   | { at: "final" }
   | { at: "done" };
 
-/** Where a resumed session opens. A conversation interrupted by a reload starts over from its brief. */
+/**
+ * Where a resumed session opens. A conversation interrupted by a reload
+ * starts over, from how it works and the practice game.
+ */
 function stepFor(resume: SessionResume): Step {
   switch (resume.at) {
     case "consent":
       return { at: "consent" };
     case "brief":
-      return resume.position === 0 ? { at: "intro" } : { at: "brief", position: resume.position };
+      return { at: "intro" };
     case "answers":
-      return { at: "answers", position: resume.position };
+      return { at: "answers" };
     case "final":
       return { at: "final" };
     case "done":
@@ -67,7 +68,7 @@ export function SessionFlow({
   code,
   hasAccount,
   resume,
-  blocks,
+  block,
   timings,
   talkbackEnabled,
 }: {
@@ -76,7 +77,8 @@ export function SessionFlow({
   code?: string;
   hasAccount: boolean;
   resume: SessionResume;
-  blocks: SessionBlockView[];
+  /** The session's one conversation. */
+  block: SessionBlockView;
   timings: SessionTimings;
   talkbackEnabled: boolean;
 }) {
@@ -100,8 +102,8 @@ export function SessionFlow({
     setStep(next);
     window.scrollTo({ top: 0 });
   }, []);
-  const onTalkFinished = useCallback((position: number) => go({ at: "answers", position }), [go]);
-  const eyebrow = (position: number) => `Conversation ${position + 1} of ${blocks.length}`;
+  const onTalkFinished = useCallback(() => go({ at: "answers" }), [go]);
+  const { position } = block;
 
   if (mode === "live" && !talkbackEnabled) {
     return (
@@ -128,7 +130,7 @@ export function SessionFlow({
     case "mic":
       return <MicCheck eyebrow="Before you start" onReady={() => go(stepFor(step.then))} />;
     case "intro":
-      return <Intro blocks={blocks.length} timings={timings} onContinue={() => go({ at: "practice" })} />;
+      return <Intro timings={timings} onContinue={() => go({ at: "practice" })} />;
     case "practice":
       // Once, unhurried, so the first interruption is not also the first time
       // they see the game.
@@ -136,66 +138,45 @@ export function SessionFlow({
         <TicTacToe
           eyebrow="Before you start"
           title="Try the game"
-          note="Once in every conversation, this game interrupts you for about a minute. Play one round now."
+          note="Once during the conversation, this game interrupts you for about a minute. Play one round now."
           minMs={0}
           capMs={PRACTICE_CAP_MS}
-          onDone={() => go({ at: "brief", position: 0 })}
+          onDone={() => go({ at: "brief" })}
         />
       );
     case "brief": {
-      const block = blocks[step.position]!;
-      const start = () => go({ at: "talk", position: block.position });
+      const start = () => go({ at: "talk" });
       return mode === "live" ? (
-        <LiveBrief block={block} eyebrow={eyebrow(block.position)} send={send} onStart={start} />
+        <LiveBrief block={block} eyebrow={EYEBROW} send={send} onStart={start} />
       ) : (
-        <Brief block={block} eyebrow={eyebrow(block.position)} ready onStart={start} />
+        <Brief block={block} eyebrow={EYEBROW} ready onStart={start} />
       );
     }
-    case "talk": {
-      const block = blocks[step.position]!;
+    case "talk":
       return mode === "live" ? (
         <LiveTalk
-          key={block.position}
           block={block}
-          eyebrow={eyebrow(block.position)}
+          eyebrow={EYEBROW}
           timings={timings}
           send={send}
-          onFinished={() => onTalkFinished(block.position)}
-          onFailed={() => go({ at: "brief", position: block.position })}
+          onFinished={onTalkFinished}
+          onFailed={() => go({ at: "brief" })}
         />
       ) : (
-        <DemoTalk
-          key={block.position}
-          block={block}
-          eyebrow={eyebrow(block.position)}
-          timings={timings}
-          onFinished={() => onTalkFinished(block.position)}
-        />
+        <DemoTalk block={block} eyebrow={EYEBROW} timings={timings} onFinished={onTalkFinished} />
       );
-    }
-    case "answers": {
-      const position = step.position;
+    case "answers":
       return (
         <PostBlock
-          key={position}
-          eyebrow={eyebrow(position)}
-          // Finish waits for the game, so every conversation has had one.
+          eyebrow={EYEBROW}
+          // Finish waits for the game, so the conversation has had one.
           hadGame
           onSubmit={async (answers) => {
             if (!(await send({ step: "answers", position, answers }))) return false;
-            const last = position === blocks.length - 1;
-            go(last ? { at: "final" } : position === 1 ? { at: "break" } : { at: "brief", position: position + 1 });
+            go({ at: "final" });
             return true;
           }}
         />
-      );
-    }
-    case "break":
-      return (
-        <StudyFrame eyebrow="Halfway" title="Take a short break">
-          <p>Two conversations done, two to go. Stretch, have a glass of water, and carry on when you are ready.</p>
-          <PrimaryButton onClick={() => go({ at: "brief", position: 2 })}>Continue</PrimaryButton>
-        </StudyFrame>
       );
     case "final":
       return (
@@ -216,6 +197,9 @@ export function SessionFlow({
       );
   }
 }
+
+/** Above the brief, the conversation and its questions. */
+const EYEBROW = "Your conversation";
 
 /* ------------------------------------------------------------------------- */
 
@@ -271,28 +255,28 @@ function Consent({
   }
 
   return (
-    <StudyFrame eyebrow="A study at Aarhus University" title="Four short conversations with a voice assistant">
+    <StudyFrame eyebrow="A study at Aarhus University" title="A short conversation with a voice assistant">
       <p>
-        In this study you talk with an AI voice assistant about four everyday planning problems, about five minutes
-        each, and answer a few questions after each one. It takes about 40 minutes. You need your phone, a quiet place,
-        and ideally headphones.
+        In this study you talk with an AI voice assistant about an everyday planning problem for about five minutes,
+        and answer a few questions afterwards. It takes about 15 minutes. You need your phone, a quiet place, and
+        ideally headphones.
       </p>
       <div className="space-y-3 rounded-2xl border border-line bg-surface p-5 text-[0.95rem]">
         <p className="font-medium">What we record and why</p>
         <ul className="list-disc space-y-1.5 pl-5 text-fg/80">
           <li>
-            Your voice during the conversations is recorded and transcribed automatically. The transcripts, the
+            Your voice during the conversation is recorded and transcribed automatically. The transcripts, the
             assistant&apos;s replies, what you write afterwards and how you used the screen are stored for research.
           </li>
           <li>
             To run the conversation, your speech is transcribed by Deepgram, the assistant&apos;s replies are written by
             an AI model, and its voice is made by ElevenLabs. Afterwards, the research team and an AI model hosted at
-            Aarhus University read the transcripts and what you wrote, to compare the four ways of showing a
-            conversation.
+            Aarhus University read the transcript and what you wrote, to study how a spoken conversation can be shown
+            on a phone.
           </li>
           <li>
             You are known to us only by a code, not by name. Please do not mention your name or other personal details
-            in the conversations. Results are published only in anonymised form.
+            in the conversation. Results are published only in anonymised form.
           </li>
           <li>
             Taking part is voluntary. You can stop at any time by closing this page, and ask the researchers to delete
@@ -317,32 +301,27 @@ function Consent({
   );
 }
 
-function Intro({ blocks, timings, onContinue }: { blocks: number; timings: SessionTimings; onContinue: () => void }) {
+function Intro({ timings, onContinue }: { timings: SessionTimings; onContinue: () => void }) {
   return (
     <StudyFrame eyebrow="Before you start" title="How it works">
       <ul className="list-disc space-y-2 pl-5 text-fg/85">
-        <li>
-          You will have {blocks} short conversations with the assistant, called Souffleur, each about a different
-          everyday problem.
-        </li>
+        <li>You will have one short conversation with the assistant, about an everyday problem.</li>
         <li>Hold your phone as you normally would and talk out loud. The assistant answers when you pause.</li>
         <li>
-          Each conversation is shown on the screen in a different way. Look at it as much or as little as you like.
+          The assistant only talks: it cannot look anything up online, so it works from what it knows and what you
+          tell it.
         </li>
+        <li>The screen shows the conversation as it goes. Look at it as much or as little as you like.</li>
         <li>
-          Sometimes the screen offers a question for the assistant to ask you, marked ✦. Tap it if you like; you never
-          have to.
-        </li>
-        <li>
-          Once in each conversation, a short game takes over the screen for about a minute. When it is over, carry on
+          Once during the conversation, a short game takes over the screen for about a minute. When it is over, carry on
           where you left off. Now and then a one-tap question about how it is going appears at the bottom of the
           screen.
         </li>
         <li>
-          You can finish each conversation after {spokenDuration(timings.talkMinMs)}. At{" "}
+          You can finish the conversation after {spokenDuration(timings.talkMinMs)}. At{" "}
           {spokenDuration(timings.talkCapMs)} it ends by itself.
         </li>
-        <li>After each one, you write two or three sentences about it and answer a few quick questions.</li>
+        <li>Afterwards, you write two or three sentences about it and answer a few quick questions.</li>
         <li>Please do not take notes.</li>
       </ul>
       <PrimaryButton onClick={onContinue}>Continue</PrimaryButton>
@@ -438,9 +417,7 @@ function Brief({
           ))}
         </ul>
       </div>
-      <p>
-        This time the screen is <strong>{copy.label}</strong>: it shows {copy.brief}
-      </p>
+      <p>While you talk, the screen shows {copy.brief}</p>
       {error && <ErrorLine>{error}</ErrorLine>}
       <PrimaryButton disabled={!ready} onClick={onStart}>
         Start the conversation
