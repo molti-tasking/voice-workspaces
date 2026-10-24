@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_CONVERSATION, applyMessage, timeline } from "./conversation";
-import { DEMO_POINTS, DEMO_STEPS, demoSparkQuestion } from "./demo-conversation";
+import { atCursor } from "./cursor";
+import { DEMO_STEPS, demoDigest, demoSparkQuestion, demoTopicTitles } from "./demo-conversation";
 import { sparksFor } from "./signals";
 
 describe("the simulated conversation", () => {
@@ -34,8 +35,21 @@ describe("the simulated conversation", () => {
     );
   });
 
-  it("has the mirror's points for every topic it names", () => {
-    for (const section of final.sections) expect(DEMO_POINTS.has(section.title!)).toBe(true);
+  it("has a digest for every topic it names", () => {
+    for (const section of final.sections) expect(demoTopicTitles()).toContain(section.title);
+    expect(demoDigest(final).topics).toHaveLength(final.sections.length);
     expect(demoSparkQuestion("decide", "Getting there")).toMatch(/\?$/);
+  });
+
+  it("digests the conversation as it stood, not as it ended", () => {
+    const end = demoDigest(final);
+    expect(end.now).toMatch(/only the journey is open/);
+    expect(end.open.filter((q) => !q.settled).map((q) => q.text)).toEqual(["How to get there?", "What to do there?"]);
+    // Back when the destinations had just been offered: nothing settled, nothing taken up.
+    const offered = final.sections.find((s) => s.title === "Destinations")!.turns[1]!.seq;
+    const then = demoDigest(atCursor(final, offered));
+    expect(then.now).toMatch(/Choosing where to go/);
+    expect(then.topics.flatMap((t) => t.ideas).some((i) => i.takenUp)).toBe(false);
+    expect(then.open.map((q) => q.text)).toEqual(["Where to go?"]);
   });
 });

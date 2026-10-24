@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { captureSession, eq, getDb } from "@voicemural/db";
 import { boardEnabledAt } from "@voicemural/db/board";
+import { loadConversation } from "@voicemural/db/conversation";
 import { currentScreen } from "@voicemural/db/display";
 import {
   pendingConfirmation,
@@ -11,7 +12,14 @@ import {
 import { findBlockByCaptureSession } from "@voicemural/db/study-session";
 import { resolveSpokenAnswer, resolveStudyCondition, type SpokenAnswer } from "@voicemural/shared";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
-import { STUDY_SCREEN, buildTurnContext, renderLocalTime, renderScreen, timeZoneOf } from "@voicemural/talkback";
+import {
+  STUDY_SCREEN,
+  buildTurnContext,
+  renderContinued,
+  renderLocalTime,
+  renderScreen,
+  timeZoneOf,
+} from "@voicemural/talkback";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -97,6 +105,7 @@ export async function POST(req: Request) {
       userId: captureSession.userId,
       deviceInfo: captureSession.deviceInfo,
       studyCondition: captureSession.studyCondition,
+      continuesId: captureSession.continuesId,
     })
     .from(captureSession)
     .where(eq(captureSession.id, payload.captureSessionId))
@@ -122,7 +131,7 @@ export async function POST(req: Request) {
   // every view. Fails open to an ordinary drive.
   const block = await findBlockByCaptureSession(payload.captureSessionId).catch(() => null);
   const boardOn = !block && (await boardEnabledAt(payload.userId).catch(() => null)) !== null;
-  const [{ passages, threads, board, drafts }, { settled, pending }, screen] = await Promise.all([
+  const [{ passages, threads, board, drafts }, { settled, pending }, screen, continued] = await Promise.all([
     buildTurnContext(payload.userId, payload.captureSessionId, parsed.data.said, {
       board: boardOn,
       memory: !block,
@@ -131,6 +140,11 @@ export async function POST(req: Request) {
     // Fails open to "not known", which is itself an instruction not to
     // describe the screen.
     currentScreen(payload.captureSessionId).catch(() => null),
+    // A drive that continues a past conversation: what was said in it. Fails
+    // open to a drive that starts afresh.
+    rows[0]?.continuesId
+      ? earlierInConversation(payload.userId, rows[0].continuesId, timeZoneOf(rows[0].deviceInfo)).catch(() => null)
+      : Promise.resolve(null),
   ]);
 
   // What the conversation view has on it on this drive: the sparks row in the
@@ -160,7 +174,9 @@ export async function POST(req: Request) {
     // have open and what it can do, so directions about the app are grounded.
     {
       passages,
-      threads,
+      // The conversation this drive continues comes first: it is this
+      // conversation, not an earlier one.
+      threads: continued ? [{ topicId: "continued", text: continued }, ...threads] : threads,
       board: board.text,
       drafts: drafts.text,
       pending,
@@ -201,4 +217,18 @@ async function settleThenReadPending(
   }
   const pending = await pendingConfirmation(captureSessionId).catch(() => null);
   return { settled, pending };
+}
+
+/** What was said in the conversation a drive continues, rendered for the agent (`renderContinued`). */
+async function earlierInConversation(userId: string, continuesId: string, timeZone: string | null): Promise<string | null> {
+  const drives = await loadConversation(userId, continuesId);
+  if (!drives || drives.length === 0) return null;
+  const topics: string[] = [];
+  for (const visit of drives.flatMap((d) => d.visits)) if (!topics.includes(visit.title)) topics.push(visit.title);
+  const last = drives.at(-1)!;
+  return renderContinued({
+    topics,
+    lines: drives.flatMap((d) => d.lines.map(({ who, text }) => ({ who, text }))),
+    when: renderLocalTime(last.endedAt ?? last.startedAt, timeZone),
+  });
 }

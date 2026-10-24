@@ -34,7 +34,7 @@ const moment = (m: Partial<StudyMoment> & Pick<StudyMoment, "kind" | "shownOffse
 const BLOCK: JudgeBlock = {
   ref: "F07",
   position: 0,
-  display: "bubbles",
+  display: "uptake",
   task: "trip",
   summary: "The bubbles helped: we picked the train to Aarhus.",
   lines: [
@@ -69,7 +69,7 @@ describe("what the judge is shown", () => {
   it("never names the block, its view or its place in the session", () => {
     const { items } = buildJudgeItems([BLOCK], { salt: "s", blindCheck: false });
     const everything = JSON.stringify(items);
-    for (const giveaway of ["F07", "bubbles", "\"position\"", "trip"]) expect(everything).not.toContain(giveaway);
+    for (const giveaway of ["F07", "uptake", "\"position\"", "trip"]) expect(everything).not.toContain(giveaway);
     // Their own words naming a view are scrubbed too.
     expect(everything).toContain("The […] helped");
     // The resumption is judged from the conversation alone.
@@ -82,7 +82,7 @@ describe("the items and their key", () => {
     const { items, key } = buildJudgeItems([BLOCK], { salt: "s", repeats: 2, random: () => 0 });
     expect(items.map((i) => i.kind).sort()).toEqual(["resumption", "resumption", "summary", "summary"]);
     expect(new Set(items.map((i) => i.id)).size).toBe(4);
-    expect(key).toContainEqual({ id: itemId("s", "F07", 0, "summary", 1), ref: "F07", position: 0, display: "bubbles", task: "trip", kind: "summary", repeat: 1 });
+    expect(key).toContainEqual({ id: itemId("s", "F07", 0, "summary", 1), ref: "F07", position: 0, display: "uptake", task: "trip", kind: "summary", repeat: 1 });
     expect(items.find((i) => i.kind === "resumption")!.afterLines).toBe(2);
   });
 
@@ -116,7 +116,7 @@ describe("scoring and joining", () => {
     expect(rows.find((r) => r.kind === "summary")).toMatchObject({ coverage: 4, present: 1, coverage_share: 1, error: null });
     expect(rows.find((r) => r.kind === "resumption")).toMatchObject({ resumed_same_topic: "yes", first_on_topic_line: 1 });
     expect(rows.find((r) => r.kind === "resumption")).not.toHaveProperty("probe_accuracy");
-    expect(JSON.stringify(rows)).not.toContain("bubbles");
+    expect(JSON.stringify(rows)).not.toContain("uptake");
     expect(scoreRow(items[0]!, { content: "no idea", model: "m", latencyMs: 1 }).error).toMatch(/no JSON/);
     const failing = await runJudge(items.slice(0, 1), async () => {
       throw new Error("LiteLLM down");
@@ -127,8 +127,8 @@ describe("scoring and joining", () => {
   it("puts the view next to the scores only when joined, and reads the blind guess back", async () => {
     const rows = await runJudge(items, async (item) => ({ content: answers[item.kind]!, model: "m", latencyMs: 10 }));
     const joined = joinScores(rows, key);
-    expect(joined.find((r) => r.kind === "blind")).toMatchObject({ display: "bubbles", guessed_view: "bubbles", guessed_right: true });
-    expect(joined.find((r) => r.kind === "summary")).toMatchObject({ ref: "F07", display: "bubbles", coverage: 4 });
+    expect(joined.find((r) => r.kind === "blind")).toMatchObject({ display: "uptake", guessed_view: "uptake", guessed_right: true });
+    expect(joined.find((r) => r.kind === "summary")).toMatchObject({ ref: "F07", display: "uptake", coverage: 4 });
   });
 });
 

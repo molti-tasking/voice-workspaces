@@ -375,7 +375,9 @@ export function useRecorder() {
   const start = useCallback(async (
     voiceId?: string,
     sttLanguage?: string | null,
-     conditionOverride?: Record<string, boolean>,
+    conditionOverride?: Record<string, boolean>,
+    /** The drive this one continues: Continue on a past conversation. */
+    continuesId?: string,
   ) => {
     if (runningRef.current) return;
 
@@ -463,6 +465,7 @@ export function useRecorder() {
         conditionOverride && Object.keys(conditionOverride).length > 0
           ? conditionOverride
           : undefined,
+      continuesId,
     };
     await saveRegistration(registration);
 

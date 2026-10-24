@@ -253,7 +253,7 @@ describeIfDb("buildSessionExport", () => {
     const untalked = out.blocks.find((b) => b.ref === UNOPENED);
     expect(talked).toMatchObject({
       position: 0,
-      display: "transcript",
+      display: "chat",
       task: "trip",
       attempts: 1,
       talk_seconds: 259,
@@ -281,7 +281,7 @@ describeIfDb("buildSessionExport", () => {
     expect(transcript.lines[0]).not.toHaveProperty("spark");
 
     const row = out.sessions.find((s) => s.ref === REF);
-    expect(row).toMatchObject({ design: "between", order_index: 0, display: "transcript", task: "trip", blocks_answered: 1 });
+    expect(row).toMatchObject({ design: "between", order_index: 0, display: "chat", task: "trip", blocks_answered: 1 });
     expect(row).not.toHaveProperty("rank_1");
   });
 

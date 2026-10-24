@@ -174,9 +174,15 @@ export {
   type SparkLine,
 } from "./spark-question";
 export { SPARK_QUESTION_NUDGE, sparkQuestionText } from "./prompt";
+export { CONTINUED_MAX_CHARS, renderContinued, type ContinuedConversation } from "./continued";
 export {
-  MIRROR_MAX_BULLETS,
-  mirrorMessages,
-  parseMirrorBullets,
-  type MirrorBullets,
-} from "./mirror";
+  EMPTY_DIGEST,
+  digestMessages,
+  parseDigest,
+  type ConversationDigest,
+  type DigestIdea,
+  type DigestLine,
+  type DigestQuestion,
+  type DigestTopic,
+  type DigestTopicInput,
+} from "./digest";

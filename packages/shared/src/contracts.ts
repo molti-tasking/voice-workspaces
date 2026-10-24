@@ -56,20 +56,42 @@ export const CaptureUseCase = z.enum(["think_aloud", "draft", "recall"]);
 export type CaptureUseCase = z.infer<typeof CaptureUseCase>;
 
 /**
- * The ways a drive's conversation can be shown on the phone. The display
- * study's session (`/study/session`) compares three of them, between
- * participants (`SESSION_DISPLAYS`); the column is the field app's.
+ * The ways a conversation can be shown on the phone — live, after it, and
+ * when it is continued, always the same five (`apps/web/src/app/record/views`).
+ * The display study's session (`/study/session`) compares three of them,
+ * between participants (`SESSION_DISPLAYS`).
  *
- * - `transcript`: every line as it was said, the way a voice assistant's chat
- *   shows a voice conversation — the study's baseline.
- * - `conversation`: the column in order with topic headlines and signals
- *   (`ConversationFlow`).
- * - `track`, `bubbles`: the conversation mirror's two layouts
- *   (`ConversationMirror`).
+ * - `chat`: every line as it was said, the way a voice assistant's chat shows
+ *   a voice conversation — the study's baseline.
+ * - `topics`: the topics on one line, in the order they came up; a tap zooms
+ *   into one.
+ * - `uptake`: the topic line, with the assistant's ideas on each marked taken
+ *   up or not yet.
+ * - `now`: one line, where the conversation is.
+ * - `open`: the questions it has raised, settled or still open.
  */
-export const CONVERSATION_DISPLAYS = ["transcript", "conversation", "track", "bubbles"] as const;
-export const ConversationDisplay = z.enum(CONVERSATION_DISPLAYS);
-export type ConversationDisplay = z.infer<typeof ConversationDisplay>;
+export const CONVERSATION_DISPLAYS = ["chat", "topics", "uptake", "now", "open"] as const;
+
+/**
+ * The views before these five, as they may still be stored — on a study
+ * block, on a drive's condition, in a browser — read as their nearest
+ * successor: the transcript and the column became the chat, the mirror's two
+ * layouts the topic line.
+ */
+const LEGACY_DISPLAYS: Readonly<Record<string, (typeof CONVERSATION_DISPLAYS)[number]>> = {
+  transcript: "chat",
+  conversation: "chat",
+  track: "topics",
+  bubbles: "topics",
+};
+
+/** A stored display as one of the five; anything unknown is left for the schema to refuse. */
+export function normalizeDisplay(value: unknown): unknown {
+  return typeof value === "string" ? (LEGACY_DISPLAYS[value] ?? value) : value;
+}
+
+export const ConversationDisplay = z.preprocess(normalizeDisplay, z.enum(CONVERSATION_DISPLAYS));
+export type ConversationDisplay = (typeof CONVERSATION_DISPLAYS)[number];
 
 /**
  * The behaviours the field study varies, for one drive.
@@ -133,11 +155,12 @@ export const StudyCondition = z.strictObject({
   alternateStart: z.enum(["suggested", "chosen"]).default("suggested"),
   /**
    * How the conversation is shown during the drive. `choice`: as the person
-   * picked it on the recorder (Conversation, Mirror, Bubbles), which is what
-   * every drive did before the display study. Anything else is forced, and the
-   * recorder hides its switch — set per block by the study session.
+   * picked it on the recorder, which is what every drive did before the
+   * display study. Anything else is forced, and the recorder hides its switch
+   * — set per block by the study session. Older drives' views read as their
+   * successors (`normalizeDisplay`).
    */
-  display: z.enum(["choice", ...CONVERSATION_DISPLAYS]).default("choice"),
+  display: z.preprocess(normalizeDisplay, z.enum(["choice", ...CONVERSATION_DISPLAYS])).default("choice"),
 });
 export type StudyCondition = z.infer<typeof StudyCondition>;
 
@@ -278,6 +301,12 @@ export const CaptureSessionCreate = z.object({
    * and a client is not a trustworthy place to decide a study condition.
    */
   conditionOverride: StudyCondition.partial().optional(),
+  /**
+   * The drive this one continues: Continue on a past conversation. Checked
+   * against ownership by the route, which stores it only for the person's
+   * own drive and only on a fresh insert.
+   */
+  continuesId: z.uuid().optional(),
   deviceInfo: z
     .object({
       userAgent: z.string().max(512).optional(),

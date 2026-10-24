@@ -55,17 +55,17 @@ describe("screen", () => {
     }
   });
 
-  it("describes the conversation as one column in order, and returns at the bottom", () => {
+  it("describes the conversation as the chat it opens on, and says it can be switched", () => {
     const line = renderScreen("conversation");
-    expect(line).toMatch(/one column, in the order it was said/);
-    expect(line).toMatch(/new headline at the bottom/);
+    expect(line).toMatch(/as a chat: every line of this drive in the order it was said/);
+    expect(line).toMatch(/you do not know which one is open/);
     expect(line).not.toMatch(/two panels/);
   });
 
-  it("says they can rename a headline, and the agent cannot", () => {
+  it("says they can rename a topic, and the agent cannot", () => {
     const line = renderScreen("conversation");
     expect(line).toMatch(/you do not name them/);
-    expect(line).toMatch(/they can rename one with the pencil beside it/);
+    expect(line).toMatch(/they can rename one, and you then hear it by their name/);
   });
 
   it("names the sparks row and Keep only on a drive that has them", () => {
@@ -73,7 +73,7 @@ describe("screen", () => {
     expect(plain).not.toMatch(/sparks|Keep/);
     const chosen = renderScreen("conversation", { sparks: true, keep: true });
     expect(chosen).toMatch(/a row of sparks/);
-    expect(chosen).toMatch(/Each headline has Keep/);
+    expect(chosen).toMatch(/with Keep on a topic they open/);
     expect(renderScreen("conversation", { sparks: true })).not.toMatch(/Keep/);
     // Other screens are the same on every drive.
     expect(renderScreen("workspace", { sparks: true, keep: true })).toBe(renderScreen("workspace"));
@@ -85,18 +85,17 @@ describe("screen", () => {
   });
 
   it("describes the display a drive forces, and only what that display has", () => {
-    const transcript = renderScreen("conversation", { display: "transcript", sparks: false });
-    expect(transcript).toMatch(/plain transcript.*no headlines, no topics, no sparks/);
-    expect(transcript).not.toMatch(/row of sparks|Keep|pencil/);
-    const track = renderScreen("conversation", { display: "track", sparks: true });
-    expect(track).toMatch(/map of topics/);
-    expect(track).toMatch(/written automatically from what was said, not by you/);
-    expect(track).not.toMatch(/row of sparks/);
-    expect(renderScreen("conversation", { display: "bubbles", sparks: true })).toMatch(/circles in one panel/);
-    // Forced to the column, it reads exactly as the recorder's own view.
-    expect(renderScreen("conversation", { display: "conversation", sparks: true })).toBe(
-      renderScreen("conversation", { sparks: true }),
-    );
+    const chat = renderScreen("conversation", { display: "chat", sparks: false });
+    expect(chat).toMatch(/as a chat/);
+    expect(chat).not.toMatch(/row of sparks|Keep|switch it/);
+    const topics = renderScreen("conversation", { display: "topics", sparks: false });
+    expect(topics).toMatch(/line of topics rather than words/);
+    expect(topics).toMatch(/written automatically from what was said, not by you/);
+    expect(topics).not.toMatch(/circle per idea/);
+    expect(renderScreen("conversation", { display: "uptake" })).toMatch(/circle per idea you suggested/);
+    expect(renderScreen("conversation", { display: "now" })).toMatch(/one line saying where the conversation is now/);
+    expect(renderScreen("conversation", { display: "open" })).toMatch(/the questions this conversation has raised/);
+    expect(renderScreen("conversation", { sparks: true })).toMatch(/row of sparks/);
   });
 
   it("gives the display study one line for every view, naming none and pointing nowhere", () => {

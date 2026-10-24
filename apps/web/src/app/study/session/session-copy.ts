@@ -6,14 +6,14 @@ import type { SessionDisplay } from "@voicemural/shared";
  * better than another — what they learn about each is what they see.
  */
 export const DISPLAY_COPY: Record<SessionDisplay, { brief: string }> = {
-  transcript: {
-    brief: "the conversation word for word, as a running transcript, newest at the bottom.",
+  chat: {
+    brief: "the conversation word for word, like a chat, newest at the bottom.",
   },
-  track: {
-    brief: "the topics as a map, on the side of whoever brought them up, newest at the bottom.",
+  topics: {
+    brief: "only the topics, one under another, newest at the bottom; tap one for more.",
   },
-  bubbles: {
-    brief: "the topics as circles, the ones you brought up in one panel, the assistant's in another.",
+  uptake: {
+    brief: "only the topics, each with the assistant's ideas marked as taken up by you or not yet.",
   },
 };
 

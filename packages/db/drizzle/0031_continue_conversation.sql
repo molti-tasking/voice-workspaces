@@ -1,0 +1,2 @@
+ALTER TABLE "capture_session" ADD COLUMN "continues_id" uuid;--> statement-breakpoint
+ALTER TABLE "capture_session" ADD CONSTRAINT "capture_session_continues_id_capture_session_id_fk" FOREIGN KEY ("continues_id") REFERENCES "public"."capture_session"("id") ON DELETE set null ON UPDATE no action;

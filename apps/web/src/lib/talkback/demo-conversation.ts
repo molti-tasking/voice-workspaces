@@ -1,12 +1,12 @@
-import type { MirrorBullets } from "@voicemural/talkback";
-import type { ConversationMessage } from "./conversation";
+import type { ConversationDigest } from "@voicemural/talkback/digest";
+import type { Conversation, ConversationMessage } from "./conversation";
 import type { SparkKind } from "./signals";
 
 /**
  * A scripted conversation, for showing the conversation views with no
  * microphone, no voice container and no AI (`/record/demo`): the messages the
- * voice container would send, in order, each after a pause, and the points
- * the mirror would have been given for each topic.
+ * voice container would send, in order, each after a pause, and what the
+ * digest would have said at each point (`demoDigest`).
  *
  * A weekend being planned, long enough to show what a drive shows: seven
  * topics on both sides, three settled and one left open, two returns to an
@@ -131,13 +131,33 @@ export const DEMO_STEPS: readonly DemoStep[] = [
   { waitMs: 900, message: settled(1, true) },
 ];
 
-/** The mirror's points for each topic, as the AI would have written them. */
-export const DEMO_POINTS: ReadonlyMap<string, MirrorBullets> = new Map([
+/**
+ * What the digest would have said, as the AI would have written it
+ * (`digest.ts` in @voicemural/talkback) — scripted with the conversation, so
+ * the views have something to show with no AI behind them.
+ *
+ * Tied to the turns that make each thing true, so going back in time shows
+ * the digest as it stood then: an idea is taken up only once the turn that
+ * took it up has been said, a question settled only once it was decided, and
+ * the Now line is the one for the latest turn there is.
+ */
+interface DemoTopic {
+  you: string[];
+  ai: string[];
+  /** Each idea, and the turn of theirs that took it up (null: never). */
+  ideas: [text: string, takenUpBy: string | null][];
+}
+
+const DEMO_TOPICS: ReadonlyMap<string, DemoTopic> = new Map([
   [
     "Weekend in Denmark",
     {
       you: ["Long weekend, at most 300 euros", "Back for work on Monday", "Aarhus, Friday to Sunday, by train"],
       ai: ["Train and two nights fit the budget", "Back on Sunday evening", "Still open: how to get there"],
+      ideas: [
+        ["Train and two nights", "s22"],
+        ["Friday to Sunday evening", "s22"],
+      ],
     },
   ],
   [
@@ -145,6 +165,11 @@ export const DEMO_POINTS: ReadonlyMap<string, MirrorBullets> = new Map([
     {
       you: ["Both city and sea, ideally", "Best for two nights?"],
       ai: ["Aarhus: ARoS and the old town", "Skagen: where two seas meet", "Aarhus: all walkable from the station"],
+      ideas: [
+        ["Aarhus: ARoS and the old town", "s13"],
+        ["Skagen, where two seas meet", "s8"],
+        ["Copenhagen: most to do, pricier", null],
+      ],
     },
   ],
   [
@@ -152,22 +177,99 @@ export const DEMO_POINTS: ReadonlyMap<string, MirrorBullets> = new Map([
     {
       you: ["Train to Skagen, about six hours", "Or fly to Aalborg, then a bus", "Decide once the days are known"],
       ai: ["The train is cheaper"],
+      ideas: [["Take the cheaper train", null]],
     },
   ],
-  ["Paper deadline", { you: ["Paper draft due Friday at noon"], ai: ["Leave Friday afternoon"] }],
+  [
+    "Paper deadline",
+    { you: ["Paper draft due Friday at noon"], ai: ["Leave Friday afternoon"], ideas: [["Leave Friday afternoon", "s22"]] },
+  ],
   [
     "Budget",
     {
       you: ["Cook one evening", "Around 280 euros is fine"],
       ai: ["Train about 120 euros", "Two nights about 140 euros", "About 20 left for food"],
+      ideas: [
+        ["Guesthouse for two nights", null],
+        ["Food money is tight", "s15"],
+      ],
     },
   ],
   [
     "Things to do in Aarhus",
-    { you: ["What to actually do there?"], ai: ["ARoS and the rainbow walkway", "Den Gamle By: old town houses", "Latin Quarter, harbour walk"] },
+    {
+      you: ["What to actually do there?"],
+      ai: ["ARoS and the rainbow walkway", "Den Gamle By: old town houses", "Latin Quarter, harbour walk"],
+      ideas: [
+        ["ARoS and its rainbow walkway", null],
+        ["Den Gamle By open-air museum", null],
+        ["Harbour walk on Sunday", null],
+      ],
+    },
   ],
-  ["Weather", { you: ["Rain at the end of October?"], ai: ["Pack a rain jacket", "Keep ARoS for the rainy day"] }],
+  [
+    "Weather",
+    {
+      you: ["Rain at the end of October?"],
+      ai: ["Pack a rain jacket", "Keep ARoS for the rainy day"],
+      ideas: [
+        ["Pack a rain jacket", null],
+        ["Keep ARoS for the rainy day", null],
+      ],
+    },
+  ],
 ]);
+
+/** The questions, by topic, and the turn that settled each (null: still open at the end). */
+const DEMO_QUESTIONS: [text: string, topic: string, settledBy: string | null][] = [
+  ["Where to go?", "Destinations", "s22"],
+  ["How to get there?", "Getting there", null],
+  ["When to leave?", "Paper deadline", "s12"],
+  ["How much will it cost?", "Budget", "s15"],
+  ["What to do there?", "Things to do in Aarhus", null],
+];
+
+/** The Now line from each turn on. */
+const DEMO_NOW: [from: string, text: string][] = [
+  ["s1", "Planning a long weekend in Denmark, under 300 euros"],
+  ["s5", "Choosing where to go: Aarhus, Skagen or Copenhagen"],
+  ["s8", "How to get there: a long train, or a flight and a bus"],
+  ["s11", "Leaving Friday afternoon, after the paper deadline"],
+  ["s13", "A rough budget for Aarhus: about 280 euros"],
+  ["s16", "Back to the places: Aarhus fits two nights best"],
+  ["s18", "What to do in Aarhus: ARoS, the old town, the harbour"],
+  ["s20", "Rain is likely: keep ARoS for the wet day"],
+  ["s22", "Aarhus by train, Friday to Sunday; only the journey is open"],
+];
+
+/** The digest of the simulated conversation as it stands. */
+export function demoDigest(conversation: Conversation): ConversationDigest {
+  const said = new Set(conversation.sections.flatMap((s) => s.turns.map((t) => t.id)));
+  const ordinalOf = new Map(conversation.sections.map((s) => [s.title, s.ordinal ?? null]));
+  const topics = conversation.sections.flatMap((section) => {
+    const topic = section.title ? DEMO_TOPICS.get(section.title) : undefined;
+    if (!topic || section.ordinal === undefined) return [];
+    return [
+      {
+        ordinal: section.ordinal,
+        you: topic.you,
+        ai: topic.ai,
+        ideas: topic.ideas.map(([text, by]) => ({ text, takenUp: by !== null && said.has(by) })),
+      },
+    ];
+  });
+  const open = DEMO_QUESTIONS.flatMap(([text, topic, by]) => {
+    const ordinal = ordinalOf.get(topic);
+    return ordinal === undefined ? [] : [{ text, ordinal, settled: by !== null && said.has(by) }];
+  });
+  const now = DEMO_NOW.filter(([from]) => said.has(from)).at(-1)?.[1] ?? null;
+  return { now, topics, open };
+}
+
+/** Whether the script has a digest for every topic it names, for its test. */
+export function demoTopicTitles(): string[] {
+  return [...DEMO_TOPICS.keys()];
+}
 
 /** What the agent asks when a spark is pulled in the simulation. */
 export function demoSparkQuestion(kind: SparkKind, topic: string): string {

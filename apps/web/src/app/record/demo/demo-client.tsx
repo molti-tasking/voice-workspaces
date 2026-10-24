@@ -3,12 +3,12 @@
 import { Pause, Play, RotateCcw, Volume2, VolumeX } from "lucide-react";
 import Link from "next/link";
 import { useState, useSyncExternalStore } from "react";
-import { DEMO_POINTS, DEMO_STEPS } from "@/lib/talkback/demo-conversation";
+import { DEMO_STEPS, demoDigest } from "@/lib/talkback/demo-conversation";
 import { createDemoVoice } from "@/lib/talkback/demo-voice";
 import { useScriptedConversation } from "@/lib/talkback/use-scripted-conversation";
-import { ConversationDisplay } from "../conversation-display";
 import { SparkChips } from "../spark-chips";
 import { ViewSwitch, useRecordView } from "../view-switch";
+import { ConversationView } from "../views/conversation-view";
 
 /** Whether this browser can speak: false on the server, so the first render agrees with it. */
 function useCanSpeak(): boolean {
@@ -59,8 +59,7 @@ function DemoRun({
   onRestart: () => void;
 }) {
   const [paused, setPaused] = useState(false);
-  // All four displays, the display study's plain transcript among them.
-  const view = useRecordView({ withTranscript: true });
+  const view = useRecordView();
   const canSpeak = useCanSpeak();
   // The script, played as the voice container would send it; with sound, each
   // spoken line is waited out before the next one comes.
@@ -110,26 +109,19 @@ function DemoRun({
         </Link>
       </p>
 
-      <ViewSwitch view={view} withTranscript />
+      <ViewSwitch view={view} />
 
-      <ConversationDisplay
-        display={view}
+      <ConversationView
+        view={view}
         store={store}
-        status={null}
-        // As on a drive: the control has no sparks.
-        sparks={view === "transcript" ? null : ledger}
         live={!done}
         captureSessionId={null}
-        canPull
-        onPull={pull}
-        fixedPoints={DEMO_POINTS}
-        flow={{ drafts: [] }}
+        // No AI behind it: the digest is scripted with the conversation.
+        fixedDigest={demoDigest}
         className="min-h-0 flex-1"
       />
 
-      {view === "conversation" && (
-        <SparkChips store={store} ledger={ledger} connected speaking={false} onPull={pull} explainEmpty />
-      )}
+      <SparkChips store={store} ledger={ledger} connected speaking={false} onPull={pull} explainEmpty />
     </main>
   );
 }

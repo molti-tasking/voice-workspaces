@@ -54,8 +54,7 @@ const NO_SPARKS: Record<NoSparksReason, string> = {
  * Pull one spark: a poke that carries it, with its own question when one has
  * been written. Taken only if the poke was — an agent already talking, or
  * another poke under way, has not asked it — and then marked in the ledger and
- * in the conversation, before the question it asks. Shared by the chips and the
- * mirror (`conversation-mirror.tsx`).
+ * in the conversation, before the question it asks.
  */
 export async function pullSpark(
   spark: Spark,

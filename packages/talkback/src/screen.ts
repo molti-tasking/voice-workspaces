@@ -48,53 +48,54 @@ export function screenFor(pathname: string): Screen {
 export interface ConversationScreen {
   /** The sparks arm: a row of sparks above the controls. */
   sparks?: boolean;
-  /** They choose what to keep: Keep on each headline. */
+  /** They choose what to keep: Keep on each topic. */
   keep?: boolean;
   /**
    * How the conversation is shown, when the drive forces it (the display
    * study, `study_condition.display`). Absent: the person's own choice, which
-   * is described as the column in order, the view a drive opens on.
+   * is described as the chat, the view it opens on, and the switch.
    */
   display?: ShownAs;
 }
 
 /** The displays a drive can force (`ConversationDisplay` in @voicemural/shared). */
-export type ShownAs = "transcript" | "conversation" | "track" | "bubbles";
+export type ShownAs = "chat" | "topics" | "uptake" | "now" | "open";
 
-/**
- * The conversation itself, as each display shows it. `conversation` is the
- * recorder's own column (talkback-23); the others are the display study's.
- */
+const NAMED =
+  "Topics are named automatically from what is said; you do not name them and cannot move anything between them, but they can rename one, and you then hear it by their name.";
+
+const TOPIC_LINE =
+  "the conversation view as a line of topics rather than words: each topic once, one under the other in the order they came up; the one being talked about is larger and one they settled has a check. A tap on a topic opens a few short points about it, written automatically from what was said, not by you, and its lines.";
+
+/** The conversation itself, as each view shows it. */
 const SHOWN_AS: Record<ShownAs, string> = {
-  conversation:
-    "the conversation view: this drive's conversation as one column, in the order it was said — their words on the right, yours on the left — under headlines naming each stretch of it, named automatically from what is said; you do not name them and cannot move anything between them, but they can rename one with the pencil beside it, and you then hear it by their name. Going back to an earlier subject starts a new headline at the bottom, \"Back to\" it, and earlier stretches fold to their headline and open with a tap. A draft you write shows in it as a line with its title, where you wrote it; a tap opens its text with a Copy button.",
-  transcript:
-    "the conversation view as a plain transcript: every line of this drive in the order it was said — their words in bubbles on the right, yours as text on the left — and nothing else: no headlines, no topics, no sparks.",
-  track:
-    "the conversation view as a map of topics rather than words: each topic once, on the side of whoever's words it mostly is — theirs on the left, yours on the right — in the order the topics came up, along one line. The topic being talked about is drawn larger, one left a while ago is faded, and a dot on a topic marks a spark on offer. Under it, a strip shows a few short points for one topic — the current one, or one they tapped — written automatically from what was said, not by you, with that topic's spark to tap when it has one.",
-  bubbles:
-    "the conversation view as a map of topics rather than words: their topics as circles in one panel and yours in another, each in the next free place; the topic being talked about is drawn larger, one left a while ago is faded, and a dot on a topic marks a spark on offer. Under them, a strip shows a few short points for one topic — the current one, or one they tapped — written automatically from what was said, not by you, with that topic's spark to tap when it has one.",
+  chat: `the conversation view as a chat: every line of this drive in the order it was said — their words in bubbles on the right, yours as text on the left. A draft you write shows in it as a line with its title, where you wrote it; a tap opens its text with a Copy button. ${NAMED}`,
+  topics: `${TOPIC_LINE} ${NAMED}`,
+  uptake: `${TOPIC_LINE} Each topic also has one small circle per idea you suggested on it: filled once they have taken it up in their own words, hollow until then — judged automatically, not by you. ${NAMED}`,
+  now: "the conversation view as one line saying where the conversation is now, under the name of the current topic, written automatically from what was said, not by you.",
+  open: "the conversation view as the questions this conversation has raised — where, when, how much — the open ones first and the settled ones ticked, written automatically from what was said, not by you.",
 };
 
+/** Unforced, the person may switch the view: said so, without saying which one is open. */
+const SWITCHABLE =
+  "They can switch it to show only the topics, which of your ideas they have taken up, one line on where things stand, or the open questions; you do not know which one is open.";
+
 /**
- * The recorder while it records (talkback-23): one column in time order, not
- * the two panels it was. It said "two panels … no other icon or button" while
- * the screen also had spark chips and Keep, and "Drafts are not shown here;
- * they are kept on this recording's page", which the agent repeated to
- * somebody looking at this screen as "it's on this recording's page".
+ * The recorder while it records. It once said "two panels … no other icon or
+ * button" while the screen also had spark chips and Keep, and "Drafts are not
+ * shown here; they are kept on this recording's page", which the agent
+ * repeated to somebody looking at this screen as "it's on this recording's
+ * page".
  */
 function conversationDescription(drive: ConversationScreen): string {
-  const shown = drive.display ?? "conversation";
+  const shown = drive.display ?? "chat";
   return [
     SHOWN_AS[shown],
-    // In the mirror's layouts a spark is a dot and the strip, said above; the
-    // transcript has none.
-    drive.sparks && shown === "conversation"
+    drive.display === undefined ? SWITCHABLE : null,
+    drive.sparks
       ? "Above the controls is a row of sparks: up to three short questions about their subjects for them to tap, or, when there are none, one line saying why."
       : null,
-    drive.keep && shown === "conversation"
-      ? "Each headline has Keep, for a subject they want to hold in their own head."
-      : null,
+    drive.keep ? "They can keep a topic they want to hold in their own head: by saying \"keep this one\", or with Keep on a topic they open." : null,
     "Three controls at the bottom: Lock (only they speak, and you are not asked to reply), Normal (you may talk back) and Poke (they want one turn from you now), and Stop at the top right. That is everything on it while it records: no dock, no menu, no other icon or button, and nothing that leads to another screen. It shows nothing from earlier drives",
   ]
     .filter(Boolean)

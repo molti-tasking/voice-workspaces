@@ -1,17 +1,19 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { and, asc, eq, getDb } from "@voicemural/db";
+import { asc, getDb, inArray } from "@voicemural/db";
+import { loadConversation } from "@voicemural/db/conversation";
 import { loadSessionDraftHistory } from "@voicemural/db/drafts";
-import { agentTurn, audioChunk, captureSession, utterance } from "@voicemural/db/schema";
-import { findCoverageGaps, formatOffset } from "@voicemural/shared";
+import { audioChunk } from "@voicemural/db/schema";
+import { findCoverageGaps } from "@voicemural/shared";
 import { AppDock } from "@/components/app-dock";
 import { BackLink } from "@/components/back-link";
 import { ViewEvent } from "@/lib/analytics/view-event";
 import { currentUser } from "@/lib/session";
+import { draftMajor } from "@/lib/talkback/conversation";
+import type { DriveRecord } from "@/lib/talkback/replay";
 import { AutoRefresh } from "./auto-refresh";
-import { RetryFailed } from "./retry-failed";
+import { PastConversation } from "./past-conversation";
 import { SessionDrafts } from "./session-drafts";
-import { Transcript, type AgentTurnRow, type TranscriptRow } from "./transcript";
 
 export const dynamic = "force-dynamic";
 
@@ -20,214 +22,106 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default async function SessionPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+/**
+ * A past conversation, shown as it was live: the same views and switch as the
+ * recorder, the time bar to go back to any point, and Continue to pick it up
+ * where it was left. A conversation that was continued is one conversation
+ * here, whichever of its drives the link named.
+ *
+ * How it was recorded — the ledger line by line, timings, gaps, failures — is
+ * on `/sessions/[id]/details`.
+ */
+export default async function SessionPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await currentUser();
   if (!user) notFound();
-
   const { id } = await params;
-  const db = getDb();
 
-  const [meta] = await db
-    .select()
-    .from(captureSession)
-    .where(and(eq(captureSession.id, id), eq(captureSession.userId, user.id)))
-    .limit(1);
+  const drives = await loadConversation(user.id, id);
+  if (!drives || drives.length === 0) notFound();
+  const ids = drives.map((d) => d.id);
+  const first = drives[0]!;
+  const last = drives.at(-1)!;
 
-  if (!meta) notFound();
+  const [chunks, histories] = await Promise.all([
+    getDb()
+      .select({
+        captureSessionId: audioChunk.captureSessionId,
+        seq: audioChunk.seq,
+        startOffsetMs: audioChunk.startOffsetMs,
+        durationMs: audioChunk.durationMs,
+        status: audioChunk.status,
+      })
+      .from(audioChunk)
+      .where(inArray(audioChunk.captureSessionId, ids))
+      .orderBy(asc(audioChunk.seq)),
+    Promise.all(ids.map((driveId) => loadSessionDraftHistory(driveId))),
+  ]);
+  const untranscribed = chunks.filter((c) => c.status === "stored" || c.status === "transcribing");
+  // Whether what is shown is complete, for reading what they do next.
+  const hasGaps = ids.some((driveId) => findCoverageGaps(chunks.filter((c) => c.captureSessionId === driveId)).length > 0);
 
-  const chunks = await db
-    .select({
-      id: audioChunk.id,
-      seq: audioChunk.seq,
-      startOffsetMs: audioChunk.startOffsetMs,
-      durationMs: audioChunk.durationMs,
-      status: audioChunk.status,
-      failureReason: audioChunk.failureReason,
-    })
-    .from(audioChunk)
-    .where(eq(audioChunk.captureSessionId, id))
-    .orderBy(asc(audioChunk.seq));
-
-  const rows: TranscriptRow[] = await db
-    .select({
-      id: utterance.id,
-      startOffsetMs: utterance.startOffsetMs,
-      endOffsetMs: utterance.endOffsetMs,
-      text: utterance.text,
-      kind: utterance.kind,
-      kindOverride: utterance.kindOverride,
-    })
-    .from(utterance)
-    .where(eq(utterance.captureSessionId, id))
-    .orderBy(asc(utterance.startOffsetMs));
-
-  // The system's own turns, on the same session clock, so the two read as one
-  // dialogue. A separate table by design — see the comment on `agentTurn`.
-  const turns: AgentTurnRow[] = await db
-    .select({
-      id: agentTurn.id,
-      seq: agentTurn.seq,
-      startOffsetMs: agentTurn.startOffsetMs,
-      endOffsetMs: agentTurn.endOffsetMs,
-      endOffsetMeasured: agentTurn.endOffsetMeasured,
-      text: agentTurn.text,
-      generatedText: agentTurn.generatedText,
-      bargedIn: agentTurn.bargedIn,
-      truncatedAtMs: agentTurn.truncatedAtMs,
-      respondingToText: agentTurn.respondingToText,
-      resolvedModel: agentTurn.resolvedModel,
-      asrMs: agentTurn.asrMs,
-      ttftMs: agentTurn.ttftMs,
-      speakTtfbMs: agentTurn.speakTtfbMs,
-      totalLatencyMs: agentTurn.totalLatencyMs,
-      toolCalls: agentTurn.toolCalls,
-      error: agentTurn.error,
-    })
-    .from(agentTurn)
-    .where(eq(agentTurn.captureSessionId, id))
-    .orderBy(asc(agentTurn.startOffsetMs));
-
-  // Surface lost audio explicitly. A session with holes must never be mistaken
-  // for a complete one when the corpus is analysed.
-  const gaps = findCoverageGaps(chunks);
-  const recordedMs = chunks.reduce((acc, c) => acc + c.durationMs, 0);
-  const failed = chunks.filter((c) => c.status === "failed");
-  const untranscribed = chunks.filter(
-    (c) => c.status === "stored" || c.status === "transcribing",
-  );
-
-  /* Every version, not just the current one: the card carries Edit, a history
-   * and Restore now, and fetching the history from the client would mean a
-   * second round trip for something this page already has an open connection
-   * for.
-   *
-   * Times are formatted HERE, on the server, like every other date on this
-   * page. `toLocaleTimeString` in a client component renders in the server's
-   * locale during SSR and the browser's on hydration, and React tears the tree
-   * down over the mismatch — which on this page would take the transcript with
-   * it. */
-  const drafts = (await loadSessionDraftHistory(id)).map((draft) => ({
+  // Times formatted HERE, on the server: a client component would render the
+  // server's locale first and the browser's on hydration, and React tears the
+  // tree down over the mismatch.
+  const time = (d: Date) => d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const drafts = histories.flat().map((draft) => ({
     ...draft,
-    current: withTime(draft.current),
-    earlier: draft.earlier.map(withTime),
+    current: { ...draft.current, at: time(draft.current.createdAt) },
+    earlier: draft.earlier.map((v) => ({ ...v, at: time(v.createdAt) })),
   }));
 
+  const records: DriveRecord[] = drives.map((drive, i) => ({
+    lines: drive.lines.map(({ who, startMs, endMs, text }) => ({ who, startMs, endMs, text })),
+    visits: drive.visits.map(({ ordinal, title, startMs }) => ({ ordinal, title, startMs })),
+    subjects: drive.subjects,
+    drafts: histories[i]!.map((d) => ({ draftId: d.id, major: draftMajor(d.current.version), startMs: d.startOffsetMs })),
+  }));
+
+  const title = last.title ?? first.title;
+  const when = first.startedAt.toLocaleString(undefined, { dateStyle: "full", timeStyle: "short" });
+
   return (
-    <div className="mx-auto max-w-3xl vm-page-top px-6 pb-40">
+    <div className="mx-auto max-w-3xl vm-page-top px-4 pb-40 sm:px-6">
       <AutoRefresh pending={untranscribed.length} />
       <ViewEvent
         event="transcript_viewed"
         properties={{
           capture_session_id: id,
-          utterance_count: rows.length,
-          // Whether the participant is looking at a clean transcript or a
-          // damaged one changes how to read anything else they do next.
-          has_gaps: gaps.length > 0,
-          has_failed_chunks: failed.length > 0,
+          utterance_count: records.reduce((n, r) => n + r.lines.filter((l) => l.who === "user").length, 0),
+          has_gaps: hasGaps,
+          has_failed_chunks: chunks.some((c) => c.status === "failed"),
         }}
       />
-
       <BackLink fallback={{ href: "/conversations", name: "Conversations" }} />
 
-      <header className="mt-4 mb-8">
-        {/* Named by what it was about when talk-back named it, with the date
-            beneath; a date alone when it did not. */}
-        <h1 className="text-2xl font-semibold">
-          {meta.title ??
-            meta.startedAt.toLocaleString(undefined, {
-              dateStyle: "full",
-              timeStyle: "short",
-            })}
-        </h1>
-        {meta.title && (
-          <p className="mt-1 text-sm text-fg/70">
-            {meta.startedAt.toLocaleString(undefined, { dateStyle: "full", timeStyle: "short" })}
-          </p>
-        )}
+      <header className="mt-4 mb-5">
+        <h1 className="text-2xl font-semibold">{title ?? when}</h1>
         <p className="mt-1 text-sm text-fg/60">
-          {formatOffset(recordedMs)} recorded · {chunks.length} chunks ·{" "}
-          {rows.length} utterances
-          {turns.length > 0 && ` · ${turns.length} agent turn${turns.length === 1 ? "" : "s"}`}
-          {meta.endedAt === null && " · still open"}
+          {title ? when : null}
+          {drives.length > 1 && `${title ? " · " : ""}continued ${drives.length - 1}×`}
+          {last.endedAt === null && " · still open"}
+          {untranscribed.length > 0 && " · still transcribing"}
         </p>
       </header>
 
-      <div className="mb-6 space-y-3 text-sm">
-        {gaps.length > 0 && (
-          <Banner tone="warn" title={`${gaps.length} gap${gaps.length === 1 ? "" : "s"} in audio`}>
-            Missing:{" "}
-            {gaps
-              .map((g) => `${formatOffset(g.fromMs)}–${formatOffset(g.toMs)}`)
-              .join(", ")}
-            . Most likely a dead zone that outlasted the upload queue, or a suspended
-            tab.
-          </Banner>
-        )}
+      <PastConversation
+        drives={records}
+        lastDriveId={last.id}
+        drafts={drafts.map((d) => ({
+          id: d.id,
+          title: d.current.title,
+          text: d.current.text,
+          version: d.current.version,
+          at: d.current.at,
+        }))}
+      />
 
-        {untranscribed.length > 0 && (
-          <Banner tone="info" title={`${untranscribed.length} chunk(s) awaiting transcription`}>
-            The worker picks these up automatically. If they sit here, check that
-            <code className="mx-1 rounded bg-fg/10 px-1">apps/worker</code>is running.
-          </Banner>
-        )}
-
-        {failed.length > 0 && (
-          <Banner tone="error" title={`${failed.length} chunk(s) failed to transcribe`}>
-            {failed[0]?.failureReason ?? "Unknown error"}. The audio is still stored, so
-            these can be retried.
-            <div>
-              <RetryFailed sessionId={id} />
-            </div>
-          </Banner>
-        )}
+      {/* Where they are changed: the chat only shows the latest. */}
+      <div className="mt-8">
+        <SessionDrafts drafts={drafts} />
       </div>
 
-      {/* Above the transcript deliberately. A draft is the one thing on this
-          page the person asked for by name, and it is what they came back to
-          copy — putting it under a thousand utterances would bury it. */}
-      <SessionDrafts drafts={drafts} />
-
-      <Transcript rows={rows} turns={turns} />
-
       <AppDock />
-    </div>
-  );
-}
-
-/** One version with its time already rendered. See the note at the call site. */
-function withTime<T extends { createdAt: Date }>(version: T): T & { at: string } {
-  return {
-    ...version,
-    at: version.createdAt.toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
-  };
-}
-
-function Banner({
-  tone,
-  title,
-  children,
-}: {
-  tone: "warn" | "error" | "info";
-  title: string;
-  children: React.ReactNode;
-}) {
-  const styles = {
-    warn: "border-amber-500/30 bg-amber-500/10 text-amber-100",
-    error: "border-red-500/30 bg-red-500/10 text-red-200",
-    info: "border-sky-500/30 bg-sky-500/10 text-sky-100",
-  } as const;
-
-  return (
-    <div className={`rounded-lg border p-3 ${styles[tone]}`}>
-      <p className="mb-1 font-medium">{title}</p>
-      <div className="text-fg/60">{children}</div>
     </div>
   );
 }

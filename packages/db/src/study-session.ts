@@ -10,6 +10,7 @@ import {
   type SessionFinal,
   type SessionMoment,
   type SessionProgress,
+  ConversationDisplay as Display,
 } from "@voicemural/shared";
 import {
   agentTurn,
@@ -273,7 +274,7 @@ export async function armedBlockFor(userId: string, now = new Date()): Promise<A
     )
     .orderBy(desc(studyBlock.armedAt))
     .limit(1);
-  return row?.armedAt ? { ...row, armedAt: row.armedAt } : null;
+  return row?.armedAt ? { ...row, display: Display.parse(row.display), armedAt: row.armedAt } : null;
 }
 
 /**
@@ -300,7 +301,8 @@ export async function findBlockByCaptureSession(
     .from(studyBlock)
     .where(eq(studyBlock.captureSessionId, captureSessionId))
     .limit(1);
-  return row ?? null;
+  // A block from before the views were renamed holds the old name.
+  return row ? { ...row, display: Display.parse(row.display) } : null;
 }
 
 async function ownBlock(userId: string, position: number): Promise<StudyBlock | null> {
