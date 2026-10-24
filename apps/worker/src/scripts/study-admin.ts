@@ -11,8 +11,8 @@
  *   pnpm study:condition --user <id>                      print the template and recent drives
  *   pnpm study:prolific [--out <dir>]                     the Prolific study: participants.csv and probes.csv (PROLIFIC.md)
  *   pnpm study:week [--out <dir>] [--text]                the end-of-week questionnaire: week.csv (and week-texts.jsonl)
- *   pnpm study:session invite [--ref F07] [--order 0-3]   a display-study session: prints its link
- *   pnpm study:session list                               every session and how far it got
+ *   pnpm study:session invite [--ref F07] [--order 0-5]   a display-study session: prints its view, task and link
+ *   pnpm study:session list                               every session, how far it got, and the cells completed
  *   pnpm study:session export [--out <dir>] [--text]      sessions.csv, blocks.csv, moments.csv (and transcripts.jsonl)
  *   pnpm study:judge [--role judge] [--repeats 2] [--blind-check] [--keep-spark-turns] [--limit n] [--langfuse] [--out <dir>]
  *                                                         the blind judge: items.jsonl, scores.csv, and key.csv apart
@@ -40,7 +40,7 @@ import { closeDb, desc, eq, getDb } from "@voicemural/db";
 import { captureSession, user } from "@voicemural/db/schema";
 import { createSession, listSessions } from "@voicemural/db/study-session";
 import { chat, type ModelRole } from "@voicemural/llm";
-import { SESSION_ORDERS, StudyCondition } from "@voicemural/shared";
+import { SESSION_CELLS, SESSION_DESIGN, StudyCondition, cellFor } from "@voicemural/shared";
 import { flushLangfuse, langfuseConfig, startLangfuse, traceTurn, type Langfuse } from "@voicemural/talkback/eval/langfuse";
 import { STUDY_JUDGE_VERSION } from "@voicemural/talkback/eval/study-judge";
 import { exportParticipant, studyParticipants } from "../study/export";
@@ -310,38 +310,57 @@ async function runWeek(): Promise<void> {
 }
 
 /**
- * The display study's sessions (`study_session`). `invite` makes one, with
- * the next order in turn unless `--order` pins it, and prints the link to
- * send; whoever consents on it first takes part as a fresh guest. The base of
- * the link is `STUDY_SESSION_BASE_URL`, else `BETTER_AUTH_URL`.
+ * The display study's sessions (`study_session`). `invite` makes one, in the
+ * next cell in turn unless `--order` pins it, and prints the link to send;
+ * whoever consents on it first takes part as a fresh guest. The base of the
+ * link is `STUDY_SESSION_BASE_URL`, else `BETTER_AUTH_URL`.
+ *
+ * `list` ends with how many sessions each cell has completed: balance holds
+ * for invites made, not for sessions finished, so a cell short of the others
+ * is filled with `--order`.
  */
 async function runSession(): Promise<void> {
   const sub = process.argv[3];
   if (sub === "invite") {
     const order = flag("order");
-    if (order !== undefined && !/^[0-9]+$/.test(order)) throw new Error(`--order takes 0 to ${SESSION_ORDERS - 1}`);
+    if (order !== undefined && (!/^[0-9]+$/.test(order) || Number(order) >= SESSION_CELLS)) {
+      throw new Error(`--order takes 0 to ${SESSION_CELLS - 1}`);
+    }
     const { session, blocks } = await createSession({
       ref: flag("ref"),
-      orderIndex: order === undefined ? undefined : Number(order) % SESSION_ORDERS,
+      orderIndex: order === undefined ? undefined : Number(order),
     });
     const base = (process.env.STUDY_SESSION_BASE_URL || process.env.BETTER_AUTH_URL || "http://localhost:3000").replace(/\/$/, "");
-    console.log(`${session.ref}  order ${session.orderIndex}: ${blocks.map((b) => `${b.display}/${b.task}`).join(", ")}`);
+    console.log(`${session.ref}  cell ${session.orderIndex}: ${blocks.map((b) => `${b.display}/${b.task}`).join(", ")}`);
     console.log(`${base}/study/session?code=${session.inviteCode}`);
     return;
   }
   if (sub === "list") {
+    const completed = new Array<number>(SESSION_CELLS).fill(0);
     for (const { session, blocks } of await listSessions()) {
-      const answered = blocks.filter((b) => b.answeredAt).length;
       const state = session.completedAt
         ? "complete"
-        : session.consentedAt
-          ? `${answered}/4 answered`
-          : session.userId
-            ? "claimed"
-            : "not opened";
+        : blocks.every((b) => b.answeredAt)
+          ? "answered"
+          : blocks.some((b) => b.finishedAt)
+            ? "talked"
+            : session.consentedAt
+              ? "consented"
+              : session.userId
+                ? "claimed"
+                : "not opened";
       const restarts = blocks.reduce((n, b) => n + Math.max(0, b.attempts - 1), 0);
-      console.log(`${session.ref.padEnd(8)} order ${session.orderIndex}  ${state}${restarts ? `  (${restarts} restarted)` : ""}`);
+      const views = blocks.map((b) => `${b.display}/${b.task}`).join(", ");
+      const cell = session.design === SESSION_DESIGN ? `cell ${session.orderIndex}` : `${session.design} ${session.orderIndex}`;
+      console.log(`${session.ref.padEnd(8)} ${cell.padEnd(9)} ${views.padEnd(20)} ${state}${restarts ? `  (${restarts} restarted)` : ""}`);
+      if (session.design === SESSION_DESIGN && session.completedAt) {
+        const k = session.orderIndex % SESSION_CELLS;
+        completed[k] = (completed[k] ?? 0) + 1;
+      }
     }
+    console.log(
+      `\ncompleted per cell: ${completed.map((n, k) => `${k} ${cellFor(k).display}/${cellFor(k).task}: ${n}`).join("  ")}`,
+    );
     return;
   }
   if (sub === "export") {
@@ -368,7 +387,7 @@ async function runSession(): Promise<void> {
     }
     return;
   }
-  throw new Error("usage: study-admin session <invite [--ref F07] [--order 0-3] | list | export [--out <dir>] [--text]>");
+  throw new Error("usage: study-admin session <invite [--ref F07] [--order 0-5] | list | export [--out <dir>] [--text]>");
 }
 
 const JUDGE_ROLES: readonly ModelRole[] = ["judge", "fast", "reasoning", "converse"];

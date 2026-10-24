@@ -1,16 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { CONVERSATION_DISPLAYS } from "./contracts";
 import {
   BlockAnswers,
   ESM_ITEMS,
   GAME_QUIET_MS,
-  SESSION_ORDERS,
+  SESSION_CELLS,
+  SESSION_DISPLAYS,
+  SESSION_TASK_PAIR,
   SESSION_TIMINGS,
   SESSION_TASK_IDS,
   SessionFinal,
   SessionMoment,
   SessionStep,
   blocksFor,
+  cellFor,
+  isSessionDisplay,
   esmDue,
   esmSlots,
   gameDue,
@@ -18,33 +21,35 @@ import {
   scaledTimings,
 } from "./study-session";
 
-const orders = Array.from({ length: SESSION_ORDERS }, (_, k) => blocksFor(k));
+const cells = Array.from({ length: SESSION_CELLS }, (_, k) => cellFor(k));
 
-describe("the session's orders", () => {
-  it("give every participant each display and each task once", () => {
-    for (const blocks of orders) {
-      expect(blocks.map((b) => b.position)).toEqual([0, 1, 2, 3]);
-      expect(new Set(blocks.map((b) => b.display))).toEqual(new Set(CONVERSATION_DISPLAYS));
-      expect(new Set(blocks.map((b) => b.task))).toEqual(new Set(SESSION_TASK_IDS));
+describe("the session's cells", () => {
+  it("compare three views, with the transcript as the baseline, over two of the tasks", () => {
+    expect(SESSION_DISPLAYS).toEqual(["transcript", "track", "bubbles"]);
+    expect(isSessionDisplay("conversation")).toBe(false);
+    for (const task of SESSION_TASK_PAIR) expect(SESSION_TASK_IDS).toContain(task);
+  });
+
+  it("hold every view with every task exactly once", () => {
+    expect(SESSION_CELLS).toBe(6);
+    expect(new Set(cells.map((c) => `${c.display}:${c.task}`)).size).toBe(SESSION_CELLS);
+  });
+
+  it("cover the three views in any three sessions in a row, and both tasks in any two", () => {
+    for (let k = 0; k < SESSION_CELLS; k++) {
+      expect(new Set([0, 1, 2].map((i) => cellFor(k + i).display)).size).toBe(3);
+      expect(new Set([0, 1].map((i) => cellFor(k + i).task)).size).toBe(2);
     }
   });
 
-  it("put every display and every task in every position once", () => {
-    for (let position = 0; position < 4; position++) {
-      const at = orders.map((blocks) => blocks[position]!);
-      expect(new Set(at.map((b) => b.display)).size).toBe(4);
-      expect(new Set(at.map((b) => b.task)).size).toBe(4);
-    }
+  it("start on the baseline, and wrap around, so any index is one of the six", () => {
+    expect(cellFor(0)).toEqual({ display: "transcript", task: "trip" });
+    expect(cellFor(SESSION_CELLS + 1)).toEqual(cellFor(1));
+    expect(cellFor(-1)).toEqual(cellFor(SESSION_CELLS - 1));
   });
 
-  it("pair every display with every task exactly once", () => {
-    const pairs = orders.flat().map((b) => `${b.display}:${b.task}`);
-    expect(new Set(pairs).size).toBe(16);
-  });
-
-  it("wrap around, so any order index is one of the four", () => {
-    expect(blocksFor(SESSION_ORDERS + 1)).toEqual(blocksFor(1));
-    expect(blocksFor(-1)).toEqual(blocksFor(SESSION_ORDERS - 1));
+  it("are one conversation each", () => {
+    expect(blocksFor(4)).toEqual([{ position: 0, ...cellFor(4) }]);
   });
 });
 
@@ -114,7 +119,7 @@ describe("a moment", () => {
     expect(SessionMoment.safeParse({ ...esm, answeredOffsetMs: null, value: null }).success).toBe(true);
     expect(SessionMoment.safeParse({ ...esm, kind: "nap" }).success).toBe(false);
     expect(SessionMoment.safeParse({ ...esm, shownOffsetMs: -1 }).success).toBe(false);
-    expect(SessionStep.safeParse({ step: "moment", position: 1, moment: { ...esm, meta: { rounds: 3 } } }).success).toBe(true);
+    expect(SessionStep.safeParse({ step: "moment", position: 0, moment: { ...esm, meta: { rounds: 3 } } }).success).toBe(true);
   });
 });
 
@@ -140,26 +145,27 @@ describe("the answers", () => {
   });
 
   it("are one step of the session's wire format", () => {
-    expect(SessionStep.safeParse({ step: "answers", position: 2, answers }).success).toBe(true);
-    expect(SessionStep.safeParse({ step: "arm", position: 4 }).success).toBe(false);
+    expect(SessionStep.safeParse({ step: "answers", position: 0, answers }).success).toBe(true);
+    // One conversation: there is no second block to step to.
+    expect(SessionStep.safeParse({ step: "arm", position: 1 }).success).toBe(false);
   });
 });
 
 describe("resumeAt", () => {
   const blocks = (answered: number, finished = answered) =>
-    [0, 1, 2, 3].map((position) => ({ position, answered: position < answered, finished: position < finished }));
+    [0].map((position) => ({ position, answered: position < answered, finished: position < finished }));
 
   it("opens on consent until they have given it", () => {
     expect(resumeAt({ consented: false, completed: false, blocks: blocks(0) })).toEqual({ at: "consent" });
   });
 
-  it("opens on the first block not yet answered: its questions once talked, else its brief", () => {
+  it("opens on the conversation not yet answered: its questions once talked, else its brief", () => {
     expect(resumeAt({ consented: true, completed: false, blocks: blocks(0) })).toEqual({ at: "brief", position: 0 });
-    expect(resumeAt({ consented: true, completed: false, blocks: blocks(1, 2) })).toEqual({ at: "answers", position: 1 });
+    expect(resumeAt({ consented: true, completed: false, blocks: blocks(0, 1) })).toEqual({ at: "answers", position: 0 });
   });
 
-  it("opens on the ranking after the fourth, and on the end once that is sent", () => {
-    expect(resumeAt({ consented: true, completed: false, blocks: blocks(4) })).toEqual({ at: "final" });
-    expect(resumeAt({ consented: true, completed: true, blocks: blocks(4) })).toEqual({ at: "done" });
+  it("opens on the last questions once it is answered, and on the end once those are sent", () => {
+    expect(resumeAt({ consented: true, completed: false, blocks: blocks(1) })).toEqual({ at: "final" });
+    expect(resumeAt({ consented: true, completed: true, blocks: blocks(1) })).toEqual({ at: "done" });
   });
 });
