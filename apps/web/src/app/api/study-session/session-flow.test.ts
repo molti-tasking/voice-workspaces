@@ -48,7 +48,15 @@ function call(route: (req: Request) => Promise<Response>, body: Record<string, u
   );
 }
 
-const ANSWERS = { summary: "We went for the train and two nights in Aarhus; food is still open.", follow: 6, effort: 2, glance: 3 };
+const ANSWERS = {
+  summary: "We went for the train and two nights in Aarhus; food is still open.",
+  follow: 6,
+  effort: 2,
+  pickup: 5,
+  beforeGame: "Food, I think.",
+  wayBack: "The assistant asked me.",
+  glance: 3,
+};
 
 describeIfDb("the display study's session routes", () => {
   let code = "";
@@ -122,6 +130,9 @@ describeIfDb("the display study's session routes", () => {
       expect((await call(step, { step: "moment", position, moment })).status).toBe(200);
       // A retry is fine, and changes nothing.
       expect((await call(step, { step: "moment", position, moment: { ...moment, meta: { rounds: 9 } } })).status).toBe(200);
+      // Session-1's probe moment is no more.
+      const probe = { ...moment, kind: "probe", item: "where_were_we", text: "food" };
+      expect((await call(step, { step: "moment", position, moment: probe })).status).toBe(400);
 
       expect((await call(step, { step: "finished", position })).status).toBe(200);
       expect((await call(step, { step: "final", final: { ranking: [...CONVERSATION_DISPLAYS], contact: false } })).status).toBe(409);

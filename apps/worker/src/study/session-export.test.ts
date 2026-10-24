@@ -46,13 +46,13 @@ const line = (who: "user" | "agent", startMs: number, text: string, spark: strin
   spark,
 });
 
-// A conversation: talk, a game from 2:15 to 3:20 with the probe and the way
-// back, their first words 2.4 s after it, and a spark-asked turn.
+// A conversation: talk, a game from 2:15 to 3:16, straight back into the
+// conversation, their first words 2.4 s after it, and a spark-asked turn.
 const LINES: DriveLine[] = [
   line("user", 1_000, "We should go to Aarhus by train"),
   line("agent", 6_000, "Aarhus works, the train is cheaper."),
   line("user", 150_000, "ugh I lost"),
-  line("user", 207_400, "Okay, back to the train tickets"),
+  line("user", 198_400, "Okay, back to the train tickets"),
   line("agent", 212_000, "So where did you land on the train?", "say_back"),
 ];
 const VISITS: SubjectVisitRow[] = [
@@ -68,15 +68,17 @@ const MOMENTS: StudyMoment[] = [
     answeredOffsetMs: 196_000,
     meta: { rounds: 3, won: 1, lost: 1, drawn: 1, moves: 12, cutOff: false, promptBeforeMissed: false },
   }),
-  moment({ kind: "probe", item: "where_were_we", shownOffsetMs: 196_000, answeredOffsetMs: 204_000, text: "the train" }),
-  moment({ kind: "resume", item: "first_speech", shownOffsetMs: 205_000, answeredOffsetMs: 207_000 }),
+  moment({ kind: "resume", item: "first_speech", shownOffsetMs: 196_000, answeredOffsetMs: 198_000 }),
   moment({ kind: "esm", ordinal: 1, item: "esm_follow", shownOffsetMs: 265_000 }),
 ];
 
 describe("the interruption and the subjects", () => {
-  it("runs from the game to the conversation handed back, or to the game's end", () => {
-    expect(pauseWindow(MOMENTS)).toEqual({ fromMs: 135_000, toMs: 205_000 });
+  it("runs from the game to the conversation coming back, or to the game's end", () => {
+    expect(pauseWindow(MOMENTS)).toEqual({ fromMs: 135_000, toMs: 196_000 });
     expect(pauseWindow(MOMENTS.filter((m) => m.kind === "game"))).toEqual({ fromMs: 135_000, toMs: 196_000 });
+    // Session-1's way back came later than the game's end.
+    const later = [MOMENTS[1]!, moment({ kind: "resume", shownOffsetMs: 205_000 })];
+    expect(pauseWindow(later)).toEqual({ fromMs: 135_000, toMs: 205_000 });
     expect(pauseWindow([])).toBeNull();
   });
 
@@ -98,7 +100,7 @@ describe("blockMeasures", () => {
   });
 
   it("times the talk without the interruption, and counts nobody's words in it", () => {
-    expect(measures).toMatchObject({ drive_seconds: 320, pause_seconds: 70, talk_seconds: 250 });
+    expect(measures).toMatchObject({ drive_seconds: 320, pause_seconds: 61, talk_seconds: 259 });
     expect(measures).toMatchObject({ user_turns: 2, user_words: 13, agent_turns: 2, agent_words: 14 });
     expect(measures.words_in_pause).toBe(3);
     expect(measures.spark_turns).toBe(1);
@@ -110,16 +112,15 @@ describe("blockMeasures", () => {
     expect(measures).toMatchObject({ subject_before_game: 2, subject_after_game: 2, same_subject: true });
   });
 
-  it("carries the game, the probe and the prompts", () => {
+  it("carries the game and the prompts", () => {
     expect(measures).toMatchObject({
       game_at_seconds: 135,
       game_seconds: 61,
       game_rounds: 3,
       game_won: 1,
       game_cut_off: false,
-      probe: "the train",
-      probe_seconds: 8,
     });
+    expect(measures).not.toHaveProperty("probe");
     expect(measures).toMatchObject({
       esm_follow_before: 5,
       esm_follow_before_state: "answered",
@@ -222,6 +223,8 @@ describeIfDb("buildSessionExport", () => {
       });
     }
     for (const m of MOMENTS) {
+      // The table's kinds still include session-1's probe; none of these is one.
+      if (m.kind === "probe") continue;
       await sessions.saveMoment(USER, 0, {
         kind: m.kind,
         ordinal: m.ordinal,
@@ -234,7 +237,20 @@ describeIfDb("buildSessionExport", () => {
       });
     }
     await sessions.finishBlock(USER, 0, T0);
-    await sessions.saveBlockAnswers(USER, 0, { summary: "Train to Aarhus; where to stay is open.", follow: 6, effort: 2, pickup: 5, glance: 3 }, T0);
+    await sessions.saveBlockAnswers(
+      USER,
+      0,
+      {
+        summary: "Train to Aarhus; where to stay is open.",
+        follow: 6,
+        effort: 2,
+        pickup: 5,
+        beforeGame: "the train",
+        wayBack: "I read the last line",
+        glance: 3,
+      },
+      T0,
+    );
   });
 
   afterAll(async () => {
@@ -254,7 +270,7 @@ describeIfDb("buildSessionExport", () => {
       display: "transcript",
       task: "trip",
       attempts: 1,
-      talk_seconds: 250,
+      talk_seconds: 259,
       user_words: 13,
       spark_turns: 1,
       resume_first_speech_ms: 2_000,
@@ -263,17 +279,19 @@ describeIfDb("buildSessionExport", () => {
       subjects: 2,
       summary: "Train to Aarhus; where to stay is open.",
       pickup: 5,
+      before_game: "the train",
+      way_back: "I read the last line",
     });
     // Every row has every column, an untalked block's included.
     expect(Object.keys(untalked!)).toEqual(Object.keys(talked!));
     expect(untalked!.talk_seconds).toBeNull();
 
     const moments = out.moments.filter((m) => m.ref === REF);
-    expect(moments.map((m) => m.kind)).toEqual(["esm", "game", "probe", "resume", "esm"]);
+    expect(moments.map((m) => m.kind)).toEqual(["esm", "game", "resume", "esm"]);
     expect(moments.find((m) => m.kind === "resume")!.latency_ms).toBe(2_000);
 
     const transcript = out.transcripts.find((t) => t.ref === REF)!;
-    expect(transcript.pause).toEqual({ from_ms: 135_000, to_ms: 205_000 });
+    expect(transcript.pause).toEqual({ from_ms: 135_000, to_ms: 196_000 });
     expect(transcript.lines.filter((l) => l.in_pause).map((l) => l.text)).toEqual(["ugh I lost"]);
     expect(transcript.lines.find((l) => l.spark)?.spark).toBe("say_back");
 

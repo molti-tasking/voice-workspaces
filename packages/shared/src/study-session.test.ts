@@ -114,8 +114,10 @@ describe("esmDue", () => {
 describe("a moment", () => {
   const esm = { kind: "esm", ordinal: 0, item: "esm_follow", shownOffsetMs: 106_000, answeredOffsetMs: 108_500, value: 5, text: null };
 
-  it("is one of the four kinds, on the drive's clock", () => {
+  it("is one of the three kinds, on the drive's clock", () => {
     expect(SessionMoment.safeParse(esm).success).toBe(true);
+    // Session-1's "where were you?" is asked after the conversation now.
+    expect(SessionMoment.safeParse({ ...esm, kind: "probe", item: "where_were_we" }).success).toBe(false);
     expect(SessionMoment.safeParse({ ...esm, answeredOffsetMs: null, value: null }).success).toBe(true);
     expect(SessionMoment.safeParse({ ...esm, kind: "nap" }).success).toBe(false);
     expect(SessionMoment.safeParse({ ...esm, shownOffsetMs: -1 }).success).toBe(false);
@@ -126,9 +128,13 @@ describe("a moment", () => {
 describe("the answers", () => {
   const answers = { summary: "We settled on Aarhus by train; the hotel is still open.", follow: 5, effort: 3, glance: 4 };
 
-  it("take a summary and the ratings, with the game's rating optional", () => {
+  it("take a summary and the ratings, with the game's questions optional", () => {
     expect(BlockAnswers.safeParse(answers).success).toBe(true);
     expect(BlockAnswers.safeParse({ ...answers, pickup: 6, helped: "" }).success).toBe(true);
+    const game = { beforeGame: "The hotel, I think", wayBack: "I looked at the screen first." };
+    expect(BlockAnswers.safeParse({ ...answers, pickup: 6, ...game }).success).toBe(true);
+    // Asked, they need an answer: "I don't remember" is one, an empty box is not.
+    expect(BlockAnswers.safeParse({ ...answers, ...game, beforeGame: "   " }).success).toBe(false);
   });
 
   it("refuse a summary too short to mean anything, a rating off the scale, and stray keys", () => {
