@@ -9,6 +9,7 @@ import { DEMO_POINTS, DEMO_STEPS } from "@/lib/talkback/demo-conversation";
 import { useScriptedConversation } from "@/lib/talkback/use-scripted-conversation";
 import type { PokeResult } from "@/lib/talkback/use-talkback";
 import { ErrorLine, PrimaryButton, StudyFrame } from "../../p/ui";
+import { AgentNameProvider } from "../../record/agent-name-context";
 import { ConversationDisplay as Display } from "../../record/conversation-display";
 import type { FlowStatus } from "../../record/conversation-flow";
 import { useBlockMoments, type BlockMoments } from "./block-moments";
@@ -446,20 +447,23 @@ function TalkScreen({
       </details>
       <p className="shrink-0 text-sm text-fg/55">{hint}</p>
 
-      <Display
-        display={display}
-        store={store}
-        status={status}
-        sparks={null}
-        live={live}
-        captureSessionId={captureSessionId}
-        canPull={false}
-        onPull={noPull}
-        fixedPoints={fixedPoints}
-        placeholder={live ? "Talk whenever you are ready." : undefined}
-        flow={{ drafts: [] }}
-        className="min-h-0 flex-1"
-      />
+      {/* No name for the agent: "Souffleur" is the field app's, and a named system is its researchers' own. */}
+      <AgentNameProvider name="the assistant">
+        <Display
+          display={display}
+          store={store}
+          status={status}
+          sparks={null}
+          live={live}
+          captureSessionId={captureSessionId}
+          canPull={false}
+          onPull={noPull}
+          fixedPoints={fixedPoints}
+          placeholder={live ? "Talk whenever you are ready." : undefined}
+          flow={{ drafts: [] }}
+          className="min-h-0 flex-1"
+        />
+      </AgentNameProvider>
     </main>
   );
 }

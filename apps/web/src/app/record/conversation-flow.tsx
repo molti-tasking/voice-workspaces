@@ -28,6 +28,7 @@ import {
 } from "@/lib/talkback/conversation";
 import { allSignals, type SubjectSignal } from "@/lib/talkback/signals";
 import { EMPTY_LEDGER, type SparkLedger } from "@/lib/talkback/spark-ledger";
+import { useAgentName } from "./agent-name-context";
 import { SPARK_LABELS } from "./spark-chips";
 
 /**
@@ -657,12 +658,13 @@ function KeepToggle({
  */
 export function StatusLine({ status }: { status: FlowStatus }) {
   const { floor, speaking, listening } = status;
+  const agent = useAgentName();
   return (
     <p className="flex h-7 w-full shrink-0 items-center gap-2 text-sm text-fg/55 select-none">
       {speaking ? (
         <>
           <SpeakingBars />
-          <span className="text-sky-700 dark:text-sky-300">Souffleur is speaking</span>
+          <span className="text-sky-700 dark:text-sky-300">{agent.Name} is speaking</span>
         </>
       ) : listening ? (
         <>
@@ -672,7 +674,7 @@ export function StatusLine({ status }: { status: FlowStatus }) {
       ) : floor === "locked" ? (
         <>
           <Lock size={13} aria-hidden />
-          <span>Locked: Souffleur only talks when you poke it</span>
+          <span>Locked: {agent.name} only talks when you poke it</span>
         </>
       ) : floor === null ? (
         <span>Connecting…</span>
