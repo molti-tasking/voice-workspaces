@@ -33,16 +33,7 @@ export function PastConversation({
 
   return (
     <div className="flex flex-col gap-3">
-      <ViewSwitch view={view} />
-      <ConversationView
-        view={view}
-        store={store}
-        live={false}
-        captureSessionId={lastDriveId}
-        drafts={drafts}
-        placeholder="Nothing was transcribed in this conversation yet."
-        className="h-[65dvh] min-h-96"
-      />
+      {/* First, above the fold on a phone: picking it up is why most come back. */}
       <div className="flex flex-wrap items-center gap-3">
         <Link
           href={`/record?continue=${lastDriveId}`}
@@ -58,6 +49,16 @@ export function PastConversation({
           Recording details
         </Link>
       </div>
+      <ViewSwitch view={view} />
+      <ConversationView
+        view={view}
+        store={store}
+        live={false}
+        captureSessionId={lastDriveId}
+        drafts={drafts}
+        placeholder="Nothing was transcribed in this conversation yet."
+        className="h-[62dvh] min-h-96"
+      />
     </div>
   );
 }

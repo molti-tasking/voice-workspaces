@@ -18,8 +18,8 @@ import { SAY_BACK_SHARE, allSignals, type SubjectSignal } from "@/lib/talkback/s
  * their divider: a whole transcript on screen is something to reread, and
  * rereading is rehearsal before the recall test (PROLIFIC.md).
  *
- * Not the recorder's `ConversationFlow`, which folds earlier topics but lets
- * them be opened, and shows the drafts: this page is read at a desk, before
+ * Not the recorder's views (`ConversationView`), whose old column folded earlier topics but let
+ * them be opened, and showed the drafts: this page is read at a desk, before
  * a recall test.
  */
 

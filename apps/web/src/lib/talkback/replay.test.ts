@@ -100,6 +100,18 @@ describe("the cursor", () => {
     expect(before.sections.map((s) => s.title)).toEqual(["Weekend"]);
   });
 
+  it("does not show a subject as settled before it was", () => {
+    let live: Conversation = EMPTY_CONVERSATION;
+    for (const message of [
+      { type: "title", title: "Where", ordinal: 1 },
+      { type: "user", id: "a", text: "Aarhus or Skagen?" },
+      { type: "user", id: "b", text: "Aarhus." },
+      { type: "state", ordinal: 1, settled: true },
+    ] as const) live = applyMessage(live, message, 0);
+    expect(atCursor(live, 1).sections[0]?.settled).toBe(true);
+    expect(atCursor(live, 0).sections[0]?.settled).toBeUndefined();
+  });
+
   it("labels a turn by its subject and its time", () => {
     expect(cursorLabel(conversation, 3)).toEqual({ title: "Destinations", at: 6500 });
   });

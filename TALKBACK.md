@@ -593,6 +593,36 @@ model at every end of a sentence; a reading mode the container enforces, as
 `Floor` enforces a Lock, would make that the system's decision, which is the
 study's own question.
 
+### One conversation, five views (25 Oct 2026)
+
+Replaces the column, the mirror and its bubbles below; kept for the record.
+Every conversation — live on `/record`, scripted on `/record/demo`, in the
+display study, and a past one on `/sessions/[id]` — is one `Conversation`
+(`conversation.ts`) shown by one shell, `record/views/conversation-view.tsx`,
+in one of five views switched by one row and remembered per browser: **Chat**
+(every line as said, drafts and sparks where they happened), **Topics** (each
+topic once, on one line), **Uptake** (the topic line, with the assistant's
+ideas on each filled once the person took them up), **Now** (one line: where
+the conversation is) and **Open** (the questions raised, open first).
+
+- **Going back in time.** A time bar under every view is a cursor over the
+  turns (`cursor.ts`); every view draws the conversation as it stood at that
+  turn, and a subject judged settled later is not settled back then.
+- **Zooming in.** A tap on a topic opens a sheet with its points, the
+  assistant's ideas taken up or not, and its words on request. Rename and
+  Keep live there now.
+- **One digest.** `/api/realtime/digest` (`digest.ts` in this package)
+  writes everything but the words in one call — Now, per-topic points and
+  ideas with uptake, the open questions — for the conversation at the cursor,
+  once it has stood still for 2.5 s. The chat asks for none. Nothing is stored.
+- **Past conversations** are replayed from the ledger, the agent's turns and
+  the subject visits (`replay.ts`); the ledger view with timings is
+  `/sessions/[id]/details`.
+- **Continue** starts a drive with `capture_session.continues_id` set, the
+  old conversation seeded onto the screen, and the agent given what was said
+  in it as the first thread (`renderContinued`). The chain is one conversation
+  on its page.
+
 ### The conversation mirror
 
 `/record` shows a drive three ways, switched by one row of buttons above it

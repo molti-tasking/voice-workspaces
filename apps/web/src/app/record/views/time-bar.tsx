@@ -50,18 +50,21 @@ export function TimeBar({
         }}
         className="h-11 min-w-0 flex-1 cursor-pointer accent-fg"
       />
-      <span className="w-32 shrink-0 truncate text-right text-xs text-fg/60" aria-hidden>
+      <span className="w-28 shrink-0 truncate text-right text-xs text-fg/60" aria-hidden>
         {words}
       </span>
-      {cursor !== null && (
-        <button
-          type="button"
-          onClick={() => onCursor(null)}
-          className="min-h-9 shrink-0 cursor-pointer rounded-full bg-fg px-3 text-xs font-semibold text-canvas"
-        >
-          Now
-        </button>
-      )}
+      {/* Always there, hidden at now, so the slider never changes width under a finger. */}
+      <button
+        type="button"
+        onClick={() => onCursor(null)}
+        disabled={cursor === null}
+        className={[
+          "min-h-9 shrink-0 cursor-pointer rounded-full bg-fg px-3 text-xs font-semibold text-canvas",
+          cursor === null ? "invisible" : "",
+        ].join(" ")}
+      >
+        Now
+      </button>
     </div>
   );
 }

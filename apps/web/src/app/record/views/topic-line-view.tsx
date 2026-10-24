@@ -42,9 +42,10 @@ export function TopicLineView({
   }
 
   return (
-    <div className="ph-no-capture min-h-0 flex-1 overflow-y-auto overscroll-contain">
-      <ol className="relative flex min-h-full flex-col justify-end py-3">
-        <span aria-hidden className="absolute inset-y-0 left-[15px] w-px bg-line" />
+    // Newest at the bottom, as in the chat: the list sits at the end of the space.
+    <div className="ph-no-capture flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
+      <ol className="relative mt-auto py-3">
+        <span aria-hidden className="absolute inset-y-6 left-[15px] w-px bg-line" />
         {topics.map((topic) => {
           const taken = topic.ideas.filter((i) => i.takenUp).length;
           return (

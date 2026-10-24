@@ -91,6 +91,11 @@ export interface Section {
    */
   settled?: boolean;
   /**
+   * The `seq` of the last turn said when `settled` was judged, so going back
+   * in time (`atCursor`) does not show a subject as settled before it was.
+   */
+  settledAfter?: number;
+  /**
    * They KEPT it: marked it as theirs to hold in their own head, by a tap on
    * the subject or by saying "keep this one" (`keepRequest` in
    * @voicemural/shared). Absent means Souffleur holds it. With
@@ -286,9 +291,10 @@ function applyState(
 ): Conversation {
   const at = state.sections.findIndex((s) => s.ordinal === message.ordinal);
   if (at === -1 || state.sections[at]!.settled === message.settled) return state;
+  const settledAfter = state.nextSeq - 1;
   return {
     ...state,
-    sections: state.sections.map((s, i) => (i === at ? { ...s, settled: message.settled } : s)),
+    sections: state.sections.map((s, i) => (i === at ? { ...s, settled: message.settled, settledAfter } : s)),
   };
 }
 

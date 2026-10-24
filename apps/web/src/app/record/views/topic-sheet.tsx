@@ -36,7 +36,10 @@ export function TopicSheet({
   const agent = useAgentName();
   const [renaming, setRenaming] = useState(false);
   const [showLines, setShowLines] = useState(false);
-  const hasPoints = topic.you.length + topic.ai.length > 0;
+  // The assistant's side as its ideas, each marked taken up or not, when the
+  // digest found any; its plain points otherwise.
+  const theirs = topic.ideas.length > 0 ? [] : topic.ai;
+  const hasContent = topic.you.length + theirs.length + topic.ideas.length > 0;
 
   return (
     <div className="absolute inset-0 z-30 flex flex-col justify-end">
@@ -101,18 +104,13 @@ export function TopicSheet({
             </div>
           )}
 
-          {hasPoints ? (
-            <div className="space-y-3">
-              <Points label="You" items={topic.you} />
-              <Points label={agent.Name} items={topic.ai} />
-            </div>
-          ) : (
-            <p className="text-sm text-fg/55">{pending ? "Summing up…" : "Nothing to sum up yet."}</p>
-          )}
+          {!hasContent && <p className="text-sm text-fg/55">{pending ? "Summing up…" : "Nothing to sum up yet."}</p>}
+          <Points label="You" items={topic.you} />
+          <Points label={agent.Name} items={theirs} />
 
           {topic.ideas.length > 0 && (
             <div className="space-y-1.5">
-              <h3 className="text-xs font-medium tracking-wide text-fg/55 uppercase">{agent.Name}&rsquo;s ideas</h3>
+              <h3 className="text-xs font-medium tracking-wide text-fg/55 uppercase">{agent.Name}</h3>
               <ul className="space-y-1.5">
                 {topic.ideas.map((idea, i) => (
                   <li key={i} className="flex items-start gap-2.5 text-sm">

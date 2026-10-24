@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { captureSession, driveSubject, subjectSignal } from "./schema";
-import { getDb } from "./index";
 import { loadDriveLines, loadSubjectVisits, type DriveLine, type SubjectVisitRow } from "./study-session";
+import { getDb } from "./index";
 
 /**
  * A conversation as its page shows it and as Continue picks it up: one drive,
