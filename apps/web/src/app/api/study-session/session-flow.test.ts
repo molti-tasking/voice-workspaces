@@ -1,8 +1,8 @@
 /**
  * The display study's session end to end through its routes: consent on the
- * link, then four blocks — armed, the drive registered under the block's view,
- * the agent set up as the session's own, finished, answered — and the ranking.
- * Steps out of turn are refused.
+ * link, then its one conversation — armed, the drive registered under the
+ * block's view, the agent set up as the session's own, finished, answered —
+ * and the last questions. Steps out of turn are refused.
  *
  * Needs the local Postgres; skipped when it is unreachable — check the counts.
  */
@@ -14,12 +14,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 const USER_ID = "test-study-session-flow";
 const REF = "TST-FLOW-1";
 // This file's own drive ids: another test file's would collide when turbo runs them in parallel.
-const DRIVES = [
-  "00000000-0000-4000-8000-0000000f10a0",
-  "00000000-0000-4000-8000-0000000f10a1",
-  "00000000-0000-4000-8000-0000000f10a2",
-  "00000000-0000-4000-8000-0000000f10a3",
-];
+const DRIVES = ["00000000-0000-4000-8000-0000000f10a0"];
 
 process.env.BETTER_AUTH_SECRET ??= "test-secret-for-study-session";
 
@@ -33,6 +28,7 @@ const { studySession, user } = await import("@voicemural/db/schema");
 const { createSession } = await import("@voicemural/db/study-session");
 const { isDatabaseReachable } = await import("@voicemural/db/testing");
 const { issueTicket } = await import("@voicemural/shared/realtime-ticket");
+const { CONVERSATION_DISPLAYS } = await import("@voicemural/shared");
 const { SESSION_OPENING_NUDGE, SESSION_SYSTEM_PROMPT, SPEECH_ONLY_CONTRACT, STUDY_SCREEN } = await import("@voicemural/talkback");
 const enroll = (await import("./enroll/route")).POST;
 const step = (await import("./route")).POST;
@@ -82,15 +78,15 @@ describeIfDb("the display study's session routes", () => {
     expect(await res.json()).toMatchObject({ ok: true, resume: { at: "brief", position: 0 } });
   });
 
-  it("refuses a block out of turn, and answers before the conversation", async () => {
-    expect((await call(step, { step: "arm", position: 1 })).status).toBe(409);
+  it("refuses a block it does not have, and answers before the conversation", async () => {
+    expect((await call(step, { step: "arm", position: 1 })).status).toBe(400);
     expect((await call(step, { step: "answers", position: 0, answers: ANSWERS })).status).toBe(409);
     expect((await call(step, { step: "finished", position: 0 })).status).toBe(409);
     const early = { kind: "esm", ordinal: 0, item: "esm_follow", shownOffsetMs: 1_000, answeredOffsetMs: null, value: null, text: null };
     expect((await call(step, { step: "moment", position: 0, moment: early })).status).toBe(409);
   });
 
-  it("runs every block's drive under its own view, with the session's agent", async () => {
+  it("runs the block's drive under its view, with the session's agent", async () => {
     for (const [position, id] of DRIVES.entries()) {
       expect((await call(step, { step: "arm", position })).status).toBe(200);
       const opened = await call(openDrive, { id, startedAt: new Date().toISOString(), deviceInfo: {} });
@@ -128,15 +124,13 @@ describeIfDb("the display study's session routes", () => {
       expect((await call(step, { step: "moment", position, moment: { ...moment, meta: { rounds: 9 } } })).status).toBe(200);
 
       expect((await call(step, { step: "finished", position })).status).toBe(200);
-      if (position < 3) {
-        expect((await call(step, { step: "final", final: { ranking: displays, contact: false } })).status).toBe(409);
-      }
+      expect((await call(step, { step: "final", final: { ranking: [...CONVERSATION_DISPLAYS], contact: false } })).status).toBe(409);
       expect((await call(step, { step: "answers", position, answers: ANSWERS })).status).toBe(200);
     }
   });
 
   it("is complete with the ranking, and a reload opens on the end", async () => {
-    const final = { ranking: [...displays].reverse(), why: "The transcript let me reread.", contact: true };
+    const final = { ranking: [...CONVERSATION_DISPLAYS].reverse(), why: "The transcript let me reread.", contact: true };
     expect((await call(step, { step: "final", final })).status).toBe(200);
     const again = await call(enroll, { code, consent: true });
     expect(await again.json()).toMatchObject({ resume: { at: "done" } });

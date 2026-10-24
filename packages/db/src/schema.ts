@@ -2152,7 +2152,7 @@ export const prolificParticipant = pgTable(
 );
 
 /* ---------------------------------------------------------------------------
- * The display study: one session, four conversations
+ * The display study: one session, one conversation, one view
  * ------------------------------------------------------------------------- */
 
 /** Where a session's participant came from: a researcher's invite link, or Prolific (later). */
@@ -2160,16 +2160,17 @@ export const studySessionSourceEnum = pgEnum("study_session_source", ["invite", 
 
 /**
  * One participant's sitting of the display study (`study-session.ts` in
- * @voicemural/shared): four short conversations, each about another task and
- * shown another way on the phone, then the four views ranked.
+ * @voicemural/shared): one short conversation, shown one of three ways on the
+ * phone, compared between participants. Session-1 rows (`design = 'within'`)
+ * were four conversations, every view for every participant.
  *
- * WHY NOT `prolific_participant`. That study is one drive per participant;
- * this one is four, compared within the person, so the drives hang off
- * `study_block` below instead of off the participant.
+ * WHY NOT `prolific_participant`. The drive hangs off `study_block` below,
+ * which holds what the session asks around it — the moments, the answers —
+ * and could hold more than one conversation again.
  *
  * CREATED BEFORE ANYONE OPENS IT. A researcher makes an invite
- * (`pnpm study:session invite`), which writes this row with its order and its
- * four blocks; the link carries `invite_code`. Whoever consents first on it
+ * (`pnpm study:session invite`), which writes this row with its cell and its
+ * block; the link carries `invite_code`. Whoever consents first on it
  * claims it for their account — a fresh guest, by default, so the study's
  * drives never reach anybody's own workspace, memory or field-study export.
  *
@@ -2189,13 +2190,17 @@ export const studySession = pgTable(
     prolificPid: text("prolific_pid"),
     /** The account that claimed the invite; null until somebody has. */
     userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
-    /** Every display within the person. The Prolific study may compare between people. */
-    design: text("design").$type<"within">().notNull().default("within"),
-    /** Which of the balanced orders (`blocksFor`), fixed when the invite is made. */
+    /**
+     * `SESSION_DESIGN`, set on every new session: "between" since session-2.
+     * The column's default is session-1's, left as it was so the schema needs
+     * no migration; nothing relies on it.
+     */
+    design: text("design").$type<"within" | "between">().notNull().default("within"),
+    /** Its cell (`cellFor`): the view and task, fixed when the invite is made. */
     orderIndex: integer("order_index").notNull(),
     claimedAt: timestamp("claimed_at", { withTimezone: true }),
     consentedAt: timestamp("consented_at", { withTimezone: true }),
-    /** The ranking at the end, validated by `SessionFinal`. */
+    /** The last questions, validated by `SessionFinal`. */
     final: jsonb("final").$type<Record<string, unknown>>(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -2226,9 +2231,9 @@ export const studyBlock = pgTable(
     sessionId: uuid("session_id")
       .notNull()
       .references(() => studySession.id, { onDelete: "cascade" }),
-    /** 0 to 3, in the order they are done. */
+    /** In the order they are done: 0, while a session is one conversation. */
     position: integer("position").notNull(),
-    /** `ConversationDisplay` in @voicemural/shared. */
+    /** `SessionDisplay` in @voicemural/shared (session-1 also had "conversation"). */
     display: text("display").$type<"transcript" | "conversation" | "track" | "bubbles">().notNull(),
     /** `SessionTaskId` in @voicemural/shared. */
     task: text("task").notNull(),

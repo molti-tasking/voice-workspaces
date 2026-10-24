@@ -2,10 +2,10 @@ import { z } from "zod";
 import { ConversationDisplay } from "./contracts";
 
 /**
- * The display study's session: one sitting of four short conversations, each
- * about a different everyday problem and each shown a different way on the
- * phone (`ConversationDisplay`), in an order balanced across participants.
- * After each, a summary and a few ratings; at the end, the four views ranked.
+ * The display study's session: one sitting, one short conversation about an
+ * everyday problem, shown one of three ways on the phone — between
+ * participants, so each sees one view and never compares it with another.
+ * After it, a summary and a few questions.
  *
  * What crosses the wire between the session page (`/study/session`) and its
  * routes, and the session's shape. Pure: shared by the pages, the routes and
@@ -13,11 +13,19 @@ import { ConversationDisplay } from "./contracts";
  */
 
 /** Bump when the questions change enough that answers should not be pooled. */
-export const SESSION_VERSION = "session-1";
+export const SESSION_VERSION = "session-2";
 
 /**
- * The session's four tasks, by id. The words — what they read and what the
+ * How the session compares the views. "within" was session-1's: four
+ * conversations, every view for every participant. Stored on each session, so
+ * no analysis pools the two.
+ */
+export const SESSION_DESIGN = "between";
+
+/**
+ * The tasks a session can have, by id. The words — what they read and what the
  * agent is told — are `SESSION_TASKS` in @voicemural/talkback/study-task.
+ * Sessions use `SESSION_TASK_PAIR` of them.
  */
 export const SESSION_TASK_IDS = ["trip", "birthday", "move", "dinners"] as const;
 export type SessionTaskId = (typeof SESSION_TASK_IDS)[number];
@@ -27,53 +35,58 @@ export function isSessionTaskId(value: unknown): value is SessionTaskId {
 }
 
 /**
- * The displays in the order the squares below index them: the control first.
- * The same four as `CONVERSATION_DISPLAYS`, named here so the squares cannot
- * change meaning if that list is ever reordered.
+ * The views the session compares: the plain transcript, the baseline — the
+ * way a voice assistant's chat shows a voice conversation — and the mirror's
+ * two layouts. The column view (`conversation`) is the field app's, and not
+ * one of them.
  */
-const DISPLAYS = ["transcript", "conversation", "track", "bubbles"] as const satisfies readonly ConversationDisplay[];
+export const SESSION_DISPLAYS = ["transcript", "track", "bubbles"] as const satisfies readonly ConversationDisplay[];
+export type SessionDisplay = (typeof SESSION_DISPLAYS)[number];
 
-/*
- * A Graeco-Latin square: row k is participant order k, column i is block i.
- * Across the four orders every display comes once in every position, every
- * task does too, and every display meets every task exactly once — so
- * neither the position nor the task can pass for an effect of the view.
- *
- * Not a Williams square: none of order 4 has an orthogonal mate, and with a
- * handful of formative participants balancing the tasks matters more than
- * balancing which view follows which. The Prolific design decides again.
+export function isSessionDisplay(value: unknown): value is SessionDisplay {
+  return typeof value === "string" && (SESSION_DISPLAYS as readonly string[]).includes(value);
+}
+
+/**
+ * The two tasks sessions rotate. Two rather than one, so a finding is not
+ * about a single scenario; two rather than four, so each view meets each task
+ * often enough to tell the task from the view.
  */
-const DISPLAY_SQUARE = [
-  [0, 1, 2, 3],
-  [1, 0, 3, 2],
-  [2, 3, 0, 1],
-  [3, 2, 1, 0],
-] as const;
-const TASK_SQUARE = [
-  [0, 1, 2, 3],
-  [2, 3, 0, 1],
-  [3, 2, 1, 0],
-  [1, 0, 3, 2],
-] as const;
+export const SESSION_TASK_PAIR = ["trip", "birthday"] as const satisfies readonly SessionTaskId[];
 
-/** How many different orders there are; a session's order index is taken modulo this. */
-export const SESSION_ORDERS = DISPLAY_SQUARE.length;
+/**
+ * How many different sessions there are: every view with every task. A
+ * session's cell (`order_index`) is taken modulo this.
+ */
+export const SESSION_CELLS = SESSION_DISPLAYS.length * SESSION_TASK_PAIR.length;
+
+/** Conversations in one session. */
+export const SESSION_BLOCKS = 1;
+
+/**
+ * The view and task of the session in cell `k`. The view turns with every
+ * session and the task with every other, so any three sessions in a row
+ * cover the three views, any two cover both tasks, and the six cells hold
+ * every pair once — which holds only while the two counts share no factor.
+ */
+export function cellFor(k: number): { display: SessionDisplay; task: SessionTaskId } {
+  const cell = ((Math.trunc(k) % SESSION_CELLS) + SESSION_CELLS) % SESSION_CELLS;
+  return {
+    display: SESSION_DISPLAYS[cell % SESSION_DISPLAYS.length]!,
+    task: SESSION_TASK_PAIR[cell % SESSION_TASK_PAIR.length]!,
+  };
+}
 
 export interface SessionBlockPlan {
-  /** 0 to 3, in the order they are done. */
+  /** In the order they are done; 0, while a session is one conversation. */
   position: number;
-  display: ConversationDisplay;
+  display: SessionDisplay;
   task: SessionTaskId;
 }
 
-/** The four blocks of the session with this order index. */
-export function blocksFor(orderIndex: number): SessionBlockPlan[] {
-  const row = ((Math.trunc(orderIndex) % SESSION_ORDERS) + SESSION_ORDERS) % SESSION_ORDERS;
-  return DISPLAY_SQUARE[row]!.map((d, position) => ({
-    position,
-    display: DISPLAYS[d]!,
-    task: SESSION_TASK_IDS[TASK_SQUARE[row]![position]!]!,
-  }));
+/** The blocks of the session in cell `k`: its one conversation. */
+export function blocksFor(k: number): SessionBlockPlan[] {
+  return [{ position: 0, ...cellFor(k) }];
 }
 
 /**
@@ -266,7 +279,7 @@ export const SessionEnroll = z.object({
 export type SessionEnroll = z.infer<typeof SessionEnroll>;
 
 const Likert = z.number().int().min(1).max(7);
-const Position = z.number().int().min(0).max(3);
+const Position = z.number().int().min(0).max(SESSION_BLOCKS - 1);
 
 /** The summary they write after each conversation, before any rating. */
 export const SUMMARY_MIN_CHARS = 20;

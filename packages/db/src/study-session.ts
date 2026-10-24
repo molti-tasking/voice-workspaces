@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import {
-  SESSION_ORDERS,
+  SESSION_CELLS,
+  SESSION_DESIGN,
   SESSION_VERSION,
   blocksFor,
   type BlockAnswers,
@@ -56,10 +57,11 @@ export const SESSION_REF_PREFIX = "F";
 export const ARM_TTL_MS = 15 * 60_000;
 
 /**
- * A new session with its four blocks, ready to be sent as a link.
+ * A new session with its block, ready to be sent as a link.
  *
- * The order is the next in turn (sessions made so far, modulo the orders),
- * so a handful of invites is as balanced as it can be; `orderIndex` pins it.
+ * The cell is the next in turn (this design's sessions so far, modulo the
+ * cells), so a handful of invites is as balanced as it can be; `orderIndex`
+ * pins it. Session-1's sessions do not count, so they cannot shift the turn.
  * Under a transaction-scoped advisory lock, so two invites made at once
  * cannot take the same pseudonym or the same turn.
  */
@@ -67,8 +69,11 @@ export async function createSession(input: { ref?: string; orderIndex?: number }
   return getDb().transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('study_session'))`);
 
-    const [{ n }] = (await tx.select({ n: sql<number>`count(*)::int` }).from(studySession)) as [{ n: number }];
-    const orderIndex = input.orderIndex ?? n % SESSION_ORDERS;
+    const [{ n }] = (await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(studySession)
+      .where(eq(studySession.design, SESSION_DESIGN))) as [{ n: number }];
+    const orderIndex = input.orderIndex ?? n % SESSION_CELLS;
 
     let ref = input.ref;
     if (ref === undefined) {
@@ -84,7 +89,7 @@ export async function createSession(input: { ref?: string; orderIndex?: number }
 
     const [session] = await tx
       .insert(studySession)
-      .values({ ref, orderIndex, inviteCode: randomBytes(18).toString("base64url") })
+      .values({ ref, design: SESSION_DESIGN, orderIndex, inviteCode: randomBytes(18).toString("base64url") })
       .returning();
     const blocks = await tx
       .insert(studyBlock)

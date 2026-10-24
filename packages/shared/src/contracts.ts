@@ -56,11 +56,12 @@ export const CaptureUseCase = z.enum(["think_aloud", "draft", "recall"]);
 export type CaptureUseCase = z.infer<typeof CaptureUseCase>;
 
 /**
- * The ways a drive's conversation can be shown on the phone, as the display
- * study compares them (the study session, `/study/session`):
+ * The ways a drive's conversation can be shown on the phone. The display
+ * study's session (`/study/session`) compares three of them, between
+ * participants (`SESSION_DISPLAYS`); the column is the field app's.
  *
  * - `transcript`: every line as it was said, the way a voice assistant's chat
- *   shows a voice conversation — the control.
+ *   shows a voice conversation — the study's baseline.
  * - `conversation`: the column in order with topic headlines and signals
  *   (`ConversationFlow`).
  * - `track`, `bubbles`: the conversation mirror's two layouts

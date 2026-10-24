@@ -1,7 +1,14 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { findSessionByCode, progressOf } from "@voicemural/db/study-session";
-import { SessionCode, blocksFor, resumeAt, scaledTimings, type SessionBlockPlan } from "@voicemural/shared";
+import {
+  SessionCode,
+  blocksFor,
+  isSessionDisplay,
+  resumeAt,
+  scaledTimings,
+  type ConversationDisplay,
+} from "@voicemural/shared";
 import { sessionTaskFor } from "@voicemural/talkback/study-task";
 import { currentUser } from "@/lib/session";
 import { StudyFrame } from "../../p/ui";
@@ -27,12 +34,13 @@ function pilotIds(): string[] {
     .filter(Boolean);
 }
 
-function viewsOf(blocks: readonly (Pick<SessionBlockPlan, "position" | "display"> & { task: string })[]): SessionBlockView[] {
+function viewsOf(blocks: readonly { position: number; display: ConversationDisplay; task: string }[]): SessionBlockView[] {
   return [...blocks]
     .sort((a, b) => a.position - b.position)
     .map((b) => {
       const task = sessionTaskFor(b.task);
       if (!task) throw new Error(`study block ${b.position} has a task not in the catalogue: ${b.task}`);
+      if (!isSessionDisplay(b.display)) throw new Error(`study block ${b.position} has a view the session does not compare: ${b.display}`);
       return {
         position: b.position,
         display: b.display,
@@ -48,7 +56,7 @@ function viewsOf(blocks: readonly (Pick<SessionBlockPlan, "position" | "display"
  *
  * For the researchers, and never for a participant — outside production, or
  * signed in as a pilot account (`STUDY_PILOT_USER_IDS`):
- * - `?demo=1[&order=0-3]` walks through a whole session with the simulated
+ * - `?demo=1[&order=0-5]` walks through a whole session with the simulated
  *   conversation: no microphone, no AI, nothing saved.
  * - `?fast=10` runs the conversations' timings ten times faster.
  */

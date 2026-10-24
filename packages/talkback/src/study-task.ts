@@ -95,14 +95,14 @@ export function studyTaskFor(id: string | null | undefined): StudyTask | null {
 }
 
 /**
- * The display study's four tasks (`SESSION_TASK_IDS` in @voicemural/shared),
- * one per conversation of a session.
+ * The display study's tasks (`SESSION_TASK_IDS` in @voicemural/shared), one
+ * per session; sessions rotate two of them (`SESSION_TASK_PAIR`).
  *
  * MADE TO BE COMPARABLE. Each is an everyday plan nobody needs expertise
  * for, with three parts that become separate topics in about five minutes, a
  * constraint or two that the conversation has to come back to, and room for
- * ideas from both sides. The squares cross them with the views, so a task
- * that is easier than the others costs balance, not validity — but the
+ * ideas from both sides. The cells cross the tasks with the views, so a task
+ * that is easier than the other costs balance, not validity — but the
  * closer they are, the less noise.
  *
  * No plan to write, unlike the Prolific task: what they worked out is asked

@@ -11,7 +11,7 @@ config({ path: new URL("../../../../.env", import.meta.url).pathname, quiet: tru
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { DriveLine, StudyMoment, SubjectVisitRow } from "@voicemural/db/study-session";
 
-const { closeDb, eq, getDb } = await import("@voicemural/db");
+const { closeDb, eq, getDb, inArray } = await import("@voicemural/db");
 const schema = await import("@voicemural/db/schema");
 const { isDatabaseReachable } = await import("@voicemural/db/testing");
 const { recordSubjectVisit } = await import("@voicemural/db/subjects");
@@ -151,17 +151,20 @@ const describeIfDb = (await isDatabaseReachable()) ? describe : describe.skip;
 describeIfDb("buildSessionExport", () => {
   const USER = "test-session-export-user";
   const REF = "TST-EXPORT-1";
+  /** A session made and never opened: its row must have every column too. */
+  const UNOPENED = "TST-EXPORT-2";
   // This file's own ids: another test file's would collide when turbo runs them in parallel.
   const DRIVE = "00000000-0000-4000-8000-0000000ee501";
   const CHUNK = "00000000-0000-4000-8000-0000000ee502";
 
   beforeAll(async () => {
     const db = getDb();
-    await db.delete(schema.studySession).where(eq(schema.studySession.ref, REF));
+    await db.delete(schema.studySession).where(inArray(schema.studySession.ref, [REF, UNOPENED]));
     await db.delete(schema.user).where(eq(schema.user.id, USER));
     await db.insert(schema.user).values({ id: USER, name: "Guest", email: `${USER}@test.local`, isAnonymous: true });
 
     const { session } = await sessions.createSession({ ref: REF, orderIndex: 0 });
+    await sessions.createSession({ ref: UNOPENED, orderIndex: 1 });
     await sessions.claimSession({ code: session.inviteCode!, userId: USER, now: T0 });
     await sessions.armBlock(USER, 0, T0);
     await db.insert(schema.captureSession).values({
@@ -235,7 +238,7 @@ describeIfDb("buildSessionExport", () => {
   });
 
   afterAll(async () => {
-    await getDb().delete(schema.studySession).where(eq(schema.studySession.ref, REF));
+    await getDb().delete(schema.studySession).where(inArray(schema.studySession.ref, [REF, UNOPENED]));
     await getDb().delete(schema.user).where(eq(schema.user.id, USER));
     await closeDb();
   });
@@ -243,8 +246,9 @@ describeIfDb("buildSessionExport", () => {
   it("writes a talked block's measures, the moments and the transcript, keyed by the session's ref", async () => {
     const out = await buildSessionExport({ text: true });
     const mine = out.blocks.filter((b) => b.ref === REF);
-    expect(mine).toHaveLength(4);
-    const [talked, untalked] = mine;
+    expect(mine).toHaveLength(1);
+    const [talked] = mine;
+    const untalked = out.blocks.find((b) => b.ref === UNOPENED);
     expect(talked).toMatchObject({
       position: 0,
       display: "transcript",
@@ -260,7 +264,7 @@ describeIfDb("buildSessionExport", () => {
       summary: "Train to Aarhus; where to stay is open.",
       pickup: 5,
     });
-    // Every row has every column, untalked blocks included.
+    // Every row has every column, an untalked block's included.
     expect(Object.keys(untalked!)).toEqual(Object.keys(talked!));
     expect(untalked!.talk_seconds).toBeNull();
 

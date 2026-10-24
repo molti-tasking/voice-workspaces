@@ -3,7 +3,7 @@ config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true }
 
 import { eq, inArray, like } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { blocksFor, SESSION_ORDERS, SESSION_VERSION } from "@voicemural/shared";
+import { blocksFor, SESSION_CELLS, SESSION_DESIGN, SESSION_VERSION } from "@voicemural/shared";
 import { captureSession, studyBlock, studyMoment, studySession, user } from "./schema";
 import {
   ARM_TTL_MS,
@@ -80,19 +80,22 @@ describeIfDb("the display study's session", () => {
     await closeDb();
   });
 
-  it("is made with its order's four blocks and a secret link", async () => {
+  it("is made in its cell, with its one block and a secret link", async () => {
     const { session, blocks } = await make(1, 2);
     expect(session.orderIndex).toBe(2);
+    expect(session.design).toBe(SESSION_DESIGN);
     expect(session.inviteCode).toMatch(/^[A-Za-z0-9_-]{24}$/);
     expect(blocks.map(({ position, display, task }) => ({ position, display, task }))).toEqual(blocksFor(2));
     await expect(make(1)).rejects.toThrow(/taken/);
   });
 
-  it("takes the next order in turn, and the next pseudonym, unless pinned", async () => {
+  it("takes the next cell in turn, and the next pseudonym, unless pinned", async () => {
+    // A session-1 session does not take a turn.
+    await db().insert(studySession).values({ ref: `${REF}within`, design: "within", orderIndex: 3 });
     const a = await createSession();
     const b = await createSession();
     try {
-      expect(b.session.orderIndex).toBe((a.session.orderIndex + 1) % SESSION_ORDERS);
+      expect(b.session.orderIndex).toBe((a.session.orderIndex + 1) % SESSION_CELLS);
       expect(a.session.ref).toMatch(/^F\d{2,}$/);
       expect(Number(b.session.ref.slice(1))).toBe(Number(a.session.ref.slice(1)) + 1);
     } finally {
@@ -147,12 +150,12 @@ describeIfDb("the display study's session", () => {
     expect(await claimSession({ code, userId: "test-ss-b" })).toEqual({ ok: false, reason: "claimed_elsewhere" });
   });
 
-  it("arms blocks in order only", async () => {
+  it("arms its one block, and no other", async () => {
     const { session } = await make(1);
     expect(await armBlock("test-ss-a", 0, T0)).toBe("no_session");
     await claimSession({ code: session.inviteCode!, userId: "test-ss-a" });
 
-    expect(await armBlock("test-ss-a", 1, T0)).toBe("out_of_order");
+    expect(await armBlock("test-ss-a", 1, T0)).toBe("no_session");
     expect(await armBlock("test-ss-a", 0, T0)).toBe("armed");
     expect(await armBlock("test-ss-a", 0, T0)).toBe("armed");
     expect((await findSessionByUser("test-ss-a"))!.blocks[0]!.attempts).toBe(0);
@@ -233,13 +236,12 @@ describeIfDb("the display study's session", () => {
     expect(row!.answers).toEqual({ follow: 5, effort: 3, glance: 4, version: SESSION_VERSION });
   });
 
-  it("is complete with the ranking, only after all four blocks", async () => {
+  it("is complete with the ranking, only after its conversation is answered", async () => {
     const { session } = await make(1);
     await claimSession({ code: session.inviteCode!, userId: "test-ss-a" });
-    for (const position of [0, 1, 2]) await talk("test-ss-a", position, DRIVES[position]!);
     expect(await saveFinal("test-ss-a", { ...FINAL, ranking: [...FINAL.ranking] }, T0)).toBe("not_done");
 
-    await talk("test-ss-a", 3, DRIVES[3]!);
+    await talk("test-ss-a", 0, DRIVES[0]!);
     expect(await saveFinal("test-ss-a", { ...FINAL, ranking: [...FINAL.ranking] }, T0)).toBe("saved");
     expect(await saveFinal("test-ss-a", { ...FINAL, ranking: [...FINAL.ranking].reverse() }, T0)).toBe("saved");
     const state = await findSessionByUser("test-ss-a");
