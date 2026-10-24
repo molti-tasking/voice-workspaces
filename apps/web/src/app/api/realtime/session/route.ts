@@ -152,8 +152,8 @@ export async function POST(req: Request) {
   const studyTask = studyTaskFor(participant?.task);
   // A block of the display study talks to the session's own agent about the
   // block's task (study-agent.ts): the same agent for every view, with no
-  // tools, no web search and nothing from the session's other blocks. Fails
-  // open to the ordinary agent, as the Prolific task does.
+  // name, no tools, no web search and nothing from earlier drives. Fails open
+  // to the ordinary agent, as the Prolific task does.
   const block = await findBlockByCaptureSession(payload.captureSessionId).catch(() => null);
   const sessionTask = sessionTaskFor(block?.task);
   const searchSection = webSearch ? [webSearchSection(new Date(), timeZoneOf(row.deviceInfo))] : [];

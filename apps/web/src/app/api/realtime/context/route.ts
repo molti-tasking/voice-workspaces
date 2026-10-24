@@ -117,10 +117,9 @@ export async function POST(req: Request) {
   // Checked per turn rather than once per drive: a researcher switching the
   // board on mid-drive should not have to wait for the next one, and it is a
   // primary-key read.
-  // A block of the display study: no board, nothing from earlier drives (the
-  // session's other blocks are on this account), and one line for the screen
-  // whatever the view, so the agent stays the same in all four. Fails open to
-  // an ordinary drive.
+  // A block of the display study: no board, nothing from earlier drives, and
+  // one line for the screen whatever the view, so the agent stays the same in
+  // every view. Fails open to an ordinary drive.
   const block = await findBlockByCaptureSession(payload.captureSessionId).catch(() => null);
   const boardOn = !block && (await boardEnabledAt(payload.userId).catch(() => null)) !== null;
   const [{ passages, threads, board, drafts }, { settled, pending }, screen] = await Promise.all([

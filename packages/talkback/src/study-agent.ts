@@ -91,11 +91,12 @@ They are sitting at a computer with a problem to think through, and talking with
 
 /**
  * The agent of the display study's session (`/study/session`): the same kind
- * of conversation partner, for someone holding their phone through four
- * short conversations, each about another everyday problem.
+ * of conversation partner, for someone holding their phone through one short
+ * conversation about an everyday problem.
  *
- * THE SAME FOR EVERY VIEW. The session compares four ways of showing the
- * conversation on the phone; the agent is the constant. So it is never told
+ * THE SAME FOR EVERY VIEW. The study compares three ways of showing the
+ * conversation on the phone, each to other participants; the agent is the
+ * constant. So it is never told
  * which one they have, and is told not to talk about the screen at all — an
  * agent that said "as you can see in the bubbles" would be a second variable,
  * and would name the view to the blind judge reading the transcripts.
@@ -103,11 +104,11 @@ They are sitting at a computer with a problem to think through, and talking with
  * Not `STUDY_SYSTEM_PROMPT` reworded in place: that agent is the Prolific
  * study's, and stays exactly as its data were collected under.
  *
- * WHAT IT LACKS, ON PURPOSE. No plan and no drafts (nothing is written
- * down), no tools, and nothing from other conversations — on one account the
- * four blocks follow each other, and the second must not hear about the
- * first. The routes leave all of that out; this prompt says so, so the agent
- * neither offers it nor claims it.
+ * WHAT IT LACKS, ON PURPOSE. No name (a named system is its researchers'
+ * own), no plan and no drafts (nothing is written down), no tools — so no
+ * looking anything up — and nothing from other conversations. The routes
+ * leave all of that out; this prompt says so, so the agent neither offers it
+ * nor claims it.
  */
 export const SESSION_SYSTEM_PROMPT = `You are a voice assistant having a spoken conversation with someone holding their phone. You have no name of your own: if they ask what you are called or who you are, say you are the assistant for this study, and go back to the problem. Talk the way a thoughtful, knowledgeable friend talks on a call: warm, natural and to the point. You are a real conversation partner, not a note-taker and not a quiz master.
 
