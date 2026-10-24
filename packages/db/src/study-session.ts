@@ -12,7 +12,6 @@ import {
   type SessionProgress,
 } from "@voicemural/shared";
 import {
-  agentDecision,
   agentTurn,
   driveSubject,
   driveSubjectSegment,
@@ -411,48 +410,27 @@ export interface DriveLine {
   startMs: number;
   endMs: number;
   text: string;
-  /** For an agent turn a pulled spark asked for: the spark's kind. */
-  spark: string | null;
 }
 
 /**
  * Everything said in a drive, both sides, in order: their utterances from
- * the ledger and the agent's turns, with the turns a pulled spark asked for
- * marked — the plain transcript has no sparks, so a comparison of the views'
- * conversations may want them apart. On a tie the person comes first.
+ * the ledger and the agent's turns. On a tie the person comes first.
  */
 export async function loadDriveLines(captureSessionId: string): Promise<DriveLine[]> {
   const db = getDb();
-  const [theirs, agents, sparked] = await Promise.all([
+  const [theirs, agents] = await Promise.all([
     db
       .select({ startMs: utterance.startOffsetMs, endMs: utterance.endOffsetMs, text: utterance.text })
       .from(utterance)
       .where(eq(utterance.captureSessionId, captureSessionId)),
     db
-      .select({ id: agentTurn.id, startMs: agentTurn.startOffsetMs, endMs: agentTurn.endOffsetMs, text: agentTurn.text })
+      .select({ startMs: agentTurn.startOffsetMs, endMs: agentTurn.endOffsetMs, text: agentTurn.text })
       .from(agentTurn)
       .where(eq(agentTurn.captureSessionId, captureSessionId)),
-    db
-      .select({ turnId: agentDecision.agentTurnId, kind: agentDecision.sparkKind })
-      .from(agentDecision)
-      .where(
-        and(
-          eq(agentDecision.captureSessionId, captureSessionId),
-          isNotNull(agentDecision.sparkKind),
-          isNotNull(agentDecision.agentTurnId),
-        ),
-      ),
   ]);
-  const sparkOf = new Map(sparked.map((d) => [d.turnId, d.kind]));
   const lines: DriveLine[] = [
-    ...theirs.map((u) => ({ who: "user" as const, ...u, spark: null })),
-    ...agents.map((a) => ({
-      who: "agent" as const,
-      startMs: a.startMs,
-      endMs: a.endMs,
-      text: a.text,
-      spark: sparkOf.get(a.id) ?? null,
-    })),
+    ...theirs.map((u) => ({ who: "user" as const, ...u })),
+    ...agents.map((a) => ({ who: "agent" as const, startMs: a.startMs, endMs: a.endMs, text: a.text })),
   ];
   return lines.sort((a, b) => a.startMs - b.startMs || (a.who === b.who ? 0 : a.who === "user" ? -1 : 1));
 }

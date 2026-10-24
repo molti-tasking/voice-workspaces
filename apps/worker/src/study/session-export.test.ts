@@ -38,22 +38,21 @@ function moment(m: Partial<StudyMoment> & Pick<StudyMoment, "kind" | "shownOffse
   };
 }
 
-const line = (who: "user" | "agent", startMs: number, text: string, spark: string | null = null): DriveLine => ({
+const line = (who: "user" | "agent", startMs: number, text: string): DriveLine => ({
   who,
   startMs,
   endMs: startMs + 2_000,
   text,
-  spark,
 });
 
 // A conversation: talk, a game from 2:15 to 3:16, straight back into the
-// conversation, their first words 2.4 s after it, and a spark-asked turn.
+// conversation, and their first words 2.4 s after it.
 const LINES: DriveLine[] = [
   line("user", 1_000, "We should go to Aarhus by train"),
   line("agent", 6_000, "Aarhus works, the train is cheaper."),
   line("user", 150_000, "ugh I lost"),
   line("user", 198_400, "Okay, back to the train tickets"),
-  line("agent", 212_000, "So where did you land on the train?", "say_back"),
+  line("agent", 212_000, "So where did you land on the train?"),
 ];
 const VISITS: SubjectVisitRow[] = [
   { ordinal: 1, title: "Where to go", startMs: 0, endMs: 100_000 },
@@ -103,7 +102,6 @@ describe("blockMeasures", () => {
     expect(measures).toMatchObject({ drive_seconds: 320, pause_seconds: 61, talk_seconds: 259 });
     expect(measures).toMatchObject({ user_turns: 2, user_words: 13, agent_turns: 2, agent_words: 14 });
     expect(measures.words_in_pause).toBe(3);
-    expect(measures.spark_turns).toBe(1);
   });
 
   it("times picking the conversation up both ways, and says whether it was the same subject", () => {
@@ -197,21 +195,9 @@ describeIfDb("buildSessionExport", () => {
       });
     }
     for (const [seq, l] of LINES.filter((l) => l.who === "agent").entries()) {
-      const [turn] = await db
+      await db
         .insert(schema.agentTurn)
-        .values({ captureSessionId: DRIVE, seq, startOffsetMs: l.startMs, endOffsetMs: l.endMs, text: l.text, generatedText: l.text })
-        .returning({ id: schema.agentTurn.id });
-      if (l.spark) {
-        await db.insert(schema.agentDecision).values({
-          captureSessionId: DRIVE,
-          seq,
-          offsetMs: l.startMs,
-          trigger: "poke",
-          outcome: "spoke",
-          sparkKind: "say_back",
-          agentTurnId: turn!.id,
-        });
-      }
+        .values({ captureSessionId: DRIVE, seq, startOffsetMs: l.startMs, endOffsetMs: l.endMs, text: l.text, generatedText: l.text });
     }
     for (const v of VISITS) {
       await recordSubjectVisit({
@@ -272,7 +258,6 @@ describeIfDb("buildSessionExport", () => {
       attempts: 1,
       talk_seconds: 259,
       user_words: 13,
-      spark_turns: 1,
       resume_first_speech_ms: 2_000,
       resume_first_utterance_ms: 2_400,
       same_subject: true,
@@ -293,7 +278,7 @@ describeIfDb("buildSessionExport", () => {
     const transcript = out.transcripts.find((t) => t.ref === REF)!;
     expect(transcript.pause).toEqual({ from_ms: 135_000, to_ms: 196_000 });
     expect(transcript.lines.filter((l) => l.in_pause).map((l) => l.text)).toEqual(["ugh I lost"]);
-    expect(transcript.lines.find((l) => l.spark)?.spark).toBe("say_back");
+    expect(transcript.lines[0]).not.toHaveProperty("spark");
 
     const row = out.sessions.find((s) => s.ref === REF);
     expect(row).toMatchObject({ design: "between", order_index: 0, display: "transcript", task: "trip", blocks_answered: 1 });
