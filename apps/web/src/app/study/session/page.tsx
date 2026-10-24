@@ -18,8 +18,23 @@ import { SessionFlow, type SessionBlockView } from "./session-flow";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Nothing of the app's own name or pitch: no "— Souffleur" in the tab, and
+ * an invite link pasted into a chat must not unfurl as "think out loud while
+ * you drive". A page's `openGraph` and `twitter` replace the root's whole
+ * (images included), so both are set, with no image.
+ */
+const STUDY_TITLE = "A research study";
+const STUDY_DESCRIPTION = "A short conversation with a voice assistant, and a few questions about it.";
+
 export const metadata: Metadata = {
-  title: "Study",
+  title: { absolute: STUDY_TITLE },
+  description: STUDY_DESCRIPTION,
+  applicationName: null,
+  appleWebApp: null,
+  manifest: null,
+  openGraph: { type: "website", title: STUDY_TITLE, description: STUDY_DESCRIPTION },
+  twitter: { card: "summary", title: STUDY_TITLE, description: STUDY_DESCRIPTION },
   robots: { index: false, follow: false },
 };
 
