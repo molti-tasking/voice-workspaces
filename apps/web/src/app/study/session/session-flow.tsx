@@ -7,7 +7,7 @@ import { signIn } from "@/lib/auth-client";
 import { MicCheck } from "../../p/mic-check";
 import { ErrorLine, PrimaryButton, StudyFrame } from "../../p/ui";
 import { DemoTalk, LiveTalk } from "./block-talk";
-import { FinalRanking } from "./final-ranking";
+import { FinalQuestions } from "./final-questions";
 import { PostBlock } from "./post-block";
 import { DISPLAY_COPY, spokenDuration } from "./session-copy";
 import { TicTacToe } from "./tic-tac-toe";
@@ -180,7 +180,7 @@ export function SessionFlow({
       );
     case "final":
       return (
-        <FinalRanking
+        <FinalQuestions
           onSubmit={async (final) => {
             if (!(await send({ step: "final", final }))) return false;
             go({ at: "done" });

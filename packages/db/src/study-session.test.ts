@@ -43,7 +43,7 @@ const ANSWERS = {
   wayBack: "I read the last line.",
   glance: 4,
 };
-const FINAL = { ranking: ["bubbles", "conversation", "track", "transcript"] as const, contact: false };
+const FINAL = { more: "The game was hard.", contact: false };
 
 const describeIfDb = (await isDatabaseReachable()) ? describe : describe.skip;
 
@@ -252,17 +252,17 @@ describeIfDb("the display study's session", () => {
     });
   });
 
-  it("is complete with the ranking, only after its conversation is answered", async () => {
+  it("is complete with the last questions, only after its conversation is answered", async () => {
     const { session } = await make(1);
     await claimSession({ code: session.inviteCode!, userId: "test-ss-a" });
-    expect(await saveFinal("test-ss-a", { ...FINAL, ranking: [...FINAL.ranking] }, T0)).toBe("not_done");
+    expect(await saveFinal("test-ss-a", FINAL, T0)).toBe("not_done");
 
     await talk("test-ss-a", 0, DRIVES[0]!);
-    expect(await saveFinal("test-ss-a", { ...FINAL, ranking: [...FINAL.ranking] }, T0)).toBe("saved");
-    expect(await saveFinal("test-ss-a", { ...FINAL, ranking: [...FINAL.ranking].reverse() }, T0)).toBe("saved");
+    expect(await saveFinal("test-ss-a", FINAL, T0)).toBe("saved");
+    expect(await saveFinal("test-ss-a", { ...FINAL, contact: true }, T0)).toBe("saved");
     const state = await findSessionByUser("test-ss-a");
     expect(state!.session.completedAt).toEqual(T0);
-    expect((state!.session.final as { ranking: string[] }).ranking).toEqual(FINAL.ranking);
+    expect(state!.session.final).toMatchObject({ more: FINAL.more, contact: false });
     expect(await armedBlockFor("test-ss-a", T0)).toBeNull();
   });
 });

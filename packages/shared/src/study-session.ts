@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ConversationDisplay } from "./contracts";
+import type { ConversationDisplay } from "./contracts";
 
 /**
  * The display study's session: one sitting, one short conversation about an
@@ -352,13 +352,11 @@ export const BlockAnswers = z.strictObject({
 });
 export type BlockAnswers = z.infer<typeof BlockAnswers>;
 
-/** The end of the session: the four views ranked best first, and why. */
+/**
+ * The end of the session. Session-1 ranked its four views here; with one view
+ * each, there is nothing to rank.
+ */
 export const SessionFinal = z.strictObject({
-  ranking: z
-    .array(ConversationDisplay)
-    .length(4)
-    .refine((r) => new Set(r).size === 4, "each view once"),
-  why: z.string().trim().max(OPEN_MAX_CHARS).optional(),
   more: z.string().trim().max(OPEN_MAX_CHARS).optional(),
   /** Whether the researchers may get back to them about their answers. */
   contact: z.boolean(),

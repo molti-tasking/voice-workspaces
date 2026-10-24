@@ -143,11 +143,11 @@ describe("the answers", () => {
     expect(BlockAnswers.safeParse({ ...answers, folow: 5 }).success).toBe(false);
   });
 
-  it("rank each view exactly once", () => {
-    const ranking = ["bubbles", "transcript", "track", "conversation"];
-    expect(SessionFinal.safeParse({ ranking, contact: false }).success).toBe(true);
-    expect(SessionFinal.safeParse({ ranking: ["bubbles", "bubbles", "track", "conversation"], contact: false }).success).toBe(false);
-    expect(SessionFinal.safeParse({ ranking: ranking.slice(1), contact: true }).success).toBe(false);
+  it("end with anything else and whether we may get back to them, and no ranking", () => {
+    expect(SessionFinal.safeParse({ contact: false }).success).toBe(true);
+    expect(SessionFinal.safeParse({ more: "It was fun.", contact: true }).success).toBe(true);
+    expect(SessionFinal.safeParse({ more: "It was fun." }).success).toBe(false);
+    expect(SessionFinal.safeParse({ ranking: ["transcript", "track", "bubbles"], contact: true }).success).toBe(false);
   });
 
   it("are one step of the session's wire format", () => {

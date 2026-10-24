@@ -1,26 +1,18 @@
-import type { ConversationDisplay } from "@voicemural/shared";
+import type { SessionDisplay } from "@voicemural/shared";
 
 /**
- * How the session's pages name each view: a short label they rank it by at
- * the end, and one sentence for the brief before the conversation that shows
- * it. The sentences are kept about the same length, so no view is explained
+ * How the brief before the conversation describes its view, in one sentence.
+ * The sentences are kept about the same length, so no view is explained
  * better than another — what they learn about each is what they see.
  */
-export const DISPLAY_COPY: Record<ConversationDisplay, { label: string; brief: string }> = {
+export const DISPLAY_COPY: Record<SessionDisplay, { brief: string }> = {
   transcript: {
-    label: "Word for word",
     brief: "the conversation word for word, as a running transcript, newest at the bottom.",
   },
-  conversation: {
-    label: "Topics in order",
-    brief: "the conversation in order, under a short headline for each topic, newest last.",
-  },
   track: {
-    label: "Topic map",
     brief: "the topics as a map, on the side of whoever brought them up, newest at the bottom.",
   },
   bubbles: {
-    label: "Topic bubbles",
     brief: "the topics as circles, the ones you brought up in one panel, the assistant's in another.",
   },
 };
