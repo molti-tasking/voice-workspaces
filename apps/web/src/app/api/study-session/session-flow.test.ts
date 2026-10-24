@@ -96,7 +96,7 @@ describeIfDb("the display study's session routes", () => {
       const opened = await call(openDrive, { id, startedAt: new Date().toISOString(), deviceInfo: {} });
       const { studyCondition } = (await opened.json()) as { studyCondition: { display: string; sparks: boolean } };
       expect(studyCondition.display).toBe(displays[position]);
-      expect(studyCondition.sparks).toBe(displays[position] !== "transcript");
+      expect(studyCondition.sparks).toBe(false);
       expect(await (await call(step, { step: "linked", position, captureSessionId: id })).json()).toEqual({ linked: true });
 
       const { ticket } = issueTicket({ userId: USER_ID, captureSessionId: id }, { ttlMs: 60_000 });

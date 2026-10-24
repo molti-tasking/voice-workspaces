@@ -6,6 +6,7 @@ import {
   FLOOR_SECTION,
   HEARING_SECTION,
   OUTPUT_CONTRACT,
+  READING_SECTION,
   SPARK_SECTION,
   SYSTEM_PROMPT,
   composeSystemPrompt,
@@ -62,8 +63,9 @@ describe("the display study's agent", () => {
     );
   });
 
-  it("handles the floor, the sparks and the transcription with the field agent's own words", () => {
-    for (const section of [FLOOR_SECTION, SPARK_SECTION, HEARING_SECTION]) expect(composed.prompt).toContain(section);
+  it("hears and reads with the field agent's own words, and has no floor controls or sparks to explain", () => {
+    for (const section of [READING_SECTION, HEARING_SECTION]) expect(composed.prompt).toContain(section);
+    for (const section of [FLOOR_SECTION, SPARK_SECTION]) expect(composed.prompt).not.toContain(section);
   });
 
   it("is someone on a phone, who writes nothing down and never talks about the screen", () => {

@@ -156,7 +156,7 @@ describeIfDb("POST /api/capture-sessions — the use case a drive begins under",
     const res = await open(SESSION_A);
     expect(res.status).toBe(201);
     const body = (await res.json()) as { studyCondition: { display: string; sparks: boolean } };
-    expect(body.studyCondition).toMatchObject({ display: "conversation", sparks: true });
+    expect(body.studyCondition).toMatchObject({ display: "conversation", sparks: false });
     expect(await findBlockByCaptureSession(SESSION_A)).toMatchObject({ position: 0, display: "conversation" });
 
     // The arm is spent: the next drive is an ordinary one.
