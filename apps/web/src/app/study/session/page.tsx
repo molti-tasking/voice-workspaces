@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { findSessionByCode, progressOf } from "@voicemural/db/study-session";
 import {
+  SESSION_BLOCKS,
+  SESSION_DESIGN,
   SessionCode,
   blocksFor,
   isSessionDisplay,
@@ -34,19 +36,16 @@ function pilotIds(): string[] {
     .filter(Boolean);
 }
 
-function viewsOf(blocks: readonly { position: number; display: ConversationDisplay; task: string }[]): SessionBlockView[] {
-  return [...blocks]
-    .sort((a, b) => a.position - b.position)
-    .map((b) => {
-      const task = sessionTaskFor(b.task);
-      if (!task) throw new Error(`study block ${b.position} has a task not in the catalogue: ${b.task}`);
-      if (!isSessionDisplay(b.display)) throw new Error(`study block ${b.position} has a view the session does not compare: ${b.display}`);
-      return {
-        position: b.position,
-        display: b.display,
-        task: { title: task.title, brief: task.brief, prompts: [...task.prompts] },
-      };
-    });
+/** The session's conversation, as the page shows it. */
+function viewOf(b: { position: number; display: ConversationDisplay; task: string }): SessionBlockView {
+  const task = sessionTaskFor(b.task);
+  if (!task) throw new Error(`study block ${b.position} has a task not in the catalogue: ${b.task}`);
+  if (!isSessionDisplay(b.display)) throw new Error(`study block ${b.position} has a view the session does not compare: ${b.display}`);
+  return {
+    position: b.position,
+    display: b.display,
+    task: { title: task.title, brief: task.brief, prompts: [...task.prompts] },
+  };
 }
 
 /**
@@ -56,9 +55,9 @@ function viewsOf(blocks: readonly { position: number; display: ConversationDispl
  *
  * For the researchers, and never for a participant — outside production, or
  * signed in as a pilot account (`STUDY_PILOT_USER_IDS`):
- * - `?demo=1[&order=0-5]` walks through a whole session with the simulated
- *   conversation: no microphone, no AI, nothing saved.
- * - `?fast=10` runs the conversations' timings ten times faster.
+ * - `?demo=1[&order=0-5]` walks through a session in that cell, with the
+ *   simulated conversation: no microphone, no AI, nothing saved.
+ * - `?fast=10` runs the conversation's timings ten times faster.
  */
 export default async function StudySessionPage({ searchParams }: { searchParams: Promise<Search> }) {
   const params = await searchParams;
@@ -68,13 +67,13 @@ export default async function StudySessionPage({ searchParams }: { searchParams:
 
   if (first(params.demo) === "1") {
     if (!researcher) notFound();
-    const order = Number(first(params.order) ?? 0);
+    const cell = Number(first(params.order) ?? 0);
     return (
       <SessionFlow
         mode="demo"
         hasAccount={user !== null}
         resume={{ at: "consent" }}
-        blocks={viewsOf(blocksFor(Number.isFinite(order) ? order : 0))}
+        block={viewOf(blocksFor(Number.isFinite(cell) ? cell : 0)[0]!)}
         timings={timings}
         talkbackEnabled
       />
@@ -87,6 +86,15 @@ export default async function StudySessionPage({ searchParams }: { searchParams:
     return (
       <StudyFrame title="This link does not work">
         <p>Please check that you opened the whole link you were sent, or ask the researchers for a new one.</p>
+      </StudyFrame>
+    );
+  }
+
+  // A session-1 invite: four conversations, which this page no longer walks.
+  if (state.session.design !== SESSION_DESIGN || state.blocks.length !== SESSION_BLOCKS) {
+    return (
+      <StudyFrame title="This link does not work any more">
+        <p>Please ask the researchers for a new one.</p>
       </StudyFrame>
     );
   }
@@ -106,7 +114,7 @@ export default async function StudySessionPage({ searchParams }: { searchParams:
       code={code.data}
       hasAccount={user !== null}
       resume={mine ? resumeAt(progressOf(state)) : { at: "consent" }}
-      blocks={viewsOf(state.blocks)}
+      block={viewOf(state.blocks[0]!)}
       timings={timings}
       talkbackEnabled={process.env.NEXT_PUBLIC_TALKBACK_ENABLED === "true"}
     />
