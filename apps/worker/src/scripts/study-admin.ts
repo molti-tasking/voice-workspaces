@@ -14,7 +14,7 @@
  *   pnpm study:session invite [--ref F07] [--order 0-5]   a display-study session: prints its view, task and link
  *   pnpm study:session list                               every session, how far it got, and the cells completed
  *   pnpm study:session export [--out <dir>] [--text]      sessions.csv, blocks.csv, moments.csv (and transcripts.jsonl)
- *   pnpm study:judge [--role judge] [--repeats 2] [--blind-check] [--keep-spark-turns] [--limit n] [--langfuse] [--out <dir>]
+ *   pnpm study:judge [--role judge] [--repeats 2] [--blind-check] [--limit n] [--langfuse] [--out <dir>]
  *                                                         the blind judge: items.jsonl, scores.csv, and key.csv apart
  *   pnpm study:judge --join [--out <dir>]                 joined.csv: the scores with the view of each item
  *
@@ -448,7 +448,6 @@ async function runStudyJudge(): Promise<void> {
   const { items: all, key } = buildJudgeItems(blocks, {
     salt,
     repeats,
-    keepSparkTurns: has("keep-spark-turns"),
     blindCheck: has("blind-check"),
   });
   const items = all.slice(0, limit);

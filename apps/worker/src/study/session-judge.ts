@@ -33,10 +33,8 @@ import { pauseWindow, sameColumns } from "./session-export";
  *   moments — never from the live traces, whose prompts and metadata name
  *   the drive's condition.
  * - Person and Assistant; the interruption dropped (nothing in it was said
- *   to the conversation); the turns a pulled spark asked for dropped by
- *   default, because only three of the four views had sparks to pull — keep
- *   them (`keepSparkTurns`) for the sensitivity check; their own voice echoed
- *   back from the agent removed; words naming a view scrubbed.
+ *   to the conversation); their own voice echoed back from the agent
+ *   removed; words naming a view scrubbed.
  * - An item's id is a keyed hash (`STUDY_JUDGE_SALT`) of the block and the
  *   item, so it says nothing by itself, and the items are judged in a
  *   shuffled order. Which block an id was lives only in the key, which the
@@ -94,12 +92,9 @@ export interface JudgeLines {
 }
 
 /** A block's conversation, blinded as above. */
-export function judgeLinesOf(block: Pick<JudgeBlock, "lines" | "moments">, options: { keepSparkTurns?: boolean } = {}): JudgeLines {
+export function judgeLinesOf(block: Pick<JudgeBlock, "lines" | "moments">): JudgeLines {
   const pause = pauseWindow([...block.moments]);
-  const said = block.lines.filter(
-    (l) =>
-      !(pause && l.startMs >= pause.fromMs && l.startMs < pause.toMs) && (options.keepSparkTurns || l.spark === null),
-  );
+  const said = block.lines.filter((l) => !(pause && l.startMs >= pause.fromMs && l.startMs < pause.toMs));
   // Their lines that are the agent's voice coming back through the
   // microphone, or a transcription repeated, are dropped; the agent's stay.
   const theirs = said.filter((l) => l.who === "user");
@@ -141,13 +136,13 @@ function shuffled<T>(items: T[], random: () => number): T[] {
  */
 export function buildJudgeItems(
   blocks: readonly JudgeBlock[],
-  options: { salt: string; repeats?: number; keepSparkTurns?: boolean; blindCheck?: boolean; random?: () => number },
+  options: { salt: string; repeats?: number; blindCheck?: boolean; random?: () => number },
 ): { items: JudgeItem[]; key: KeyRow[] } {
   const repeats = Math.max(1, Math.trunc(options.repeats ?? 1));
   const items: JudgeItem[] = [];
   const key: KeyRow[] = [];
   for (const block of blocks) {
-    const lines = judgeLinesOf(block, options);
+    const lines = judgeLinesOf(block);
     if (lines.all.length === 0) continue;
     const probe = block.moments.find((m) => m.kind === "probe");
     const made: { kind: ItemKind; messages: ChatMessage[]; afterLines?: number }[] = [];

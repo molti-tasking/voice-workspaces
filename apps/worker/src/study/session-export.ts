@@ -1,5 +1,5 @@
-import { asc, eq, getDb, inArray, sql } from "@voicemural/db";
-import { captureSession, driveSubject, subjectSignal } from "@voicemural/db/schema";
+import { getDb, inArray } from "@voicemural/db";
+import { captureSession } from "@voicemural/db/schema";
 import {
   listSessions,
   loadDriveLines,
@@ -24,7 +24,7 @@ import type { Row } from "./prolific-export";
  *   wrote and rated after it.
  * - `moments`: every moment as stored, with its latency.
  * - `transcripts` (only with `--text`): each block's lines, both sides, with
- *   the interruption and the spark-asked turns marked.
+ *   the interruption marked.
  *
  * TEXT IS INCLUDED — summaries, what they wrote about the game, reasons, and
  * with `--text` the transcripts: the session's consent says the researchers
@@ -119,7 +119,6 @@ export function blockMeasures(input: BlockInput): Row {
     user_words: theirs.reduce((n, l) => n + wordCount(l.text), 0),
     agent_turns: agents.length,
     agent_words: agents.reduce((n, l) => n + wordCount(l.text), 0),
-    spark_turns: agents.filter((l) => l.spark !== null).length,
     words_in_pause: lines.filter((l) => inPause(l.startMs)).reduce((n, l) => n + wordCount(l.text), 0),
     subjects: new Set(visits.map((v) => v.ordinal)).size,
     game_at_seconds: seconds(game?.shownOffsetMs ?? null),
@@ -153,7 +152,7 @@ export interface TranscriptRecord {
   task: string;
   capture_session_id: string;
   pause: { from_ms: number; to_ms: number } | null;
-  lines: { who: "user" | "agent"; start_ms: number; end_ms: number; text: string; spark: string | null; in_pause: boolean }[];
+  lines: { who: "user" | "agent"; start_ms: number; end_ms: number; text: string; in_pause: boolean }[];
 }
 
 export interface SessionExport {
@@ -177,19 +176,6 @@ export async function buildSessionExport(options: { text?: boolean } = {}): Prom
         .select({ id: captureSession.id, startedAt: captureSession.startedAt, endedAt: captureSession.endedAt })
         .from(captureSession)
         .where(inArray(captureSession.id, driveIds))
-    : [];
-  const sparks = driveIds.length
-    ? await db
-        .select({
-          id: driveSubject.captureSessionId,
-          shown: sql<number>`coalesce(sum(coalesce(array_length(${subjectSignal.sparksShown}, 1), 0)), 0)::int`,
-          pulled: sql<number>`coalesce(sum(coalesce(array_length(${subjectSignal.sparksPulled}, 1), 0)), 0)::int`,
-        })
-        .from(driveSubject)
-        .innerJoin(subjectSignal, eq(subjectSignal.driveSubjectId, driveSubject.id))
-        .where(inArray(driveSubject.captureSessionId, driveIds))
-        .groupBy(driveSubject.captureSessionId)
-        .orderBy(asc(driveSubject.captureSessionId))
     : [];
   const moments = await loadMoments(driveIds);
 
@@ -251,14 +237,11 @@ export async function buildSessionExport(options: { text?: boolean } = {}): Prom
       loadDriveLines(block.captureSessionId),
       loadSubjectVisits(block.captureSessionId),
     ]);
-    const spark = sparks.find((s) => s.id === block.captureSessionId);
     blockRows.push({
       ...head,
       capture_session_id: block.captureSessionId,
       started_at: iso(drive.startedAt),
       ...blockMeasures({ startedAt: drive.startedAt, endedAt: drive.endedAt, lines, visits, moments: mine }),
-      sparks_shown: spark?.shown ?? 0,
-      sparks_pulled: spark?.pulled ?? 0,
       ...tail,
     });
     for (const m of mine) {
@@ -289,7 +272,6 @@ export async function buildSessionExport(options: { text?: boolean } = {}): Prom
           start_ms: l.startMs,
           end_ms: l.endMs,
           text: l.text,
-          spark: l.spark,
           in_pause: pause !== null && l.startMs >= pause.fromMs && l.startMs < pause.toMs,
         })),
       });

@@ -11,12 +11,11 @@ import {
 } from "./session-judge";
 
 const T0 = new Date("2026-10-21T10:00:00Z");
-const line = (who: "user" | "agent", startMs: number, text: string, spark: string | null = null): DriveLine => ({
+const line = (who: "user" | "agent", startMs: number, text: string): DriveLine => ({
   who,
   startMs,
   endMs: startMs + 2_000,
   text,
-  spark,
 });
 const moment = (m: Partial<StudyMoment> & Pick<StudyMoment, "kind" | "shownOffsetMs">): StudyMoment => ({
   id: `${m.kind}-${m.shownOffsetMs}`,
@@ -43,7 +42,6 @@ const BLOCK: JudgeBlock = {
     line("agent", 4_000, "The train is faster and not much dearer for four people."),
     // Their microphone hearing the agent: dropped.
     line("user", 7_000, "The train is faster and not much dearer for four people."),
-    line("agent", 9_000, "Where did you land on the budget?", "say_back"),
     line("user", 150_000, "ugh, lost again"),
     line("user", 210_000, "Right, so the train, we were on the tickets"),
     line("agent", 214_000, "Book them early and they are cheaper."),
@@ -56,7 +54,7 @@ const BLOCK: JudgeBlock = {
 };
 
 describe("what the judge is shown", () => {
-  it("leaves out the interruption, the spark-asked turns and their echo of the agent", () => {
+  it("leaves out the interruption and their echo of the agent", () => {
     const lines = judgeLinesOf(BLOCK);
     expect(lines.all.map((l) => `${l.who}: ${l.text}`)).toEqual([
       "Person: Should we take the train to Aarhus or the bus?",
@@ -66,11 +64,6 @@ describe("what the judge is shown", () => {
     ]);
     expect(lines.before).toHaveLength(2);
     expect(lines.after.map((l) => l.who)).toEqual(["Person", "Assistant"]);
-  });
-
-  it("keeps the spark-asked turns for the sensitivity check", () => {
-    const lines = judgeLinesOf(BLOCK, { keepSparkTurns: true });
-    expect(lines.all.map((l) => l.text)).toContain("Where did you land on the budget?");
   });
 
   it("never names the block, its view or its place in the session", () => {
