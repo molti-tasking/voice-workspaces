@@ -34,7 +34,18 @@ export function atCursor(conversation: Conversation, cursor: number | null): Con
       latest = last;
       current = section;
     }
-    sections.push(turns.length === section.turns.length ? section : { ...section, turns });
+    // Judged settled only after this point: not yet, back then.
+    const judgedLater = section.settled !== undefined && (section.settledAfter ?? -1) > cursor;
+    if (turns.length === section.turns.length && !judgedLater) {
+      sections.push(section);
+      continue;
+    }
+    const cut: Section = { ...section, turns };
+    if (judgedLater) {
+      delete cut.settled;
+      delete cut.settledAfter;
+    }
+    sections.push(cut);
   }
   const unchanged =
     sections.length === conversation.sections.length &&
