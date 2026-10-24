@@ -42,7 +42,7 @@ import { createSession, listSessions } from "@voicemural/db/study-session";
 import { chat, type ModelRole } from "@voicemural/llm";
 import { SESSION_CELLS, SESSION_DESIGN, StudyCondition, cellFor } from "@voicemural/shared";
 import { flushLangfuse, langfuseConfig, startLangfuse, traceTurn, type Langfuse } from "@voicemural/talkback/eval/langfuse";
-import { STUDY_JUDGE_VERSION } from "@voicemural/talkback/eval/study-judge";
+import { BLIND_OPTIONS, STUDY_JUDGE_VERSION } from "@voicemural/talkback/eval/study-judge";
 import { exportParticipant, studyParticipants } from "../study/export";
 import { participantMetrics } from "../study/metrics";
 import { buildProlificExport, fromCsv, toCsv } from "../study/prolific-export";
@@ -414,7 +414,8 @@ async function runStudyJudge(): Promise<void> {
     const blind = joined.filter((r) => r.kind === "blind" && r.guessed_right !== undefined && r.guessed_right !== null);
     if (blind.length > 0) {
       const right = blind.filter((r) => r.guessed_right === true).length;
-      console.log(`blind check: ${right} of ${blind.length} guessed the view (${Math.round((right / blind.length) * 100)}%; chance is 25%)`);
+      const chance = Math.round(100 / Object.keys(BLIND_OPTIONS).length);
+      console.log(`blind check: ${right} of ${blind.length} guessed the view (${Math.round((right / blind.length) * 100)}%; chance is ${chance}%)`);
     }
     return;
   }

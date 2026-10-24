@@ -33,7 +33,7 @@ const moment = (m: Partial<StudyMoment> & Pick<StudyMoment, "kind" | "shownOffse
 
 const BLOCK: JudgeBlock = {
   ref: "F07",
-  position: 2,
+  position: 0,
   display: "bubbles",
   task: "trip",
   summary: "The bubbles helped: we picked the train to Aarhus.",
@@ -48,8 +48,8 @@ const BLOCK: JudgeBlock = {
   ],
   moments: [
     moment({ kind: "game", shownOffsetMs: 135_000, answeredOffsetMs: 196_000 }),
-    moment({ kind: "probe", shownOffsetMs: 196_000, answeredOffsetMs: 204_000, text: "the train, on the screen" }),
-    moment({ kind: "resume", shownOffsetMs: 205_000, answeredOffsetMs: 209_000 }),
+    // Straight back: the conversation returns as the game ends.
+    moment({ kind: "resume", shownOffsetMs: 196_000, answeredOffsetMs: 209_000 }),
   ],
 };
 
@@ -72,7 +72,8 @@ describe("what the judge is shown", () => {
     for (const giveaway of ["F07", "bubbles", "\"position\"", "trip"]) expect(everything).not.toContain(giveaway);
     // Their own words naming a view are scrubbed too.
     expect(everything).toContain("The […] helped");
-    expect(everything).toContain("the train, […]");
+    // The resumption is judged from the conversation alone.
+    expect(everything).not.toContain("THEIR NOTE");
   });
 });
 
@@ -81,7 +82,7 @@ describe("the items and their key", () => {
     const { items, key } = buildJudgeItems([BLOCK], { salt: "s", repeats: 2, random: () => 0 });
     expect(items.map((i) => i.kind).sort()).toEqual(["resumption", "resumption", "summary", "summary"]);
     expect(new Set(items.map((i) => i.id)).size).toBe(4);
-    expect(key).toContainEqual({ id: itemId("s", "F07", 2, "summary", 1), ref: "F07", position: 2, display: "bubbles", task: "trip", kind: "summary", repeat: 1 });
+    expect(key).toContainEqual({ id: itemId("s", "F07", 0, "summary", 1), ref: "F07", position: 0, display: "bubbles", task: "trip", kind: "summary", repeat: 1 });
     expect(items.find((i) => i.kind === "resumption")!.afterLines).toBe(2);
   });
 
@@ -105,15 +106,16 @@ describe("scoring and joining", () => {
   const { items, key } = buildJudgeItems([BLOCK], { salt: "s", blindCheck: true, random: () => 0.5 });
   const answers: Record<string, string> = {
     summary: '{"key_points": [{"point": "Train", "in_summary": "present"}], "invented": 0, "coverage": 4, "accuracy": 5, "specificity": 3, "reason": "ok"}',
-    resumption: '{"probe_accuracy": 5, "resumed_same_topic": "yes", "first_on_topic_line": 1, "asked_assistant": false, "reason": "back"}',
-    blind: '{"guess": "D", "confidence": 2}',
+    resumption: '{"resumed_same_topic": "yes", "first_on_topic_line": 1, "asked_assistant": false, "reason": "back"}',
+    blind: '{"guess": "C", "confidence": 2}',
   };
 
   it("scores each answer by its id alone, and keeps a bad one as an error", async () => {
     const rows = await runJudge(items, async (item) => ({ content: answers[item.kind]!, model: "m", latencyMs: 10 }));
     expect(rows).toHaveLength(3);
     expect(rows.find((r) => r.kind === "summary")).toMatchObject({ coverage: 4, present: 1, coverage_share: 1, error: null });
-    expect(rows.find((r) => r.kind === "resumption")).toMatchObject({ probe_accuracy: 5, first_on_topic_line: 1 });
+    expect(rows.find((r) => r.kind === "resumption")).toMatchObject({ resumed_same_topic: "yes", first_on_topic_line: 1 });
+    expect(rows.find((r) => r.kind === "resumption")).not.toHaveProperty("probe_accuracy");
     expect(JSON.stringify(rows)).not.toContain("bubbles");
     expect(scoreRow(items[0]!, { content: "no idea", model: "m", latencyMs: 1 }).error).toMatch(/no JSON/);
     const failing = await runJudge(items.slice(0, 1), async () => {
