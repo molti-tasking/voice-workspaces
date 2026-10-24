@@ -36,7 +36,8 @@ export function atCursor(conversation: Conversation, cursor: number | null): Con
     }
     // Judged settled only after this point: not yet, back then.
     const judgedLater = section.settled !== undefined && (section.settledAfter ?? -1) > cursor;
-    if (turns.length === section.turns.length && !judgedLater) {
+    const keptLater = section.kept !== undefined && (section.kept.after ?? -1) > cursor;
+    if (turns.length === section.turns.length && !judgedLater && !keptLater) {
       sections.push(section);
       continue;
     }
@@ -45,6 +46,7 @@ export function atCursor(conversation: Conversation, cursor: number | null): Con
       delete cut.settled;
       delete cut.settledAfter;
     }
+    if (keptLater) delete cut.kept;
     sections.push(cut);
   }
   const unchanged =

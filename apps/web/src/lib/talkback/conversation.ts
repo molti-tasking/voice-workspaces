@@ -101,7 +101,7 @@ export interface Section {
    * @voicemural/shared). Absent means Souffleur holds it. With
    * `sparkSelection: "chosen"`, sparks are offered on kept subjects only.
    */
-  kept?: { via: KeepVia; at: number };
+  kept?: { via: KeepVia; at: number; /** The `seq` of the last turn said when they kept it. */ after?: number };
 }
 
 /** How a subject was kept: a tap on it, or saying so. */
@@ -313,7 +313,7 @@ function applyKeep(
   const section = state.sections[index]!;
   if (message.kept === (section.kept !== undefined)) return state;
   const next: Section = message.kept
-    ? { ...section, kept: { via: message.via, at } }
+    ? { ...section, kept: { via: message.via, at, after: state.nextSeq - 1 } }
     : (({ kept: _kept, ...rest }) => rest)(section);
   return { ...state, sections: state.sections.map((s, i) => (i === index ? next : s)) };
 }

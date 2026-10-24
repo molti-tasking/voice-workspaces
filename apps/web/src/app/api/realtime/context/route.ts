@@ -221,7 +221,8 @@ async function settleThenReadPending(
 
 /** What was said in the conversation a drive continues, rendered for the agent (`renderContinued`). */
 async function earlierInConversation(userId: string, continuesId: string, timeZone: string | null): Promise<string | null> {
-  const drives = await loadConversation(userId, continuesId);
+  // Up to the drive it continues: never this drive's own lines, nor a later one's.
+  const drives = await loadConversation(userId, continuesId, { forward: false });
   if (!drives || drives.length === 0) return null;
   const topics: string[] = [];
   for (const visit of drives.flatMap((d) => d.visits)) if (!topics.includes(visit.title)) topics.push(visit.title);

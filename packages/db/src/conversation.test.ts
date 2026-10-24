@@ -51,6 +51,10 @@ describeIfDb("a conversation and the drives that continued it", () => {
     expect(await conversationChain("test-cv-a", D3)).toEqual([D1, D2, D3]);
   });
 
+  it("stops at the drive asked for, for the drive that continues it", async () => {
+    expect(await conversationChain("test-cv-a", D2, { forward: false })).toEqual([D1, D2]);
+  });
+
   it("never reaches into somebody else's drives", async () => {
     expect(await conversationChain("test-cv-b", D1)).toEqual([]);
     // Their drive claims to continue ours: it is theirs alone.

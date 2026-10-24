@@ -378,13 +378,13 @@ export function useRecorder() {
     conditionOverride?: Record<string, boolean>,
     /** The drive this one continues: Continue on a past conversation. */
     continuesId?: string,
-  ) => {
-    if (runningRef.current) return;
+  ): Promise<string | null> => {
+    if (runningRef.current) return null;
 
     const mimeType = pickMimeType();
     if (!mimeType) {
       patch({ error: "This browser cannot record audio (no supported MediaRecorder format)." });
-      return;
+      return null;
     }
 
     patch({ status: "requesting", error: null });
@@ -409,7 +409,7 @@ export function useRecorder() {
             ? "Microphone permission denied."
             : "Could not open the microphone.",
       });
-      return;
+      return null;
     }
 
     streamRef.current = stream;
@@ -517,6 +517,8 @@ export function useRecorder() {
     earcon("started");
     await acquireWakeLock();
     loopRef.current = runLoop(stream, meta);
+    // The drive that started, for a caller that has to know whether one did.
+    return meta.captureSessionId;
   }, [acquireWakeLock, patch, runLoop]);
 
   /** Close the drive and end the recording. */
