@@ -4,6 +4,7 @@ import { AudioLines, Sparkles, UserRound } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 // A type only: the package index pulls in server code.
 import type { MirrorBullets } from "@voicemural/talkback";
+import type { AgentName } from "@/lib/talkback/agent-name";
 import { EMPTY_CONVERSATION, type ConversationStore, type Speaker } from "@/lib/talkback/conversation";
 import { mirrorTopics, type MirrorTopic } from "@/lib/talkback/mirror";
 import { allSignals, type Spark } from "@/lib/talkback/signals";
@@ -11,6 +12,7 @@ import { EMPTY_LEDGER, sparkKey, type SparkLedger } from "@/lib/talkback/spark-l
 import type { SparkRequest } from "@/lib/talkback/types";
 import { useMirrorBullets, type TopicBullets } from "@/lib/talkback/use-mirror-bullets";
 import type { PokeResult } from "@/lib/talkback/use-talkback";
+import { useAgentName } from "./agent-name-context";
 import { POKE_NOTES } from "./floor-controls";
 import { SPARK_LABELS, pullSpark } from "./spark-chips";
 
@@ -49,7 +51,6 @@ const CLOCK_MS = 15_000;
 /** How long what became of a pull stays in the strip. */
 const NOTE_MS = 2500;
 
-const SIDE_LABEL: Record<Speaker, string> = { user: "your topic", agent: "Souffleur's topic" };
 
 export function ConversationMirror({
   store,
@@ -219,13 +220,14 @@ function Bubbles({
   focusKey: string | null;
   onChoose: (key: string) => void;
 }) {
+  const agent = useAgentName();
   return (
     // Each panel as tall as its topics need, the two scrolling together.
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
       {(["user", "agent"] as const).map((side) => (
         <section
           key={side}
-          aria-label={side === "user" ? "Your topics" : "Souffleur's topics"}
+          aria-label={side === "user" ? "Your topics" : `${agent.Possessive} topics`}
           className={[
             "relative min-h-36 shrink-0 rounded-3xl p-3",
             side === "user" ? "bg-amber-500/[0.07]" : "bg-sky-500/[0.07]",
@@ -250,10 +252,10 @@ function Bubbles({
 
 /* --- topics -------------------------------------------------------------------- */
 
-function topicLabel(topic: MirrorTopic): string {
+function topicLabel(topic: MirrorTopic, agent: AgentName): string {
   return [
     topic.title,
-    SIDE_LABEL[topic.side],
+    topic.side === "user" ? "your topic" : `${agent.possessive} topic`,
     topic.active ? "being talked about" : topic.faded ? "left a while ago" : null,
     topic.spark ? "spark on offer" : null,
   ]
@@ -288,12 +290,13 @@ function TopicChip({
   onChoose: (key: string) => void;
   align: "start" | "end";
 }) {
+  const agent = useAgentName();
   return (
     <button
       type="button"
       onClick={() => onChoose(topic.key)}
       aria-pressed={focused}
-      aria-label={topicLabel(topic)}
+      aria-label={topicLabel(topic, agent)}
       className={[
         "relative min-h-11 max-w-full cursor-pointer rounded-2xl bg-surface text-left",
         align === "end" ? "justify-self-end" : "justify-self-start",
@@ -317,12 +320,13 @@ function Bubble({
   focused: boolean;
   onChoose: (key: string) => void;
 }) {
+  const agent = useAgentName();
   return (
     <button
       type="button"
       onClick={() => onChoose(topic.key)}
       aria-pressed={focused}
-      aria-label={topicLabel(topic)}
+      aria-label={topicLabel(topic, agent)}
       className={[
         "relative grid aspect-square cursor-pointer place-items-center rounded-full bg-surface p-1.5 text-center",
         topic.active ? "w-full text-base" : topic.faded ? "w-[64%] text-xs" : "w-[80%] text-sm",
@@ -443,12 +447,13 @@ function FocusStrip({
 }
 
 function Points({ side, items }: { side: Speaker; items: string[] }) {
+  const agent = useAgentName();
   if (items.length === 0) return null;
   return (
     <div className="flex gap-2">
-      <span className="mt-0.5 shrink-0" title={side === "user" ? "You" : "Souffleur"}>
+      <span className="mt-0.5 shrink-0" title={side === "user" ? "You" : agent.Name}>
         <SideIcon side={side} />
-        <span className="sr-only">{side === "user" ? "You:" : "Souffleur:"}</span>
+        <span className="sr-only">{side === "user" ? "You:" : `${agent.Name}:`}</span>
       </span>
       <ul className={`min-w-0 space-y-0.5 text-sm ${side === "user" ? "text-fg/70" : "text-fg"}`}>
         {items.map((item, i) => (
