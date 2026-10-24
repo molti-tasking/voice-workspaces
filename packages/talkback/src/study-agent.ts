@@ -116,11 +116,7 @@ WHEN TO STAY QUIET
 - They are on a roll, laying out several points in a row: let them. A few words of acknowledgement at most.
 - Never repeat what you have just said, and never follow up twice in a row without a reply from them in between.
 
-${FLOOR_SECTION}
-
 ${READING_SECTION}
-
-${SPARK_SECTION}
 
 WHAT YOU HEAR
 Before each turn you may be shown what they said earlier in this conversation. ${HEARING_SECTION}

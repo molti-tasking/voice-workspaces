@@ -6,14 +6,11 @@ import type { MirrorBullets } from "@voicemural/talkback";
 import { useCapture } from "@/components/capture-provider";
 import type { ConversationStore } from "@/lib/talkback/conversation";
 import { DEMO_POINTS, DEMO_STEPS } from "@/lib/talkback/demo-conversation";
-import type { SparkLedger } from "@/lib/talkback/spark-ledger";
-import type { SparkRequest } from "@/lib/talkback/types";
 import { useScriptedConversation } from "@/lib/talkback/use-scripted-conversation";
 import type { PokeResult } from "@/lib/talkback/use-talkback";
 import { ErrorLine, PrimaryButton, StudyFrame } from "../../p/ui";
 import { ConversationDisplay as Display } from "../../record/conversation-display";
 import type { FlowStatus } from "../../record/conversation-flow";
-import { SparkChips } from "../../record/spark-chips";
 import { useBlockMoments, type BlockMoments } from "./block-moments";
 import { CarryOn, EsmPrompt, Probe } from "./interruption";
 import { clock, spokenDuration } from "./session-copy";
@@ -21,11 +18,11 @@ import type { SessionBlockView, SendStep } from "./session-flow";
 import { TicTacToe } from "./tic-tac-toe";
 
 /**
- * One block's conversation: the task at the top with a timer and Finish, the
- * block's view of the conversation under it, and — in the column view — the
- * sparks row, exactly as on the recorder. Nothing else: no floor controls, no
- * renaming, no drafts, no Keep. Every control the four views do not all have
- * would be a difference between them that is not the view.
+ * One block's conversation: the task at the top with a timer and Finish, and
+ * the block's view of the conversation under it, exactly as on the recorder.
+ * Nothing else: no floor controls, no renaming, no drafts, no Keep, no
+ * sparks. Every control the views do not all have would be a difference
+ * between them that is not the view.
  *
  * Once, between 2:15 and 3:00, a game interrupts it (`block-moments.ts`):
  * the agent is paused, the game covers the screen, then they type where they
@@ -60,8 +57,6 @@ export function LiveTalk({
     recorder: rec,
     talkback: talk,
     conversation,
-    sparks,
-    poke,
     isRecording,
     isBusy,
     stopRecording,
@@ -233,13 +228,8 @@ export function LiveTalk({
               }
             : null
         }
-        sparks={rec.sparksArm ? sparks : null}
         live={isRecording}
         captureSessionId={sessionId}
-        connected={connected}
-        speaking={hearing}
-        canPull={isRecording && connected && !hearing}
-        onPull={poke}
       />
     </Interrupted>
   );
@@ -271,7 +261,7 @@ export function DemoTalk({
     pauseAgent: noop,
   });
   const interrupted = moments.phase !== "talk" && moments.phase !== "back";
-  const { store, ledger, pull } = useScriptedConversation({ steps: DEMO_STEPS, speed, paused: interrupted });
+  const { store } = useScriptedConversation({ steps: DEMO_STEPS, speed, paused: interrupted });
   const [now, setNow] = useState(started);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 500);
@@ -311,15 +301,9 @@ export function DemoTalk({
         onFinish={finish}
         store={store}
         status={null}
-        // As on a drive: the control has no sparks.
-        sparks={block.display === "transcript" ? null : ledger}
         live
         captureSessionId={null}
         fixedPoints={DEMO_POINTS}
-        connected
-        speaking={false}
-        canPull
-        onPull={pull}
       />
     </Interrupted>
   );
@@ -366,6 +350,11 @@ function Interrupted({
 
 function noop(): void {}
 
+/** Nothing to pull: the session has no sparks. */
+async function noPull(): Promise<PokeResult | null> {
+  return null;
+}
+
 function TalkScreen({
   eyebrow,
   block,
@@ -379,14 +368,9 @@ function TalkScreen({
   onFinish,
   store,
   status,
-  sparks,
   live,
   captureSessionId,
   fixedPoints,
-  connected,
-  speaking,
-  canPull,
-  onPull,
 }: {
   eyebrow: string;
   block: SessionBlockView;
@@ -403,14 +387,9 @@ function TalkScreen({
   onFinish: () => void;
   store: ConversationStore;
   status: FlowStatus | null;
-  sparks: SparkLedger | null;
   live: boolean;
   captureSessionId: string | null;
   fixedPoints?: ReadonlyMap<string, MirrorBullets>;
-  connected: boolean;
-  speaking: boolean;
-  canPull: boolean;
-  onPull: (spark: SparkRequest) => Promise<PokeResult | null>;
 }) {
   const canFinish = elapsedMs !== null && elapsedMs >= timings.talkMinMs && gameDone && !finishing;
   const hint =
@@ -471,20 +450,16 @@ function TalkScreen({
         display={display}
         store={store}
         status={status}
-        sparks={sparks}
+        sparks={null}
         live={live}
         captureSessionId={captureSessionId}
-        canPull={canPull}
-        onPull={onPull}
+        canPull={false}
+        onPull={noPull}
         fixedPoints={fixedPoints}
         placeholder={live ? "Talk whenever you are ready." : undefined}
         flow={{ drafts: [] }}
         className="min-h-0 flex-1"
       />
-
-      {display === "conversation" && sparks && (
-        <SparkChips store={store} ledger={sparks} connected={connected} speaking={speaking} onPull={onPull} />
-      )}
     </main>
   );
 }

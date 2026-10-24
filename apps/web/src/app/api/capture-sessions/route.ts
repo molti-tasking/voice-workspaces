@@ -132,18 +132,13 @@ export async function POST(req: Request) {
 
   // A block of the display study (`study_block`), when the session page armed
   // one for this account's next drive: the block's display is forced onto the
-  // drive, with the sparks in every view but the plain transcript, and the two
-  // are linked once the drive exists. Decided here, like the rest of the
-  // condition, so no browser can name its own view. Fails open to an ordinary
-  // drive, which the page notices (`linked`) and starts over.
+  // drive, with no sparks in any view — the views are all the study varies —
+  // and the two are linked once the drive exists. Decided here, like the rest
+  // of the condition, so no browser can name its own view. Fails open to an
+  // ordinary drive, which the page notices (`linked`) and starts over.
   const block = await armedBlockFor(userId).catch(() => null);
   if (block) {
-    condition = {
-      ...condition,
-      display: block.display,
-      sparks: block.display !== "transcript",
-      sparkSelection: "suggested",
-    };
+    condition = { ...condition, display: block.display, sparks: false, sparkSelection: "suggested" };
   }
 
   // `sparkSelection: "alternate"` becomes the day's mode, on the day the drive
