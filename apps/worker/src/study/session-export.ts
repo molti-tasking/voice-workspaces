@@ -16,8 +16,8 @@ import type { Row } from "./prolific-export";
  * The display study's data (`study_session`, `study_block`, `study_moment`),
  * as flat files keyed by the session's pseudonym (`ref`):
  *
- * - `sessions`: one row per session — its order, when it was done, and the
- *   ranking of the four views with the reasons given.
+ * - `sessions`: one row per session — its design, cell, view and task, when
+ *   it was done, and the last questions.
  * - `blocks`: one row per conversation — its view and task, how long it ran
  *   and how much each side said outside the interruption, the game, how long
  *   they took to pick the conversation up, the one-tap prompts, and what they
@@ -196,23 +196,19 @@ export async function buildSessionExport(options: { text?: boolean } = {}): Prom
   const sessions: Row[] = all.map(({ session, blocks: mine }) => {
     const { version, ...stored } = (session.final ?? {}) as Record<string, unknown>;
     const final = SessionFinal.safeParse(session.final ? stored : null);
-    const ranking = final.success ? final.data.ranking : [];
     return {
       ref: session.ref,
       source: session.source,
       design: session.design,
       order_index: session.orderIndex,
-      order: mine.map((b) => `${b.display}/${b.task}`).join(" "),
+      // The session's view and task; space-separated for session-1's four.
+      display: mine.map((b) => b.display).join(" "),
+      task: mine.map((b) => b.task).join(" "),
       created_at: iso(session.createdAt),
       consented_at: iso(session.consentedAt),
       completed_at: iso(session.completedAt),
       blocks_answered: mine.filter((b) => b.answeredAt).length,
       restarts: mine.reduce((n, b) => n + Math.max(0, b.attempts - 1), 0),
-      rank_1: ranking[0] ?? null,
-      rank_2: ranking[1] ?? null,
-      rank_3: ranking[2] ?? null,
-      rank_4: ranking[3] ?? null,
-      why_first: final.success ? (final.data.why ?? null) : null,
       more: final.success ? (final.data.more ?? null) : null,
       contact: final.success ? final.data.contact : null,
       version: typeof version === "string" ? version : null,

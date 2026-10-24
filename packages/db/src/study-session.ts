@@ -386,7 +386,7 @@ export async function saveBlockAnswers(
 
 export type FinalResult = "saved" | "no_session" | "not_done";
 
-/** The ranking, which completes the session. Only after all four blocks; the first one stands. */
+/** The last questions, which complete the session. Only once its conversation is answered; the first one stands. */
 export async function saveFinal(userId: string, final: SessionFinal, now = new Date()): Promise<FinalResult> {
   const state = await findSessionByUser(userId);
   if (!state?.session.consentedAt) return "no_session";

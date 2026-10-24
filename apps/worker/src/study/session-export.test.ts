@@ -295,7 +295,9 @@ describeIfDb("buildSessionExport", () => {
     expect(transcript.lines.filter((l) => l.in_pause).map((l) => l.text)).toEqual(["ugh I lost"]);
     expect(transcript.lines.find((l) => l.spark)?.spark).toBe("say_back");
 
-    expect(out.sessions.find((s) => s.ref === REF)).toMatchObject({ order_index: 0, blocks_answered: 1, rank_1: null });
+    const row = out.sessions.find((s) => s.ref === REF);
+    expect(row).toMatchObject({ design: "between", order_index: 0, display: "transcript", task: "trip", blocks_answered: 1 });
+    expect(row).not.toHaveProperty("rank_1");
   });
 
   it("leaves the transcripts out unless asked", async () => {

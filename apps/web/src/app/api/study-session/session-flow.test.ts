@@ -28,7 +28,6 @@ const { studySession, user } = await import("@voicemural/db/schema");
 const { createSession } = await import("@voicemural/db/study-session");
 const { isDatabaseReachable } = await import("@voicemural/db/testing");
 const { issueTicket } = await import("@voicemural/shared/realtime-ticket");
-const { CONVERSATION_DISPLAYS } = await import("@voicemural/shared");
 const { SESSION_OPENING_NUDGE, SESSION_SYSTEM_PROMPT, SPEECH_ONLY_CONTRACT, STUDY_SCREEN } = await import("@voicemural/talkback");
 const enroll = (await import("./enroll/route")).POST;
 const step = (await import("./route")).POST;
@@ -135,13 +134,14 @@ describeIfDb("the display study's session routes", () => {
       expect((await call(step, { step: "moment", position, moment: probe })).status).toBe(400);
 
       expect((await call(step, { step: "finished", position })).status).toBe(200);
-      expect((await call(step, { step: "final", final: { ranking: [...CONVERSATION_DISPLAYS], contact: false } })).status).toBe(409);
+      expect((await call(step, { step: "final", final: { contact: false } })).status).toBe(409);
       expect((await call(step, { step: "answers", position, answers: ANSWERS })).status).toBe(200);
     }
   });
 
-  it("is complete with the ranking, and a reload opens on the end", async () => {
-    const final = { ranking: [...CONVERSATION_DISPLAYS].reverse(), why: "The transcript let me reread.", contact: true };
+  it("is complete with the last questions, and a reload opens on the end", async () => {
+    expect((await call(step, { step: "final", final: { ranking: ["transcript"], contact: true } })).status).toBe(400);
+    const final = { more: "The game came at a bad moment.", contact: true };
     expect((await call(step, { step: "final", final })).status).toBe(200);
     const again = await call(enroll, { code, consent: true });
     expect(await again.json()).toMatchObject({ resume: { at: "done" } });
