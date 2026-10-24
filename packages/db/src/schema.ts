@@ -2260,15 +2260,19 @@ export const studyBlock = pgTable(
   ],
 );
 
-/** What a moment of a block's conversation is (`MOMENT_KINDS` in @voicemural/shared). */
+/**
+ * What a moment of a block's conversation is (`MOMENT_KINDS` in
+ * @voicemural/shared). `probe` is session-1's only, kept so the enum needs
+ * no migration; nothing writes it since.
+ */
 export const studyMomentKindEnum = pgEnum("study_moment_kind", ["esm", "game", "probe", "resume"]);
 
 /**
  * Something that happened during a block's conversation, on its drive's
  * clock (ms since `capture_session.started_at`): a one-tap prompt and its
- * answer, the interruption game, the "where were you?" typed after it, and
- * the resumption — from the moment the conversation came back to their first
- * words. `SessionMoment` in @voicemural/shared.
+ * answer, the interruption game, and the resumption — from the moment the
+ * game ended and the conversation came back to their first words.
+ * `SessionMoment` in @voicemural/shared.
  *
  * ONE ROW PER MOMENT AND DRIVE, the first one sent standing: a retry after a
  * dead zone must not record a prompt twice, and a restarted block's new drive
@@ -2291,7 +2295,7 @@ export const studyMoment = pgTable(
     kind: studyMomentKindEnum("kind").notNull(),
     /** Its place among the block's moments of this kind. */
     ordinal: integer("ordinal").notNull(),
-    /** What it asked or was: `esm_follow`, `tic_tac_toe`, `where_were_we`, `first_speech`. */
+    /** What it asked or was: `esm_follow`, `tic_tac_toe`, `first_speech` (session-1: `where_were_we`). */
     item: text("item").notNull(),
     shownOffsetMs: integer("shown_offset_ms").notNull(),
     /** Null: never answered — a prompt that expired, or no words before Finish. */

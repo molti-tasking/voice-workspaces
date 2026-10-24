@@ -34,7 +34,15 @@ const DRIVES = [
 ];
 const REF = "TST-SS-";
 const T0 = new Date("2026-10-21T10:00:00Z");
-const ANSWERS = { summary: "We chose the train to Aarhus; the hotel is still open.", follow: 5, effort: 3, glance: 4 };
+const ANSWERS = {
+  summary: "We chose the train to Aarhus; the hotel is still open.",
+  follow: 5,
+  effort: 3,
+  pickup: 4,
+  beforeGame: "Where to stay",
+  wayBack: "I read the last line.",
+  glance: 4,
+};
 const FINAL = { ranking: ["bubbles", "conversation", "track", "transcript"] as const, contact: false };
 
 const describeIfDb = (await isDatabaseReachable()) ? describe : describe.skip;
@@ -233,7 +241,15 @@ describeIfDb("the display study's session", () => {
 
     const [row] = await db().select().from(studyBlock).where(eq(studyBlock.captureSessionId, DRIVES[0]!));
     expect(row!.summary).toBe(ANSWERS.summary);
-    expect(row!.answers).toEqual({ follow: 5, effort: 3, glance: 4, version: SESSION_VERSION });
+    expect(row!.answers).toEqual({
+      follow: 5,
+      effort: 3,
+      pickup: 4,
+      beforeGame: "Where to stay",
+      wayBack: "I read the last line.",
+      glance: 4,
+      version: SESSION_VERSION,
+    });
   });
 
   it("is complete with the ranking, only after its conversation is answered", async () => {

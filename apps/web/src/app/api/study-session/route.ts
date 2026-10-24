@@ -20,8 +20,8 @@ export const dynamic = "force-dynamic";
  * - `arm`: the next drive is this block's (`/api/capture-sessions` claims it).
  * - `linked`: whether the drive that started is the block's, so the page
  *   never carries on with a conversation the server does not count.
- * - `moment`: a prompt, the game, the probe or the resumption, on the
- *   drive's clock. A duplicate is fine: the first one stands.
+ * - `moment`: a prompt, the game or the resumption, on the drive's clock. A
+ *   duplicate is fine: the first one stands.
  * - `finished`, `answers`, `final`: each first-one-stands.
  *
  * 409 with a reason when a step comes out of turn; the page treats that as

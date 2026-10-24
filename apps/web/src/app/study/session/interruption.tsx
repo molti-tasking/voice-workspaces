@@ -1,14 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ESM_EXPIRY_MS, ESM_ITEMS, PROBE_QUESTION, type EsmItem } from "@voicemural/shared";
-import { PrimaryButton, StudyFrame } from "../../p/ui";
+import { ESM_EXPIRY_MS, ESM_ITEMS, type EsmItem } from "@voicemural/shared";
 
 /**
- * The screens a block's conversation is interrupted by (`block-moments.ts`):
- * the one-tap prompt over its bottom edge, and — after the game — the
- * question typed with the conversation out of sight, then the screen that
- * hands it back.
+ * What a block's conversation is interrupted by, besides the game
+ * (`block-moments.ts`): the one-tap prompt over its bottom edge.
  */
 
 /**
@@ -56,43 +53,6 @@ export function EsmPrompt({ item, onAnswer }: { item: EsmItem; onAnswer: (value:
           }}
         />
       </div>
-    </div>
-  );
-}
-
-/** Right after the game, before the conversation is shown again: where were they? */
-export function Probe({ eyebrow, onDone }: { eyebrow: string; onDone: (text: string) => void }) {
-  const [text, setText] = useState("");
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-canvas">
-      <StudyFrame eyebrow={eyebrow} title="Where were you?">
-        <label className="block space-y-2">
-          <span className="block font-medium">{PROBE_QUESTION}</span>
-          <span className="block text-sm text-fg/60">A few words is enough. &ldquo;I don&apos;t remember&rdquo; is fine too.</span>
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            rows={3}
-            maxLength={2000}
-            className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-base leading-relaxed"
-          />
-        </label>
-        <PrimaryButton disabled={text.trim().length === 0} onClick={() => onDone(text.trim())}>
-          Continue
-        </PrimaryButton>
-      </StudyFrame>
-    </div>
-  );
-}
-
-/** The conversation handed back: from the tap on it, the wait for their first words is timed. */
-export function CarryOn({ eyebrow, onBack }: { eyebrow: string; onBack: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-canvas">
-      <StudyFrame eyebrow={eyebrow} title="Carry on where you left off">
-        <p>The assistant is listening again. Pick the conversation up wherever you like.</p>
-        <PrimaryButton onClick={onBack}>Back to the conversation</PrimaryButton>
-      </StudyFrame>
     </div>
   );
 }

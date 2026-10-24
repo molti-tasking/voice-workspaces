@@ -12,11 +12,13 @@ import {
 import type { GameStats } from "./tic-tac-toe";
 
 /**
- * Where a block's conversation is: talking; the game; "where were you?"
- * typed after it; the screen that hands the conversation back; and back in
- * it. Each step happens once, in that order.
+ * Where a block's conversation is: talking; the game; and back in it, from
+ * the moment the game ends. Each step happens once, in that order. Nothing
+ * comes between the game and the conversation — no question about where
+ * they were, no screen that tells them to carry on — because how they pick
+ * it up unaided is what the resumption measures.
  */
-export type BlockPhase = "talk" | "game" | "probe" | "carry_on" | "back";
+export type BlockPhase = "talk" | "game" | "back";
 
 export interface BlockMoments {
   phase: BlockPhase;
@@ -24,8 +26,6 @@ export interface BlockMoments {
   prompt: { slot: EsmSlot; shownMs: number } | null;
   answerPrompt: (value: number) => void;
   gameDone: (stats: GameStats) => void;
-  probeDone: (text: string) => void;
-  carryOn: () => void;
   /** Close what is still open, unanswered, before the conversation ends. */
   flush: () => void;
 }
@@ -36,9 +36,8 @@ const TICK_MS = 250;
 /**
  * Runs a block's moments against the drive's clock (`clock`: ms since the
  * drive started, null before it is known): the game when it is due, which
- * pauses the agent, then the probe and the way back, which resumes it; the
- * prompts in quiet moments; and the first words after the way back. Each is
- * handed to `record` once, as it closes.
+ * pauses the agent until it ends; the prompts in quiet moments; and the
+ * first words after the game. Each is handed to `record` once, as it closes.
  *
  * Quiet is both sides at once: `userSpeaking` and `agentSpeaking` both off,
  * timed from the last moment either was on.
@@ -78,7 +77,6 @@ export function useBlockMoments({
   const gameShown = useRef(0);
   /** No quiet moment came for the first prompt before the game did. */
   const missedBefore = useRef(false);
-  const probeShown = useRef(0);
   const awaitingWords = useRef<number | null>(null);
 
   const go = useCallback((next: BlockPhase) => {
@@ -203,38 +201,17 @@ export function useBlockMoments({
         text: null,
         meta: { ...stats, promptBeforeMissed: missedBefore.current },
       });
-      probeShown.current = at;
-      go("probe");
+      // Straight back: the agent listens again and their first words are
+      // timed from here.
+      latest.current.pauseAgent(false);
+      resumedAt.current = at;
+      awaitingWords.current = at;
+      // The way back is not a quiet stretch to fill with a prompt.
+      lastSound.current = at;
+      go("back");
     },
     [go],
   );
-
-  const probeDone = useCallback(
-    (text: string) => {
-      const at = latest.current.clock() ?? probeShown.current;
-      latest.current.record({
-        kind: "probe",
-        ordinal: 0,
-        item: "where_were_we",
-        shownOffsetMs: probeShown.current,
-        answeredOffsetMs: at,
-        value: null,
-        text,
-      });
-      go("carry_on");
-    },
-    [go],
-  );
-
-  const carryOn = useCallback(() => {
-    const at = latest.current.clock() ?? probeShown.current;
-    latest.current.pauseAgent(false);
-    resumedAt.current = at;
-    awaitingWords.current = at;
-    // The way back is not a quiet stretch to fill with a prompt.
-    lastSound.current = at;
-    go("back");
-  }, [go]);
 
   const flush = useCallback(() => {
     expirePrompt("ended");
@@ -252,5 +229,5 @@ export function useBlockMoments({
     }
   }, [expirePrompt]);
 
-  return { phase, prompt, answerPrompt, gameDone, probeDone, carryOn, flush };
+  return { phase, prompt, answerPrompt, gameDone, flush };
 }

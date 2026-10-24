@@ -13,7 +13,7 @@ import { AgentNameProvider } from "../../record/agent-name-context";
 import { ConversationDisplay as Display } from "../../record/conversation-display";
 import type { FlowStatus } from "../../record/conversation-flow";
 import { useBlockMoments, type BlockMoments } from "./block-moments";
-import { CarryOn, EsmPrompt, Probe } from "./interruption";
+import { EsmPrompt } from "./interruption";
 import { clock, spokenDuration } from "./session-copy";
 import type { SessionBlockView, SendStep } from "./session-flow";
 import { TicTacToe } from "./tic-tac-toe";
@@ -26,9 +26,9 @@ import { TicTacToe } from "./tic-tac-toe";
  * between them that is not the view.
  *
  * Once, between 2:15 and 3:00, a game interrupts it (`block-moments.ts`):
- * the agent is paused, the game covers the screen, then they type where they
- * were, and are handed the conversation back. One-tap prompts come in quiet
- * moments. Finish waits for the game.
+ * the agent is paused and the game covers the screen; when it ends, the
+ * conversation is back at once, with nothing in between. One-tap prompts
+ * come in quiet moments. Finish waits for the game.
  *
  * Live, it is the recorder the whole app uses (`useCapture`). The walkthrough
  * (`?demo=1`) plays the simulated conversation instead, with no microphone,
@@ -206,7 +206,7 @@ export function LiveTalk({
     <Interrupted eyebrow={eyebrow} timings={timings} moments={moments}>
       <TalkScreen
         gameDone={moments.phase === "back"}
-        hidden={moments.phase !== "talk" && moments.phase !== "back"}
+        hidden={moments.phase === "game"}
         eyebrow={eyebrow}
         block={block}
         display={display}
@@ -261,7 +261,7 @@ export function DemoTalk({
     record: noop,
     pauseAgent: noop,
   });
-  const interrupted = moments.phase !== "talk" && moments.phase !== "back";
+  const interrupted = moments.phase === "game";
   const { store } = useScriptedConversation({ steps: DEMO_STEPS, speed, paused: interrupted });
   const [now, setNow] = useState(started);
   useEffect(() => {
@@ -311,10 +311,9 @@ export function DemoTalk({
 }
 
 /**
- * The conversation with whatever interrupts it laid over it: the game, the
- * probe and the way back over the whole screen, the prompt over its bottom
- * edge. The conversation stays mounted underneath, so nothing it shows is
- * rebuilt when it comes back.
+ * The conversation with whatever interrupts it laid over it: the game over the
+ * whole screen, the prompt over its bottom edge. The conversation stays
+ * mounted underneath, so nothing it shows is rebuilt when it comes back.
  */
 function Interrupted({
   eyebrow,
@@ -340,13 +339,28 @@ function Interrupted({
           onDone={moments.gameDone}
         />
       )}
-      {moments.phase === "probe" && <Probe eyebrow={eyebrow} onDone={moments.probeDone} />}
-      {moments.phase === "carry_on" && <CarryOn eyebrow={eyebrow} onBack={moments.carryOn} />}
+      {moments.phase === "back" && <ReturnShield />}
       {moments.prompt && (
         <EsmPrompt key={moments.prompt.slot.ordinal} item={moments.prompt.slot.item} onAnswer={moments.answerPrompt} />
       )}
     </>
   );
+}
+
+/**
+ * For a moment after the game, taps land on nothing. A round cut off by the
+ * cap ends under a finger mid-move, and that tap would otherwise open
+ * whatever the view has where the board was. The same in every view.
+ */
+const RETURN_SHIELD_MS = 600;
+
+function ReturnShield() {
+  const [on, setOn] = useState(true);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setOn(false), RETURN_SHIELD_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return on ? <div aria-hidden className="fixed inset-0 z-50" /> : null;
 }
 
 function noop(): void {}

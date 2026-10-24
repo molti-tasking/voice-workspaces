@@ -243,10 +243,15 @@ export function esmDue(input: {
  * - `esm`: a one-tap prompt (`item` is its question; `value` 1-7, or null
  *   when it expired).
  * - `game`: the interruption, from the pause to the end of its last round.
- * - `probe`: "where were you?", typed straight after the game.
- * - `resume`: back in the conversation; answered at their first words.
+ * - `resume`: back in the conversation, the moment the game ends; answered
+ *   at their first words.
+ *
+ * Session-1 also had `probe`, "where were you?" typed between the two. It
+ * made them recall where they had got to before they picked the
+ * conversation up, which is the very thing the resumption measures; it is
+ * asked afterwards now (`GAME_QUESTIONS`).
  */
-export const MOMENT_KINDS = ["esm", "game", "probe", "resume"] as const;
+export const MOMENT_KINDS = ["esm", "game", "resume"] as const;
 export type MomentKind = (typeof MOMENT_KINDS)[number];
 
 const Offset = z.number().int().min(0).max(4 * 3_600_000);
@@ -265,8 +270,21 @@ export const SessionMoment = z.strictObject({
 });
 export type SessionMoment = z.infer<typeof SessionMoment>;
 
-/** What they type after the game, before they see the conversation again. */
-export const PROBE_QUESTION = "Just before the game, what were you talking about, and where had you got to?";
+/**
+ * About the game, asked after the conversation — after the summary, so they
+ * cannot cue it — and only of a conversation the game interrupted.
+ */
+export const GAME_QUESTIONS = {
+  beforeGame: {
+    question: "Just before the game, what were you talking about, and where had you got to?",
+    hint: "A few words is enough. “I don’t remember” is fine too.",
+  },
+  wayBack: {
+    question: "When the game ended, how did you find your way back into the conversation?",
+    hint: "A sentence or two.",
+  },
+} as const;
+export type GameQuestionKey = keyof typeof GAME_QUESTIONS;
 
 /** The secret in an invite link. Long enough not to be guessed. */
 export const SessionCode = z.string().regex(/^[A-Za-z0-9_-]{16,64}$/);
@@ -322,8 +340,12 @@ export const BlockAnswers = z.strictObject({
   summary: z.string().trim().min(SUMMARY_MIN_CHARS).max(SUMMARY_MAX_CHARS),
   follow: Likert,
   effort: Likert,
-  /** Absent for a conversation the game did not interrupt. */
+  /** Absent for a conversation the game did not interrupt, like the two below. */
   pickup: Likert.optional(),
+  /** Where they had got to before the game, recalled afterwards (`GAME_QUESTIONS`). */
+  beforeGame: z.string().trim().min(1).max(OPEN_MAX_CHARS).optional(),
+  /** How they found their way back in. */
+  wayBack: z.string().trim().min(1).max(OPEN_MAX_CHARS).optional(),
   glance: Likert,
   /** What helped, or got in the way. Optional. */
   helped: z.string().trim().max(OPEN_MAX_CHARS).optional(),

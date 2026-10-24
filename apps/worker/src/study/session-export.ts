@@ -19,29 +19,29 @@ import type { Row } from "./prolific-export";
  * - `sessions`: one row per session — its order, when it was done, and the
  *   ranking of the four views with the reasons given.
  * - `blocks`: one row per conversation — its view and task, how long it ran
- *   and how much each side said outside the interruption, the game, what
- *   they typed after it, how long they took to pick the conversation up, the
- *   one-tap prompts, and the summary and ratings after it.
+ *   and how much each side said outside the interruption, the game, how long
+ *   they took to pick the conversation up, the one-tap prompts, and what they
+ *   wrote and rated after it.
  * - `moments`: every moment as stored, with its latency.
  * - `transcripts` (only with `--text`): each block's lines, both sides, with
  *   the interruption and the spark-asked turns marked.
  *
- * TEXT IS INCLUDED — summaries, probes, reasons, and with `--text` the
- * transcripts: the session's consent says the researchers read them.
+ * TEXT IS INCLUDED — summaries, what they wrote about the game, reasons, and
+ * with `--text` the transcripts: the session's consent says the researchers
+ * read them.
  */
 
 /**
  * The interruption on the drive's clock: from the game taking the screen to
- * the conversation handed back. Anything said in it was not said to the
- * conversation — the agent was paused and not listening — so it counts for
- * neither side. Ends at the game's end when the way back was never reached.
+ * the conversation coming back, which is the game's end. Anything said in it
+ * was not said to the conversation — the agent was paused and not listening
+ * — so it counts for neither side.
  */
 export function pauseWindow(moments: readonly StudyMoment[]): { fromMs: number; toMs: number } | null {
   const game = moments.find((m) => m.kind === "game");
   if (!game) return null;
   const resume = moments.find((m) => m.kind === "resume");
-  const probe = moments.find((m) => m.kind === "probe");
-  const toMs = resume?.shownOffsetMs ?? probe?.answeredOffsetMs ?? game.answeredOffsetMs ?? game.shownOffsetMs;
+  const toMs = resume?.shownOffsetMs ?? game.answeredOffsetMs ?? game.shownOffsetMs;
   return { fromMs: game.shownOffsetMs, toMs };
 }
 
@@ -96,7 +96,6 @@ export function blockMeasures(input: BlockInput): Row {
 
   const game = moments.find((m) => m.kind === "game");
   const gameMeta = (game?.meta ?? {}) as Record<string, unknown>;
-  const probe = moments.find((m) => m.kind === "probe");
   const resume = moments.find((m) => m.kind === "resume");
   const firstWords = resume ? lines.find((l) => l.who === "user" && l.startMs >= resume.shownOffsetMs) : undefined;
   const before = game ? subjectAt(visits, game.shownOffsetMs - 1) : null;
@@ -132,9 +131,6 @@ export function blockMeasures(input: BlockInput): Row {
     game_drawn: typeof gameMeta.drawn === "number" ? gameMeta.drawn : null,
     game_moves: typeof gameMeta.moves === "number" ? gameMeta.moves : null,
     game_cut_off: typeof gameMeta.cutOff === "boolean" ? gameMeta.cutOff : null,
-    probe_seconds:
-      probe && probe.answeredOffsetMs !== null ? seconds(probe.answeredOffsetMs - probe.shownOffsetMs) : null,
-    probe: probe?.text ?? null,
     resume_first_speech_ms:
       resume && resume.answeredOffsetMs !== null ? resume.answeredOffsetMs - resume.shownOffsetMs : null,
     resume_first_utterance_ms: resume && firstWords ? firstWords.startMs - resume.shownOffsetMs : null,
@@ -241,6 +237,9 @@ export async function buildSessionExport(options: { text?: boolean } = {}): Prom
       follow: (answers.follow as number | undefined) ?? null,
       effort: (answers.effort as number | undefined) ?? null,
       pickup: (answers.pickup as number | undefined) ?? null,
+      // Their own account of the game, for reading; the judge never sees it.
+      before_game: (answers.beforeGame as string | undefined) ?? null,
+      way_back: (answers.wayBack as string | undefined) ?? null,
       glance: (answers.glance as number | undefined) ?? null,
       helped: (answers.helped as string | undefined) ?? null,
       answered_at: iso(block.answeredAt),
