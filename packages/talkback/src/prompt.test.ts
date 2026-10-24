@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { capabilitiesSection } from "./capabilities";
 import { PROACTIVITY_STANZAS, PROFILE } from "./profile";
@@ -20,6 +21,7 @@ import {
   READING_SECTION,
   SPARK_SECTION,
   SPARKS_NONE_ON_OFFER,
+  SPEECH_ONLY_CONTRACT,
   SEARCH_WAIT_PHRASES,
   SILENCE_NUDGE,
   SILENCE_TOKEN,
@@ -40,6 +42,21 @@ import {
 import { STUDY_SYSTEM_PROMPT } from "./study-agent";
 
 describe("composeSystemPrompt", () => {
+  it("leaves the field agent's contract byte for byte as it was before the speech-only one split from it", () => {
+    expect(createHash("sha256").update(OUTPUT_CONTRACT).digest("hex")).toBe(
+      "8216cd5e9352ce0f88a70b561b6c6e5661bf9895354843974db51fa8935f09ee",
+    );
+  });
+
+  it("ends with the speech-only contract when asked, with nothing about drafts", () => {
+    const { prompt } = composeSystemPrompt({ contract: SPEECH_ONLY_CONTRACT });
+    expect(prompt.endsWith(SPEECH_ONLY_CONTRACT)).toBe(true);
+    expect(prompt).not.toContain(OUTPUT_CONTRACT);
+    expect(SPEECH_ONLY_CONTRACT).toContain(`reply with exactly: ${SILENCE_TOKEN}`);
+    expect(SPEECH_ONLY_CONTRACT).not.toMatch(/draft|WHEN THEY ASK FOR SOMETHING TO KEEP/i);
+    expect(SPEECH_ONLY_CONTRACT).toMatch(/this section wins\.$/);
+  });
+
   it("puts the output contract last, after the composed material", () => {
     const { prompt } = composeSystemPrompt();
     expect(prompt.endsWith(OUTPUT_CONTRACT)).toBe(true);
@@ -182,6 +199,12 @@ describe("the proactive engine's instructions, which bot.py mirrors", () => {
     // ceiling, not the floor.
     expect(OPENING_NUDGE).toMatch(/one short sentence/);
     expect(OPENING_NUDGE).not.toContain("{secs}");
+  });
+
+  it("keeps the field agent's opening word for word, as bot.py has it", () => {
+    expect(OPENING_NUDGE).toBe(
+      "(The drive is just starting and they have not spoken yet. Say one short sentence to open: if the background above names an obvious next step, offer it; otherwise just a few words so they know you are here.)",
+    );
   });
 
   it("substitutes the silence length and nothing else", () => {
