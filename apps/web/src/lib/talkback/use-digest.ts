@@ -26,6 +26,9 @@ import { lastSeq, turnsInOrder } from "./cursor";
  */
 
 export const DIGEST_SETTLE_MS = 2500;
+/** The newest lines sent, each cut to this length: the model reads the last 80 anyway. */
+const MAX_LINES = 200;
+const MAX_LINE_CHARS = 1500;
 
 export interface DigestState {
   digest: ConversationDigest;
@@ -49,7 +52,8 @@ export function digestInput(conversation: Conversation): {
   );
   const lines = turnsInOrder(conversation)
     .filter((t) => t.text.trim().length > 0)
-    .map((t) => ({ who: t.who, text: t.text, ordinal: ordinalOf.get(t.seq) ?? null }));
+    .slice(-MAX_LINES)
+    .map((t) => ({ who: t.who, text: t.text.slice(0, MAX_LINE_CHARS), ordinal: ordinalOf.get(t.seq) ?? null }));
   const signature = [
     topics.map((t) => `${t.ordinal}:${t.title}`).join("|"),
     turnsInOrder(conversation)
@@ -78,6 +82,8 @@ export function useDigest(
   const input = useMemo(() => digestInput(conversation), [conversation]);
   const [written, setWritten] = useState<ReadonlyMap<string, Written>>(() => new Map());
   const [writing, setWriting] = useState<string | null>(null);
+  /** Points whose digest could not be written: not shown as on its way. */
+  const [failed, setFailed] = useState<ReadonlySet<string>>(() => new Set());
   /** Signatures already asked for, so each is asked once. */
   const asked = useRef(new Set<string>());
 
@@ -85,6 +91,11 @@ export function useDigest(
     if (fixed || !captureSessionId || input.lines.length === 0) return;
     if (asked.current.has(input.signature)) return;
     let cancelled = false;
+    // Not written: asked again the next time this point is reached.
+    const fail = () => {
+      asked.current.delete(input.signature);
+      setFailed((prev) => new Set(prev).add(input.signature));
+    };
     const timer = window.setTimeout(() => {
       asked.current.add(input.signature);
       setWriting(input.signature);
@@ -97,10 +108,9 @@ export function useDigest(
         .then((body) => {
           const digest = body?.digest;
           if (digest) setWritten((prev) => new Map(prev).set(input.signature, { upTo: input.upTo, digest }));
-          // Not written: asked again the next time this point is reached.
-          else asked.current.delete(input.signature);
+          else fail();
         })
-        .catch(() => asked.current.delete(input.signature))
+        .catch(fail)
         .finally(() => {
           if (!cancelled) setWriting((was) => (was === input.signature ? null : was));
         });
@@ -122,7 +132,9 @@ export function useDigest(
     // Waiting to settle, or being written: either way, this point's digest is on its way.
     return {
       digest: best?.digest ?? EMPTY_DIGEST,
-      pending: input.lines.length > 0 && (writing === input.signature || captureSessionId !== null),
+      pending:
+        input.lines.length > 0 &&
+        (writing === input.signature || (captureSessionId !== null && !failed.has(input.signature))),
     };
-  }, [fixed, conversation, written, writing, input, captureSessionId]);
+  }, [fixed, conversation, written, writing, failed, input, captureSessionId]);
 }

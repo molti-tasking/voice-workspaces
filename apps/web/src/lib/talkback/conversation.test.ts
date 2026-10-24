@@ -199,7 +199,7 @@ describe("keeping a subject", () => {
 
   it("files a keep on the subject by its ordinal, with how and when it was made", () => {
     const state = applyMessage(twoSubjects(), keep(1, true, "voice"), 1_000);
-    expect(state.sections.find((s) => s.ordinal === 1)?.kept).toEqual({ via: "voice", at: 1_000 });
+    expect(state.sections.find((s) => s.ordinal === 1)?.kept).toEqual({ via: "voice", at: 1_000, after: 1 });
     expect(state.sections.find((s) => s.ordinal === 2)?.kept).toBeUndefined();
   });
 

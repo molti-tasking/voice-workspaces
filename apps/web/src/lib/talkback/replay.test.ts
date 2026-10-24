@@ -112,6 +112,18 @@ describe("the cursor", () => {
     expect(atCursor(live, 0).sections[0]?.settled).toBeUndefined();
   });
 
+  it("does not show a subject as kept before it was", () => {
+    let live: Conversation = EMPTY_CONVERSATION;
+    for (const message of [
+      { type: "title", title: "Where", ordinal: 1 },
+      { type: "user", id: "a", text: "Aarhus or Skagen?" },
+      { type: "user", id: "b", text: "Keep this one." },
+      { type: "keep", ordinal: 1, kept: true, via: "voice" },
+    ] as const) live = applyMessage(live, message, 0);
+    expect(atCursor(live, 1).sections[0]?.kept?.via).toBe("voice");
+    expect(atCursor(live, 0).sections[0]?.kept).toBeUndefined();
+  });
+
   it("labels a turn by its subject and its time", () => {
     expect(cursorLabel(conversation, 3)).toEqual({ title: "Destinations", at: 6500 });
   });

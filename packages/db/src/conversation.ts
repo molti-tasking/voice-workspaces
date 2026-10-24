@@ -27,8 +27,17 @@ export interface ConversationDrive {
 /** At most this many drives in one chain: a guard against a cycle, not a limit anyone reaches. */
 const MAX_CHAIN = 50;
 
-/** The ids of the chain `captureSessionId` is part of, first drive first. Empty when it is not theirs. */
-export async function conversationChain(userId: string, captureSessionId: string): Promise<string[]> {
+/**
+ * The ids of the chain `captureSessionId` is part of, first drive first.
+ * Empty when it is not theirs. `forward: false` stops at `captureSessionId`
+ * itself: the conversation as it stood when that drive was the latest — what
+ * a drive that continues it must be told, without its own lines.
+ */
+export async function conversationChain(
+  userId: string,
+  captureSessionId: string,
+  { forward = true }: { forward?: boolean } = {},
+): Promise<string[]> {
   const db = getDb();
   const own = async (id: string) =>
     (
@@ -53,7 +62,7 @@ export async function conversationChain(userId: string, captureSessionId: string
   // On to the latest: of two continuations of one drive, the later started.
   const chain = [...back];
   let last = chain.at(-1)!;
-  while (chain.length < MAX_CHAIN) {
+  while (forward && chain.length < MAX_CHAIN) {
     const [next] = await db
       .select({ id: captureSession.id })
       .from(captureSession)
@@ -67,9 +76,16 @@ export async function conversationChain(userId: string, captureSessionId: string
   return chain;
 }
 
-/** The whole conversation `captureSessionId` belongs to, drive by drive. Null when it is not theirs. */
-export async function loadConversation(userId: string, captureSessionId: string): Promise<ConversationDrive[] | null> {
-  const ids = await conversationChain(userId, captureSessionId);
+/**
+ * The whole conversation `captureSessionId` belongs to, drive by drive. Null
+ * when it is not theirs. `forward: false`: only up to that drive.
+ */
+export async function loadConversation(
+  userId: string,
+  captureSessionId: string,
+  options: { forward?: boolean } = {},
+): Promise<ConversationDrive[] | null> {
+  const ids = await conversationChain(userId, captureSessionId, options);
   if (ids.length === 0) return null;
   const db = getDb();
   const [meta, signals] = await Promise.all([

@@ -393,21 +393,41 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     void start(voiceId, sttLanguage, conditionOverride);
   }, [start, voiceId, sttLanguage, conditionOverride]);
 
+  // One Continue at a time: the fetch below comes before the recorder is
+  // busy, and a second tap in that gap would start a second drive.
+  const continuing = useRef(false);
   const continueRecording = useCallback(
     (from: string) => {
+      if (continuing.current) return;
+      continuing.current = true;
       void (async () => {
-        // What was said, to put back on screen. Fails open: the drive still
-        // continues the conversation (the agent is told on the server), it
-        // just starts with an empty screen.
-        const drives = await fetch(`/api/conversations/${from}`)
-          .then((res) => (res.ok ? (res.json() as Promise<{ drives: DriveRecord[] }>) : null))
-          .then((body) => body?.drives ?? null)
-          .catch(() => null);
-        if (drives) setSeed(seedMessages(replayConversation(drives)));
-        await start(voiceId, sttLanguage, conditionOverride, from);
+        try {
+          // The conversation just stopped is still on screen, complete: the
+          // stored one may still be missing chunks that are uploading.
+          const onScreen = from === conversationId ? conversation.getSnapshot() : null;
+          let messages: ConversationMessage[] | null = null;
+          if (onScreen && onScreen.sections.length > 0) messages = seedMessages(onScreen);
+          else {
+            // What was said, to put back on screen. Fails open: the drive
+            // still continues the conversation (the agent is told on the
+            // server), it just starts with an empty screen.
+            const drives = await fetch(`/api/conversations/${from}`)
+              .then((res) => (res.ok ? (res.json() as Promise<{ drives: DriveRecord[] }>) : null))
+              .then((body) => body?.drives ?? null)
+              .catch(() => null);
+            if (drives) messages = seedMessages(replayConversation(drives));
+          }
+          if (messages) setSeed(messages);
+          const started = await start(voiceId, sttLanguage, conditionOverride, from);
+          // No drive started — the microphone refused, say: the seed must not
+          // wait for the next, unrelated one.
+          if (!started) setSeed(null);
+        } finally {
+          continuing.current = false;
+        }
       })();
     },
-    [start, voiceId, sttLanguage, conditionOverride],
+    [start, voiceId, sttLanguage, conditionOverride, conversationId, conversation],
   );
 
   // What the recorder worked out about each subject, kept at Stop — with the
