@@ -12,6 +12,7 @@ import { currentUser } from "@/lib/session";
 import { draftMajor } from "@/lib/talkback/conversation";
 import type { DriveRecord } from "@/lib/talkback/replay";
 import { AutoRefresh } from "./auto-refresh";
+import { CopyDebug } from "./copy-debug";
 import { PastConversation } from "./past-conversation";
 import { SessionDrafts } from "./session-drafts";
 
@@ -102,6 +103,9 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
           {last.endedAt === null && " · still open"}
           {untranscribed.length > 0 && " · still transcribing"}
         </p>
+        <div className="mt-2">
+          <CopyDebug captureSessionId={last.id} />
+        </div>
       </header>
 
       <PastConversation
