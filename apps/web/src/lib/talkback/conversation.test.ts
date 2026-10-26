@@ -5,6 +5,7 @@ import {
   createConversationStore,
   currentTitle,
   draftMajor,
+  linesForReconnect,
   parseServerMessage,
   timeline,
   titlesForReconnect,
@@ -105,6 +106,24 @@ describe("the conversation, by subject", () => {
     expect(titlesForReconnect(state)).toEqual([
       { title: "B", ordinal: 2 },
       { title: "A", ordinal: 1 },
+    ]);
+  });
+
+  it("hands a reconnecting agent this drive's lines in order, not those of the one it continues", () => {
+    const state = fold(
+      user("past:0", "last time"),
+      title("A"),
+      user("c-1", "a"),
+      title("B"),
+      agent("c-2", "b"),
+      user("c-3", " "),
+      title("A"),
+      user("c-4", "back to a"),
+    );
+    expect(linesForReconnect(state)).toEqual([
+      { id: "c-1", who: "user", text: "a" },
+      { id: "c-2", who: "agent", text: "b" },
+      { id: "c-4", who: "user", text: "back to a" },
     ]);
   });
 });

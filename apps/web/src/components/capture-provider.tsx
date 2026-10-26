@@ -30,6 +30,7 @@ import {
   createConversationStore,
   currentTitle,
   draftMajor,
+  linesForReconnect,
   titlesForReconnect,
   type ConversationMessage,
   type ConversationStore,
@@ -252,6 +253,7 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     paused: agentPaused,
     onMessage: conversation.dispatch,
     titles: () => titlesForReconnect(conversation.getSnapshot()),
+    history: () => linesForReconnect(conversation.getSnapshot()),
   });
 
   // THE SPARKS ON OFFER, worked out here rather than on `/record`: the
