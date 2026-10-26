@@ -3,10 +3,12 @@ import {
   agentDecisionOutcomeEnum,
   agentDecisionTriggerEnum,
   agentTurn,
+  eq,
   floorEvent,
   floorEventKindEnum,
   getDb,
   sparkKindEnum,
+  sql,
 } from "@voicemural/db";
 import { log } from "@voicemural/telemetry";
 
@@ -216,4 +218,32 @@ export async function recordFloorEvent(record: FloorEventRecord): Promise<void> 
       err: err instanceof Error ? err.message : String(err),
     });
   }
+}
+
+/**
+ * Where a connection's three counters resume on this drive: turns, decisions,
+ * floor changes.
+ *
+ * A reconnect mid-drive is a new connection with the same drive, and a counter
+ * restarting at 0 collides with the rows already there — for turns, whose
+ * `(capture_session_id, seq)` is unique, every later turn becomes a silent
+ * no-op (see `nextDraftSeq` for the same story with drafts). Fails open to 0,
+ * which is where a counter started before this existed.
+ */
+export async function nextRecordSeqs(
+  captureSessionId: string,
+): Promise<{ turn: number; decision: number; floor: number }> {
+  const next = async (table: typeof agentTurn | typeof agentDecision | typeof floorEvent) => {
+    const [row] = await getDb()
+      .select({ seq: sql<number | null>`max(${table.seq})` })
+      .from(table)
+      .where(eq(table.captureSessionId, captureSessionId));
+    return row?.seq === null || row?.seq === undefined ? 0 : Number(row.seq) + 1;
+  };
+  const [turn, decision, floor] = await Promise.all([
+    next(agentTurn).catch(() => 0),
+    next(agentDecision).catch(() => 0),
+    next(floorEvent).catch(() => 0),
+  ]);
+  return { turn, decision, floor };
 }
