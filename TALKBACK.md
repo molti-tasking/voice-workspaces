@@ -43,6 +43,61 @@ Three corollaries that are easy to violate:
 
 ---
 
+## Speech to speech (26 Oct 2026)
+
+**Two engines now, one hook.** `NEXT_PUBLIC_VOICE_ENGINE=realtime` (the
+default) runs the conversation on a speech-to-speech model the browser talks
+to directly; `pipecat` runs everything below this section, unchanged, and is
+how to roll back. `use-talkback.ts` picks one at build time, and both give the
+screens the same state, the same messages and the same rows.
+
+Why: the display study varies how the conversation is SHOWN, so the voice is
+equipment, and equipment should be the off-the-shelf thing people actually
+talk to, not a pipeline of our own with its own habits. Measured on the
+display study's pilot blocks (23 Oct), a third of Pipecat turns waited out the
+3 s `USER_TURN_STOP_TIMEOUT_SECS` fallback; Pipecat's own overhead was ~0.2 s.
+
+| | |
+|---|---|
+| `/api/realtime/call` | Composes the agent for the drive, mints a one-session secret with LiteLLM (`/realtime/client_secrets`), returns it with the drive's ticket and each record counter resumed |
+| `use-realtime.ts` | Offers the RECORDER'S OWN TRACK to the proxy's `/realtime/calls` over WebRTC; audio then flows phone ↔ provider, never via us. No container, no coturn |
+| `lib/talkback/realtime/events.ts` | Provider events → both sides' turns for the views, and one record per agent turn |
+| `lib/talkback/realtime/titler.ts` | `TopicTitle`'s rules, in the browser; its two calls go to `/api/realtime/topic` |
+| `lib/talkback/realtime/records.ts` | `agent_turn`, `agent_decision`, `floor_event`, title and subject visits, through the existing routes and ticket |
+| `packages/talkback/src/realtime.ts` | The prompts: `REALTIME_SESSION_PROMPT` is the session agent with exactly the three sentinel/transcript passages swapped, and throws if one is gone |
+
+- **Only OpenAI's realtime models work through the proxy** (`MODEL_REALTIME`,
+  default `openai/gpt-realtime-2.1`). The proxy's WebRTC routes forward to
+  OpenAI and Azure only; Gemini Live there is WebSocket-only, which a browser
+  cannot authenticate to; `openai/gpt-live-1` is refused in realtime mode (it
+  lives on OpenAI's separate `/v1/live` endpoint). Grok Voice, top of the
+  Artificial Analysis index in Oct 2026, is not on the proxy.
+- **No `<silence>`.** The model answers in audio, so the sentinel would be read
+  out. Whether a pause ends their turn is the provider's semantic turn
+  detection (`REALTIME_EAGERNESS`, default `auto`); the prompt only says how
+  little to say mid-thought.
+- **Nothing per turn.** No recall, board, drafts, search or sparks-asked-aloud:
+  what the agent knows (local time at the start, the study's screen line, a
+  continued conversation, the drive's language) is in the instructions, fixed
+  for the call. The Prolific study's co-written plan needs drafts, so it needs
+  Pipecat.
+- **Lock and pause are the session's own switch** (`create_response: false`);
+  pause also takes the track off the sender — not `enabled = false`, which
+  would silence the ledger. A poke is a system note plus `response.create`.
+- **Their transcript often lands after the answer has begun.** The store
+  numbers turns by first sight, so agent lines are held until their turn is on
+  screen (at most `HOLD_MS`).
+- **One agent turn per response.** The model often says a lead-in first
+  ("Nice plan, let me think…") as an item of its own, `phase: commentary`.
+- **`total_latency_ms` means something narrower here**: from the provider
+  ending their turn to the first audio (0.7–1.3 s on the 26 Oct test drives).
+  The provider's own wait for the end of their turn is not in it; end of
+  speech to first sound measured 1.6–3.8 s on synthetic speech, mostly that
+  wait. `config_version = realtime-1` tells the engines' rows apart.
+- **Where the audio goes changes.** Participants' voice goes to OpenAI, not
+  Deepgram/ElevenLabs; the display study's consent text says so per engine.
+  The ledger is still Whisper at AU.
+
 ## Architecture
 
 | | |
