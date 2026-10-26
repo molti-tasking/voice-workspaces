@@ -5,3 +5,4 @@ export * from "./chat";
 export * from "./embed";
 export * from "./transcript-repair";
 export * from "./health";
+export * from "./realtime";

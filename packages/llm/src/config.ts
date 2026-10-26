@@ -25,7 +25,8 @@ export type ModelRole =
   | "converse"
   | "summarise"
   | "embed"
-  | "judge";
+  | "judge"
+  | "realtime";
 
 const ROLE_ENV: Record<ModelRole, string> = {
   transcribe: "MODEL_TRANSCRIBE",
@@ -36,6 +37,7 @@ const ROLE_ENV: Record<ModelRole, string> = {
   summarise: "MODEL_SUMMARISE",
   embed: "MODEL_EMBED",
   judge: "MODEL_JUDGE",
+  realtime: "MODEL_REALTIME",
 };
 
 /**
@@ -71,6 +73,11 @@ const ROLE_ENV: Record<ModelRole, string> = {
  * hosted at the university, which is what the session's consent names for
  * reading their words; a judge on any other host is a choice to make on
  * purpose, by setting MODEL_JUDGE.
+ *
+ * `realtime` is the speech-to-speech model the browser talks to (realtime.ts
+ * here, `use-realtime.ts` in the web app). No fallback: no other role names a
+ * model that can listen and speak, and a chat model in its place would be
+ * refused by the proxy at the first call.
  */
 const ROLE_FALLBACK: Partial<Record<ModelRole, ModelRole>> = {
   transcribe_live: "transcribe",
