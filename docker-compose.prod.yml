@@ -51,6 +51,9 @@ services:
         - BETTER_AUTH_URL=${BETTER_AUTH_URL}
         # Decides whether the conversational path is built into the bundle at all.
         - NEXT_PUBLIC_TALKBACK_ENABLED=${TALKBACK_ENABLED:-false}
+        # Which engine runs it: `realtime` (a speech-to-speech model through
+        # LiteLLM, no container) or `pipecat` (the container below, to roll back).
+        - NEXT_PUBLIC_VOICE_ENGINE=${NEXT_PUBLIC_VOICE_ENGINE:-realtime}
         - NEXT_PUBLIC_PIPECAT_URL=${NEXT_PUBLIC_PIPECAT_URL:-}
         # The BROWSER's STUN. Without it the browser offers only LAN
         # candidates and ICE never completes against a remote container.
@@ -81,6 +84,15 @@ services:
       - MODEL_TRANSCRIBE=${MODEL_TRANSCRIBE}
       - MODEL_FAST=${MODEL_FAST}
       - MODEL_REASONING=${MODEL_REASONING}
+      # The speech-to-speech engine (NEXT_PUBLIC_VOICE_ENGINE=realtime): the
+      # model the browser talks to, minted per call by /api/realtime/call, and
+      # the model that names its topics (/api/realtime/topic), which falls back
+      # from MODEL_SUMMARISE to MODEL_CONVERSE as it did in the container.
+      - MODEL_REALTIME=${MODEL_REALTIME:-}
+      - REALTIME_TRANSCRIBE_MODEL=${REALTIME_TRANSCRIBE_MODEL:-}
+      - REALTIME_EAGERNESS=${REALTIME_EAGERNESS:-}
+      - MODEL_CONVERSE=${MODEL_CONVERSE}
+      - MODEL_SUMMARISE=${MODEL_SUMMARISE:-}
       # The memory index. Optional — unset keeps recall lexical. Web embeds the
       # query per turn; the worker builds the index. See TALKBACK.md, "Memory".
       - MODEL_EMBED=${MODEL_EMBED:-}
