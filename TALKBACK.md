@@ -94,6 +94,16 @@ display study's pilot blocks (23 Oct), a third of Pipecat turns waited out the
   The provider's own wait for the end of their turn is not in it; end of
   speech to first sound measured 1.6–3.8 s on synthetic speech, mostly that
   wait. `config_version = realtime-1` tells the engines' rows apart.
+- **Live transcription on auto-detect can translate.** On 26 Oct a drive on
+  Auto showed accented English as Finnish and German (`gpt-4o-transcribe`
+  guessed the language from a few seconds and wrote a translation), while the
+  ledger had English and the agent, which hears the audio, answered in
+  English. The screen and the topic titles are built from that transcript.
+  Pin the language on the recorder; the display study pins English.
+- **To debug a conversation**, "Copy for debugging" on its page copies the
+  drive's settings, topics and a timeline of both transcripts, the agent's
+  turns with the live transcript each answered, cut-off attempts and pokes
+  (`/api/capture-sessions/[id]/debug`). Paste it into the bug report.
 - **Where the audio goes changes.** Participants' voice goes to OpenAI, not
   Deepgram/ElevenLabs; the display study's consent text says so per engine.
   The ledger is still Whisper at AU.
