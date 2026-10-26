@@ -366,6 +366,12 @@ export function useRealtimeTalkback(options: TalkbackOptions): Talkback {
         }
       };
 
+      // Stopped while this was being set up: close it rather than leave a
+      // session open with the provider, which bills until it times out.
+      if (disposed) {
+        close(c);
+        return;
+      }
       current = c;
       live.current = c;
       connections += 1;
