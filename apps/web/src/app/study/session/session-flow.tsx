@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { SessionDisplay, SessionResume, SessionStep, SessionTimings } from "@voicemural/shared";
 import { useCapture } from "@/components/capture-provider";
 import { signIn } from "@/lib/auth-client";
+import { VOICE_ENGINE } from "@/lib/talkback/use-talkback";
 import { MicCheck } from "../../p/mic-check";
 import { ErrorLine, PrimaryButton, StudyFrame } from "../../p/ui";
 import { DemoTalk, LiveTalk } from "./block-talk";
@@ -269,8 +270,10 @@ function Consent({
             assistant&apos;s replies, what you write afterwards and how you used the screen are stored for research.
           </li>
           <li>
-            To run the conversation, your speech is transcribed by Deepgram, the assistant&apos;s replies are written by
-            an AI model, and its voice is made by ElevenLabs. Afterwards, the research team and an AI model hosted at
+            {VOICE_ENGINE === "realtime"
+              ? "To run the conversation, your voice goes to OpenAI’s speech model, which hears what you say, transcribes it and speaks the assistant’s replies."
+              : "To run the conversation, your speech is transcribed by Deepgram, the assistant’s replies are written by an AI model, and its voice is made by ElevenLabs."}{" "}
+            Afterwards, the research team and an AI model hosted at
             Aarhus University read the transcript and what you wrote, to study how a spoken conversation can be shown
             on a phone.
           </li>
