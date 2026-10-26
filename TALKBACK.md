@@ -697,9 +697,10 @@ the recorder sends a topic's title and lines once they have stood still for
 had. Nothing is stored. No container change: topics, sides and sparks are all
 worked out in the browser from what it already receives.
 
-Sparks are on by default since this change (`StudyCondition.sparks`), so
-every drive is the same app; a condition with `sparks: false` still turns
-them off.
+Sparks were on by default from this change (`StudyCondition.sparks`) until
+26 Oct 2026, when they went back to off: the research is now how the
+conversation is shown, and sparks are not part of it. A condition with
+`sparks: true` turns them on.
 
 **When the AI is down.** `/api/health/ai` asks the LiteLLM proxy for its
 model list with the key, without following redirects (`checkLiteLLM` in
