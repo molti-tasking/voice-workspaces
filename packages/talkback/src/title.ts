@@ -80,3 +80,62 @@ You are given the subject's title and what was said about it. Lines starting "(y
 Answer SETTLED if the PERSON stated a decision, a conclusion or a concrete next step on this subject in their own words. A proposal from the assistant that they did not take up in their own words is not settled. Answer OPEN otherwise, and whenever you are unsure.
 
 This is automatic transcription of unrehearsed speech, in any language. Return exactly one word: SETTLED or OPEN.`;
+
+/*
+ * The calls themselves, for an engine that has no container to make them
+ * (`/api/realtime/topic`, for `use-realtime.ts`). Ported from `bot.py` —
+ * `TopicTitle._name_once`, `_judge`, `clean_title`, `parse_settled` — with
+ * the same messages, so a title is asked for the same way on either engine.
+ */
+
+/** The naming call's messages: the current title, the earlier ones, and the recent speech. */
+export function titleMessages(
+  current: string | null,
+  earlier: readonly string[],
+  recent: string,
+): { role: "system" | "user"; content: string }[] {
+  const earlierLine = earlier.length > 0 ? `Earlier titles: ${earlier.join("; ")}\n\n` : "";
+  return [
+    { role: "system", content: TITLE_PROMPT },
+    { role: "user", content: `Current title: ${current ?? "(none yet)"}\n\n${earlierLine}Recent speech:\n${recent}` },
+  ];
+}
+
+/** The settled check's messages: one subject, and what was said while it was current. */
+export function settledMessages(title: string, said: string): { role: "system" | "user"; content: string }[] {
+  return [
+    { role: "system", content: SETTLED_PROMPT },
+    { role: "user", content: `Subject: ${title}\n\nWhat was said:\n${said}` },
+  ];
+}
+
+const TRAILING_MARKS = /[\s.,;:!?\-–—]+$/u;
+
+/**
+ * Make a model's answer fit on a board, or decide it is not a change: null
+ * for NONE, for nothing, and for the current title given back — which is the
+ * common case, and the one the prompt asks for. Four words and 32 characters,
+ * cut at a word.
+ */
+export function cleanTitle(raw: string | null | undefined, previous: string | null): string | null {
+  if (!raw) return null;
+  let text = raw.trim().replace(/[*_`#]+/g, " ");
+  text = text.trim().replace(/^["'“”‘’]+|["'“”‘’]+$/gu, "").trim();
+  text = text.replace(TRAILING_MARKS, "").replace(/\s+/g, " ").trim();
+  if (!text || text.toUpperCase() === "NONE") return null;
+  const words = text.split(" ").slice(0, 4);
+  while (words.length > 1 && words.join(" ").length > 32) words.pop();
+  text = words.join(" ").slice(0, 32).trim().replace(TRAILING_MARKS, "");
+  if (!text) return null;
+  if (previous !== null && text.toLowerCase() === previous.toLowerCase()) return null;
+  return text;
+}
+
+/** SETTLED or OPEN, however the model dressed it; null for anything else. */
+export function parseSettled(raw: string | null | undefined): boolean | null {
+  const first = (raw ?? "").trim().split(/\s+/)[0] ?? "";
+  const word = first.replace(/[^A-Za-z]/g, "").toUpperCase();
+  if (word === "SETTLED") return true;
+  if (word === "OPEN") return false;
+  return null;
+}
