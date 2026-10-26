@@ -41,7 +41,7 @@ export {
   type DraftForContext,
 } from "./draft-context";
 export { SUMMARY_PROMPT, foldSummary, summaryPromptFor } from "./summary";
-export { SETTLED_PROMPT, TITLE_PROMPT } from "./title";
+export { SETTLED_PROMPT, TITLE_PROMPT, cleanTitle, parseSettled, settledMessages, titleMessages } from "./title";
 export {
   ANSWER_ACKNOWLEDGEMENTS,
   ANSWER_RETRY_NUDGE,
@@ -186,3 +186,14 @@ export {
   type DigestTopic,
   type DigestTopicInput,
 } from "./digest";
+export {
+  REALTIME_CONFIG_VERSION,
+  composeRealtimeFieldPrompt,
+  composeRealtimeSessionPrompt,
+  realtimeOpeningNudge,
+  realtimeSessionConfig,
+  realtimeTurnDetection,
+  realtimeVoiceFor,
+  type RealtimeBackground,
+  type RealtimeTurnDetection,
+} from "./realtime";
