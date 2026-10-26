@@ -643,6 +643,19 @@ export function titlesForReconnect(state: Conversation): { title: string; ordina
   }));
 }
 
+/**
+ * The lines of this drive, in order, for a reconnecting agent. Not the lines
+ * of a conversation it continues (`past:` ids, from `seedMessages`): those
+ * reach the agent another way.
+ */
+export function linesForReconnect(state: Conversation): { id: string; who: Speaker; text: string }[] {
+  return state.sections
+    .flatMap((s) => s.turns)
+    .filter((t) => !t.id.startsWith("past:") && t.text.trim())
+    .sort((a, b) => a.seq - b.seq)
+    .map(({ id, who, text }) => ({ id, who, text }));
+}
+
 export interface ConversationStore {
   subscribe(listener: () => void): () => void;
   getSnapshot(): Conversation;
