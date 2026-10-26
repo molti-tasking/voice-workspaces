@@ -128,13 +128,15 @@ export const StudyCondition = z.strictObject({
   voiceMacroOffers: z.boolean().default(false),
   /**
    * Whether the recorder offers sparks — short questions about one subject the
-   * person can pull for the agent to ask (talkback-21, the sparks plan). On by
-   * default since 21 Oct 2026: one app for everyone, with the conversation
-   * mirror as a view of it. Off, the signals are still worked out and kept;
-   * only the chips and the spark pokes go. A condition that says
-   * `sparks: false` (the Prolific control arm) still turns them off.
+   * person can pull for the agent to ask (talkback-21, the sparks plan). OFF by
+   * default since 26 Oct 2026: the research is now how the conversation is
+   * shown (the display study, whose blocks force them off anyway), and sparks
+   * are not part of it. They were on by default from 21 Oct; drives since then
+   * store `sparks: true` explicitly and keep it. A condition that says
+   * `sparks: true` turns them back on; off, the signals are still worked out
+   * and kept, and only the chips and the spark pokes go.
    */
-  sparks: z.boolean().default(true),
+  sparks: z.boolean().default(false),
   /**
    * WHO PICKS THE SUBJECTS a spark is offered on, with `sparks` on.
    *
