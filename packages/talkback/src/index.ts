@@ -128,6 +128,7 @@ export {
   type SearchResultForModel,
 } from "./web-search";
 export {
+  nextRecordSeqs,
   recordAgentDecision,
   recordAgentTurn,
   recordFloorEvent,
