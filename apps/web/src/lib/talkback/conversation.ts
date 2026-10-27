@@ -56,6 +56,12 @@ export interface Turn {
   pauses?: number;
   /** Of those, the ones before the turn began: thinking before speaking. */
   pausesBefore?: number;
+  /**
+   * When it was said, in ms on the conversation's own clock — known for a
+   * conversation read back from storage (`replay.ts`), where it labels the
+   * time bar. Absent live.
+   */
+  at?: number;
 }
 
 export interface Section {
@@ -85,12 +91,17 @@ export interface Section {
    */
   settled?: boolean;
   /**
+   * The `seq` of the last turn said when `settled` was judged, so going back
+   * in time (`atCursor`) does not show a subject as settled before it was.
+   */
+  settledAfter?: number;
+  /**
    * They KEPT it: marked it as theirs to hold in their own head, by a tap on
    * the subject or by saying "keep this one" (`keepRequest` in
    * @voicemural/shared). Absent means Souffleur holds it. With
    * `sparkSelection: "chosen"`, sparks are offered on kept subjects only.
    */
-  kept?: { via: KeepVia; at: number };
+  kept?: { via: KeepVia; at: number; /** The `seq` of the last turn said when they kept it. */ after?: number };
 }
 
 /** How a subject was kept: a tap on it, or saying so. */
@@ -126,12 +137,22 @@ export type Mark =
       /** The question as written for this subject, when there was one. */
       question?: string;
       after: number;
+    }
+  | {
+      /**
+       * `continued:{after}`: the conversation was picked up again here, on a
+       * later drive (`/record?continue=`). Everything before it was said then.
+       */
+      key: string;
+      kind: "continued";
+      after: number;
     };
 
 /** A mark as the recorder hands it in; the store places it. */
 export type MarkInput =
   | { kind: "draft"; draftId: string; major: number }
-  | { kind: "spark"; ordinal: number; spark: SparkKind; question?: string };
+  | { kind: "spark"; ordinal: number; spark: SparkKind; question?: string }
+  | { kind: "continued" };
 
 export interface Conversation {
   /** In the order each subject first came up. */
@@ -165,6 +186,8 @@ export type ConversationMessage =
       interrupted?: boolean;
       pauses?: number;
       pausesBefore?: number;
+      /** Only from storage (`replay.ts`): see `Turn.at`. */
+      at?: number;
     }
   | { type: "title"; title: string; rehomeFrom?: string; ordinal?: number }
   /** What the container judged of a subject it has just left. */
@@ -268,9 +291,10 @@ function applyState(
 ): Conversation {
   const at = state.sections.findIndex((s) => s.ordinal === message.ordinal);
   if (at === -1 || state.sections[at]!.settled === message.settled) return state;
+  const settledAfter = state.nextSeq - 1;
   return {
     ...state,
-    sections: state.sections.map((s, i) => (i === at ? { ...s, settled: message.settled } : s)),
+    sections: state.sections.map((s, i) => (i === at ? { ...s, settled: message.settled, settledAfter } : s)),
   };
 }
 
@@ -289,7 +313,7 @@ function applyKeep(
   const section = state.sections[index]!;
   if (message.kept === (section.kept !== undefined)) return state;
   const next: Section = message.kept
-    ? { ...section, kept: { via: message.via, at } }
+    ? { ...section, kept: { via: message.via, at, after: state.nextSeq - 1 } }
     : (({ kept: _kept, ...rest }) => rest)(section);
   return { ...state, sections: state.sections.map((s, i) => (i === index ? next : s)) };
 }
@@ -305,9 +329,6 @@ function applyKeep(
  * because it is pulled the moment they tap.
  */
 function applyMark(state: Conversation, input: MarkInput): Conversation {
-  const key =
-    input.kind === "draft" ? `draft:${input.draftId}:${input.major}` : `spark:${input.ordinal}`;
-  if (state.marks.some((m) => m.key === key)) return state;
   let after = -1;
   for (const section of state.sections) {
     for (const turn of section.turns) {
@@ -315,7 +336,14 @@ function applyMark(state: Conversation, input: MarkInput): Conversation {
       after = Math.max(after, turn.seq);
     }
   }
-  return { ...state, marks: [...state.marks, { ...input, key, after }] };
+  const key =
+    input.kind === "draft"
+      ? `draft:${input.draftId}:${input.major}`
+      : input.kind === "spark"
+        ? `spark:${input.ordinal}`
+        : `continued:${after}`;
+  if (state.marks.some((m) => m.key === key)) return state;
+  return { ...state, marks: [...state.marks, { ...input, key, after } as Mark] };
 }
 
 /** The longest title a rename keeps: what the container keeps of a title it is handed. */
@@ -373,6 +401,7 @@ function applyTurn(
     ...(message.type === "user" && message.pausesBefore
       ? { pausesBefore: message.pausesBefore }
       : {}),
+    ...(message.at !== undefined ? { at: message.at } : {}),
   };
 
   // A turn already on screen is updated where it is, even if the subject has
@@ -612,6 +641,19 @@ export function titlesForReconnect(state: Conversation): { title: string; ordina
     title: s.title!,
     ...(s.ordinal !== undefined ? { ordinal: s.ordinal } : {}),
   }));
+}
+
+/**
+ * The lines of this drive, in order, for a reconnecting agent. Not the lines
+ * of a conversation it continues (`past:` ids, from `seedMessages`): those
+ * reach the agent another way.
+ */
+export function linesForReconnect(state: Conversation): { id: string; who: Speaker; text: string }[] {
+  return state.sections
+    .flatMap((s) => s.turns)
+    .filter((t) => !t.id.startsWith("past:") && t.text.trim())
+    .sort((a, b) => a.seq - b.seq)
+    .map(({ id, who, text }) => ({ id, who, text }));
 }
 
 export interface ConversationStore {

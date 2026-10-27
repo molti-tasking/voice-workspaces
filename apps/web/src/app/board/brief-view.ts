@@ -48,10 +48,14 @@ export function cardHref(cardId: string, asOf?: Date): string {
   return withAsOf(`/board/cards/${encodeURIComponent(cardId)}`, asOf);
 }
 
-/** A line in a drive's transcript. `UserLine` carries the matching anchor id. */
+/**
+ * A drive, or one line of it. A line opens the recording's details, where
+ * `UserLine` carries the matching anchor id; the drive alone opens its
+ * conversation.
+ */
 export function transcriptHref(sessionId: string, utteranceId?: string): string {
   const base = `/sessions/${encodeURIComponent(sessionId)}`;
-  return utteranceId ? `${base}#u-${utteranceId}` : base;
+  return utteranceId ? `${base}/details#u-${utteranceId}` : base;
 }
 
 /**

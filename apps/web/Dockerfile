@@ -55,6 +55,10 @@ ENV POSTHOG_API_KEY=$POSTHOG_API_KEY \
     POSTHOG_HOST=$POSTHOG_HOST
 ARG NEXT_PUBLIC_TALKBACK_ENABLED
 ENV NEXT_PUBLIC_TALKBACK_ENABLED=$NEXT_PUBLIC_TALKBACK_ENABLED
+# Which engine runs talk-back: `realtime` (default) or `pipecat`. Baked in, so
+# the hook it picks never changes under a running page.
+ARG NEXT_PUBLIC_VOICE_ENGINE
+ENV NEXT_PUBLIC_VOICE_ENGINE=$NEXT_PUBLIC_VOICE_ENGINE
 # Which talk-back backend the bundle talks to. Baked in like the flag above,
 ARG NEXT_PUBLIC_PIPECAT_URL
 ENV NEXT_PUBLIC_PIPECAT_URL=$NEXT_PUBLIC_PIPECAT_URL

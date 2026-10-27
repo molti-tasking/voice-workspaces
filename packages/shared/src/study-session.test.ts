@@ -24,9 +24,9 @@ import {
 const cells = Array.from({ length: SESSION_CELLS }, (_, k) => cellFor(k));
 
 describe("the session's cells", () => {
-  it("compare three views, with the transcript as the baseline, over two of the tasks", () => {
-    expect(SESSION_DISPLAYS).toEqual(["transcript", "track", "bubbles"]);
-    expect(isSessionDisplay("conversation")).toBe(false);
+  it("compare three views, with the chat as the baseline, over two of the tasks", () => {
+    expect(SESSION_DISPLAYS).toEqual(["chat", "topics", "uptake"]);
+    expect(isSessionDisplay("now")).toBe(false);
     for (const task of SESSION_TASK_PAIR) expect(SESSION_TASK_IDS).toContain(task);
   });
 
@@ -43,7 +43,7 @@ describe("the session's cells", () => {
   });
 
   it("start on the baseline, and wrap around, so any index is one of the six", () => {
-    expect(cellFor(0)).toEqual({ display: "transcript", task: "trip" });
+    expect(cellFor(0)).toEqual({ display: "chat", task: "trip" });
     expect(cellFor(SESSION_CELLS + 1)).toEqual(cellFor(1));
     expect(cellFor(-1)).toEqual(cellFor(SESSION_CELLS - 1));
   });
@@ -147,7 +147,7 @@ describe("the answers", () => {
     expect(SessionFinal.safeParse({ contact: false }).success).toBe(true);
     expect(SessionFinal.safeParse({ more: "It was fun.", contact: true }).success).toBe(true);
     expect(SessionFinal.safeParse({ more: "It was fun." }).success).toBe(false);
-    expect(SessionFinal.safeParse({ ranking: ["transcript", "track", "bubbles"], contact: true }).success).toBe(false);
+    expect(SessionFinal.safeParse({ ranking: ["chat", "topics", "uptake"], contact: true }).success).toBe(false);
   });
 
   it("are one step of the session's wire format", () => {

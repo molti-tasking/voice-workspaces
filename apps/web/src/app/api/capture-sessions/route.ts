@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { and, captureSession, desc, eq, getDb, user } from "@voicemural/db";
+import { conversationChain } from "@voicemural/db/conversation";
 import { armedBlockFor, linkArmedBlock } from "@voicemural/db/study-session";
 import { CaptureSessionCreate, freezeStudyCondition, resolveStudyCondition } from "@voicemural/shared";
 import { asSttLanguage } from "@voicemural/talkback/language";
@@ -141,6 +142,15 @@ export async function POST(req: Request) {
     condition = { ...condition, display: block.display, sparks: false, sparkSelection: "suggested" };
   }
 
+  // The drive it continues, if it is theirs and no study block claims this
+  // one: a study conversation always starts afresh. Picked up from the LAST
+  // drive of that conversation, so the chain stays one line.
+  let continuesId: string | null = null;
+  if (parsed.data.continuesId && !block) {
+    const chain = await conversationChain(userId, parsed.data.continuesId).catch(() => []);
+    continuesId = chain.at(-1) ?? null;
+  }
+
   // `sparkSelection: "alternate"` becomes the day's mode, on the day the drive
   // STARTED in the study's time zone, and is frozen like the rest: a drive past
   // midnight keeps the mode it began in.
@@ -166,6 +176,7 @@ export async function POST(req: Request) {
       // the condition above: a resumed drive keeps the intent it started with.
       useCase,
       studyCondition: condition,
+      continuesId,
     })
     .onConflictDoNothing({ target: captureSession.id })
     .returning({ id: captureSession.id });

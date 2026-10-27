@@ -236,6 +236,15 @@ export const captureSession = pgTable(
      */
     title: text("title"),
     /**
+     * The drive this one continues, when it was started from a past
+     * conversation's Continue (`/record?continue=`): the two, and any later
+     * ones, are one conversation, shown as one on its page and carried on
+     * with what was said before. NULL for a drive that began a conversation.
+     * A drive continues the LAST drive of its conversation, so following
+     * `continues_id` back always walks one chain to its first drive.
+     */
+    continuesId: uuid("continues_id").references((): AnyPgColumn => captureSession.id, { onDelete: "set null" }),
+    /**
      * Which path closed the session.
      *
      * A drive usually ends by arriving somewhere rather than by deciding to
@@ -2233,8 +2242,12 @@ export const studyBlock = pgTable(
       .references(() => studySession.id, { onDelete: "cascade" }),
     /** In the order they are done: 0, while a session is one conversation. */
     position: integer("position").notNull(),
-    /** `SessionDisplay` in @voicemural/shared (session-1 also had "conversation"). */
-    display: text("display").$type<"transcript" | "conversation" | "track" | "bubbles">().notNull(),
+    /**
+     * `SessionDisplay` in @voicemural/shared. Rows from before the views were
+     * renamed hold "transcript", "conversation", "track" or "bubbles": read
+     * through `normalizeDisplay`.
+     */
+    display: text("display").$type<"chat" | "topics" | "uptake" | "now" | "open">().notNull(),
     /** `SessionTaskId` in @voicemural/shared. */
     task: text("task").notNull(),
     /** The drive that is this block's conversation: the latest one armed. */

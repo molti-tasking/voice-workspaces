@@ -69,16 +69,16 @@ Reply with ONLY a JSON object of this shape, nothing else:
 
 /** The blind check's options, in a fixed order; the key maps a guess back to a view. */
 export const BLIND_OPTIONS = {
-  A: "transcript",
-  B: "track",
-  C: "bubbles",
+  A: "chat",
+  B: "topics",
+  C: "uptake",
 } as const;
 export type BlindLetter = keyof typeof BLIND_OPTIONS;
 
 export const BLIND_PROMPT = `A person had this conversation with a voice assistant while their phone showed it in one of three ways:
 A — every line, word for word, like a chat.
-B — only the topics, along a line, on the side of whoever brought each up, with a few short points for one topic.
-C — only the topics, as circles in two panels, with a few short points for one topic.
+B — only the topics, one under the other in the order they came up, with a few short points for each.
+C — the same topics, each with the assistant's ideas on it marked as taken up by the person or not yet.
 
 From the conversation alone, which do you think it was? If nothing in it tells you, guess.
 

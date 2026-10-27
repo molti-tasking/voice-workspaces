@@ -16,11 +16,10 @@ import {
 } from "@/components/capture-settings";
 import { RecordingBadge } from "@/components/recording-badge";
 import { aiHealthProblem, useAiHealth } from "@/lib/ai-health";
-import { ConversationDisplay } from "./conversation-display";
 import { FloorControls } from "./floor-controls";
-import { SparkChips } from "./spark-chips";
 import { PostDriveItems } from "./study-items";
 import { ViewSwitch, useRecordView } from "./view-switch";
+import { ConversationView } from "./views/conversation-view";
 
 /**
  * The recorder screen.
@@ -29,12 +28,12 @@ import { ViewSwitch, useRecordView } from "./view-switch";
  * start with.
  *
  * DURING ONE, TURN-TAKING AND NOTHING ELSE. The study has moved to who holds
- * the floor, so the screen is the conversation — one column, in the order it
- * was said, under headlines that name each stretch of it
- * (`ConversationFlow`) — and exactly three things to do about it: Lock (only
+ * the floor, so the screen is the conversation — shown the way they chose
+ * (`ConversationView`: the chat, the topics, uptake, now or open) — and
+ * exactly three things to do about it: Lock (only
  * they speak), Normal (the agent may talk back) and Poke (one turn from the
- * agent, now). Plus Stop, which has to be here, and the sparks on a drive
- * that has them. The cue panel and the transcript link are gone from this
+ * agent, now). Plus Stop, which has to be here. The sparks row went on 27
+ * Oct 2026: one more thing to read beside the conversation. The cue panel and the transcript link are gone from this
  * screen, and the dock with them while a drive runs: every one of them was a
  * reason to look away from the turns. A draft the agent writes is a line in
  * the conversation, where it was written (talkback-23); it was off this
@@ -52,7 +51,12 @@ import { ViewSwitch, useRecordView } from "./view-switch";
  * The next drive starts from the dock's record button, which comes back on
  * this screen once nothing is running (6 Oct 2026).
  */
-export function RecorderClient() {
+export function RecorderClient({
+  continueFrom = null,
+}: {
+  /** Opened from a past conversation's Continue: the drive it picks up, and its name. */
+  continueFrom?: { id: string; title: string } | null;
+} = {}) {
   // The recorder itself lives above the router (see capture-provider.tsx), so a
   // drive survives walking over to the board and back. This screen is the full
   // view onto it, not its owner.
@@ -61,8 +65,6 @@ export function RecorderClient() {
     talkback: talk,
     conversationId,
     conversation,
-    sparks,
-    keepable,
     cues,
     floor,
     setFloor,
@@ -71,14 +73,14 @@ export function RecorderClient() {
     isRecording,
     isBusy,
     startRecording,
+    continueRecording,
     stopRecording,
   } = useCapture();
   const hearing = talk.status === "speaking";
   const connected = talk.status === "listening" || talk.status === "speaking";
-  // How the conversation is shown: in order, word for word, or as the mirror
-  // in one of its two layouts. A choice of this browser, kept across drives —
-  // unless the drive's study condition forces one, as the display study does,
-  // and then there is no choice to offer.
+  // How the conversation is shown: a choice of this browser, kept across
+  // drives — unless the drive's study condition forces one, as the display
+  // study does, and then there is no choice to offer.
   const chosen = useRecordView();
   const view = rec.display ?? chosen;
   // Whether the AI proxy answers (`/api/health/ai`): a pill when it does not,
@@ -160,17 +162,17 @@ export function RecorderClient() {
         <div className="flex w-full flex-col items-center gap-8">
           <button
             type="button"
-            onClick={startRecording}
+            onClick={() => (continueFrom ? continueRecording(continueFrom.id) : startRecording())}
             disabled={isBusy}
             className={[
               "relative flex size-56 cursor-pointer items-center justify-center rounded-full text-2xl font-medium",
               "bg-surface text-fg ring-1 ring-line transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
             ].join(" ")}
           >
-            {isBusy ? "…" : "Record"}
+            {isBusy ? "…" : continueFrom ? "Continue" : "Record"}
           </button>
 
-          <p className="h-5 text-center text-sm text-fg/60">
+          <p className="min-h-5 max-w-xs text-center text-sm text-fg/60">
             {isBusy ? (
               // A tap that opens a microphone takes about a second, and until
               // now that second showed an ellipsis on a disabled button — which
@@ -178,6 +180,13 @@ export function RecorderClient() {
               <span className="text-fg/60">
                 {rec.status === "requesting" ? "Opening the microphone…" : "Saving…"}
               </span>
+            ) : continueFrom ? (
+              <>
+                Picks up &ldquo;{continueFrom.title}&rdquo; where it was left.{" "}
+                <Link href="/record" className="underline underline-offset-2 hover:text-fg">
+                  Start a new one instead
+                </Link>
+              </>
             ) : (
               "Tap to start. Say whatever you are working on."
             )}
@@ -213,7 +222,7 @@ export function RecorderClient() {
     <main
       className={[
         // One centred column, and everything in it edge to edge with
-        // everything else: the conversation, its headlines, the sparks and the
+        // everything else: the conversation, its headlines and the
         // controls (20 Oct 2026). The whole window was too wide to read.
         "no-touch-fuss mx-auto flex w-full max-w-5xl flex-col gap-3 px-4",
         // While recording: exactly the screen, the conversation scrolling inside it, and
@@ -235,11 +244,11 @@ export function RecorderClient() {
 
       {rec.display === null && <ViewSwitch view={chosen} />}
 
-      <ConversationDisplay
+      <ConversationView
         // Keyed by the drive: the next one starts from nothing rather than
-        // inheriting the last one's scroll position, opened headlines and points.
+        // inheriting the last one's scroll position, cursor and zoom.
         key={conversationId}
-        display={view}
+        view={view}
         store={conversation}
         status={
           TALKBACK_ENABLED && isRecording
@@ -251,23 +260,14 @@ export function RecorderClient() {
               }
             : null
         }
-        // Only in the sparks arm: the ledger is worked out in both, for the
-        // record, and the control arm must not see a sparkle on a headline.
-        sparks={TALKBACK_ENABLED && rec.sparksArm ? sparks : null}
         live={isRecording}
         captureSessionId={conversationId}
-        canPull={TALKBACK_ENABLED && isRecording && connected && !hearing}
-        onPull={poke}
         // "It is listening" is true only while it is.
         placeholder={isRecording ? PROFILE.hint : undefined}
-        flow={{
-          // Keeping is part of the drive: after Stop the subjects are a record.
-          keepable: TALKBACK_ENABLED && isRecording && keepable,
-          drafts: cues.drafts,
-          // During the drive and after it: tidying the headlines is a thing to
-          // do once there is time to read them.
-          onRename: renameSubject,
-        }}
+        drafts={cues.drafts}
+        // During the drive and after it: tidying the topics is a thing to do
+        // once there is time to read them.
+        onRename={renameSubject}
         className={isRecording ? "min-h-0 flex-1" : "h-[65dvh] shrink-0"}
       />
 
@@ -283,42 +283,25 @@ export function RecorderClient() {
                 ? `${rec.pendingUploads} chunk${rec.pendingUploads === 1 ? "" : "s"} still uploading. The transcript fills in as they land.`
                 : "Transcription runs in the background; the transcript fills in as it goes."}
             </p>
-            <Link
-              href={`/sessions/${rec.lastSessionId}`}
-              className="inline-block rounded bg-fg px-3 py-1.5 font-medium text-canvas hover:bg-fg/90"
-            >
-              View transcript
-            </Link>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => continueRecording(rec.lastSessionId!)}
+                disabled={isBusy}
+                className="cursor-pointer rounded bg-fg px-3 py-1.5 font-medium text-canvas hover:bg-fg/90 disabled:opacity-50"
+              >
+                Continue
+              </button>
+              <Link
+                href={`/sessions/${rec.lastSessionId}`}
+                className="inline-block rounded bg-fg/10 px-3 py-1.5 font-medium text-fg hover:bg-fg/20"
+              >
+                Open the conversation
+              </Link>
+            </div>
           </div>
         )}
       </div>
-
-      {TALKBACK_ENABLED && isRecording && keepable && view === "conversation" && (
-        // How keeping works, once, in plain words: on a "chosen" drive the
-        // sparks come only for what they keep, so a drive with nothing kept
-        // offers none — which should not read as broken. Voice first: the
-        // information sheet's rule is no touching the phone while driving.
-        <p className="shrink-0 text-xs leading-snug text-fg/60">
-          Say &ldquo;keep this one&rdquo; — or tap{" "}
-          <span className="font-medium text-fg/80">Keep</span> when you are not driving — for what
-          you want to hold in your own head. Souffleur holds the rest; sparks come for what you
-          keep.
-        </p>
-      )}
-
-      {/* In the mirror, a spark is a dot on its topic and pulled from the strip. */}
-      {TALKBACK_ENABLED && isRecording && rec.sparksArm && view === "conversation" && (
-        <SparkChips
-          store={conversation}
-          ledger={sparks}
-          connected={connected}
-          speaking={hearing}
-          onPull={poke}
-          // Always a row in the sparks arm: an empty one says why.
-          explainEmpty
-          selection={rec.sparkSelection}
-        />
-      )}
 
       {TALKBACK_ENABLED && isRecording && (
         <FloorControls

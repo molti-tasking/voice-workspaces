@@ -11,7 +11,14 @@ import {
 import { findBlockByCaptureSession } from "@voicemural/db/study-session";
 import { resolveSpokenAnswer, resolveStudyCondition, type SpokenAnswer } from "@voicemural/shared";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
-import { STUDY_SCREEN, buildTurnContext, renderLocalTime, renderScreen, timeZoneOf } from "@voicemural/talkback";
+import {
+  STUDY_SCREEN,
+  buildTurnContext,
+  renderLocalTime,
+  renderScreen,
+  timeZoneOf,
+} from "@voicemural/talkback";
+import { earlierInConversation } from "@/lib/talkback/earlier-in-conversation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -97,6 +104,7 @@ export async function POST(req: Request) {
       userId: captureSession.userId,
       deviceInfo: captureSession.deviceInfo,
       studyCondition: captureSession.studyCondition,
+      continuesId: captureSession.continuesId,
     })
     .from(captureSession)
     .where(eq(captureSession.id, payload.captureSessionId))
@@ -122,7 +130,7 @@ export async function POST(req: Request) {
   // every view. Fails open to an ordinary drive.
   const block = await findBlockByCaptureSession(payload.captureSessionId).catch(() => null);
   const boardOn = !block && (await boardEnabledAt(payload.userId).catch(() => null)) !== null;
-  const [{ passages, threads, board, drafts }, { settled, pending }, screen] = await Promise.all([
+  const [{ passages, threads, board, drafts }, { settled, pending }, screen, continued] = await Promise.all([
     buildTurnContext(payload.userId, payload.captureSessionId, parsed.data.said, {
       board: boardOn,
       memory: !block,
@@ -131,14 +139,17 @@ export async function POST(req: Request) {
     // Fails open to "not known", which is itself an instruction not to
     // describe the screen.
     currentScreen(payload.captureSessionId).catch(() => null),
+    // A drive that continues a past conversation: what was said in it. Fails
+    // open to a drive that starts afresh.
+    rows[0]?.continuesId
+      ? earlierInConversation(payload.userId, rows[0].continuesId, timeZoneOf(rows[0].deviceInfo)).catch(() => null)
+      : Promise.resolve(null),
   ]);
 
-  // What the conversation view has on it on this drive: the sparks row in the
-  // sparks arm, and Keep where they choose. Frozen with the drive.
+  // What the conversation view has on it on this drive. No sparks row and no
+  // Keep: both left the screen on 27 Oct 2026. Frozen with the drive.
   const condition = resolveStudyCondition(rows[0]?.studyCondition).condition;
   const onScreen = {
-    sparks: condition.sparks,
-    keep: condition.sparks && condition.sparkSelection === "chosen",
     // A display the drive forces (the display study); otherwise their choice.
     ...(condition.display !== "choice" ? { display: condition.display } : {}),
   };
@@ -160,7 +171,9 @@ export async function POST(req: Request) {
     // have open and what it can do, so directions about the app are grounded.
     {
       passages,
-      threads,
+      // The conversation this drive continues comes first: it is this
+      // conversation, not an earlier one.
+      threads: continued ? [{ topicId: "continued", text: continued }, ...threads] : threads,
       board: board.text,
       drafts: drafts.text,
       pending,

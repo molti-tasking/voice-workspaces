@@ -9,6 +9,9 @@
     "./voice": "./src/voice.ts",
     "./language": "./src/language.ts",
     "./screen": "./src/screen.ts",
+    "./digest": "./src/digest.ts",
+    "./realtime": "./src/realtime.ts",
+    "./title": "./src/title.ts",
     "./study-task": "./src/study-task.ts",
     "./eval/study-judge": "./src/eval/study-judge.ts",
     "./eval/langfuse": "./src/eval/langfuse.ts"

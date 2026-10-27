@@ -18,7 +18,7 @@ describe("StudyCondition", () => {
       proactiveOffers: true,
       agendaOffers: false,
       voiceMacroOffers: false,
-      sparks: true,
+      sparks: false,
       sparkSelection: "suggested",
       alternateStart: "suggested",
       display: "choice",
@@ -33,15 +33,19 @@ describe("StudyCondition", () => {
       proactiveOffers: true,
       agendaOffers: true,
       voiceMacroOffers: false,
-      sparks: true,
+      sparks: false,
       sparkSelection: "suggested",
       alternateStart: "suggested",
       display: "choice",
     });
   });
 
-  it("forces one of the four displays, or leaves the person's choice", () => {
-    expect(StudyCondition.parse({ display: "transcript" }).display).toBe("transcript");
+  it("forces one of the six views, or leaves the person's choice", () => {
+    expect(StudyCondition.parse({ display: "uptake" }).display).toBe("uptake");
+    expect(StudyCondition.parse({ display: "recent" }).display).toBe("recent");
+    // A drive frozen before the views were renamed reads as the successor.
+    expect(StudyCondition.parse({ display: "transcript" }).display).toBe("chat");
+    expect(StudyCondition.parse({ display: "track" }).display).toBe("topics");
     expect(StudyCondition.parse({}).display).toBe("choice");
     expect(StudyCondition.safeParse({ display: "orb" }).success).toBe(false);
   });

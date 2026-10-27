@@ -63,7 +63,7 @@ describe("cardHref", () => {
 
 describe("transcriptHref", () => {
   it("jumps to the line when one is named, and to the drive when not", () => {
-    expect(transcriptHref("s1", "u1")).toBe("/sessions/s1#u-u1");
+    expect(transcriptHref("s1", "u1")).toBe("/sessions/s1/details#u-u1");
     expect(transcriptHref("s1")).toBe("/sessions/s1");
   });
 });

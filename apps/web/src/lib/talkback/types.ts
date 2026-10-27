@@ -71,6 +71,13 @@ export interface TalkbackOptions {
   onMessage: (message: ConversationMessage) => void;
   /** The sections the screen already has, for a reconnect. See `titlesForReconnect`. */
   titles: () => { title: string; ordinal?: number }[];
+  /**
+   * The lines the screen already has, for a reconnect to tell the agent what
+   * was said before the connection dropped (`linesForReconnect`). The
+   * speech-to-speech engine needs it; the container seeds itself from the
+   * ledger instead.
+   */
+  history?: () => { id: string; who: "user" | "agent"; text: string }[];
 }
 
 /** A spark the person pulled: which question, about which subject. Never its title. */

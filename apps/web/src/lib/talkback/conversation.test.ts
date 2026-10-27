@@ -5,6 +5,7 @@ import {
   createConversationStore,
   currentTitle,
   draftMajor,
+  linesForReconnect,
   parseServerMessage,
   timeline,
   titlesForReconnect,
@@ -107,6 +108,24 @@ describe("the conversation, by subject", () => {
       { title: "A", ordinal: 1 },
     ]);
   });
+
+  it("hands a reconnecting agent this drive's lines in order, not those of the one it continues", () => {
+    const state = fold(
+      user("past:0", "last time"),
+      title("A"),
+      user("c-1", "a"),
+      title("B"),
+      agent("c-2", "b"),
+      user("c-3", " "),
+      title("A"),
+      user("c-4", "back to a"),
+    );
+    expect(linesForReconnect(state)).toEqual([
+      { id: "c-1", who: "user", text: "a" },
+      { id: "c-2", who: "agent", text: "b" },
+      { id: "c-4", who: "user", text: "back to a" },
+    ]);
+  });
 });
 
 describe("server messages", () => {
@@ -199,7 +218,7 @@ describe("keeping a subject", () => {
 
   it("files a keep on the subject by its ordinal, with how and when it was made", () => {
     const state = applyMessage(twoSubjects(), keep(1, true, "voice"), 1_000);
-    expect(state.sections.find((s) => s.ordinal === 1)?.kept).toEqual({ via: "voice", at: 1_000 });
+    expect(state.sections.find((s) => s.ordinal === 1)?.kept).toEqual({ via: "voice", at: 1_000, after: 1 });
     expect(state.sections.find((s) => s.ordinal === 2)?.kept).toBeUndefined();
   });
 
