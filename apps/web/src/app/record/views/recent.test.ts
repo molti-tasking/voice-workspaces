@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { EMPTY_DIGEST } from "@voicemural/talkback/digest";
 import { EMPTY_CONVERSATION, applyMessage, type Conversation } from "@/lib/talkback/conversation";
-import { LAST_WORDS, localGist, recentLadder } from "./recent";
+import { LAST_WORDS, localGist, recentLadder, settleGists } from "./recent";
+
+const NONE = new Map();
 
 function talk(lines: [who: "user" | "agent", text: string][]): Conversation {
   let c: Conversation = applyMessage(EMPTY_CONVERSATION, { type: "title", title: "Trip", ordinal: 1 }, 0);
@@ -21,7 +22,7 @@ describe("the conversation shrunk by age", () => {
   ]);
 
   it("keeps the newest turn in its words, the one before in two, earlier ones in one", () => {
-    const ladder = recentLadder(conversation, EMPTY_DIGEST);
+    const ladder = recentLadder(conversation, NONE);
     expect(ladder.last).toMatchObject({
       who: "user",
       text: "So if we take the 9:40 we'd be there by lunch, right?",
@@ -34,20 +35,29 @@ describe("the conversation shrunk by age", () => {
 
   it("takes the model's words for a turn once it has them", () => {
     const seq = (i: number) => conversation.sections[0]!.turns[i]!.seq;
-    const ladder = recentLadder(conversation, {
-      ...EMPTY_DIGEST,
-      gists: [
-        { seq: seq(3), two: "train cheaper", one: "train" },
-        { seq: seq(1), two: "three places", one: "places" },
-      ],
-    });
-    expect(ladder.previous?.text).toBe("train cheaper");
+    const before = recentLadder(conversation, NONE);
+    expect(before.previous?.provisional).toBe(true);
+    const gists = settleGists(NONE, [
+      { seq: seq(3), two: "train cheaper", one: "train" },
+      { seq: seq(1), two: "three places", one: "places" },
+    ]);
+    const ladder = recentLadder(conversation, gists);
+    expect(ladder.previous).toMatchObject({ text: "train cheaper", provisional: false });
     expect(ladder.earlier.map((w) => w.text)[1]).toBe("places");
+    expect(ladder.earlier[0]?.provisional).toBe(true);
+  });
+
+  it("changes a turn's words once, and never rewrites them after", () => {
+    const first = settleGists(NONE, [{ seq: 4, two: "train cheaper", one: "train" }]);
+    const again = settleGists(first, [{ seq: 4, two: "cheaper by rail", one: "rail" }]);
+    expect(again).toBe(first);
+    expect(again.get(4)?.two).toBe("train cheaper");
+    expect(settleGists(first, [{ seq: 5, two: "a", one: "a" }]).size).toBe(2);
   });
 
   it("shows only the end of a long last turn, and says it was cut", () => {
     const long = Array.from({ length: 40 }, (_, i) => `w${i}`).join(" ");
-    const ladder = recentLadder(talk([["agent", long]]), EMPTY_DIGEST);
+    const ladder = recentLadder(talk([["agent", long]]), NONE);
     expect(ladder.last?.cut).toBe(true);
     expect(ladder.last?.text.split(" ")).toHaveLength(LAST_WORDS);
     expect(ladder.last?.text.endsWith("w39")).toBe(true);
@@ -55,7 +65,7 @@ describe("the conversation shrunk by age", () => {
   });
 
   it("is empty before anything was said", () => {
-    expect(recentLadder(EMPTY_CONVERSATION, EMPTY_DIGEST)).toEqual({
+    expect(recentLadder(EMPTY_CONVERSATION, NONE)).toEqual({
       earlier: [],
       previous: null,
       last: null,

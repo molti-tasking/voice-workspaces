@@ -11,18 +11,16 @@ import type { DigestQuestion } from "@voicemural/talkback/digest";
  */
 export function OpenView({
   questions,
-  pending,
   onZoom,
 }: {
   questions: (DigestQuestion & { title: string | null })[];
-  pending: boolean;
   /** Zoom into a topic, by ordinal. */
   onZoom: (ordinal: number) => void;
 }) {
   if (questions.length === 0) {
     return (
       <p className="m-auto max-w-xs text-center text-sm text-fg/55">
-        {pending ? "…" : "The questions to settle show here as they come up."}
+        The questions to settle show here as they come up.
       </p>
     );
   }
@@ -42,7 +40,9 @@ export function OpenView({
               <span className="flex min-w-0 flex-col">
                 <span
                   className={
-                    q.settled ? "text-base text-fg/45 line-through decoration-fg/25" : "text-xl leading-snug font-medium text-fg"
+                    q.settled
+                      ? "text-base text-fg/45 line-through decoration-fg/25"
+                      : "text-xl leading-snug font-medium text-fg"
                   }
                 >
                   {q.text}
