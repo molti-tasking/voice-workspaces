@@ -75,7 +75,7 @@ const SHOWN_AS: Record<ShownAs, string> = {
   now: "the conversation view as one line saying where the conversation is now, under the name of the current topic, written automatically from what was said, not by you.",
   open: "the conversation view as the questions this conversation has raised — where, when, how much — the open ones first and the settled ones ticked, written automatically from what was said, not by you.",
   recent:
-    "the conversation view shrunk by age: the last turn in its own words, large, at the bottom; the turn before it in two words; the few before that in one word each; and the names of the topics at the top. Their words are in grey bubbles on the right, yours as plain text on the left. The short words are written automatically, not by you, and a tap opens the current topic with all of its lines.",
+    "the conversation view shrunk by age: the last turn in its own words, large, at the bottom, under who said it; the turn before it in two words; the three before that in one word each; and above them the name of the current topic. The short words are written automatically, not by you, and a tap opens the current topic with all of its lines.",
 };
 
 /** Unforced, the person may switch the view: said so, without saying which one is open. */

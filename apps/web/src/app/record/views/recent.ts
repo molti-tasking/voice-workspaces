@@ -10,7 +10,7 @@ import { turnsInOrder } from "@/lib/talkback/cursor";
  *   `LAST_WORDS`, so a long turn never fills the screen;
  * - `previous`: the turn before it, in two words;
  * - `earlier`: the `EARLIER_TURNS` turns before that, one word each;
- * - and above all of it the topics (`topicEntries`), the furthest zoom out.
+ * - and above all of it the topic being talked about, the furthest zoom out.
  *
  * WHERE THE WORDS COME FROM. The digest's gists (`digest.ts`), written by the
  * model for the newest turns and matched by `seq`. A turn the digest has not
@@ -27,7 +27,7 @@ import { turnsInOrder } from "@/lib/talkback/cursor";
 /** The most of the newest turn shown: its last words. */
 export const LAST_WORDS = 16;
 /** Turns shown one word each, above the turn before last. */
-export const EARLIER_TURNS = 6;
+export const EARLIER_TURNS = 3;
 
 export interface RecentWords {
   seq: number;
