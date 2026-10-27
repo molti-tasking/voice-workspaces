@@ -11,6 +11,8 @@ import { useDigest } from "@/lib/talkback/use-digest";
 import { ChatView } from "./chat-view";
 import { NowView } from "./now-view";
 import { OpenView } from "./open-view";
+import { recentLadder } from "./recent";
+import { RecentView } from "./recent-view";
 import { StatusLine, type FlowStatus } from "./status-line";
 import { TimeBar } from "./time-bar";
 import { TopicLineView } from "./topic-line-view";
@@ -18,7 +20,7 @@ import { TopicSheet } from "./topic-sheet";
 import { questionEntries, topicEntries } from "./topics";
 
 /**
- * One conversation, shown one of the five ways (`ConversationDisplay` in
+ * One conversation, shown one of the six ways (`ConversationDisplay` in
  * @voicemural/shared) — the same component live on the recorder, in the
  * display study, in the simulated conversation, and for a past conversation
  * on its page. Where the conversation comes from is the store's business:
@@ -100,6 +102,8 @@ export function ConversationView({
         <TopicLineView topics={topics} uptake={view === "uptake"} onZoom={setZoomKey} />
       ) : view === "now" ? (
         <NowView now={digest.now} current={topics.find((t) => t.current) ?? null} pending={pending} onZoom={setZoomKey} />
+      ) : view === "recent" ? (
+        <RecentView ladder={recentLadder(shown, digest)} topics={topics} onZoom={setZoomKey} />
       ) : (
         <OpenView questions={questionEntries(shown, digest)} pending={pending} onZoom={zoomOrdinal} />
       )}

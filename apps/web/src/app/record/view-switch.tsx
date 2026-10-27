@@ -18,6 +18,7 @@ const LABELS: Record<ConversationDisplay, string> = {
   uptake: "Uptake",
   now: "Now",
   open: "Open",
+  recent: "Recent",
 };
 
 export function useRecordView(): ConversationDisplay {
@@ -26,7 +27,7 @@ export function useRecordView(): ConversationDisplay {
   return (CONVERSATION_DISPLAYS as readonly unknown[]).includes(stored) ? (stored as ConversationDisplay) : "chat";
 }
 
-/** One row of targets, so switching is one tap during a drive and after it. Five fit a phone. */
+/** One row of targets, so switching is one tap during a drive and after it. Six still fit a phone. */
 export function ViewSwitch({ view }: { view: ConversationDisplay }) {
   return (
     <div role="group" aria-label="Show the conversation as" className="flex shrink-0 rounded-2xl bg-fg/[0.06] p-1">

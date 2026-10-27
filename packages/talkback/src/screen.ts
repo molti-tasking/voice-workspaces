@@ -59,7 +59,7 @@ export interface ConversationScreen {
 }
 
 /** The displays a drive can force (`ConversationDisplay` in @voicemural/shared). */
-export type ShownAs = "chat" | "topics" | "uptake" | "now" | "open";
+export type ShownAs = "chat" | "topics" | "uptake" | "now" | "open" | "recent";
 
 const NAMED =
   "Topics are named automatically from what is said; you do not name them and cannot move anything between them, but they can rename one, and you then hear it by their name.";
@@ -74,11 +74,13 @@ const SHOWN_AS: Record<ShownAs, string> = {
   uptake: `${TOPIC_LINE} Each topic also has one small circle per idea you suggested on it: filled once they have taken it up in their own words, hollow until then — judged automatically, not by you. ${NAMED}`,
   now: "the conversation view as one line saying where the conversation is now, under the name of the current topic, written automatically from what was said, not by you.",
   open: "the conversation view as the questions this conversation has raised — where, when, how much — the open ones first and the settled ones ticked, written automatically from what was said, not by you.",
+  recent:
+    "the conversation view shrunk by age: the last turn in its own words, large, at the bottom, under who said it; the turn before it in two words; the three before that in one word each; and above them the name of the current topic. The short words are written automatically, not by you, and a tap opens the current topic with all of its lines.",
 };
 
 /** Unforced, the person may switch the view: said so, without saying which one is open. */
 const SWITCHABLE =
-  "They can switch it to show only the topics, which of your ideas they have taken up, one line on where things stand, or the open questions; you do not know which one is open.";
+  "They can switch it to show only the topics, which of your ideas they have taken up, one line on where things stand, the open questions, or only the last turn in full with the ones before shrunk to a word or two; you do not know which one is open.";
 
 /**
  * The recorder while it records. It once said "two panels … no other icon or

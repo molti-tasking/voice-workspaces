@@ -6,7 +6,6 @@ import { useState, useSyncExternalStore } from "react";
 import { DEMO_STEPS, demoDigest } from "@/lib/talkback/demo-conversation";
 import { createDemoVoice } from "@/lib/talkback/demo-voice";
 import { useScriptedConversation } from "@/lib/talkback/use-scripted-conversation";
-import { SparkChips } from "../spark-chips";
 import { ViewSwitch, useRecordView } from "../view-switch";
 import { ConversationView } from "../views/conversation-view";
 
@@ -63,7 +62,7 @@ function DemoRun({
   const canSpeak = useCanSpeak();
   // The script, played as the voice container would send it; with sound, each
   // spoken line is waited out before the next one comes.
-  const { store, ledger, done, pull } = useScriptedConversation({ steps: DEMO_STEPS, paused, voice, sound });
+  const { store, done } = useScriptedConversation({ steps: DEMO_STEPS, paused, voice, sound });
 
   const control =
     "grid size-11 cursor-pointer place-items-center rounded-full bg-fg/10 text-fg/80 hover:bg-fg/20";
@@ -121,7 +120,6 @@ function DemoRun({
         className="min-h-0 flex-1"
       />
 
-      <SparkChips store={store} ledger={ledger} connected speaking={false} onPull={pull} explainEmpty />
     </main>
   );
 }

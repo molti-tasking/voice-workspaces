@@ -12,6 +12,9 @@
  *   brought, each marked taken up or not (the topic line, Uptake, the zoom).
  * - `open`: the questions the conversation has raised, settled or still open
  *   (the Open view).
+ * - `gists`: the last few turns, each in two words and in one (the Recent
+ *   view, which shrinks a turn the further back it lies). Matched to turns by
+ *   their `seq`, so a gist written for one point still fits at a later one.
  *
  * KEPT APART BY WHO SAID IT. "you" is only what the person said, "ai" only
  * what the assistant said, and an idea is only ever the assistant's: whether
@@ -36,6 +39,11 @@ export const DIGEST_MAX_CHARS = 80;
 /** Longest `now` line kept. */
 export const DIGEST_MAX_NOW_CHARS = 120;
 
+/** The newest lines that get a gist. */
+export const DIGEST_GIST_LINES = 6;
+/** Words in a turn's short gist; its shortest is one. */
+export const GIST_WORDS = 2;
+
 /** The last lines the model sees: bounded, newest last. */
 const MAX_LINES = 80;
 const MAX_LINE_CHARS = 400;
@@ -45,6 +53,8 @@ export interface DigestLine {
   text: string;
   /** The topic it was said under; null before anything was named. */
   ordinal: number | null;
+  /** The turn's place in the conversation (`Turn.seq`); the newest lines with one get a gist. */
+  seq?: number;
 }
 
 export interface DigestTopicInput {
@@ -72,10 +82,19 @@ export interface DigestQuestion {
   ordinal: number | null;
 }
 
+/** One turn, shrunk: `two` words, then `one`. */
+export interface DigestGist {
+  seq: number;
+  two: string;
+  one: string;
+}
+
 export interface ConversationDigest {
   now: string | null;
   topics: DigestTopic[];
   open: DigestQuestion[];
+  /** Absent from a digest written locally; the view then shrinks the turns itself (`recent.ts`). */
+  gists?: DigestGist[];
 }
 
 export const EMPTY_DIGEST: ConversationDigest = { now: null, topics: [], open: [] };
@@ -83,13 +102,14 @@ export const EMPTY_DIGEST: ConversationDigest = { now: null, topics: [], open: [
 const SYSTEM = `You digest a spoken conversation between a person and a voice assistant, for a small phone screen that is read at a glance.
 
 Return JSON only, nothing else:
-{"now": "...", "topics": [{"n": 1, "you": ["..."], "ai": ["..."], "ideas": [{"text": "...", "takenUp": false}]}], "open": [{"q": "...", "settled": false, "n": 1}]}
+{"now": "...", "topics": [{"n": 1, "you": ["..."], "ai": ["..."], "ideas": [{"text": "...", "takenUp": false}]}], "open": [{"q": "...", "settled": false, "n": 1}], "gists": [{"id": 12, "two": "...", "one": "..."}]}
 
 - "now": ONE line, at most 14 words: where the conversation is right now and what it is working out. No "you are discussing".
 - "topics": one entry per numbered topic that has lines, by its number "n".
   - "you": what the PERSON said, asked or decided on it. "ai": what the ASSISTANT contributed. Never put one side's point under the other. At most 3 each, most recent last, each at most 8 words: a fragment, no full stop.
   - "ideas": the concrete suggestions the ASSISTANT made on it (an option, a recommendation, a plan), at most 4, each at most 8 words. "takenUp": true only when the person afterwards made it their own in their own words — chose it, built on it, restated it adding something, or decided on it. "Okay", "hm" or silence is NOT taking it up.
 - "open": the questions this conversation has to answer that came up (where, when, how, how much), at most 6, each a short question of at most 8 words. "settled": true when the person decided it. "n": the topic it belongs to.
+- "gists": one entry per line marked #id, by that "id". "two": the line in TWO words, the concrete thing it said ("train slower", "Aarhus, two nights"). "one": ONE word, the thing itself ("train"). Words from the line where possible; no "discussed", no full stop.
 - Name the concrete thing — the place, number or option — never "discussed X".
 - Only what was actually said. An empty list is better than an invented point.
 - In the language of the conversation.`;
@@ -99,11 +119,13 @@ export function digestMessages(
   lines: readonly DigestLine[],
 ): ChatMessage[] {
   const named = topics.map((t) => `${t.ordinal}. ${t.title}`).join("\n");
-  const transcript = lines
-    .slice(-MAX_LINES)
+  const shown = lines.slice(-MAX_LINES);
+  const gisted = new Set(gistSeqs(shown));
+  const transcript = shown
     .map((l) => {
       const who = l.who === "agent" ? "Assistant" : "Person";
-      return `[${l.ordinal ?? "-"}] ${who}: ${l.text.slice(0, MAX_LINE_CHARS)}`;
+      const id = l.seq !== undefined && gisted.has(l.seq) ? ` #${l.seq}` : "";
+      return `[${l.ordinal ?? "-"}]${id} ${who}: ${l.text.slice(0, MAX_LINE_CHARS)}`;
     })
     .join("\n");
   return [
@@ -113,6 +135,24 @@ export function digestMessages(
       content: `Topics, numbered:\n${named || "(none named yet)"}\n\nThe conversation, each line with its topic's number:\n${transcript || "(nothing transcribed yet)"}`,
     },
   ];
+}
+
+/** The turns that are asked a gist for: the newest lines that carry a seq. */
+export function gistSeqs(lines: readonly DigestLine[]): number[] {
+  return lines.flatMap((l) => (l.seq !== undefined ? [l.seq] : [])).slice(-DIGEST_GIST_LINES);
+}
+
+/** At most `n` words, no full stop. */
+function words(raw: unknown, n: number): string | null {
+  if (typeof raw !== "string") return null;
+  const text = raw
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .slice(0, n)
+    .join(" ")
+    .replace(/[.。]+$/, "");
+  return text || null;
 }
 
 function cut(raw: unknown, max: number): string | null {
@@ -160,7 +200,11 @@ function ideas(raw: unknown): DigestIdea[] {
  * only when their number is one of `ordinals`, so a topic the model invented
  * never reaches the screen. Null means the screen keeps the digest it had.
  */
-export function parseDigest(raw: string, ordinals: readonly number[]): ConversationDigest | null {
+export function parseDigest(
+  raw: string,
+  ordinals: readonly number[],
+  seqs: readonly number[] = [],
+): ConversationDigest | null {
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
   if (start < 0 || end <= start) return null;
@@ -171,7 +215,7 @@ export function parseDigest(raw: string, ordinals: readonly number[]): Conversat
     return null;
   }
   if (!parsed || typeof parsed !== "object") return null;
-  const body = parsed as { now?: unknown; topics?: unknown; open?: unknown };
+  const body = parsed as { now?: unknown; topics?: unknown; open?: unknown; gists?: unknown };
   if (body.now === undefined && !Array.isArray(body.topics) && !Array.isArray(body.open)) return null;
 
   const known = new Set(ordinals);
@@ -205,9 +249,23 @@ export function parseDigest(raw: string, ordinals: readonly number[]): Conversat
     });
   }
 
+  // Only turns that were asked about: a gist for an id the model made up never reaches the screen.
+  const asked = new Set(seqs);
+  const gists: DigestGist[] = [];
+  for (const item of Array.isArray(body.gists) ? body.gists : []) {
+    if (!item || typeof item !== "object") continue;
+    const g = item as { id?: unknown; two?: unknown; one?: unknown };
+    const seq = Number(g.id);
+    if (!Number.isInteger(seq) || !asked.has(seq) || gists.some((x) => x.seq === seq)) continue;
+    const two = words(g.two, GIST_WORDS + 1);
+    const one = words(g.one, 1) ?? two?.split(" ")[0] ?? null;
+    if (two && one) gists.push({ seq, two, one });
+  }
+
   return {
     now: cut(body.now, DIGEST_MAX_NOW_CHARS),
     topics,
     open: open.slice(0, DIGEST_MAX_QUESTIONS),
+    gists,
   };
 }
