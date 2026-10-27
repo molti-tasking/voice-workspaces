@@ -11,7 +11,6 @@ import { useDigest } from "@/lib/talkback/use-digest";
 import { ChatView } from "./chat-view";
 import { NowView } from "./now-view";
 import { OpenView } from "./open-view";
-import { recentLadder } from "./recent";
 import { RecentView } from "./recent-view";
 import { StatusLine, type FlowStatus } from "./status-line";
 import { TimeBar } from "./time-bar";
@@ -101,11 +100,11 @@ export function ConversationView({
       ) : view === "topics" || view === "uptake" ? (
         <TopicLineView topics={topics} uptake={view === "uptake"} onZoom={setZoomKey} />
       ) : view === "now" ? (
-        <NowView now={digest.now} current={topics.find((t) => t.current) ?? null} pending={pending} onZoom={setZoomKey} />
+        <NowView now={digest.now} current={topics.find((t) => t.current) ?? null} onZoom={setZoomKey} />
       ) : view === "recent" ? (
-        <RecentView ladder={recentLadder(shown, digest)} topics={topics} onZoom={setZoomKey} />
+        <RecentView conversation={shown} gists={digest.gists} topics={topics} onZoom={setZoomKey} />
       ) : (
-        <OpenView questions={questionEntries(shown, digest)} pending={pending} onZoom={zoomOrdinal} />
+        <OpenView questions={questionEntries(shown, digest)} onZoom={zoomOrdinal} />
       )}
 
       {zoomed && (

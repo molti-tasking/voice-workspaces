@@ -1,5 +1,5 @@
 // The `/digest` subpath, not the package index: the index pulls in server code.
-import { GIST_WORDS, type ConversationDigest } from "@voicemural/talkback/digest";
+import { GIST_WORDS, type DigestGist } from "@voicemural/talkback/digest";
 import type { Conversation, Speaker } from "@/lib/talkback/conversation";
 import { turnsInOrder } from "@/lib/talkback/cursor";
 
@@ -18,6 +18,13 @@ import { turnsInOrder } from "@/lib/talkback/cursor";
  * is shrunk here (`localGist`), so the rows never wait for a model call; the
  * model's words replace these once they arrive.
  *
+ * A GUESS, THEN THE WORD, THEN NOTHING. A turn's own guess is `provisional`
+ * and drawn lighter; the model's words replace it once, and are never
+ * rewritten after that (`settleGists`) — a later digest that words the same
+ * turn differently does not reach the screen. Progressive visualisation's
+ * trade between following the data and keeping still (Angelini & Santucci
+ * 2017), settled for keeping still.
+ *
  * ROWS, NOT MOTION. A turn moves one row up only when a new turn begins, never
  * while it is being said, and the rows keep their places on the screen.
  *
@@ -33,6 +40,8 @@ export interface RecentWords {
   seq: number;
   who: Speaker;
   text: string;
+  /** Shrunk here, not yet by the model: drawn lighter until its words come. */
+  provisional?: boolean;
 }
 
 export interface RecentLadder {
@@ -42,9 +51,24 @@ export interface RecentLadder {
   last: (RecentWords & { cut: boolean }) | null;
 }
 
-export function recentLadder(conversation: Conversation, digest: ConversationDigest): RecentLadder {
+/**
+ * The gists the screen has settled on: `settled` plus any turn it had none
+ * for. A turn already settled keeps its words. Returns `settled` itself when
+ * nothing is new, so a caller can keep it as state without re-rendering.
+ */
+export function settleGists(
+  settled: ReadonlyMap<number, DigestGist>,
+  incoming: readonly DigestGist[] | undefined,
+): ReadonlyMap<number, DigestGist> {
+  const fresh = (incoming ?? []).filter((g) => !settled.has(g.seq));
+  if (fresh.length === 0) return settled;
+  const next = new Map(settled);
+  for (const g of fresh) next.set(g.seq, g);
+  return next;
+}
+
+export function recentLadder(conversation: Conversation, gists: ReadonlyMap<number, DigestGist>): RecentLadder {
   const turns = turnsInOrder(conversation).filter((t) => t.text.trim().length > 0);
-  const gists = new Map((digest.gists ?? []).map((g) => [g.seq, g]));
   const newest = turns.at(-1);
   const before = turns.at(-2);
   let last: RecentLadder["last"] = null;
@@ -58,17 +82,20 @@ export function recentLadder(conversation: Conversation, digest: ConversationDig
     };
   }
   return {
-    earlier: turns.slice(-(EARLIER_TURNS + 2), -2).map((t) => ({
-      seq: t.seq,
-      who: t.who,
-      text: gists.get(t.seq)?.one ?? localGist(t.text, 1),
-    })),
+    earlier: turns.slice(-(EARLIER_TURNS + 2), -2).map((t) => {
+      const gist = gists.get(t.seq);
+      return { seq: t.seq, who: t.who, text: gist?.one ?? localGist(t.text, 1), provisional: !gist };
+    }),
     previous: before
-      ? {
-          seq: before.seq,
-          who: before.who,
-          text: gists.get(before.seq)?.two ?? localGist(before.text, GIST_WORDS),
-        }
+      ? (() => {
+          const gist = gists.get(before.seq);
+          return {
+            seq: before.seq,
+            who: before.who,
+            text: gist?.two ?? localGist(before.text, GIST_WORDS),
+            provisional: !gist,
+          };
+        })()
       : null,
     last,
   };
