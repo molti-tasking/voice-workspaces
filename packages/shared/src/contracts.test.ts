@@ -40,8 +40,9 @@ describe("StudyCondition", () => {
     });
   });
 
-  it("forces one of the five views, or leaves the person's choice", () => {
+  it("forces one of the six views, or leaves the person's choice", () => {
     expect(StudyCondition.parse({ display: "uptake" }).display).toBe("uptake");
+    expect(StudyCondition.parse({ display: "recent" }).display).toBe("recent");
     // A drive frozen before the views were renamed reads as the successor.
     expect(StudyCondition.parse({ display: "transcript" }).display).toBe("chat");
     expect(StudyCondition.parse({ display: "track" }).display).toBe("topics");

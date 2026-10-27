@@ -41,6 +41,13 @@ describe("the simulated conversation", () => {
     expect(demoSparkQuestion("decide", "Getting there")).toMatch(/\?$/);
   });
 
+  it("has every turn in two words and in one, for the Recent view", () => {
+    const turns = final.sections.flatMap((s) => s.turns);
+    expect(demoDigest(final).gists?.map((g) => g.seq).sort((x, y) => x - y)).toEqual(
+      turns.map((t) => t.seq).sort((x, y) => x - y),
+    );
+  });
+
   it("digests the conversation as it stood, not as it ended", () => {
     const end = demoDigest(final);
     expect(end.now).toMatch(/only the journey is open/);

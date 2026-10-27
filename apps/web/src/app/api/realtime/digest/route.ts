@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { captureSession, eq, getDb } from "@voicemural/db";
 import { chat } from "@voicemural/llm";
-import { digestMessages, parseDigest } from "@voicemural/talkback";
+import { digestMessages, gistSeqs, parseDigest } from "@voicemural/talkback";
 import { currentUserId } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -30,6 +30,7 @@ const Body = z.object({
         who: z.enum(["user", "agent"]),
         text: z.string().max(4000),
         ordinal: z.number().int().positive().nullable(),
+        seq: z.number().int().nonnegative().optional(),
       }),
     )
     .min(1)
@@ -56,13 +57,14 @@ export async function POST(req: Request) {
     const result = await chat(digestMessages(topics, lines), {
       role: "fast",
       temperature: 0.2,
-      maxTokens: 700,
+      maxTokens: 900,
       signal: AbortSignal.timeout(15_000),
       metadata: { generation_name: "conversation_digest", session_id: captureSessionId },
     });
     const digest = parseDigest(
       result.content,
       topics.map((t) => t.ordinal),
+      gistSeqs(lines),
     );
     return NextResponse.json({ digest }, { headers });
   } catch (err) {

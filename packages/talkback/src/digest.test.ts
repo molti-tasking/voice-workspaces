@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DIGEST_MAX_CHARS, digestMessages, parseDigest } from "./digest";
+import { DIGEST_GIST_LINES, DIGEST_MAX_CHARS, digestMessages, gistSeqs, parseDigest } from "./digest";
 
 describe("the conversation digest", () => {
   it("names the topics by number and marks each line with its topic", () => {
@@ -34,6 +34,7 @@ describe("the conversation digest", () => {
       '```json\n{"now": "Choosing between Aarhus and Skagen.", "topics": [{"n": 2, "you": ["City and sea"], "ai": ["Aarhus: ARoS"], "ideas": [{"text": "Aarhus for two nights", "takenUp": true}, {"text": "Skagen in autumn", "takenUp": false}]}], "open": [{"q": "Where to go?", "settled": true, "n": 2}, {"q": "How to get there?", "settled": false, "n": 3}]}\n```';
     expect(parseDigest(raw, [1, 2, 3])).toEqual({
       now: "Choosing between Aarhus and Skagen.",
+      gists: [],
       topics: [
         {
           ordinal: 2,
@@ -86,5 +87,22 @@ describe("the conversation digest", () => {
     expect(parseDigest("Sorry, I can't.", [1])).toBeNull();
     expect(parseDigest("{not json}", [1])).toBeNull();
     expect(parseDigest('{"other": 1}', [1])).toBeNull();
+  });
+
+  it("asks a gist only of the newest lines, each marked by its seq", () => {
+    const lines = Array.from({ length: 10 }, (_, i) => ({ who: "user" as const, text: `line ${i}`, ordinal: 1, seq: i }));
+    expect(gistSeqs(lines)).toEqual([4, 5, 6, 7, 8, 9].slice(-DIGEST_GIST_LINES));
+    const content = digestMessages([{ ordinal: 1, title: "Long" }], lines)[1]?.content ?? "";
+    expect(content).toContain("[1] #9 Person: line 9");
+    expect(content).toContain("[1] Person: line 3");
+  });
+
+  it("keeps a gist only for a turn it asked about, in two words and one", () => {
+    const raw =
+      '{"now": null, "topics": [], "open": [], "gists": [{"id": 8, "two": "train slower, cheaper.", "one": "train"}, {"id": 99, "two": "made up", "one": "up"}, {"id": 9, "two": "Aarhus"}]}';
+    expect(parseDigest(raw, [], [8, 9])?.gists).toEqual([
+      { seq: 8, two: "train slower, cheaper", one: "train" },
+      { seq: 9, two: "Aarhus", one: "Aarhus" },
+    ]);
   });
 });
