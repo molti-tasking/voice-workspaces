@@ -146,12 +146,10 @@ export async function POST(req: Request) {
       : Promise.resolve(null),
   ]);
 
-  // What the conversation view has on it on this drive: the sparks row in the
-  // sparks arm, and Keep where they choose. Frozen with the drive.
+  // What the conversation view has on it on this drive. No sparks row and no
+  // Keep: both left the screen on 27 Oct 2026. Frozen with the drive.
   const condition = resolveStudyCondition(rows[0]?.studyCondition).condition;
   const onScreen = {
-    sparks: condition.sparks,
-    keep: condition.sparks && condition.sparkSelection === "chosen",
     // A display the drive forces (the display study); otherwise their choice.
     ...(condition.display !== "choice" ? { display: condition.display } : {}),
   };

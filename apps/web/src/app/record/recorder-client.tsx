@@ -17,7 +17,6 @@ import {
 import { RecordingBadge } from "@/components/recording-badge";
 import { aiHealthProblem, useAiHealth } from "@/lib/ai-health";
 import { FloorControls } from "./floor-controls";
-import { SparkChips } from "./spark-chips";
 import { PostDriveItems } from "./study-items";
 import { ViewSwitch, useRecordView } from "./view-switch";
 import { ConversationView } from "./views/conversation-view";
@@ -33,8 +32,8 @@ import { ConversationView } from "./views/conversation-view";
  * (`ConversationView`: the chat, the topics, uptake, now or open) — and
  * exactly three things to do about it: Lock (only
  * they speak), Normal (the agent may talk back) and Poke (one turn from the
- * agent, now). Plus Stop, which has to be here, and the sparks on a drive
- * that has them. The cue panel and the transcript link are gone from this
+ * agent, now). Plus Stop, which has to be here. The sparks row went on 27
+ * Oct 2026: one more thing to read beside the conversation. The cue panel and the transcript link are gone from this
  * screen, and the dock with them while a drive runs: every one of them was a
  * reason to look away from the turns. A draft the agent writes is a line in
  * the conversation, where it was written (talkback-23); it was off this
@@ -66,8 +65,6 @@ export function RecorderClient({
     talkback: talk,
     conversationId,
     conversation,
-    sparks,
-    keepable,
     cues,
     floor,
     setFloor,
@@ -225,7 +222,7 @@ export function RecorderClient({
     <main
       className={[
         // One centred column, and everything in it edge to edge with
-        // everything else: the conversation, its headlines, the sparks and the
+        // everything else: the conversation, its headlines and the
         // controls (20 Oct 2026). The whole window was too wide to read.
         "no-touch-fuss mx-auto flex w-full max-w-5xl flex-col gap-3 px-4",
         // While recording: exactly the screen, the conversation scrolling inside it, and
@@ -267,8 +264,6 @@ export function RecorderClient({
         captureSessionId={conversationId}
         // "It is listening" is true only while it is.
         placeholder={isRecording ? PROFILE.hint : undefined}
-        // Keeping is part of the drive: after Stop the subjects are a record.
-        keepable={TALKBACK_ENABLED && isRecording && keepable}
         drafts={cues.drafts}
         // During the drive and after it: tidying the topics is a thing to do
         // once there is time to read them.
@@ -307,33 +302,6 @@ export function RecorderClient({
           </div>
         )}
       </div>
-
-      {TALKBACK_ENABLED && isRecording && keepable && (
-        // How keeping works, once, in plain words: on a "chosen" drive the
-        // sparks come only for what they keep, so a drive with nothing kept
-        // offers none — which should not read as broken. Voice first: the
-        // information sheet's rule is no touching the phone while driving.
-        <p className="shrink-0 text-xs leading-snug text-fg/60">
-          Say &ldquo;keep this one&rdquo; — or open a topic and tap{" "}
-          <span className="font-medium text-fg/80">Keep</span> when you are not driving — for what
-          you want to hold in your own head. Souffleur holds the rest; sparks come for what you
-          keep.
-        </p>
-      )}
-
-      {/* The same row under every view. */}
-      {TALKBACK_ENABLED && isRecording && rec.sparksArm && (
-        <SparkChips
-          store={conversation}
-          ledger={sparks}
-          connected={connected}
-          speaking={hearing}
-          onPull={poke}
-          // Always a row in the sparks arm: an empty one says why.
-          explainEmpty
-          selection={rec.sparkSelection}
-        />
-      )}
 
       {TALKBACK_ENABLED && isRecording && (
         <FloorControls
