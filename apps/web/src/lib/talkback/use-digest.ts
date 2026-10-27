@@ -53,7 +53,12 @@ export function digestInput(conversation: Conversation): {
   const lines = turnsInOrder(conversation)
     .filter((t) => t.text.trim().length > 0)
     .slice(-MAX_LINES)
-    .map((t) => ({ who: t.who, text: t.text.slice(0, MAX_LINE_CHARS), ordinal: ordinalOf.get(t.seq) ?? null }));
+    .map((t) => ({
+      who: t.who,
+      text: t.text.slice(0, MAX_LINE_CHARS),
+      ordinal: ordinalOf.get(t.seq) ?? null,
+      seq: t.seq,
+    }));
   const signature = [
     topics.map((t) => `${t.ordinal}:${t.title}`).join("|"),
     turnsInOrder(conversation)

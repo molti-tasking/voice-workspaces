@@ -242,6 +242,33 @@ const DEMO_NOW: [from: string, text: string][] = [
   ["s22", "Aarhus by train, Friday to Sunday; only the journey is open"],
 ];
 
+/** Each turn in two words and in one, as the digest's gists would have it (the Recent view). */
+const DEMO_GISTS: Record<string, [two: string, one: string]> = {
+  s1: ["Denmark, 300 €", "Denmark"],
+  s2: ["train, two nights", "train"],
+  s3: ["back Monday", "Monday"],
+  s4: ["Friday–Sunday", "Friday"],
+  s5: ["your suggestion?", "suggestion?"],
+  s6: ["Aarhus, Skagen, Copenhagen", "options"],
+  s7: ["hm, okay", "okay"],
+  s8: ["Skagen far", "Skagen"],
+  s9: ["decide later", "later"],
+  s10: ["train cheaper", "train"],
+  s11: ["deadline Friday", "deadline"],
+  s12: ["Friday afternoon", "Friday"],
+  s13: ["Aarhus budget?", "budget?"],
+  s14: ["food tight", "budget"],
+  s15: ["280 € fine", "280 €"],
+  s16: ["which place?", "places"],
+  s17: ["Aarhus walkable", "Aarhus"],
+  s18: ["what to do?", "do?"],
+  s19: ["ARoS, old town", "ARoS"],
+  s20: ["rain?", "rain?"],
+  s21: ["ARoS if rain", "jacket"],
+  s22: ["Aarhus by train", "Aarhus"],
+  s23: ["journey open", "journey"],
+};
+
 /** The digest of the simulated conversation as it stands. */
 export function demoDigest(conversation: Conversation): ConversationDigest {
   const said = new Set(conversation.sections.flatMap((s) => s.turns.map((t) => t.id)));
@@ -263,7 +290,13 @@ export function demoDigest(conversation: Conversation): ConversationDigest {
     return ordinal === undefined ? [] : [{ text, ordinal, settled: by !== null && said.has(by) }];
   });
   const now = DEMO_NOW.filter(([from]) => said.has(from)).at(-1)?.[1] ?? null;
-  return { now, topics, open };
+  const gists = conversation.sections.flatMap((s) =>
+    s.turns.flatMap((turn) => {
+      const gist = DEMO_GISTS[turn.id];
+      return gist ? [{ seq: turn.seq, two: gist[0], one: gist[1] }] : [];
+    }),
+  );
+  return { now, topics, open, gists };
 }
 
 /** Whether the script has a digest for every topic it names, for its test. */

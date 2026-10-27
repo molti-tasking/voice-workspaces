@@ -57,7 +57,7 @@ export type CaptureUseCase = z.infer<typeof CaptureUseCase>;
 
 /**
  * The ways a conversation can be shown on the phone — live, after it, and
- * when it is continued, always the same five (`apps/web/src/app/record/views`).
+ * when it is continued, always the same six (`apps/web/src/app/record/views`).
  * The display study's session (`/study/session`) compares three of them,
  * between participants (`SESSION_DISPLAYS`).
  *
@@ -69,11 +69,13 @@ export type CaptureUseCase = z.infer<typeof CaptureUseCase>;
  *   up or not yet.
  * - `now`: one line, where the conversation is.
  * - `open`: the questions it has raised, settled or still open.
+ * - `recent`: the conversation shrunk by age — the newest turn in its words,
+ *   the one before in two, earlier ones in one each, the topics above.
  */
-export const CONVERSATION_DISPLAYS = ["chat", "topics", "uptake", "now", "open"] as const;
+export const CONVERSATION_DISPLAYS = ["chat", "topics", "uptake", "now", "open", "recent"] as const;
 
 /**
- * The views before these five, as they may still be stored — on a study
+ * The views before these six, as they may still be stored — on a study
  * block, on a drive's condition, in a browser — read as their nearest
  * successor: the transcript and the column became the chat, the mirror's two
  * layouts the topic line.
@@ -85,7 +87,7 @@ const LEGACY_DISPLAYS: Readonly<Record<string, (typeof CONVERSATION_DISPLAYS)[nu
   bubbles: "topics",
 };
 
-/** A stored display as one of the five; anything unknown is left for the schema to refuse. */
+/** A stored display as one of the six; anything unknown is left for the schema to refuse. */
 export function normalizeDisplay(value: unknown): unknown {
   return typeof value === "string" ? (LEGACY_DISPLAYS[value] ?? value) : value;
 }

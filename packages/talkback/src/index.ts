@@ -179,8 +179,10 @@ export { CONTINUED_MAX_CHARS, renderContinued, type ContinuedConversation } from
 export {
   EMPTY_DIGEST,
   digestMessages,
+  gistSeqs,
   parseDigest,
   type ConversationDigest,
+  type DigestGist,
   type DigestIdea,
   type DigestLine,
   type DigestQuestion,
