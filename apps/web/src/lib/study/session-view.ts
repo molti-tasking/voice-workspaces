@@ -36,6 +36,18 @@ export function blockView(b: { position: number; display: string; task: string }
 const isProduction = () => process.env.NODE_ENV === "production";
 
 /**
+ * Where a session's links point: `STUDY_SESSION_BASE_URL`, else the public
+ * origin (`BETTER_AUTH_URL`), else the request's own. No trailing slash.
+ */
+export function studyBaseUrl(requestUrl?: string): string {
+  const base =
+    process.env.STUDY_SESSION_BASE_URL ||
+    process.env.BETTER_AUTH_URL ||
+    (requestUrl ? new URL(requestUrl).origin : "http://localhost:3000");
+  return base.replace(/\/+$/, "");
+}
+
+/**
  * Whether a new Prolific session needs its setup to have a completion code:
  * in production, so nobody does the study and then finds there is nothing to
  * hand in. Elsewhere a made-up one stands in (`completionCodeOf`).

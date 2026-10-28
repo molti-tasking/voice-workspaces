@@ -12,7 +12,8 @@ import { useLocalValue, writeLocalValue } from "@/lib/local-value";
 
 const VIEW_KEY = "souffleur.record-view";
 
-const LABELS: Record<ConversationDisplay, string> = {
+/** Each view's name, as the switch shows it; the researchers' page names them the same. */
+export const VIEW_LABELS: Record<ConversationDisplay, string> = {
   chat: "Chat",
   topics: "Topics",
   uptake: "Uptake",
@@ -43,7 +44,7 @@ export function ViewSwitch({ view }: { view: ConversationDisplay }) {
             view === id ? "bg-surface font-semibold text-fg shadow-sm" : "text-fg/65 hover:text-fg",
           ].join(" ")}
         >
-          {LABELS[id]}
+          {VIEW_LABELS[id]}
         </button>
       ))}
     </div>

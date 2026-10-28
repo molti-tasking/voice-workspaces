@@ -22,6 +22,7 @@ import {
   type SessionTimings,
 } from "@voicemural/shared";
 import { currentUser } from "@/lib/session";
+import { isResearcher } from "@/lib/study/researchers";
 import { blockView, completionCodeOf, completionCodeRequired, completionFor } from "@/lib/study/session-view";
 import { StudyFrame } from "../../p/ui";
 import { SessionFlow } from "./session-flow";
@@ -76,7 +77,8 @@ const talkbackEnabled = () => process.env.NEXT_PUBLIC_TALKBACK_ENABLED === "true
  *   the setup that is running; the end hands them its completion code.
  *
  * For the researchers, and never for a participant — outside production, or
- * signed in as a pilot account (`STUDY_PILOT_USER_IDS`):
+ * signed in as a researcher (`RESEARCHER_USER_IDS`) or a pilot account
+ * (`STUDY_PILOT_USER_IDS`); /researcher links each cell's walkthrough:
  * - `?demo=1[&design=name][&order=cell]` walks through a session in that
  *   cell of that setup (a draft's too; the active one by default), with the
  *   simulated conversation: no microphone, no AI, nothing saved.
@@ -85,7 +87,8 @@ const talkbackEnabled = () => process.env.NEXT_PUBLIC_TALKBACK_ENABLED === "true
 export default async function StudySessionPage({ searchParams }: { searchParams: Promise<Search> }) {
   const params = await searchParams;
   const user = await currentUser();
-  const researcher = process.env.NODE_ENV !== "production" || (user !== null && pilotIds().includes(user.id));
+  const researcher =
+    process.env.NODE_ENV !== "production" || (user !== null && (pilotIds().includes(user.id) || isResearcher(user.id)));
   const timings = scaledTimings(researcher ? Number(first(params.fast) ?? 1) : 1);
 
   if (first(params.demo) === "1") {

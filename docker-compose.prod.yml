@@ -91,6 +91,9 @@ services:
       - MODEL_REALTIME=${MODEL_REALTIME:-}
       - REALTIME_TRANSCRIBE_MODEL=${REALTIME_TRANSCRIBE_MODEL:-}
       - REALTIME_EAGERNESS=${REALTIME_EAGERNESS:-}
+      # "on" gives the speech-to-speech agent a MOCK web search (results made
+      # up by the fast model). Demos and the display study only; off for drives.
+      - REALTIME_MOCK_SEARCH=${REALTIME_MOCK_SEARCH:-off}
       - MODEL_CONVERSE=${MODEL_CONVERSE}
       - MODEL_SUMMARISE=${MODEL_SUMMARISE:-}
       # The memory index. Optional — unset keeps recall lexical. Web embeds the
@@ -113,9 +116,17 @@ services:
       - TURN_URLS=${TURN_URLS:-}
       - TURN_SECRET=${TURN_SECRET:-}
       - TURN_TTL_SECONDS=${TURN_TTL_SECONDS:-43200}
-      # Who may open researcher-only pages (the findings survey's results).
+      # Who may open researcher-only pages: /researcher (the display study's
+      # setups, sessions and downloads) and the findings survey's results.
       # Comma-separated user ids; unset, those pages are a 404 for everyone.
       - RESEARCHER_USER_IDS=${RESEARCHER_USER_IDS:-}
+      # Pilot accounts: the display study's walkthrough (?demo=1) in production,
+      # and the recorder's per-drive study toggles' server half.
+      - STUDY_PILOT_USER_IDS=${STUDY_PILOT_USER_IDS:-}
+      # The display study's links: their base (unset: BETTER_AUTH_URL), and
+      # whether a signed-in account may take part as itself (off: fresh guests).
+      - STUDY_SESSION_BASE_URL=${STUDY_SESSION_BASE_URL:-}
+      - STUDY_SESSION_ALLOW_ACCOUNTS=${STUDY_SESSION_ALLOW_ACCOUNTS:-false}
       # The study's calendar day, an IANA name (e.g. Europe/Copenhagen); unset
       # is UTC. A drive's spark mode alternates by this day when its condition
       # says `sparkSelection: "alternate"`, and /my-week groups drives by it.
@@ -175,6 +186,16 @@ services:
       # The study's calendar day, for `pnpm study:metrics` run in here; the
       # same value as web's.
       - STUDY_TIME_ZONE=${STUDY_TIME_ZONE:-}
+      # `pnpm study:session invite` run in here prints a link: without these
+      # it would point at localhost.
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL}
+      - STUDY_SESSION_BASE_URL=${STUDY_SESSION_BASE_URL:-}
+      # `pnpm study:judge` and `pnpm study:export --include-text` in here:
+      # the judge's model and the secret its item ids are made from, and the
+      # pilot accounts whose words an export may include.
+      - MODEL_JUDGE=${MODEL_JUDGE:-}
+      - STUDY_JUDGE_SALT=${STUDY_JUDGE_SALT:-}
+      - STUDY_PILOT_USER_IDS=${STUDY_PILOT_USER_IDS:-}
     volumes:
       # Same volume as web: the web app writes chunks, the worker reads them.
       # Both images run as uid 1001, which is what makes the shared mount work.
