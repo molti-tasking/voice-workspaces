@@ -13,8 +13,11 @@
  * - `open`: the questions the conversation has raised, settled or still open
  *   (the Open view).
  * - `gists`: the last few turns, each in two words and in one (the Recent
- *   view, which shrinks a turn the further back it lies). Matched to turns by
- *   their `seq`, so a gist written for one point still fits at a later one.
+ *   view, which shrinks a turn the further back it lies), and in a short
+ *   line (the Stack view's previous turn). Matched to turns by their `seq`,
+ *   so a gist written for one point still fits at a later one.
+ * - each topic's `decision`: what has been decided on it so far, in a few
+ *   words with the times, places and numbers (the Stack view's bubbles).
  *
  * KEPT APART BY WHO SAID IT. "you" is only what the person said, "ai" only
  * what the assistant said, and an idea is only ever the assistant's: whether
@@ -43,6 +46,10 @@ export const DIGEST_MAX_NOW_CHARS = 120;
 export const DIGEST_GIST_LINES = 6;
 /** Words in a turn's short gist; its shortest is one. */
 export const GIST_WORDS = 2;
+/** Words in a turn's line, the longest gist. */
+export const GIST_LINE_WORDS = 8;
+/** Words in a topic's decision. */
+export const DECISION_WORDS = 6;
 
 /** The last lines the model sees: bounded, newest last. */
 const MAX_LINES = 80;
@@ -73,6 +80,12 @@ export interface DigestTopic {
   you: string[];
   ai: string[];
   ideas: DigestIdea[];
+  /**
+   * What has been decided on it so far, with what is still unclear named as
+   * such: "Sat 9:12 ICE, seats reserved", "Booked, breakfast unclear". Null
+   * when nothing has been. Absent from a digest written before it existed.
+   */
+  decision?: string | null;
 }
 
 export interface DigestQuestion {
@@ -82,11 +95,13 @@ export interface DigestQuestion {
   ordinal: number | null;
 }
 
-/** One turn, shrunk: `two` words, then `one`. */
+/** One turn, shrunk: a `line` of a few words, `two` words, then `one`. */
 export interface DigestGist {
   seq: number;
   two: string;
   one: string;
+  /** At most `GIST_LINE_WORDS`. Absent from an older digest. */
+  line?: string;
 }
 
 export interface ConversationDigest {
@@ -102,14 +117,15 @@ export const EMPTY_DIGEST: ConversationDigest = { now: null, topics: [], open: [
 const SYSTEM = `You digest a spoken conversation between a person and a voice assistant, for a small phone screen that is read at a glance.
 
 Return JSON only, nothing else:
-{"now": "...", "topics": [{"n": 1, "you": ["..."], "ai": ["..."], "ideas": [{"text": "...", "takenUp": false}]}], "open": [{"q": "...", "settled": false, "n": 1}], "gists": [{"id": 12, "two": "...", "one": "..."}]}
+{"now": "...", "topics": [{"n": 1, "decision": "...", "you": ["..."], "ai": ["..."], "ideas": [{"text": "...", "takenUp": false}]}], "open": [{"q": "...", "settled": false, "n": 1}], "gists": [{"id": 12, "line": "...", "two": "...", "one": "..."}]}
 
 - "now": ONE line, at most 14 words: where the conversation is right now and what it is working out. No "you are discussing".
 - "topics": one entry per numbered topic that has lines, by its number "n".
   - "you": what the PERSON said, asked or decided on it. "ai": what the ASSISTANT contributed. Never put one side's point under the other. At most 3 each, most recent last, each at most 8 words: a fragment, no full stop.
+  - "decision": what has been DECIDED on this topic so far, at most 6 words, with the concrete times, places and numbers ("Sat 9:12 ICE, seats reserved", "Harbour fish place, 8 pm, two"). Name what is still unclear as unclear ("Booked, breakfast unclear"). null when nothing has been decided. Only what the person agreed to, never a suggestion they did not take up.
   - "ideas": the concrete suggestions the ASSISTANT made on it (an option, a recommendation, a plan), at most 4, each at most 8 words. "takenUp": true only when the person afterwards made it their own in their own words — chose it, built on it, restated it adding something, or decided on it. "Okay", "hm" or silence is NOT taking it up.
 - "open": the questions this conversation has to answer that came up (where, when, how, how much), at most 6, each a short question of at most 8 words. "settled": true when the person decided it. "n": the topic it belongs to.
-- "gists": one entry per line marked #id, by that "id". "two": the line in TWO words, the concrete thing it said ("train slower", "Aarhus, two nights"). "one": ONE word, the thing itself ("train"). Words from the line where possible; no "discussed", no full stop.
+- "gists": one entry per line marked #id, by that "id". "line": the line in at most 8 words, as its speaker would put it short ("Fish place by the harbour, bookings until six", "Is breakfast included?"); keep their own words where you can. "two": the line in TWO words, the concrete thing it said ("train slower", "Aarhus, two nights"). "one": ONE word, the thing itself ("train"). Words from the line where possible; no "discussed", no full stop.
 - Name the concrete thing — the place, number or option — never "discussed X".
 - Only what was actually said. An empty list is better than an invented point.
 - In the language of the conversation.`;
@@ -223,7 +239,7 @@ export function parseDigest(
   const topics: DigestTopic[] = [];
   for (const item of Array.isArray(body.topics) ? body.topics : []) {
     if (!item || typeof item !== "object") continue;
-    const t = item as { n?: unknown; you?: unknown; ai?: unknown; ideas?: unknown };
+    const t = item as { n?: unknown; you?: unknown; ai?: unknown; ideas?: unknown; decision?: unknown };
     const ordinal = Number(t.n);
     if (!Number.isInteger(ordinal) || !known.has(ordinal) || seen.has(ordinal)) continue;
     seen.add(ordinal);
@@ -232,6 +248,7 @@ export function parseDigest(
       you: points(t.you, DIGEST_MAX_POINTS),
       ai: points(t.ai, DIGEST_MAX_POINTS),
       ideas: ideas(t.ideas),
+      decision: words(t.decision, DECISION_WORDS + 2),
     });
   }
 
@@ -254,12 +271,13 @@ export function parseDigest(
   const gists: DigestGist[] = [];
   for (const item of Array.isArray(body.gists) ? body.gists : []) {
     if (!item || typeof item !== "object") continue;
-    const g = item as { id?: unknown; two?: unknown; one?: unknown };
+    const g = item as { id?: unknown; two?: unknown; one?: unknown; line?: unknown };
     const seq = Number(g.id);
     if (!Number.isInteger(seq) || !asked.has(seq) || gists.some((x) => x.seq === seq)) continue;
     const two = words(g.two, GIST_WORDS + 1);
     const one = words(g.one, 1) ?? two?.split(" ")[0] ?? null;
-    if (two && one) gists.push({ seq, two, one });
+    const line = words(g.line, GIST_LINE_WORDS + 2);
+    if (two && one) gists.push({ seq, two, one, ...(line ? { line } : {}) });
   }
 
   return {

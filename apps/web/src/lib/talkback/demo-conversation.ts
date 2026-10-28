@@ -30,6 +30,11 @@ const user = (id: string, text: string, pauses?: { pauses: number; pausesBefore:
 const agent = (id: string, text: string): ConversationMessage => ({ type: "agent", id, text });
 const title = (t: string, ordinal: number): ConversationMessage => ({ type: "title", title: t, ordinal });
 const settled = (ordinal: number, value: boolean): ConversationMessage => ({ type: "state", ordinal, settled: value });
+/** A search the agent ran: first the query, then again with what it found. */
+const lookup = (id: string, query: string, found?: string): ConversationMessage => ({
+  type: "mark",
+  mark: { kind: "lookup", id, query, ...(found ? { found } : {}) },
+});
 
 export const DEMO_STEPS: readonly DemoStep[] = [
   { waitMs: 600, message: title("Weekend in Denmark", 1) },
@@ -117,7 +122,9 @@ export const DEMO_STEPS: readonly DemoStep[] = [
 
   { waitMs: 3200, message: title("Weather", 7) },
   { waitMs: 600, message: user("s20", "Is it going to rain? It's the end of October, after all.") },
-  { waitMs: 2000, message: agent("s21", "Probably on one of the days: pack a rain jacket, and keep ARoS for the rainy one.") },
+  { waitMs: 500, message: lookup("l1", "Aarhus weather forecast, last weekend of October") },
+  { waitMs: 2400, message: lookup("l1", "Aarhus weather forecast, last weekend of October", "4 results found") },
+  { waitMs: 600, message: agent("s21", "Probably on one of the days: pack a rain jacket, and keep ARoS for the rainy one.") },
 
   { waitMs: 2400, message: title("Weekend in Denmark", 1) },
   {
@@ -242,6 +249,44 @@ const DEMO_NOW: [from: string, text: string][] = [
   ["s22", "Aarhus by train, Friday to Sunday; only the journey is open"],
 ];
 
+/** What each topic had decided, from the turn that decided it; the latest one said wins. */
+const DEMO_DECISIONS: [topic: string, from: string, text: string][] = [
+  ["Weekend in Denmark", "s4", "Fri to Sun, back Sunday evening"],
+  ["Getting there", "s9", "Train or flight, still unclear"],
+  ["Paper deadline", "s11", "Due Fri noon, leave after"],
+  ["Destinations", "s13", "Leaning to Aarhus"],
+  ["Budget", "s15", "About 280 €, cook one evening"],
+  ["Destinations", "s22", "Aarhus, two nights"],
+  ["Weekend in Denmark", "s22", "Aarhus, Fri to Sun, under 300 €"],
+];
+
+/** Each turn in a few words, as the digest's gists would have it (the Stack view). */
+const DEMO_LINES: Record<string, string> = {
+  s1: "Long weekend in Denmark, at most 300 €",
+  s2: "Train and two nights fit the budget",
+  s3: "Back for work on Monday",
+  s4: "Friday to Sunday, back Sunday evening",
+  s5: "What would you suggest?",
+  s6: "Aarhus, Skagen or Copenhagen",
+  s7: "Hm, okay",
+  s8: "Skagen is far, maybe fly to Aalborg",
+  s9: "Decide once the days are known",
+  s10: "The train is the cheaper one",
+  s11: "Paper due Friday at noon",
+  s12: "Leave Friday afternoon",
+  s13: "A rough budget for Aarhus?",
+  s14: "About 280 €, food money tight",
+  s15: "Cook one evening, 280 € is fine",
+  s16: "Which place for two nights?",
+  s17: "Aarhus, all walkable from the station",
+  s18: "What would I do there?",
+  s19: "ARoS, old town, Latin Quarter, harbour",
+  s20: "Is it going to rain?",
+  s21: "Rain jacket, ARoS for the wet day",
+  s22: "Aarhus, Friday to Sunday, by train",
+  s23: "Only the journey is still open",
+};
+
 /** Each turn in two words and in one, as the digest's gists would have it (the Recent view). */
 const DEMO_GISTS: Record<string, [two: string, one: string]> = {
   s1: ["Denmark, 300 €", "Denmark"],
@@ -282,6 +327,7 @@ export function demoDigest(conversation: Conversation): ConversationDigest {
         you: topic.you,
         ai: topic.ai,
         ideas: topic.ideas.map(([text, by]) => ({ text, takenUp: by !== null && said.has(by) })),
+        decision: DEMO_DECISIONS.filter(([t, from]) => t === section.title && said.has(from)).at(-1)?.[2] ?? null,
       },
     ];
   });
@@ -293,7 +339,8 @@ export function demoDigest(conversation: Conversation): ConversationDigest {
   const gists = conversation.sections.flatMap((s) =>
     s.turns.flatMap((turn) => {
       const gist = DEMO_GISTS[turn.id];
-      return gist ? [{ seq: turn.seq, two: gist[0], one: gist[1] }] : [];
+      const line = DEMO_LINES[turn.id];
+      return gist ? [{ seq: turn.seq, two: gist[0], one: gist[1], ...(line ? { line } : {}) }] : [];
     }),
   );
   return { now, topics, open, gists };

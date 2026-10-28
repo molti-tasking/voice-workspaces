@@ -257,6 +257,8 @@ export function RecorderClient({
                 // The agent first: its own voice can reach the microphone.
                 speaking: hearing,
                 listening: !hearing && talk.userSpeaking,
+                thinking: talk.thinking,
+                lookingUp: talk.lookingUp,
               }
             : null
         }

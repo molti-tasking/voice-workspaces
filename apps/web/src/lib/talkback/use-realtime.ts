@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { LOOKUP_TOOL_NAME, lookupQuery } from "@voicemural/talkback/lookup";
 import {
   REALTIME_POKE_NUDGE,
   REALTIME_RESUME_NOTE,
@@ -65,6 +66,10 @@ interface Connection {
   userSpeaking: boolean;
   /** A poke made while they were talking, fired when their turn is over. */
   armed: SparkRequest | "poke" | null;
+  /** Searches the agent asked for that have not been answered yet. */
+  lookups: number;
+  /** A search is answered and its reply waits for the response that asked for it to end. */
+  replyAfterLookup: boolean;
   disconnectTimer: ReturnType<typeof setTimeout> | null;
 }
 
@@ -83,6 +88,8 @@ function systemNote(text: string) {
   };
 }
 
+const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+
 function send(c: Connection, event: Record<string, unknown>): void {
   if (c.dc.readyState === "open") c.dc.send(JSON.stringify(event));
 }
@@ -97,6 +104,11 @@ function applyTurnDetection(c: Connection, floor: Floor, paused: boolean): void 
       audio: { input: { turn_detection: { ...c.call.turnDetection, create_response: floor !== "locked" && !paused } } },
     },
   });
+}
+
+/** A function call's result, handed back to the model. */
+function functionOutput(callId: string, output: unknown) {
+  return { type: "conversation.item.create", item: { type: "function_call_output", call_id: callId, output: JSON.stringify(output) } };
 }
 
 function why(err: unknown): string {
@@ -225,11 +237,51 @@ export function useRealtimeTalkback(options: TalkbackOptions): Talkback {
         c.appliedFloor = applied;
         c.askedFloor = null;
         patch({ floor: applied });
+      } else if (event.type === "response.function_call_arguments.done") {
+        void lookUp(c, str(event.call_id), str(event.name), event.arguments);
       } else if (event.type === "error") {
         const error = (event.error ?? {}) as { message?: unknown; code?: unknown };
         console.warn(`[talkback:realtime] provider error — ${String(error.code ?? "")} ${String(error.message ?? "")}`);
       }
       c.conversation.handle(event);
+    }
+
+    /**
+     * The agent asked to look something up: show the query, run the mock
+     * search, hand the result back, and ask for the answer once the response
+     * that asked has ended (the provider takes one response at a time).
+     */
+    async function lookUp(c: Connection, callId: string | null, name: string | null, args: unknown): Promise<void> {
+      if (!callId) return;
+      const query = name === LOOKUP_TOOL_NAME ? lookupQuery(args) : null;
+      let output: unknown = { ok: false, error: "That tool does not exist." };
+      if (query) {
+        c.lookups += 1;
+        patch({ lookingUp: true, thinking: false });
+        latest.current.onMessage({ type: "mark", mark: { kind: "lookup", id: callId, query } });
+        let found = "Search failed";
+        try {
+          const res = await fetch("/api/realtime/lookup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ captureSessionId: driveId, query }),
+          });
+          const body = res.ok ? ((await res.json()) as { ok?: boolean; found?: string; results?: unknown; error?: string }) : null;
+          found = body?.found ?? found;
+          output = body?.ok ? { results: body.results } : { ok: false, error: body?.error ?? "The search failed." };
+        } catch (err) {
+          console.warn(`[talkback:realtime] lookup failed — ${why(err)}`);
+          output = { ok: false, error: "The search failed." };
+        }
+        c.lookups -= 1;
+        latest.current.onMessage({ type: "mark", mark: { kind: "lookup", id: callId, query, found } });
+      }
+      if (current !== c || disposed) return;
+      send(c, functionOutput(callId, output));
+      if (c.lookups === 0) patch({ lookingUp: false, thinking: true });
+      if (latest.current.paused) return;
+      if (c.conversation.responding) c.replyAfterLookup = true;
+      else send(c, { type: "response.create" });
     }
 
     async function connect(next: MediaStream): Promise<void> {
@@ -315,18 +367,28 @@ export function useRealtimeTalkback(options: TalkbackOptions): Talkback {
         heard: (who, text) => titler.heard(who, text),
         userSpeaking: (on) => {
           c.userSpeaking = on;
-          patch({ userSpeaking: on });
+          patch(on ? { userSpeaking: true, thinking: false } : { userSpeaking: false });
         },
         agentSpeaking: (on) => {
-          if (current === c) patch({ status: on ? "speaking" : "listening" });
+          if (current === c) patch(on ? { status: "speaking", thinking: false } : { status: "listening" });
         },
         finished: (turn) => void recordsRef.current?.turn(turn),
         // Locked, their turn creates no reply, so an armed poke goes now;
         // open, it waits for the reply their turn gets.
         turnEnded: () => {
           if (latest.current.floor === "locked") fireArmed();
+          else if (!latest.current.paused) patch({ thinking: true });
         },
-        responseDone: fireArmed,
+        responseDone: () => {
+          if (c.replyAfterLookup) {
+            c.replyAfterLookup = false;
+            send(c, { type: "response.create" });
+            return;
+          }
+          // Nothing more is coming: a reply that never spoke, or one that has.
+          if (c.lookups === 0 && !c.conversation.speaking) patch({ thinking: false });
+          fireArmed();
+        },
       });
       const c: Connection = {
         pc,
@@ -341,6 +403,8 @@ export function useRealtimeTalkback(options: TalkbackOptions): Talkback {
         wasPaused: false,
         userSpeaking: false,
         armed: null,
+        lookups: 0,
+        replyAfterLookup: false,
         disconnectTimer: null,
       };
 

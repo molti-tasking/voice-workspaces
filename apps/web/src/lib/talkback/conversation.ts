@@ -146,13 +146,28 @@ export type Mark =
       key: string;
       kind: "continued";
       after: number;
+    }
+  | {
+      /**
+       * `lookup:{id}`: the agent searched for something, `id` being the tool
+       * call's. The query as the agent sent it, so they can see what was
+       * looked up; `found` once the result is back, null while it runs.
+       */
+      key: string;
+      kind: "lookup";
+      id: string;
+      query: string;
+      found: string | null;
+      after: number;
     };
 
 /** A mark as the recorder hands it in; the store places it. */
 export type MarkInput =
   | { kind: "draft"; draftId: string; major: number }
   | { kind: "spark"; ordinal: number; spark: SparkKind; question?: string }
-  | { kind: "continued" };
+  | { kind: "continued" }
+  /** Handed in twice: when the search starts, and again with `found` when it is back. */
+  | { kind: "lookup"; id: string; query: string; found?: string };
 
 export interface Conversation {
   /** In the order each subject first came up. */
@@ -329,6 +344,18 @@ function applyKeep(
  * because it is pulled the moment they tap.
  */
 function applyMark(state: Conversation, input: MarkInput): Conversation {
+  if (input.kind === "lookup") {
+    // The second hand-in is the result: the search stays where it started.
+    const key = `lookup:${input.id}`;
+    const found = input.found ?? null;
+    const existing = state.marks.find((m) => m.key === key);
+    if (existing) {
+      if (existing.kind !== "lookup" || found === null || existing.found === found) return state;
+      return { ...state, marks: state.marks.map((m) => (m === existing ? { ...existing, found } : m)) };
+    }
+    const after = lastTurnSeq(state);
+    return { ...state, marks: [...state.marks, { key, kind: "lookup", id: input.id, query: input.query, found, after }] };
+  }
   let after = -1;
   for (const section of state.sections) {
     for (const turn of section.turns) {
@@ -344,6 +371,13 @@ function applyMark(state: Conversation, input: MarkInput): Conversation {
         : `continued:${after}`;
   if (state.marks.some((m) => m.key === key)) return state;
   return { ...state, marks: [...state.marks, { ...input, key, after } as Mark] };
+}
+
+/** The `seq` of the last turn said, by either of them; -1 before any. */
+function lastTurnSeq(state: Conversation): number {
+  let after = -1;
+  for (const section of state.sections) for (const turn of section.turns) after = Math.max(after, turn.seq);
+  return after;
 }
 
 /** The longest title a rename keeps: what the container keeps of a title it is handed. */

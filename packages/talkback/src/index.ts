@@ -200,3 +200,13 @@ export {
   type RealtimeBackground,
   type RealtimeTurnDetection,
 } from "./realtime";
+export {
+  LOOKUP_MAX_QUERY_CHARS,
+  LOOKUP_TOOL,
+  LOOKUP_TOOL_NAME,
+  lookupFoundLabel,
+  lookupQuery,
+  mockSearchMessages,
+  parseMockSearch,
+  type LookupResult,
+} from "./lookup";

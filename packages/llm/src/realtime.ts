@@ -44,6 +44,17 @@ export interface RealtimeSessionConfig {
     };
     output: { voice: string };
   };
+  /** Functions the model may call; the browser runs them and hands back the result. */
+  tools?: RealtimeFunctionTool[];
+  tool_choice?: "auto" | "none";
+}
+
+/** A function the realtime model may call, in the provider's flat form. */
+export interface RealtimeFunctionTool {
+  type: "function";
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
 }
 
 /** How readily the provider ends their turn: `low` waits longest for them to go on. */

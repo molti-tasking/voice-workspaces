@@ -12,6 +12,7 @@ import { ChatView } from "./chat-view";
 import { NowView } from "./now-view";
 import { OpenView } from "./open-view";
 import { RecentView } from "./recent-view";
+import { StackView } from "./stack-view";
 import { StatusLine, type FlowStatus } from "./status-line";
 import { TimeBar } from "./time-bar";
 import { TopicLineView } from "./topic-line-view";
@@ -19,7 +20,7 @@ import { TopicSheet } from "./topic-sheet";
 import { questionEntries, topicEntries } from "./topics";
 
 /**
- * One conversation, shown one of the six ways (`ConversationDisplay` in
+ * One conversation, shown one of the seven ways (`ConversationDisplay` in
  * @voicemural/shared) — the same component live on the recorder, in the
  * display study, in the simulated conversation, and for a past conversation
  * on its page. Where the conversation comes from is the store's business:
@@ -103,6 +104,14 @@ export function ConversationView({
         <NowView now={digest.now} current={topics.find((t) => t.current) ?? null} onZoom={setZoomKey} />
       ) : view === "recent" ? (
         <RecentView conversation={shown} gists={digest.gists} topics={topics} onZoom={setZoomKey} />
+      ) : view === "stack" ? (
+        <StackView
+          conversation={shown}
+          digest={digest}
+          speaking={cursor !== null ? null : status?.speaking ? "agent" : status?.listening ? "user" : null}
+          onZoom={setZoomKey}
+          placeholder={placeholder}
+        />
       ) : (
         <OpenView questions={questionEntries(shown, digest)} onZoom={zoomOrdinal} />
       )}

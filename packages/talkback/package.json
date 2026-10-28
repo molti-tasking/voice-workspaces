@@ -11,6 +11,7 @@
     "./screen": "./src/screen.ts",
     "./digest": "./src/digest.ts",
     "./realtime": "./src/realtime.ts",
+    "./lookup": "./src/lookup.ts",
     "./title": "./src/title.ts",
     "./study-task": "./src/study-task.ts",
     "./eval/study-judge": "./src/eval/study-judge.ts",

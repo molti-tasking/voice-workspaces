@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, FileText, Sparkles } from "lucide-react";
+import { ChevronRight, FileText, Search, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { stripFillers } from "@voicemural/shared";
 import { CopyButton } from "@/components/copy-button";
@@ -126,6 +126,8 @@ export function ChatView({
               />
             ) : item.mark.kind === "spark" ? (
               <SparkLine key={item.mark.key} mark={item.mark} title={titleOf(item.mark.ordinal)} />
+            ) : item.mark.kind === "lookup" ? (
+              <LookupLine key={item.mark.key} mark={item.mark} />
             ) : (
               <ContinuedLine key={item.mark.key} />
             ),
@@ -220,6 +222,19 @@ function SparkLine({ mark, title }: { mark: Extract<Mark, { kind: "spark" }>; ti
       <span className="min-w-0">
         You asked: {mark.question ?? SPARK_LABELS[mark.spark]}
         {title && <span className="text-fg/50"> · {title}</span>}
+      </span>
+    </p>
+  );
+}
+
+/** A search the assistant ran: what it looked up, and what came back. */
+function LookupLine({ mark }: { mark: Extract<Mark, { kind: "lookup" }> }) {
+  return (
+    <p className="flex items-start gap-1.5 text-sm text-fg/65">
+      <Search size={14} aria-hidden className="mt-0.5 shrink-0 text-sky-700 dark:text-sky-300" />
+      <span className="min-w-0">
+        {mark.query}
+        <span className="text-fg/50"> · {mark.found ?? "looking it up"}</span>
       </span>
     </p>
   );
