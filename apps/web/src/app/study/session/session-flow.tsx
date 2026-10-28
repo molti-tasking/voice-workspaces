@@ -1,12 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { SessionDisplay, SessionResume, SessionStep, SessionTimings } from "@voicemural/shared";
+import type {
+  SessionCompletion,
+  SessionProlific,
+  SessionResume,
+  SessionStep,
+  SessionTimings,
+} from "@voicemural/shared";
 import { useCapture } from "@/components/capture-provider";
 import { signIn } from "@/lib/auth-client";
+import type { SessionBlockView } from "@/lib/study/session-view";
 import { VOICE_ENGINE } from "@/lib/talkback/use-talkback";
 import { MicCheck } from "../../p/mic-check";
-import { ErrorLine, PrimaryButton, StudyFrame } from "../../p/ui";
+import { Completion, ErrorLine, PrimaryButton, StudyFrame } from "../../p/ui";
 import { DemoTalk, LiveTalk } from "./block-talk";
 import { FinalQuestions } from "./final-questions";
 import { PostBlock } from "./post-block";
@@ -18,20 +25,20 @@ import { TicTacToe } from "./tic-tac-toe";
  * it works → one practice round of the game → the brief → the conversation →
  * its questions → the last questions → done.
  *
- * The conversation's view and task come from the server, fixed when the
- * invite was made; the page only walks through them. Each step it tells the
- * server about is first-one-stands there, so a reload picks up where the
- * server says (`resumeAt`) and never records anything twice.
+ * The conversation's view and task come from the server: fixed when an
+ * invite was made, or — for a participant from Prolific — when they consent,
+ * in the setup that is running. The page only walks through them. Each step
+ * it tells the server about is first-one-stands there, so a reload picks up
+ * where the server says (`resumeAt`) and never records anything twice.
  *
  * `demo` is the walkthrough (`?demo=1`): the same pages, with the simulated
  * conversation instead of the microphone and nothing sent anywhere.
  */
 
-export interface SessionBlockView {
-  position: number;
-  display: SessionDisplay;
-  task: { title: string; brief: string; prompts: string[] };
-}
+export type { SessionBlockView } from "@/lib/study/session-view";
+
+/** How a live session was opened: an invite's code, or a participant from Prolific. */
+export type SessionEntry = { code: string } | { prolific: SessionProlific };
 
 /** One step to the server; the reply's body, or null when it did not go through. */
 export type SendStep = (step: SessionStep) => Promise<Record<string, unknown> | null>;
@@ -66,24 +73,30 @@ function stepFor(resume: SessionResume): Step {
 
 export function SessionFlow({
   mode,
-  code,
+  entry,
   hasAccount,
   resume,
-  block,
+  block: initialBlock,
+  completion: initialCompletion = null,
   timings,
   talkbackEnabled,
 }: {
   mode: "live" | "demo";
-  /** The invite's code; absent in the walkthrough. */
-  code?: string;
+  /** How it was opened; absent in the walkthrough. */
+  entry?: SessionEntry;
   hasAccount: boolean;
   resume: SessionResume;
-  /** The session's one conversation. */
-  block: SessionBlockView;
+  /** The session's one conversation; null until a participant from Prolific has consented. */
+  block: SessionBlockView | null;
+  /** A finished Prolific participant's code, when the page opens on the end. */
+  completion?: SessionCompletion | null;
   timings: SessionTimings;
   talkbackEnabled: boolean;
 }) {
   const [step, setStep] = useState<Step>(() => (resume.at === "brief" ? { at: "mic", then: resume } : stepFor(resume)));
+  const [block, setBlock] = useState(initialBlock);
+  const [completion, setCompletion] = useState(initialCompletion);
+  const fromProlific = entry !== undefined && "prolific" in entry;
 
   const send = useCallback<SendStep>(
     async (body) => {
@@ -104,7 +117,6 @@ export function SessionFlow({
     window.scrollTo({ top: 0 });
   }, []);
   const onTalkFinished = useCallback(() => go({ at: "answers" }), [go]);
-  const { position } = block;
 
   if (mode === "live" && !talkbackEnabled) {
     return (
@@ -117,17 +129,41 @@ export function SessionFlow({
     );
   }
 
-  switch (step.at) {
-    case "consent":
-      return (
-        <Consent
-          mode={mode}
-          code={code}
-          hasAccount={hasAccount}
+  if (step.at === "consent") {
+    return (
+      <Consent
+        mode={mode}
+        entry={entry}
+        hasAccount={hasAccount}
+        onEnrolled={(at, assigned) => {
+          if (assigned) setBlock(assigned);
           // The walkthrough has no microphone to check.
-          onEnrolled={(at) => go(mode === "demo" ? stepFor(at) : { at: "mic", then: at })}
-        />
-      );
+          go(mode === "demo" ? stepFor(at) : { at: "mic", then: at });
+        }}
+      />
+    );
+  }
+  if (step.at === "done") {
+    return fromProlific ? (
+      <Completion code={completion?.code ?? null} url={completion?.url ?? null} />
+    ) : (
+      <StudyFrame title="Thank you, you are done">
+        <p>Your answers are saved. You can close this page.</p>
+        {mode === "demo" && <p className="text-sm text-fg/60">This was the walkthrough: nothing was recorded or saved.</p>}
+      </StudyFrame>
+    );
+  }
+  // Past consent there is always a block; a session that has none was not made properly.
+  if (!block) {
+    return (
+      <StudyFrame title="This session could not be prepared">
+        <p>Please reload the page.</p>
+      </StudyFrame>
+    );
+  }
+  const { position } = block;
+
+  switch (step.at) {
     case "mic":
       return <MicCheck eyebrow="Before you start" onReady={() => go(stepFor(step.then))} />;
     case "intro":
@@ -183,18 +219,13 @@ export function SessionFlow({
       return (
         <FinalQuestions
           onSubmit={async (final) => {
-            if (!(await send({ step: "final", final }))) return false;
+            const body = await send({ step: "final", final });
+            if (!body) return false;
+            if (body.completion) setCompletion(body.completion as SessionCompletion);
             go({ at: "done" });
             return true;
           }}
         />
-      );
-    case "done":
-      return (
-        <StudyFrame title="Thank you, you are done">
-          <p>Your answers are saved. You can close this page.</p>
-          {mode === "demo" && <p className="text-sm text-fg/60">This was the walkthrough: nothing was recorded or saved.</p>}
-        </StudyFrame>
       );
   }
 }
@@ -206,21 +237,21 @@ const EYEBROW = "Your conversation";
 
 function Consent({
   mode,
-  code,
+  entry,
   hasAccount,
   onEnrolled,
 }: {
   mode: "live" | "demo";
-  code?: string;
+  entry?: SessionEntry;
   hasAccount: boolean;
-  onEnrolled: (resume: SessionResume) => void;
+  onEnrolled: (resume: SessionResume, block?: SessionBlockView) => void;
 }) {
   const [agreed, setAgreed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function enrol() {
-    if (mode === "demo") return onEnrolled({ at: "brief", position: 0 });
+    if (mode === "demo" || !entry) return onEnrolled({ at: "brief", position: 0 });
     setBusy(true);
     setError(null);
     if (!hasAccount) {
@@ -234,11 +265,15 @@ function Consent({
     const res = await fetch("/api/study-session/enroll", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code, consent: true }),
+      body: JSON.stringify({ ...entry, consent: true }),
     }).catch(() => null);
-    const body = (await res?.json().catch(() => null)) as { resume?: SessionResume; error?: string } | null;
+    const body = (await res?.json().catch(() => null)) as {
+      resume?: SessionResume;
+      block?: SessionBlockView;
+      error?: string;
+    } | null;
     setBusy(false);
-    if (res?.ok && body?.resume) return onEnrolled(body.resume);
+    if (res?.ok && body?.resume) return onEnrolled(body.resume, body.block);
     switch (body?.error) {
       case "claimed_elsewhere":
         return setError("This session was already started in another browser. Please carry on there.");
@@ -248,6 +283,8 @@ function Consent({
         return setError(
           "This browser was already used for another session of this study. Please open the link in a private window.",
         );
+      case "closed":
+        return setError("This study is not open right now. Please return it on Prolific, and sorry for the trouble.");
       case "unknown":
         return setError("This link does not work any more. Please ask the researchers for a new one.");
       default:

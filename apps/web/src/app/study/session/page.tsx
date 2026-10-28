@@ -1,20 +1,30 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { findSessionByCode, progressOf } from "@voicemural/db/study-session";
 import {
+  activeDesign,
+  designPlan,
+  findDesign,
+  findSessionByCode,
+  findSessionByPid,
+  progressOf,
+} from "@voicemural/db/study-session";
+import {
+  LEGACY_DESIGN,
+  ProlificPid,
+  ProlificRef,
   SESSION_BLOCKS,
-  SESSION_DESIGN,
   SessionCode,
   blocksFor,
-  isSessionDisplay,
+  cellCount,
   resumeAt,
   scaledTimings,
-  type ConversationDisplay,
+  type SessionProlific,
+  type SessionTimings,
 } from "@voicemural/shared";
-import { sessionTaskFor } from "@voicemural/talkback/study-task";
 import { currentUser } from "@/lib/session";
+import { blockView, completionCodeOf, completionCodeRequired, completionFor } from "@/lib/study/session-view";
 import { StudyFrame } from "../../p/ui";
-import { SessionFlow, type SessionBlockView } from "./session-flow";
+import { SessionFlow } from "./session-flow";
 
 export const dynamic = "force-dynamic";
 
@@ -51,26 +61,24 @@ function pilotIds(): string[] {
     .filter(Boolean);
 }
 
-/** The session's conversation, as the page shows it. */
-function viewOf(b: { position: number; display: ConversationDisplay; task: string }): SessionBlockView {
-  const task = sessionTaskFor(b.task);
-  if (!task) throw new Error(`study block ${b.position} has a task not in the catalogue: ${b.task}`);
-  if (!isSessionDisplay(b.display)) throw new Error(`study block ${b.position} has a view the session does not compare: ${b.display}`);
-  return {
-    position: b.position,
-    display: b.display,
-    task: { title: task.title, brief: task.brief, prompts: [...task.prompts] },
-  };
-}
+type Viewer = Awaited<ReturnType<typeof currentUser>>;
+
+const talkbackEnabled = () => process.env.NEXT_PUBLIC_TALKBACK_ENABLED === "true";
 
 /**
- * The display study's session (`session-flow.tsx`), opened from an invite
- * link: `/study/session?code=…`. Standalone, like the Prolific pages: no dock,
- * no drive bar, nothing that leads out of it (lib/study/routes.ts).
+ * The display study's session (`session-flow.tsx`). Standalone, like the
+ * Prolific pages: no dock, no drive bar, nothing that leads out of it
+ * (lib/study/routes.ts). Two ways in:
+ *
+ * - `?code=…`: an invite made on /researcher or by `pnpm study:session invite`.
+ * - `?PROLIFIC_PID=…&STUDY_ID=…&SESSION_ID=…`: Prolific's link, the one study
+ *   URL every participant gets. Their session is made when they consent, in
+ *   the setup that is running; the end hands them its completion code.
  *
  * For the researchers, and never for a participant — outside production, or
  * signed in as a pilot account (`STUDY_PILOT_USER_IDS`):
- * - `?demo=1[&order=0-5]` walks through a session in that cell, with the
+ * - `?demo=1[&design=name][&order=cell]` walks through a session in that
+ *   cell of that setup (a draft's too; the active one by default), with the
  *   simulated conversation: no microphone, no AI, nothing saved.
  * - `?fast=10` runs the conversation's timings ten times faster.
  */
@@ -82,20 +90,39 @@ export default async function StudySessionPage({ searchParams }: { searchParams:
 
   if (first(params.demo) === "1") {
     if (!researcher) notFound();
+    const name = first(params.design);
+    const design = name ? await findDesign(name) : await activeDesign();
+    if (!design || cellCount(designPlan(design)) === 0) {
+      return (
+        <StudyFrame title="No such setup">
+          <p>Name a setup that has views and tasks, or make one active on the researchers&apos; page.</p>
+        </StudyFrame>
+      );
+    }
     const cell = Number(first(params.order) ?? 0);
     return (
       <SessionFlow
         mode="demo"
         hasAccount={user !== null}
         resume={{ at: "consent" }}
-        block={viewOf(blocksFor(Number.isFinite(cell) ? cell : 0)[0]!)}
+        block={blockView(blocksFor(designPlan(design), Number.isFinite(cell) ? cell : 0)[0]!)}
         timings={timings}
         talkbackEnabled
       />
     );
   }
 
-  const code = SessionCode.safeParse(first(params.code));
+  if (first(params.code) !== undefined) return invitePage(first(params.code), user, timings);
+  if (first(params.PROLIFIC_PID) !== undefined) return prolificPage(params, user, timings);
+  return (
+    <StudyFrame title="This link does not work">
+      <p>Please check that you opened the whole link you were sent, or ask the researchers for a new one.</p>
+    </StudyFrame>
+  );
+}
+
+async function invitePage(raw: string | undefined, user: Viewer, timings: SessionTimings) {
+  const code = SessionCode.safeParse(raw);
   const state = code.success ? await findSessionByCode(code.data) : null;
   if (!code.success || !state) {
     return (
@@ -106,7 +133,7 @@ export default async function StudySessionPage({ searchParams }: { searchParams:
   }
 
   // A session-1 invite: four conversations, which this page no longer walks.
-  if (state.session.design !== SESSION_DESIGN || state.blocks.length !== SESSION_BLOCKS) {
+  if (state.session.design === LEGACY_DESIGN || state.blocks.length !== SESSION_BLOCKS) {
     return (
       <StudyFrame title="This link does not work any more">
         <p>Please ask the researchers for a new one.</p>
@@ -126,12 +153,76 @@ export default async function StudySessionPage({ searchParams }: { searchParams:
   return (
     <SessionFlow
       mode="live"
-      code={code.data}
+      entry={{ code: code.data }}
       hasAccount={user !== null}
       resume={mine ? resumeAt(progressOf(state)) : { at: "consent" }}
-      block={viewOf(state.blocks[0]!)}
+      block={blockView(state.blocks[0]!)}
       timings={timings}
-      talkbackEnabled={process.env.NEXT_PUBLIC_TALKBACK_ENABLED === "true"}
+      talkbackEnabled={talkbackEnabled()}
+    />
+  );
+}
+
+async function prolificPage(params: Search, user: Viewer, timings: SessionTimings) {
+  const pid = ProlificPid.safeParse(first(params.PROLIFIC_PID));
+  if (!pid.success) {
+    return (
+      <StudyFrame title="Please open this study from Prolific">
+        <p>The link is missing your Prolific ID. Please start the study again from Prolific.</p>
+      </StudyFrame>
+    );
+  }
+  // Kept when they come as Prolific sends them, dropped otherwise: they only help match the submission.
+  const ref = (value: string | string[] | undefined) => {
+    const parsed = ProlificRef.safeParse(first(value));
+    return parsed.success ? parsed.data : undefined;
+  };
+  const prolific: SessionProlific = { pid: pid.data, studyId: ref(params.STUDY_ID), sessionId: ref(params.SESSION_ID) };
+
+  const state = await findSessionByPid(pid.data);
+  if (state && user !== null && state.session.userId === user.id) {
+    return (
+      <SessionFlow
+        mode="live"
+        entry={{ prolific }}
+        hasAccount
+        resume={resumeAt(progressOf(state))}
+        block={blockView(state.blocks[0]!)}
+        completion={completionFor(state.session, await findDesign(state.session.design))}
+        timings={timings}
+        talkbackEnabled={talkbackEnabled()}
+      />
+    );
+  }
+  if (state?.session.completedAt) {
+    return (
+      <StudyFrame title="This session is complete">
+        <p>Thank you for taking part. If you did not get your completion code, please message the researchers on Prolific.</p>
+      </StudyFrame>
+    );
+  }
+  if (!state) {
+    // Nobody starts a session that cannot be handed in: no setup running, or none to pay with.
+    const design = await activeDesign();
+    if (!design || (completionCodeRequired() && !completionCodeOf(design))) {
+      return (
+        <StudyFrame title="This study is not open right now">
+          <p>Please return it on Prolific. Sorry for the trouble.</p>
+        </StudyFrame>
+      );
+    }
+  }
+
+  return (
+    <SessionFlow
+      mode="live"
+      entry={{ prolific }}
+      hasAccount={user !== null}
+      resume={{ at: "consent" }}
+      // Made when they consent, unless another browser of theirs already did.
+      block={state ? blockView(state.blocks[0]!) : null}
+      timings={timings}
+      talkbackEnabled={talkbackEnabled()}
     />
   );
 }

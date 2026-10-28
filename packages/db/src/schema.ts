@@ -2164,24 +2164,66 @@ export const prolificParticipant = pgTable(
  * The display study: one session, one conversation, one view
  * ------------------------------------------------------------------------- */
 
-/** Where a session's participant came from: a researcher's invite link, or Prolific (later). */
+/** Where a session's participant came from: a researcher's invite link, or Prolific. */
 export const studySessionSourceEnum = pgEnum("study_session_source", ["invite", "prolific"]);
+
+/** A setup's state: being prepared, the one new sessions go to, or done with. */
+export const studyDesignStatusEnum = pgEnum("study_design_status", ["draft", "active", "closed"]);
+
+/**
+ * A setup of the display study (`SessionDesign` in @voicemural/shared): which
+ * views it compares, over which tasks, and the code Prolific marks a finished
+ * submission with. Made on /researcher.
+ *
+ * ONE ACTIVE AT A TIME. Prolific's link and new invites go to it.
+ *
+ * FROZEN ONCE IT HAS A SESSION. Its views and tasks are what its sessions'
+ * cells mean, so they never change after the first; comparing other views is
+ * a new setup, and no analysis pools the two. The code and the note can still
+ * change.
+ *
+ * Migration 0032 seeded session-2's setup ("between") as the active one, and
+ * session-1's ("within", closed) where its sessions exist.
+ */
+export const studyDesign = pgTable(
+  "study_design",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** What its sessions are filed under (`study_session.design`) and every export calls it. */
+    name: text("name").notNull().unique("study_design_name_uq"),
+    /** `SessionDisplay`s, in the researchers' order. */
+    views: jsonb("views").$type<string[]>().notNull(),
+    /** `SessionTaskId`s, in the researchers' order. */
+    tasks: jsonb("tasks").$type<string[]>().notNull(),
+    status: studyDesignStatusEnum("status").notNull().default("draft"),
+    /** What Prolific's study page gives; a setup without one is not open to Prolific in production. */
+    completionCode: text("completion_code"),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    activatedAt: timestamp("activated_at", { withTimezone: true }),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+  },
+  (t) => [uniqueIndex("study_design_one_active_uq").on(t.status).where(sql`${t.status} = 'active'`)],
+);
 
 /**
  * One participant's sitting of the display study (`study-session.ts` in
- * @voicemural/shared): one short conversation, shown one of three ways on the
- * phone, compared between participants. Session-1 rows (`design = 'within'`)
- * were four conversations, every view for every participant.
+ * @voicemural/shared): one short conversation, shown one way on the phone,
+ * compared between participants under its setup. Session-1 rows
+ * (`design = 'within'`) were four conversations, every view for every
+ * participant.
  *
  * WHY NOT `prolific_participant`. The drive hangs off `study_block` below,
  * which holds what the session asks around it — the moments, the answers —
  * and could hold more than one conversation again.
  *
- * CREATED BEFORE ANYONE OPENS IT. A researcher makes an invite
- * (`pnpm study:session invite`), which writes this row with its cell and its
- * block; the link carries `invite_code`. Whoever consents first on it
- * claims it for their account — a fresh guest, by default, so the study's
- * drives never reach anybody's own workspace, memory or field-study export.
+ * TWO WAYS IN. An invite is made before anyone opens it (on /researcher, or
+ * `pnpm study:session invite`), with its cell and its block; the link carries
+ * `invite_code`, and whoever consents first on it claims it. From Prolific,
+ * the row is made when they consent, in the active setup, keyed by their
+ * Prolific ID. Either way the account is a fresh guest by default, so the
+ * study's drives never reach anybody's own workspace, memory or field-study
+ * export.
  *
  * TEXT IS KEPT, in `study_block.summary` and in `final`: what they write is
  * the study's measure, and the consent page says so.
@@ -2197,16 +2239,23 @@ export const studySession = pgTable(
     inviteCode: text("invite_code"),
     /** For `source = prolific`, which the payments need. */
     prolificPid: text("prolific_pid"),
+    /** Prolific's `STUDY_ID` and `SESSION_ID` as they arrived, to match the submission. */
+    prolificStudyId: text("prolific_study_id"),
+    prolificSessionId: text("prolific_session_id"),
     /** The account that claimed the invite; null until somebody has. */
     userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
-    /**
-     * `SESSION_DESIGN`, set on every new session: "between" since session-2.
-     * The column's default is session-1's, left as it was so the schema needs
-     * no migration; nothing relies on it.
-     */
-    design: text("design").$type<"within" | "between">().notNull().default("within"),
-    /** Its cell (`cellFor`): the view and task, fixed when the invite is made. */
+    /** Its setup's name: "between" was session-2's, "within" session-1's. */
+    design: text("design")
+      .notNull()
+      .references(() => studyDesign.name),
+    /** Its cell in its setup (`cellFor`): the view and task, fixed when the session is made. */
     orderIndex: integer("order_index").notNull(),
+    /**
+     * A researcher trying it: made as a test on /researcher, or a Prolific ID
+     * that is not one Prolific issues. Holds no cell, is left out of every
+     * export, and is deleted in one go.
+     */
+    test: boolean("test").notNull().default(false),
     claimedAt: timestamp("claimed_at", { withTimezone: true }),
     consentedAt: timestamp("consented_at", { withTimezone: true }),
     /** The last questions, validated by `SessionFinal`. */
@@ -2219,6 +2268,7 @@ export const studySession = pgTable(
     uniqueIndex("study_session_invite_uq").on(t.inviteCode),
     uniqueIndex("study_session_pid_uq").on(t.prolificPid),
     index("study_session_user_idx").on(t.userId),
+    index("study_session_design_idx").on(t.design),
   ],
 );
 
@@ -2247,7 +2297,7 @@ export const studyBlock = pgTable(
      * renamed hold "transcript", "conversation", "track" or "bubbles": read
      * through `normalizeDisplay`.
      */
-    display: text("display").$type<"chat" | "topics" | "uptake" | "now" | "open">().notNull(),
+    display: text("display").$type<"chat" | "topics" | "uptake" | "now" | "open" | "recent" | "stack">().notNull(),
     /** `SessionTaskId` in @voicemural/shared. */
     task: text("task").notNull(),
     /** The drive that is this block's conversation: the latest one armed. */

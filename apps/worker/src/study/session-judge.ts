@@ -1,5 +1,7 @@
 import { createHmac } from "node:crypto";
 import {
+  designPlan,
+  listDesigns,
   listSessions,
   loadDriveLines,
   loadMoments,
@@ -7,11 +9,11 @@ import {
   type StudyMoment,
 } from "@voicemural/db/study-session";
 import type { ChatMessage } from "@voicemural/llm";
-import { SESSION_DESIGN } from "@voicemural/shared";
+import { LEGACY_DESIGN, type SessionDisplay } from "@voicemural/shared";
 import { keptIndices } from "@voicemural/talkback";
 import {
-  BLIND_OPTIONS,
   STUDY_JUDGE_VERSION,
+  blindCheck,
   blindMessages,
   parseBlindGuess,
   parseResumptionJudgement,
@@ -19,7 +21,6 @@ import {
   resumptionMessages,
   scrubViewWords,
   summaryMessages,
-  type BlindLetter,
   type JudgeLine,
 } from "@voicemural/talkback/eval/study-judge";
 import type { Row } from "./prolific-export";
@@ -53,6 +54,9 @@ export type ItemKind = "summary" | "resumption" | "blind";
 export interface JudgeBlock {
   ref: string;
   position: number;
+  /** Its setup's name, and the views the setup compares: what the blind check offers. */
+  design: string;
+  views: readonly SessionDisplay[];
   display: string;
   task: string;
   summary: string | null;
@@ -66,6 +70,8 @@ export interface JudgeItem {
   messages: ChatMessage[];
   /** How many AFTER lines a resumption item shows, to check the line it names. */
   afterLines?: number;
+  /** A blind check's letters and the view each is. */
+  options?: Record<string, SessionDisplay>;
 }
 
 /** Which block and item an id is. Only `joinScores` reads it with the scores. */
@@ -73,10 +79,13 @@ export interface KeyRow extends Row {
   id: string;
   ref: string;
   position: number;
+  design: string;
   display: string;
   task: string;
   kind: ItemKind;
   repeat: number;
+  /** A blind check's letters as JSON (`{"A":"chat",…}`), for reading the guess back; null for the others. */
+  options: string | null;
 }
 
 /** How much either side of the interruption the resumption item shows. */
@@ -145,7 +154,7 @@ export function buildJudgeItems(
   for (const block of blocks) {
     const lines = judgeLinesOf(block);
     if (lines.all.length === 0) continue;
-    const made: { kind: ItemKind; messages: ChatMessage[]; afterLines?: number }[] = [];
+    const made: Omit<JudgeItem, "id">[] = [];
     if (block.summary) {
       made.push({ kind: "summary", messages: summaryMessages({ lines: lines.all, summary: scrubViewWords(block.summary) }) });
     }
@@ -156,12 +165,26 @@ export function buildJudgeItems(
         afterLines: lines.after.length,
       });
     }
-    if (options.blindCheck) made.push({ kind: "blind", messages: blindMessages({ lines: lines.all }) });
+    // A setup of one view has nothing to guess between.
+    if (options.blindCheck && block.views.length > 1) {
+      const check = blindCheck(block.views);
+      made.push({ kind: "blind", messages: blindMessages({ lines: lines.all, check }), options: check.options });
+    }
     for (const item of made) {
       for (let repeat = 0; repeat < repeats; repeat++) {
         const id = itemId(options.salt, block.ref, block.position, item.kind, repeat);
         items.push({ id, ...item });
-        key.push({ id, ref: block.ref, position: block.position, display: block.display, task: block.task, kind: item.kind, repeat });
+        key.push({
+          id,
+          ref: block.ref,
+          position: block.position,
+          design: block.design,
+          display: block.display,
+          task: block.task,
+          kind: item.kind,
+          repeat,
+          options: item.options ? JSON.stringify(item.options) : null,
+        });
       }
     }
   }
@@ -208,7 +231,7 @@ export function scoreRow(item: JudgeItem, answer: JudgeAnswer): Row {
         error: null,
       };
     }
-    const j = parseBlindGuess(answer.content);
+    const j = parseBlindGuess(answer.content, Object.keys(item.options ?? {}));
     return { ...head, guess: j.guess, confidence: j.confidence, error: null };
   } catch (err) {
     return { ...head, error: err instanceof Error ? err.message : String(err) };
@@ -250,8 +273,9 @@ export function joinScores(scores: readonly Row[], key: readonly Row[]): Row[] {
     scores.map((s) => {
       const k = byId.get(String(s.id));
       const joined: Row = { ...k, ...s };
-      if (s.kind === "blind" && typeof s.guess === "string" && Object.hasOwn(BLIND_OPTIONS, s.guess)) {
-        const view = BLIND_OPTIONS[s.guess as BlindLetter];
+      const letters = blindLetters(k?.options);
+      if (s.kind === "blind" && typeof s.guess === "string" && Object.hasOwn(letters, s.guess)) {
+        const view = letters[s.guess]!;
         joined.guessed_view = view;
         joined.guessed_right = k ? view === k.display : null;
       }
@@ -260,24 +284,40 @@ export function joinScores(scores: readonly Row[], key: readonly Row[]): Row[] {
   );
 }
 
+/** A key row's blind-check letters, back from the JSON the key holds them in. */
+export function blindLetters(options: Row[string] | undefined): Record<string, string> {
+  if (typeof options !== "string" || !options) return {};
+  try {
+    const parsed = JSON.parse(options) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Every answered block with a drive, as the judge's items are made from —
- * this design's only: session-1's blocks were judged by another rubric, with
- * a note this one never sees and a fourth view.
+ * every setup's but session-1's, whose blocks were judged by another rubric,
+ * with a note this one never sees. Tests never.
  */
 export async function loadJudgeBlocks(): Promise<JudgeBlock[]> {
-  const all = await listSessions();
+  const [all, designs] = await Promise.all([listSessions(), listDesigns()]);
+  const views = new Map(designs.map(({ design }) => [design.name, designPlan(design).views]));
   const blocks = all
-    .filter(({ session }) => session.design === SESSION_DESIGN)
+    .filter(({ session }) => session.design !== LEGACY_DESIGN)
     .flatMap(({ session, blocks }) =>
-      blocks.filter((b) => b.captureSessionId && b.answeredAt).map((b) => ({ ref: session.ref, block: b })),
+      blocks
+        .filter((b) => b.captureSessionId && b.answeredAt)
+        .map((b) => ({ ref: session.ref, design: session.design, block: b })),
     );
   const moments = await loadMoments(blocks.map((b) => b.block.captureSessionId!));
   const out: JudgeBlock[] = [];
-  for (const { ref, block } of blocks) {
+  for (const { ref, design, block } of blocks) {
     out.push({
       ref,
       position: block.position,
+      design,
+      views: views.get(design) ?? [],
       display: block.display,
       task: block.task,
       summary: block.summary,

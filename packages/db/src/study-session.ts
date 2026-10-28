@@ -1,12 +1,17 @@
 import { randomBytes } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import {
-  SESSION_CELLS,
-  SESSION_DESIGN,
+  SESSION_HOLD_MS,
   SESSION_VERSION,
   blocksFor,
+  cellCount,
+  isRealProlificPid,
+  isSessionTaskId,
+  leastFilledCell,
   type BlockAnswers,
   type ConversationDisplay,
+  type DesignInput,
+  type SessionDesign,
   type SessionFinal,
   type SessionMoment,
   type SessionProgress,
@@ -17,6 +22,7 @@ import {
   driveSubject,
   driveSubjectSegment,
   studyBlock,
+  studyDesign,
   studyMoment,
   studySession,
   user,
@@ -25,18 +31,19 @@ import {
 import { getDb } from "./index";
 
 /**
- * The display study's sessions and their blocks (`study_session`,
- * `study_block`; `study-session.ts` in @voicemural/shared).
+ * The display study's setups, sessions and their blocks (`study_design`,
+ * `study_session`, `study_block`; `study-session.ts` in @voicemural/shared).
  *
- * A session is made by a researcher before anyone sees it, claimed by the
- * account that consents on its link, and then walked through block by block:
- * armed, talked (the drive links itself when it registers), finished and
- * answered — and at the end, ranked.
+ * A session is made in a setup — by a researcher before anyone sees it, or
+ * when a participant from Prolific consents — claimed by the account that
+ * consents, and then walked through block by block: armed, talked (the drive
+ * links itself when it registers), finished and answered.
  *
  * Every write here is first-one-stands, as in the Prolific study: a reload, a
  * double tap or a second tab must never overwrite an answer already given.
  */
 
+export type StudyDesign = typeof studyDesign.$inferSelect;
 export type StudySession = typeof studySession.$inferSelect;
 export type StudyBlock = typeof studyBlock.$inferSelect;
 
@@ -46,8 +53,13 @@ export interface SessionWithBlocks {
   blocks: StudyBlock[];
 }
 
-/** Pseudonyms of invited participants: F01, F02, … (F for formative). */
+/**
+ * Pseudonyms: F01, F02, … for invites (F for formative), P01, … for Prolific's
+ * participants, T01, … for a researcher's tests.
+ */
 export const SESSION_REF_PREFIX = "F";
+export const PROLIFIC_REF_PREFIX = "P";
+export const TEST_REF_PREFIX = "T";
 
 /**
  * How long an armed block waits for its drive. The page arms it a moment
@@ -56,46 +68,240 @@ export const SESSION_REF_PREFIX = "F";
  */
 export const ARM_TTL_MS = 15 * 60_000;
 
-/**
- * A new session with its block, ready to be sent as a link.
- *
- * The cell is the next in turn (this design's sessions so far, modulo the
- * cells), so a handful of invites is as balanced as it can be; `orderIndex`
- * pins it. Session-1's sessions do not count, so they cannot shift the turn.
- * Under a transaction-scoped advisory lock, so two invites made at once
- * cannot take the same pseudonym or the same turn.
- */
-export async function createSession(input: { ref?: string; orderIndex?: number } = {}): Promise<SessionWithBlocks> {
-  return getDb().transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('study_session'))`);
+type Tx = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
 
-    const [{ n }] = (await tx
-      .select({ n: sql<number>`count(*)::int` })
+/** One lock for everything that hands out a pseudonym, a cell or a session. */
+async function lock(tx: Tx): Promise<void> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext('study_session'))`);
+}
+
+/* ---------------------------------------------------------------------------
+ * Setups
+ * ------------------------------------------------------------------------- */
+
+/** A setup as `cellFor` reads it: its views by their current names, its known tasks. */
+export function designPlan(design: Pick<StudyDesign, "name" | "views" | "tasks">): SessionDesign {
+  return {
+    name: design.name,
+    views: design.views.map((v) => Display.parse(v)),
+    tasks: design.tasks.filter(isSessionTaskId),
+  };
+}
+
+export interface DesignSummary {
+  design: StudyDesign;
+  /** Sessions filed under it, tests left out; how many of them are complete. */
+  sessions: number;
+  completed: number;
+  tests: number;
+}
+
+/** Every setup, the active one first and then the newest, with what is filed under it. */
+export async function listDesigns(): Promise<DesignSummary[]> {
+  const db = getDb();
+  const [designs, counts] = await Promise.all([
+    db.select().from(studyDesign).orderBy(desc(studyDesign.createdAt)),
+    db
+      .select({
+        design: studySession.design,
+        test: studySession.test,
+        sessions: count(),
+        completed: sql<number>`count(${studySession.completedAt})::int`,
+      })
       .from(studySession)
-      .where(eq(studySession.design, SESSION_DESIGN))) as [{ n: number }];
-    const orderIndex = input.orderIndex ?? n % SESSION_CELLS;
+      .groupBy(studySession.design, studySession.test),
+  ]);
+  const of = (name: string, test: boolean) => counts.find((c) => c.design === name && c.test === test);
+  return designs
+    .map((design) => ({
+      design,
+      sessions: of(design.name, false)?.sessions ?? 0,
+      completed: of(design.name, false)?.completed ?? 0,
+      tests: of(design.name, true)?.sessions ?? 0,
+    }))
+    .sort((a, b) => Number(b.design.status === "active") - Number(a.design.status === "active"));
+}
+
+export async function findDesign(name: string): Promise<StudyDesign | null> {
+  const [row] = await getDb().select().from(studyDesign).where(eq(studyDesign.name, name)).limit(1);
+  return row ?? null;
+}
+
+/** The setup new sessions go to: Prolific's link and new invites. */
+export async function activeDesign(): Promise<StudyDesign | null> {
+  const [row] = await getDb().select().from(studyDesign).where(eq(studyDesign.status, "active")).limit(1);
+  return row ?? null;
+}
+
+export type DesignResult =
+  | { ok: true; design: StudyDesign }
+  | { ok: false; reason: "unknown" | "taken" | "has_sessions" };
+
+/** A new setup, as a draft: nothing goes to it until it is made active. */
+export async function createDesign(input: DesignInput): Promise<DesignResult> {
+  const inserted = await getDb()
+    .insert(studyDesign)
+    .values({ ...input, views: [...input.views], tasks: [...input.tasks], status: "draft" })
+    .onConflictDoNothing({ target: studyDesign.name })
+    .returning();
+  return inserted[0] ? { ok: true, design: inserted[0] } : { ok: false, reason: "taken" };
+}
+
+/**
+ * Make a setup the one new sessions go to; the one that was, closes. Or close
+ * one. A closed setup can be made active again: its sessions are unchanged.
+ */
+export async function setDesignStatus(name: string, status: "active" | "closed", now = new Date()): Promise<DesignResult> {
+  return getDb().transaction(async (tx) => {
+    await lock(tx);
+    const [target] = await tx.select().from(studyDesign).where(eq(studyDesign.name, name)).limit(1);
+    if (!target) return { ok: false, reason: "unknown" };
+    if (target.status === status) return { ok: true, design: target };
+    if (status === "active") {
+      await tx
+        .update(studyDesign)
+        .set({ status: "closed", closedAt: now })
+        .where(and(eq(studyDesign.status, "active"), ne(studyDesign.id, target.id)));
+    }
+    const [updated] = await tx
+      .update(studyDesign)
+      .set(status === "active" ? { status, activatedAt: now, closedAt: null } : { status, closedAt: now })
+      .where(eq(studyDesign.id, target.id))
+      .returning();
+    return { ok: true, design: updated! };
+  });
+}
+
+/** What may change about a setup at any time: its completion code and its note. */
+export async function updateDesignDetails(
+  name: string,
+  details: { completionCode?: string | null; note?: string | null },
+): Promise<DesignResult> {
+  const [updated] = await getDb().update(studyDesign).set(details).where(eq(studyDesign.name, name)).returning();
+  return updated ? { ok: true, design: updated } : { ok: false, reason: "unknown" };
+}
+
+/** A setup nobody took part in — tests deleted first. Refused for one with sessions. */
+export async function deleteDesign(name: string): Promise<DesignResult> {
+  return getDb().transaction(async (tx) => {
+    await lock(tx);
+    const [target] = await tx.select().from(studyDesign).where(eq(studyDesign.name, name)).limit(1);
+    if (!target) return { ok: false, reason: "unknown" };
+    const [used] = await tx.select({ id: studySession.id }).from(studySession).where(eq(studySession.design, name)).limit(1);
+    if (used) return { ok: false, reason: "has_sessions" };
+    await tx.delete(studyDesign).where(eq(studyDesign.id, target.id));
+    return { ok: true, design: target };
+  });
+}
+
+/* ---------------------------------------------------------------------------
+ * Making a session
+ * ------------------------------------------------------------------------- */
+
+/**
+ * How many sessions hold each of a setup's cells: complete, or begun within
+ * `SESSION_HOLD_MS` (consented, or for an invite not yet opened, made). Tests
+ * hold none.
+ */
+async function heldCells(tx: Tx, design: StudyDesign, now: Date): Promise<number[]> {
+  const n = cellCount(designPlan(design));
+  const since = new Date(now.getTime() - SESSION_HOLD_MS);
+  const rows = await tx
+    .select({ orderIndex: studySession.orderIndex, n: count() })
+    .from(studySession)
+    .where(
+      and(
+        eq(studySession.design, design.name),
+        eq(studySession.test, false),
+        or(
+          isNotNull(studySession.completedAt),
+          sql`coalesce(${studySession.consentedAt}, ${studySession.createdAt}) > ${since.toISOString()}::timestamptz`,
+        ),
+      ),
+    )
+    .groupBy(studySession.orderIndex);
+  const held = new Array<number>(n).fill(0);
+  for (const row of rows) held[((row.orderIndex % n) + n) % n]! += row.n;
+  return held;
+}
+
+/** The next free pseudonym with this prefix: one more than the highest so far. */
+async function nextRef(tx: Tx, prefix: string): Promise<string> {
+  const [{ last }] = (await tx
+    // The position cast: a text parameter would make it substring's regex form.
+    .select({ last: sql<number | null>`max(substring(${studySession.ref} from ${prefix.length + 1}::int)::int)` })
+    .from(studySession)
+    .where(sql`${studySession.ref} ~ ${`^${prefix}[0-9]+$`}`)) as [{ last: number | null }];
+  return prefix + String((last ?? 0) + 1).padStart(2, "0");
+}
+
+type NewSession = Omit<typeof studySession.$inferInsert, "design" | "orderIndex" | "ref">;
+
+/**
+ * Write a session and its block into `design`'s cell: `orderIndex` if pinned,
+ * else the least held. Inside the caller's transaction, under its lock.
+ */
+async function insertSession(
+  tx: Tx,
+  design: StudyDesign,
+  values: NewSession & { ref: string; orderIndex?: number },
+  now: Date,
+): Promise<SessionWithBlocks> {
+  const plan = designPlan(design);
+  const n = cellCount(plan);
+  if (n === 0) throw new Error(`the setup ${design.name} has no views or no tasks`);
+  if (values.orderIndex !== undefined && (!Number.isInteger(values.orderIndex) || values.orderIndex < 0 || values.orderIndex >= n)) {
+    throw new Error(`the setup ${design.name} has cells 0 to ${n - 1}`);
+  }
+  const orderIndex = values.orderIndex ?? leastFilledCell(await heldCells(tx, design, now));
+  const [session] = await tx
+    .insert(studySession)
+    .values({ ...values, design: design.name, orderIndex })
+    .returning();
+  const blocks = await tx
+    .insert(studyBlock)
+    .values(blocksFor(plan, orderIndex).map((b) => ({ sessionId: session!.id, ...b })))
+    .returning();
+  return { session: session!, blocks: blocks.sort((a, b) => a.position - b.position) };
+}
+
+/**
+ * A new invite with its block, ready to be sent as a link: in the active
+ * setup unless another is named, in the least held cell unless `orderIndex`
+ * pins it.
+ *
+ * A test may be made in any setup, a draft's included, to try it before it
+ * runs; it holds no cell and is filed as a test. A real invite only in a
+ * setup that is not closed.
+ */
+export async function createSession(
+  input: { design?: string; ref?: string; orderIndex?: number; test?: boolean; now?: Date } = {},
+): Promise<SessionWithBlocks> {
+  const now = input.now ?? new Date();
+  const test = input.test ?? false;
+  return getDb().transaction(async (tx) => {
+    await lock(tx);
+    const [design] = await tx
+      .select()
+      .from(studyDesign)
+      .where(input.design === undefined ? eq(studyDesign.status, "active") : eq(studyDesign.name, input.design))
+      .limit(1);
+    if (!design) throw new Error(input.design === undefined ? "no setup is active" : `no setup is called ${input.design}`);
+    if (design.status === "closed" && !test) throw new Error(`the setup ${design.name} is closed`);
 
     let ref = input.ref;
     if (ref === undefined) {
-      const [{ last }] = (await tx
-        .select({ last: sql<number | null>`max(substring(${studySession.ref} from 2)::int)` })
-        .from(studySession)
-        .where(sql`${studySession.ref} ~ ${`^${SESSION_REF_PREFIX}[0-9]+$`}`)) as [{ last: number | null }];
-      ref = SESSION_REF_PREFIX + String((last ?? 0) + 1).padStart(2, "0");
+      ref = await nextRef(tx, test ? TEST_REF_PREFIX : SESSION_REF_PREFIX);
     } else {
       const [taken] = await tx.select({ id: studySession.id }).from(studySession).where(eq(studySession.ref, ref)).limit(1);
       if (taken) throw new Error(`the pseudonym ${ref} is taken`);
     }
-
-    const [session] = await tx
-      .insert(studySession)
-      .values({ ref, design: SESSION_DESIGN, orderIndex, inviteCode: randomBytes(18).toString("base64url") })
-      .returning();
-    const blocks = await tx
-      .insert(studyBlock)
-      .values(blocksFor(orderIndex).map((b) => ({ sessionId: session!.id, ...b })))
-      .returning();
-    return { session: session!, blocks: blocks.sort((a, b) => a.position - b.position) };
+    return insertSession(
+      tx,
+      design,
+      { ref, orderIndex: input.orderIndex, test, inviteCode: randomBytes(18).toString("base64url"), createdAt: now },
+      now,
+    );
   });
 }
 
@@ -123,6 +329,11 @@ export async function findSessionByCode(code: string): Promise<SessionWithBlocks
   return withBlocks(session);
 }
 
+export async function findSessionByPid(pid: string): Promise<SessionWithBlocks | null> {
+  const [session] = await getDb().select().from(studySession).where(eq(studySession.prolificPid, pid)).limit(1);
+  return withBlocks(session);
+}
+
 export async function findSessionByUser(userId: string): Promise<SessionWithBlocks | null> {
   const [session] = await getDb()
     .select()
@@ -133,11 +344,35 @@ export async function findSessionByUser(userId: string): Promise<SessionWithBloc
   return withBlocks(session);
 }
 
-/** Every session, oldest first, for the researchers' commands. */
-export async function listSessions(): Promise<SessionWithBlocks[]> {
-  const sessions = await getDb().select().from(studySession).orderBy(asc(studySession.createdAt));
-  const blocks = await getDb().select().from(studyBlock).orderBy(asc(studyBlock.position));
+/**
+ * Sessions oldest first, for the researchers: every one, or one setup's;
+ * tests only when asked for.
+ */
+export async function listSessions(
+  options: { design?: string; tests?: boolean } = {},
+): Promise<SessionWithBlocks[]> {
+  const db = getDb();
+  const where = and(
+    options.design === undefined ? undefined : eq(studySession.design, options.design),
+    options.tests ? undefined : eq(studySession.test, false),
+  );
+  const sessions = await db.select().from(studySession).where(where).orderBy(asc(studySession.createdAt));
+  if (sessions.length === 0) return [];
+  const blocks = await db
+    .select()
+    .from(studyBlock)
+    .where(inArray(studyBlock.sessionId, sessions.map((s) => s.id)))
+    .orderBy(asc(studyBlock.position));
   return sessions.map((session) => ({ session, blocks: blocks.filter((b) => b.sessionId === session.id) }));
+}
+
+/** Delete a setup's tests, or every test: their blocks and moments go with them. The number deleted. */
+export async function deleteTestSessions(design?: string): Promise<number> {
+  const deleted = await getDb()
+    .delete(studySession)
+    .where(and(eq(studySession.test, true), design === undefined ? undefined : eq(studySession.design, design)))
+    .returning({ id: studySession.id });
+  return deleted.length;
 }
 
 export type ClaimResult =
@@ -173,7 +408,7 @@ export async function claimSession(input: {
 }): Promise<ClaimResult> {
   const now = input.now ?? new Date();
   return getDb().transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('study_session'))`);
+    await lock(tx);
 
     const [account] = await tx.select({ isAnonymous: user.isAnonymous }).from(user).where(eq(user.id, input.userId)).limit(1);
     if (!account) return { ok: false, reason: "unknown" };
@@ -214,6 +449,104 @@ export async function claimSession(input: {
       .where(eq(studySession.id, target.id))
       .returning();
     return { ok: true, session: claimed! };
+  });
+}
+
+export type ProlificStartResult =
+  | { ok: true; state: SessionWithBlocks }
+  | { ok: false; reason: "unknown" | "not_a_guest" | "other_session" | "claimed_elsewhere" }
+  /** No setup is active, or — where a code is required — the active one has no completion code. */
+  | { ok: false; reason: "closed" };
+
+/**
+ * Consent given by a participant who arrived from Prolific: their session,
+ * by their Prolific ID, becomes this account's — made now, in the active
+ * setup's least held cell, if they have none yet.
+ *
+ * The same rules as an invite's claim (`claimSession`): a reload changes
+ * nothing; a second browser takes it over only while nothing was recorded.
+ * A Prolific ID that is not one Prolific issues — a researcher's `test-…` —
+ * makes a test.
+ *
+ * `requireCode`: refuse a new session where the setup cannot pay for it, so
+ * nobody does the study and then finds there is no code (production).
+ */
+export async function startProlificSession(input: {
+  pid: string;
+  studyId?: string;
+  sessionId?: string;
+  userId: string;
+  allowAccounts?: boolean;
+  requireCode?: boolean;
+  now?: Date;
+}): Promise<ProlificStartResult> {
+  const now = input.now ?? new Date();
+  return getDb().transaction(async (tx) => {
+    await lock(tx);
+
+    const [account] = await tx.select({ isAnonymous: user.isAnonymous }).from(user).where(eq(user.id, input.userId)).limit(1);
+    if (!account) return { ok: false, reason: "unknown" };
+    if (!account.isAnonymous && !input.allowAccounts) return { ok: false, reason: "not_a_guest" };
+
+    const [existing] = await tx.select().from(studySession).where(eq(studySession.prolificPid, input.pid)).limit(1);
+    const [other] = await tx
+      .select({ id: studySession.id })
+      .from(studySession)
+      .where(
+        existing
+          ? and(eq(studySession.userId, input.userId), ne(studySession.id, existing.id))
+          : eq(studySession.userId, input.userId),
+      )
+      .limit(1);
+    if (other) return { ok: false, reason: "other_session" };
+
+    if (existing) {
+      if (existing.userId !== input.userId && existing.userId !== null) {
+        const [started] = await tx
+          .select({ id: studyBlock.id })
+          .from(studyBlock)
+          .where(and(eq(studyBlock.sessionId, existing.id), sql`${studyBlock.attempts} > 0`))
+          .limit(1);
+        if (started) return { ok: false, reason: "claimed_elsewhere" };
+      }
+      const [session] =
+        existing.userId === input.userId && existing.consentedAt
+          ? [existing]
+          : await tx
+              .update(studySession)
+              .set({ userId: input.userId, claimedAt: now, consentedAt: now })
+              .where(eq(studySession.id, existing.id))
+              .returning();
+      const blocks = await tx
+        .select()
+        .from(studyBlock)
+        .where(eq(studyBlock.sessionId, existing.id))
+        .orderBy(asc(studyBlock.position));
+      return { ok: true, state: { session: session!, blocks } };
+    }
+
+    const [design] = await tx.select().from(studyDesign).where(eq(studyDesign.status, "active")).limit(1);
+    if (!design || (input.requireCode && !design.completionCode)) return { ok: false, reason: "closed" };
+
+    const test = !isRealProlificPid(input.pid);
+    const state = await insertSession(
+      tx,
+      design,
+      {
+        ref: await nextRef(tx, test ? TEST_REF_PREFIX : PROLIFIC_REF_PREFIX),
+        source: "prolific",
+        prolificPid: input.pid,
+        prolificStudyId: input.studyId ?? null,
+        prolificSessionId: input.sessionId ?? null,
+        test,
+        userId: input.userId,
+        claimedAt: now,
+        consentedAt: now,
+        createdAt: now,
+      },
+      now,
+    );
+    return { ok: true, state };
   });
 }
 

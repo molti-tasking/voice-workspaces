@@ -1,11 +1,17 @@
 import { z } from "zod";
-import type { ConversationDisplay } from "./contracts";
+import { CONVERSATION_DISPLAYS, type ConversationDisplay } from "./contracts";
+import { ProlificPid, ProlificRef } from "./prolific";
 
 /**
  * The display study's session: one sitting, one short conversation about an
- * everyday problem, shown one of three ways on the phone — between
- * participants, so each sees one view and never compares it with another.
- * After it, a summary and a few questions.
+ * everyday problem, shown one way on the phone — between participants, so
+ * each sees one view and never compares it with another. After it, a summary
+ * and a few questions.
+ *
+ * WHICH VIEWS ARE COMPARED is a setup's (`study_design`), chosen by the
+ * researchers on /researcher: a name, the views, the tasks, and the Prolific
+ * completion code. Every session is filed under its setup, so no analysis
+ * pools two sets of views, and a setup cannot change once it has a session.
  *
  * What crosses the wire between the session page (`/study/session`) and its
  * routes, and the session's shape. Pure: shared by the pages, the routes and
@@ -16,16 +22,8 @@ import type { ConversationDisplay } from "./contracts";
 export const SESSION_VERSION = "session-2";
 
 /**
- * How the session compares the views. "within" was session-1's: four
- * conversations, every view for every participant. Stored on each session, so
- * no analysis pools the two.
- */
-export const SESSION_DESIGN = "between";
-
-/**
  * The tasks a session can have, by id. The words — what they read and what the
  * agent is told — are `SESSION_TASKS` in @voicemural/talkback/study-task.
- * Sessions use `SESSION_TASK_PAIR` of them.
  */
 export const SESSION_TASK_IDS = ["trip", "birthday", "move", "dinners"] as const;
 export type SessionTaskId = (typeof SESSION_TASK_IDS)[number];
@@ -35,47 +33,68 @@ export function isSessionTaskId(value: unknown): value is SessionTaskId {
 }
 
 /**
- * The views the session compares, each one step from the last: the chat, the
- * baseline — the way a voice assistant's chat shows a voice conversation —
- * then the topic line (structure instead of words), then the topic line with
- * uptake (whether the assistant's ideas have become theirs). `now` and `open`
- * are the app's, and not compared here.
+ * Every view can be compared: each has a sentence for the brief before the
+ * conversation (`DISPLAY_COPY` on the session page) and one for the blind
+ * judge (`BLIND_DESCRIPTIONS`).
  */
-export const SESSION_DISPLAYS = ["chat", "topics", "uptake"] as const satisfies readonly ConversationDisplay[];
-export type SessionDisplay = (typeof SESSION_DISPLAYS)[number];
+export type SessionDisplay = ConversationDisplay;
+export const SESSION_VIEWS = CONVERSATION_DISPLAYS;
 
-export function isSessionDisplay(value: unknown): value is SessionDisplay {
-  return typeof value === "string" && (SESSION_DISPLAYS as readonly string[]).includes(value);
+/** A setup, as far as making its sessions goes. */
+export interface SessionDesign {
+  name: string;
+  /** In the order the researchers put them; cell 0 is the first view with the first task. */
+  views: readonly SessionDisplay[];
+  tasks: readonly SessionTaskId[];
 }
 
 /**
- * The two tasks sessions rotate. Two rather than one, so a finding is not
- * about a single scenario; two rather than four, so each view meets each task
- * often enough to tell the task from the view.
+ * Session-2's setup, the one every session was made in before setups could be
+ * chosen: the chat — the baseline, the way a voice assistant's chat shows a
+ * voice conversation — the topic line (structure instead of words) and the
+ * topic line with uptake, over two of the tasks. Seeded by migration 0032.
  */
-export const SESSION_TASK_PAIR = ["trip", "birthday"] as const satisfies readonly SessionTaskId[];
+export const DEFAULT_DESIGN: SessionDesign = {
+  name: "between",
+  views: ["chat", "topics", "uptake"],
+  tasks: ["trip", "birthday"],
+};
 
-/**
- * How many different sessions there are: every view with every task. A
- * session's cell (`order_index`) is taken modulo this.
- */
-export const SESSION_CELLS = SESSION_DISPLAYS.length * SESSION_TASK_PAIR.length;
+/** Session-1's: four conversations, every view for every participant. Its links no longer open. */
+export const LEGACY_DESIGN = "within";
 
 /** Conversations in one session. */
 export const SESSION_BLOCKS = 1;
 
+/** How many different sessions a setup has: every view with every task. */
+export function cellCount(design: Pick<SessionDesign, "views" | "tasks">): number {
+  return design.views.length * design.tasks.length;
+}
+
+const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+
 /**
- * The view and task of the session in cell `k`. The view turns with every
- * session and the task with every other, so any three sessions in a row
- * cover the three views, any two cover both tasks, and the six cells hold
- * every pair once — which holds only while the two counts share no factor.
+ * The view and task of a setup's cell `k` (`order_index`), any index wrapping
+ * onto one of its cells.
+ *
+ * The view turns with every cell. While the two counts share no factor — three
+ * views and two tasks — the task turns with every cell too, so any run of
+ * cells covers the views and the tasks as evenly as it can, and the cells
+ * still hold every pair once. When they do share one — four views and two
+ * tasks — that would pair each view with one task for ever, so the task turns
+ * once per round of the views instead.
  */
-export function cellFor(k: number): { display: SessionDisplay; task: SessionTaskId } {
-  const cell = ((Math.trunc(k) % SESSION_CELLS) + SESSION_CELLS) % SESSION_CELLS;
-  return {
-    display: SESSION_DISPLAYS[cell % SESSION_DISPLAYS.length]!,
-    task: SESSION_TASK_PAIR[cell % SESSION_TASK_PAIR.length]!,
-  };
+export function cellFor(
+  design: Pick<SessionDesign, "views" | "tasks">,
+  k: number,
+): { display: SessionDisplay; task: SessionTaskId } {
+  const n = cellCount(design);
+  if (n === 0) throw new Error("a setup needs at least one view and one task");
+  const cell = ((Math.trunc(k) % n) + n) % n;
+  const { views, tasks } = design;
+  const task =
+    gcd(views.length, tasks.length) === 1 ? cell % tasks.length : Math.floor(cell / views.length) % tasks.length;
+  return { display: views[cell % views.length]!, task: tasks[task]! };
 }
 
 export interface SessionBlockPlan {
@@ -85,10 +104,51 @@ export interface SessionBlockPlan {
   task: SessionTaskId;
 }
 
-/** The blocks of the session in cell `k`: its one conversation. */
-export function blocksFor(k: number): SessionBlockPlan[] {
-  return [{ position: 0, ...cellFor(k) }];
+/** The blocks of the session in a setup's cell `k`: its one conversation. */
+export function blocksFor(design: Pick<SessionDesign, "views" | "tasks">, k: number): SessionBlockPlan[] {
+  return [{ position: 0, ...cellFor(design, k) }];
 }
+
+/**
+ * The cell a new session takes: the one held by the fewest sessions, the
+ * lowest on a tie, so sessions made in a row go round the cells in turn and a
+ * cell left short by a participant who gave up is the next one filled.
+ * `held[k]` counts the sessions holding cell `k` (`SESSION_HOLD_MS`).
+ */
+export function leastFilledCell(held: readonly number[]): number {
+  let best = 0;
+  for (let k = 1; k < held.length; k++) if (held[k]! < held[best]!) best = k;
+  return best;
+}
+
+/**
+ * How long a session that is not complete still holds its cell. A Prolific
+ * participant who gives up never says so; after this, their cell counts as
+ * free again. Generous next to the 15 minutes a session takes, so nobody still
+ * in one loses it.
+ */
+export const SESSION_HOLD_MS = 3 * 3_600_000;
+
+/** A setup's name: also what every export calls it, so short and plain. */
+export const DesignName = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9][a-z0-9-]{1,39}$/, "lowercase letters, digits and dashes");
+
+/** A Prolific completion code, as Prolific shows it on the study's page. */
+export const CompletionCode = z.string().trim().regex(/^[A-Za-z0-9_-]{2,64}$/);
+
+const distinct = <T>(items: readonly T[]) => new Set(items).size === items.length;
+
+/** A setup as the researchers make it. Views and tasks in their order, each once. */
+export const DesignInput = z.strictObject({
+  name: DesignName,
+  views: z.array(z.enum(SESSION_VIEWS)).min(1).max(SESSION_VIEWS.length).refine(distinct, "each view once"),
+  tasks: z.array(z.enum(SESSION_TASK_IDS)).min(1).max(SESSION_TASK_IDS.length).refine(distinct, "each task once"),
+  completionCode: CompletionCode.nullable().default(null),
+  note: z.string().trim().max(500).nullable().default(null),
+});
+export type DesignInput = z.infer<typeof DesignInput>;
 
 /**
  * When things happen in a conversation, in ms of recording (the drive's
@@ -290,12 +350,30 @@ export type GameQuestionKey = keyof typeof GAME_QUESTIONS;
 /** The secret in an invite link. Long enough not to be guessed. */
 export const SessionCode = z.string().regex(/^[A-Za-z0-9_-]{16,64}$/);
 
-/** Consent given on the first page: claim the invite for this browser's account. */
-export const SessionEnroll = z.object({
-  code: SessionCode,
-  consent: z.literal(true),
+/** Who arrived from Prolific: the three parameters it appends to the study's link. */
+export const SessionProlific = z.object({
+  pid: ProlificPid,
+  studyId: ProlificRef.optional(),
+  sessionId: ProlificRef.optional(),
 });
+export type SessionProlific = z.infer<typeof SessionProlific>;
+
+/**
+ * Consent given on the first page, for this browser's account: claim the
+ * invite in the link, or — arriving from Prolific — take a session in the
+ * setup that is running.
+ */
+export const SessionEnroll = z.union([
+  z.object({ code: SessionCode, consent: z.literal(true) }),
+  z.object({ prolific: SessionProlific, consent: z.literal(true) }),
+]);
 export type SessionEnroll = z.infer<typeof SessionEnroll>;
+
+/** What a finished Prolific participant is given: the code, and the way back. */
+export interface SessionCompletion {
+  code: string;
+  url: string;
+}
 
 const Likert = z.number().int().min(1).max(7);
 const Position = z.number().int().min(0).max(SESSION_BLOCKS - 1);

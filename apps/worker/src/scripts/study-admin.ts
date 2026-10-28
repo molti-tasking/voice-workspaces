@@ -11,9 +11,11 @@
  *   pnpm study:condition --user <id>                      print the template and recent drives
  *   pnpm study:prolific [--out <dir>]                     the Prolific study: participants.csv and probes.csv (PROLIFIC.md)
  *   pnpm study:week [--out <dir>] [--text]                the end-of-week questionnaire: week.csv (and week-texts.jsonl)
- *   pnpm study:session invite [--ref F07] [--order 0-5]   a display-study session: prints its view, task and link
- *   pnpm study:session list                               every session, how far it got, and the cells completed
- *   pnpm study:session export [--out <dir>] [--text]      sessions.csv, blocks.csv, moments.csv (and transcripts.jsonl)
+ *   pnpm study:session invite [--design <name>] [--ref F07] [--order <cell>] [--test]
+ *                                                         a display-study session: prints its view, task and link
+ *   pnpm study:session list [--tests]                     every setup, its sessions, how far each got, the cells completed
+ *   pnpm study:session export [--design <name>] [--out <dir>] [--text]
+ *                                                         sessions.csv, blocks.csv, moments.csv, prolific-key.csv (and transcripts.jsonl)
  *   pnpm study:judge [--role judge] [--repeats 2] [--blind-check] [--limit n] [--langfuse] [--out <dir>]
  *                                                         the blind judge: items.jsonl, scores.csv, and key.csv apart
  *   pnpm study:judge --join [--out <dir>]                 joined.csv: the scores with the view of each item
@@ -38,17 +40,25 @@ config({ path: new URL("../../../../.env", import.meta.url).pathname, quiet: tru
 
 import { closeDb, desc, eq, getDb } from "@voicemural/db";
 import { captureSession, user } from "@voicemural/db/schema";
-import { createSession, listSessions } from "@voicemural/db/study-session";
+import { createSession, designPlan, listDesigns, listSessions } from "@voicemural/db/study-session";
 import { chat, type ModelRole } from "@voicemural/llm";
-import { SESSION_CELLS, SESSION_DESIGN, StudyCondition, cellFor } from "@voicemural/shared";
+import { StudyCondition, cellCount, cellFor } from "@voicemural/shared";
 import { flushLangfuse, langfuseConfig, startLangfuse, traceTurn, type Langfuse } from "@voicemural/talkback/eval/langfuse";
-import { BLIND_OPTIONS, STUDY_JUDGE_VERSION } from "@voicemural/talkback/eval/study-judge";
+import { STUDY_JUDGE_VERSION } from "@voicemural/talkback/eval/study-judge";
 import { exportParticipant, studyParticipants } from "../study/export";
 import { participantMetrics } from "../study/metrics";
 import { buildProlificExport, fromCsv, toCsv } from "../study/prolific-export";
 import { pendingReview, recordReview } from "../study/review";
-import { buildSessionExport } from "../study/session-export";
-import { buildJudgeItems, joinScores, langfuseAllowed, loadJudgeBlocks, runJudge, type JudgeItem } from "../study/session-judge";
+import { buildProlificKey, buildSessionExport } from "../study/session-export";
+import {
+  blindLetters,
+  buildJudgeItems,
+  joinScores,
+  langfuseAllowed,
+  loadJudgeBlocks,
+  runJudge,
+  type JudgeItem,
+} from "../study/session-judge";
 import { loadWeekResponses, weekRows, weekTexts } from "../study/week-survey";
 
 function flag(name: string): string | undefined {
@@ -310,57 +320,68 @@ async function runWeek(): Promise<void> {
 }
 
 /**
- * The display study's sessions (`study_session`). `invite` makes one, in the
- * next cell in turn unless `--order` pins it, and prints the link to send;
- * whoever consents on it first takes part as a fresh guest. The base of the
- * link is `STUDY_SESSION_BASE_URL`, else `BETTER_AUTH_URL`.
+ * The display study's sessions (`study_session`), the same as /researcher
+ * does them. `invite` makes one in the active setup (or `--design`), in its
+ * least held cell unless `--order` pins it, and prints the link to send;
+ * whoever consents on it first takes part as a fresh guest. `--test` makes a
+ * test: it holds no cell and is left out of the exports. The base of the link
+ * is `STUDY_SESSION_BASE_URL`, else `BETTER_AUTH_URL`.
  *
- * `list` ends with how many sessions each cell has completed: balance holds
- * for invites made, not for sessions finished, so a cell short of the others
- * is filled with `--order`.
+ * `list` shows every setup with its sessions and how many each cell has
+ * completed. Prolific's participants arrive by themselves, on the study link
+ * /researcher shows.
  */
 async function runSession(): Promise<void> {
   const sub = process.argv[3];
   if (sub === "invite") {
     const order = flag("order");
-    if (order !== undefined && (!/^[0-9]+$/.test(order) || Number(order) >= SESSION_CELLS)) {
-      throw new Error(`--order takes 0 to ${SESSION_CELLS - 1}`);
-    }
+    if (order !== undefined && !/^[0-9]+$/.test(order)) throw new Error("--order takes a cell number");
     const { session, blocks } = await createSession({
+      design: flag("design"),
       ref: flag("ref"),
       orderIndex: order === undefined ? undefined : Number(order),
+      test: has("test"),
     });
     const base = (process.env.STUDY_SESSION_BASE_URL || process.env.BETTER_AUTH_URL || "http://localhost:3000").replace(/\/$/, "");
-    console.log(`${session.ref}  cell ${session.orderIndex}: ${blocks.map((b) => `${b.display}/${b.task}`).join(", ")}`);
+    console.log(
+      `${session.ref}  ${session.design} cell ${session.orderIndex}: ${blocks.map((b) => `${b.display}/${b.task}`).join(", ")}${session.test ? "  (test)" : ""}`,
+    );
     console.log(`${base}/study/session?code=${session.inviteCode}`);
     return;
   }
   if (sub === "list") {
-    const completed = new Array<number>(SESSION_CELLS).fill(0);
-    for (const { session, blocks } of await listSessions()) {
-      const state = session.completedAt
-        ? "complete"
-        : blocks.every((b) => b.answeredAt)
-          ? "answered"
-          : blocks.some((b) => b.finishedAt)
-            ? "talked"
-            : session.consentedAt
-              ? "consented"
-              : session.userId
-                ? "claimed"
-                : "not opened";
-      const restarts = blocks.reduce((n, b) => n + Math.max(0, b.attempts - 1), 0);
-      const views = blocks.map((b) => `${b.display}/${b.task}`).join(", ");
-      const cell = session.design === SESSION_DESIGN ? `cell ${session.orderIndex}` : `${session.design} ${session.orderIndex}`;
-      console.log(`${session.ref.padEnd(8)} ${cell.padEnd(9)} ${views.padEnd(20)} ${state}${restarts ? `  (${restarts} restarted)` : ""}`);
-      if (session.design === SESSION_DESIGN && session.completedAt) {
-        const k = session.orderIndex % SESSION_CELLS;
-        completed[k] = (completed[k] ?? 0) + 1;
+    const sessions = await listSessions({ tests: has("tests") });
+    for (const { design, sessions: n, completed, tests } of await listDesigns()) {
+      const plan = designPlan(design);
+      console.log(
+        `\n${design.name}  ${design.status}  ${plan.views.join("/")} × ${plan.tasks.join("/")}  ${n} sessions, ${completed} complete${tests ? `, ${tests} tests` : ""}`,
+      );
+      const cells = cellCount(plan);
+      const done = new Array<number>(cells).fill(0);
+      for (const { session, blocks } of sessions.filter((s) => s.session.design === design.name)) {
+        const state = session.completedAt
+          ? "complete"
+          : blocks.every((b) => b.answeredAt)
+            ? "answered"
+            : blocks.some((b) => b.finishedAt)
+              ? "talked"
+              : session.consentedAt
+                ? "consented"
+                : session.userId
+                  ? "claimed"
+                  : "not opened";
+        const restarts = blocks.reduce((k, b) => k + Math.max(0, b.attempts - 1), 0);
+        const views = blocks.map((b) => `${b.display}/${b.task}`).join(", ");
+        const tags = [session.source === "prolific" ? "prolific" : null, session.test ? "test" : null, restarts ? `${restarts} restarted` : null];
+        console.log(
+          `  ${session.ref.padEnd(8)} cell ${String(session.orderIndex).padEnd(3)} ${views.padEnd(22)} ${state}${tags.some(Boolean) ? `  (${tags.filter(Boolean).join(", ")})` : ""}`,
+        );
+        if (session.completedAt && !session.test && cells > 0) done[session.orderIndex % cells]! += 1;
+      }
+      if (cells > 0) {
+        console.log(`  completed per cell: ${done.map((k, i) => `${i} ${cellFor(plan, i).display}/${cellFor(plan, i).task}: ${k}`).join("  ")}`);
       }
     }
-    console.log(
-      `\ncompleted per cell: ${completed.map((n, k) => `${k} ${cellFor(k).display}/${cellFor(k).task}: ${n}`).join("  ")}`,
-    );
     return;
   }
   if (sub === "export") {
@@ -370,7 +391,8 @@ async function runSession(): Promise<void> {
     const outDir = flag("out")
       ? resolve(flag("out")!)
       : new URL("../../../../storage/study-session", import.meta.url).pathname;
-    const out = await buildSessionExport({ text: has("text") });
+    const design = flag("design");
+    const out = await buildSessionExport({ text: has("text"), design });
     await mkdir(outDir, { recursive: true });
     for (const [name, rows] of [
       ["sessions.csv", out.sessions],
@@ -380,6 +402,9 @@ async function runSession(): Promise<void> {
       await writeFile(join(outDir, name), toCsv(rows));
       console.log(`${join(outDir, name)}  ${rows.length} rows`);
     }
+    const key = await buildProlificKey({ design });
+    await writeFile(join(outDir, "prolific-key.csv"), toCsv(key));
+    console.log(`${join(outDir, "prolific-key.csv")}  ${key.length} rows — who each Prolific pseudonym is, for payments; keep it apart`);
     if (has("text")) {
       const file = join(outDir, "transcripts.jsonl");
       await writeFile(file, out.transcripts.map((t) => JSON.stringify(t)).join("\n") + (out.transcripts.length ? "\n" : ""));
@@ -387,7 +412,9 @@ async function runSession(): Promise<void> {
     }
     return;
   }
-  throw new Error("usage: study-admin session <invite [--ref F07] [--order 0-5] | list | export [--out <dir>] [--text]>");
+  throw new Error(
+    "usage: study-admin session <invite [--design <name>] [--ref F07] [--order <cell>] [--test] | list [--tests] | export [--design <name>] [--out <dir>] [--text]>",
+  );
 }
 
 const JUDGE_ROLES: readonly ModelRole[] = ["judge", "fast", "reasoning", "converse"];
@@ -414,7 +441,10 @@ async function runStudyJudge(): Promise<void> {
     const blind = joined.filter((r) => r.kind === "blind" && r.guessed_right !== undefined && r.guessed_right !== null);
     if (blind.length > 0) {
       const right = blind.filter((r) => r.guessed_right === true).length;
-      const chance = Math.round(100 / Object.keys(BLIND_OPTIONS).length);
+      // Each setup's own chance: one in as many views as it offered.
+      const chance = Math.round(
+        (100 * blind.reduce((sum, r) => sum + 1 / Math.max(1, Object.keys(blindLetters(r.options)).length), 0)) / blind.length,
+      );
       console.log(`blind check: ${right} of ${blind.length} guessed the view (${Math.round((right / blind.length) * 100)}%; chance is ${chance}%)`);
     }
     return;

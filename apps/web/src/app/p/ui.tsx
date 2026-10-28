@@ -143,17 +143,20 @@ export function ErrorLine({ children }: { children: React.ReactNode }) {
  */
 export function Completion({
   part,
+  eyebrow,
   url,
   code,
   next,
 }: {
-  part: 1 | 2;
+  /** The recall study's part; the display study has one, and no eyebrow. */
+  part?: 1 | 2;
+  eyebrow?: string;
   url: string | null;
   code: string | null;
   next?: string;
 }) {
   return (
-    <StudyFrame eyebrow={`Part ${part} of 2`} title="Thank you, you are done">
+    <StudyFrame eyebrow={eyebrow ?? (part ? `Part ${part} of 2` : undefined)} title="Thank you, you are done">
       {next && <p>{next}</p>}
       {code ? (
         <>

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  BLIND_PROMPT,
+  BLIND_DESCRIPTIONS,
   RESUMPTION_PROMPT,
   SUMMARY_PROMPT,
+  blindCheck,
   blindMessages,
   parseBlindGuess,
   parseResumptionJudgement,
@@ -35,9 +36,33 @@ describe("what the judge reads", () => {
       expect(prompt).not.toMatch(/transcript view|bubble|circle|headline|mirror|spark|timeline|screen|phone showed/i);
     }
     expect(RESUMPTION_PROMPT).not.toMatch(/note|probe_accuracy/i);
-    // Only the blind check describes them, which is the point of it: the three, with nothing to tap.
-    expect(BLIND_PROMPT).toMatch(/A —[\s\S]*C —/);
-    expect(BLIND_PROMPT).not.toMatch(/D —|tap/);
+    // Only the blind check describes them, which is the point of it: the setup's, with nothing to tap.
+    for (const description of Object.values(BLIND_DESCRIPTIONS)) expect(description).not.toMatch(/tap/);
+  });
+
+  it("asks session-2's blind check word for word as its scores were made", () => {
+    expect(blindCheck(["chat", "topics", "uptake"])).toEqual({
+      options: { A: "chat", B: "topics", C: "uptake" },
+      prompt: `A person had this conversation with a voice assistant while their phone showed it in one of three ways:
+A — every line, word for word, like a chat.
+B — only the topics, one under the other in the order they came up, with a few short points for each.
+C — the same topics, each with the assistant's ideas on it marked as taken up by the person or not yet.
+
+From the conversation alone, which do you think it was? If nothing in it tells you, guess.
+
+Reply with ONLY a JSON object of this shape, nothing else:
+{"guess": "A" | "B" | "C", "confidence": 1-5}`,
+    });
+  });
+
+  it("letters any setup's views in its order, and needs two to tell apart", () => {
+    const check = blindCheck(["stack", "chat", "uptake", "recent"]);
+    expect(check.options).toEqual({ A: "stack", B: "chat", C: "uptake", D: "recent" });
+    expect(check.prompt).toContain("in one of four ways:\nA — the topics as a stack");
+    // Without the topic line before it, uptake is described on its own.
+    expect(check.prompt).toContain(`C — ${BLIND_DESCRIPTIONS.uptake}`);
+    expect(check.prompt).toContain('{"guess": "A" | "B" | "C" | "D"');
+    expect(() => blindCheck(["chat"])).toThrow(/two views/);
   });
 
   it("puts the conversation and their words in the user turn, the rubric in the system turn", () => {
@@ -48,7 +73,8 @@ describe("what the judge reads", () => {
     const resumption = resumptionMessages({ before: lines, after: lines });
     expect(resumption[1]!.content).not.toContain("THEIR NOTE");
     expect(resumption[1]!.content).toContain("=== AFTER ===\n[1] Person: Train.");
-    expect(blindMessages({ lines })[0]!.content).toBe(BLIND_PROMPT);
+    const check = blindCheck(["chat", "stack"]);
+    expect(blindMessages({ lines, check })[0]!.content).toBe(check.prompt);
   });
 });
 
@@ -98,7 +124,7 @@ describe("reading the judge's answers", () => {
   });
 
   it("reads the blind guess as one of the three letters", () => {
-    expect(parseBlindGuess('{"guess": "c", "confidence": 2}')).toEqual({ guess: "C", confidence: 2 });
-    expect(() => parseBlindGuess('{"guess": "D", "confidence": 2}')).toThrow(/not an option/);
+    expect(parseBlindGuess('{"guess": "c", "confidence": 2}', ["A", "B", "C"])).toEqual({ guess: "C", confidence: 2 });
+    expect(() => parseBlindGuess('{"guess": "D", "confidence": 2}', ["A", "B", "C"])).toThrow(/not an option/);
   });
 });

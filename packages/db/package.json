@@ -21,6 +21,7 @@
     "./prolific": "./src/prolific.ts",
     "./week": "./src/week.ts",
     "./study-session": "./src/study-session.ts",
+    "./study-export": "./src/study-export.ts",
     "./conversation": "./src/conversation.ts"
   },
   "scripts": {

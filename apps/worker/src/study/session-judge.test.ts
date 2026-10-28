@@ -34,6 +34,8 @@ const moment = (m: Partial<StudyMoment> & Pick<StudyMoment, "kind" | "shownOffse
 const BLOCK: JudgeBlock = {
   ref: "F07",
   position: 0,
+  design: "between",
+  views: ["chat", "topics", "uptake"],
   display: "uptake",
   task: "trip",
   summary: "The bubbles helped: we picked the train to Aarhus.",
@@ -82,7 +84,7 @@ describe("the items and their key", () => {
     const { items, key } = buildJudgeItems([BLOCK], { salt: "s", repeats: 2, random: () => 0 });
     expect(items.map((i) => i.kind).sort()).toEqual(["resumption", "resumption", "summary", "summary"]);
     expect(new Set(items.map((i) => i.id)).size).toBe(4);
-    expect(key).toContainEqual({ id: itemId("s", "F07", 0, "summary", 1), ref: "F07", position: 0, display: "uptake", task: "trip", kind: "summary", repeat: 1 });
+    expect(key).toContainEqual({ id: itemId("s", "F07", 0, "summary", 1), ref: "F07", position: 0, design: "between", display: "uptake", task: "trip", kind: "summary", repeat: 1, options: null });
     expect(items.find((i) => i.kind === "resumption")!.afterLines).toBe(2);
   });
 
@@ -95,6 +97,9 @@ describe("the items and their key", () => {
   it("asks for the view only in the blind check, and skips what has nothing to judge", () => {
     expect(buildJudgeItems([BLOCK], { salt: "s" }).items.some((i) => i.kind === "blind")).toBe(false);
     expect(buildJudgeItems([BLOCK], { salt: "s", blindCheck: true }).items.filter((i) => i.kind === "blind")).toHaveLength(1);
+    // A setup of one view has nothing to guess between.
+    const single = { ...BLOCK, views: ["stack" as const], display: "stack" };
+    expect(buildJudgeItems([single], { salt: "s", blindCheck: true }).items.some((i) => i.kind === "blind")).toBe(false);
     const silent = { ...BLOCK, lines: [], summary: null };
     expect(buildJudgeItems([silent], { salt: "s", blindCheck: true }).items).toEqual([]);
     const noGame = { ...BLOCK, moments: [] };
@@ -128,6 +133,11 @@ describe("scoring and joining", () => {
     const rows = await runJudge(items, async (item) => ({ content: answers[item.kind]!, model: "m", latencyMs: 10 }));
     const joined = joinScores(rows, key);
     expect(joined.find((r) => r.kind === "blind")).toMatchObject({ display: "uptake", guessed_view: "uptake", guessed_right: true });
+    // Another setup's letters are its own: there, C is the stack.
+    const other = { ...BLOCK, ref: "F08", design: "stack-pilot", views: ["chat", "topics", "stack"] as const, display: "uptake" };
+    const second = buildJudgeItems([other], { salt: "s", blindCheck: true });
+    const guessed = await runJudge(second.items, async (item) => ({ content: answers[item.kind]!, model: "m", latencyMs: 10 }));
+    expect(joinScores(guessed, second.key).find((r) => r.kind === "blind")).toMatchObject({ guessed_view: "stack", guessed_right: false });
     expect(joined.find((r) => r.kind === "summary")).toMatchObject({ ref: "F07", display: "uptake", coverage: 4 });
   });
 });

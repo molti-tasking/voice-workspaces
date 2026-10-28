@@ -29,6 +29,7 @@ const { agentTurn, closeDb, getDb, inArray, eq } = await import("@voicemural/db"
 const { captureSession, studyBlock, studySession, user } = await import("@voicemural/db/schema");
 const { isDatabaseReachable } = await import("@voicemural/db/testing");
 const { verifyTicket } = await import("@voicemural/shared/realtime-ticket");
+const { DEFAULT_DESIGN } = await import("@voicemural/shared");
 const { POST } = await import("./route");
 
 const describeIfDb = (await isDatabaseReachable()) ? describe : describe.skip;
@@ -61,7 +62,7 @@ async function seed() {
   );
   const [session] = await db
     .insert(studySession)
-    .values({ ref: REF, orderIndex: 0, userId: USER_ID })
+    .values({ ref: REF, design: DEFAULT_DESIGN.name, orderIndex: 0, userId: USER_ID })
     .returning({ id: studySession.id });
   await db.insert(studyBlock).values({
     sessionId: session!.id,

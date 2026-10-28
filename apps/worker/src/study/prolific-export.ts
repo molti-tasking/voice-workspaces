@@ -2,6 +2,7 @@ import { asc, eq, getDb, inArray, sql } from "@voicemural/db";
 import { loadSessionDrafts } from "@voicemural/db/drafts";
 import { listParticipants, pseudonymFor } from "@voicemural/db/prolific";
 import { agentTurn, captureSession, driveSubject, recallProbe, subjectSignal, utterance } from "@voicemural/db/schema";
+import type { Row } from "@voicemural/db/study-export";
 import {
   ATTENTION_EXPECTED,
   ProlificClosing,
@@ -29,7 +30,8 @@ import {
  * bonuses and part-2 invitations need them; `test` marks researcher IDs.
  */
 
-export type Row = Record<string, string | number | boolean | null>;
+export { fromCsv, toCsv, type Row } from "@voicemural/db/study-export";
+
 
 export async function buildProlificExport(): Promise<{ participants: Row[]; probes: Row[] }> {
   const db = getDb();
@@ -195,54 +197,4 @@ export async function buildProlificExport(): Promise<{ participants: Row[]; prob
   return { participants, probes };
 }
 
-/** RFC 4180: every field quoted when it needs to be, newlines kept inside quotes. */
-export function toCsv(rows: Row[]): string {
-  if (rows.length === 0) return "";
-  const headers = Object.keys(rows[0]!);
-  const cell = (value: Row[string]) => {
-    if (value === null || value === undefined) return "";
-    const text = String(value);
-    return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-  };
-  return [headers.join(","), ...rows.map((r) => headers.map((h) => cell(r[h] ?? null)).join(","))].join("\n") + "\n";
-}
-
-/**
- * Read back what `toCsv` wrote: RFC 4180, quoted fields with commas, quotes
- * and newlines in them. Every value comes back as a string, an empty one as
- * null — it is for joining files on their ids, not for typing them.
- */
-export function fromCsv(text: string): Row[] {
-  const records: string[][] = [];
-  let field = "";
-  let record: string[] = [];
-  let quoted = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i]!;
-    if (quoted) {
-      if (c === '"' && text[i + 1] === '"') {
-        field += '"';
-        i++;
-      } else if (c === '"') quoted = false;
-      else field += c;
-    } else if (c === '"') quoted = true;
-    else if (c === ",") {
-      record.push(field);
-      field = "";
-    } else if (c === "\n" || c === "\r") {
-      if (c === "\r" && text[i + 1] === "\n") i++;
-      record.push(field);
-      records.push(record);
-      field = "";
-      record = [];
-    } else field += c;
-  }
-  if (field !== "" || record.length > 0) {
-    record.push(field);
-    records.push(record);
-  }
-  const [headers, ...rows] = records;
-  if (!headers) return [];
-  return rows.map((r) => Object.fromEntries(headers.map((h, i) => [h, r[i] === undefined || r[i] === "" ? null : r[i]!])));
-}
 

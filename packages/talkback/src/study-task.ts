@@ -96,7 +96,7 @@ export function studyTaskFor(id: string | null | undefined): StudyTask | null {
 
 /**
  * The display study's tasks (`SESSION_TASK_IDS` in @voicemural/shared), one
- * per session; sessions rotate two of them (`SESSION_TASK_PAIR`).
+ * per session; a setup rotates the ones it names (`study_design.tasks`).
  *
  * MADE TO BE COMPARABLE. Each is an everyday plan nobody needs expertise
  * for, with three parts that become separate topics in about five minutes, a

@@ -8,12 +8,13 @@
  * a view scrubbed (`scrubViewWords`). Which block an item was is kept apart
  * from the scores and joined back only at the end. The one exception is the
  * blind check, which asks the judge to guess the view and so has to describe
- * the three — a guess no better than a third right is what blind means.
+ * the setup's views — a guess no better than chance is what blind means.
  *
  * Pure: the worker makes the calls (apps/worker/src/study/session-judge.ts).
  */
 
 import type { ChatMessage } from "@voicemural/llm";
+import type { ConversationDisplay } from "@voicemural/shared";
 
 /** Bump when a rubric changes enough that scores should not be pooled. */
 export const STUDY_JUDGE_VERSION = "study-judge-2";
@@ -67,23 +68,51 @@ asked_assistant — true if the Person asks the assistant where they were or wha
 Reply with ONLY a JSON object of this shape, nothing else:
 {"resumed_same_topic": "yes" | "no" | "unclear", "first_on_topic_line": 3 | null, "asked_assistant": true | false, "reason": "one sentence"}`;
 
-/** The blind check's options, in a fixed order; the key maps a guess back to a view. */
-export const BLIND_OPTIONS = {
-  A: "chat",
-  B: "topics",
-  C: "uptake",
-} as const;
-export type BlindLetter = keyof typeof BLIND_OPTIONS;
+/**
+ * How the blind check describes each view: what the phone showed, never what
+ * it was for. `uptake`'s reads as the same topics when the topic line is one
+ * of the options before it, as in session-2's setup.
+ */
+export const BLIND_DESCRIPTIONS: Record<ConversationDisplay, string> = {
+  chat: "every line, word for word, like a chat.",
+  topics: "only the topics, one under the other in the order they came up, with a few short points for each.",
+  uptake: "only the topics, each with the assistant's ideas on it marked as taken up by the person or not yet.",
+  now: "one line saying where the conversation is now, under the name of the current topic.",
+  open: "the questions the conversation raised, the open ones first and the settled ones ticked.",
+  recent: "the last turn in full, with the turns before it shrunk to a word or two.",
+  stack: "the topics as a stack, the current one largest at the bottom, each with what was decided on it.",
+};
 
-export const BLIND_PROMPT = `A person had this conversation with a voice assistant while their phone showed it in one of three ways:
-A — every line, word for word, like a chat.
-B — only the topics, one under the other in the order they came up, with a few short points for each.
-C — the same topics, each with the assistant's ideas on it marked as taken up by the person or not yet.
+const COUNT_WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven"];
+
+/** The blind check for a setup's views: its prompt, and which view each letter is. */
+export interface BlindCheck {
+  prompt: string;
+  /** Letter → view, in the setup's order: A is its first view. */
+  options: Record<string, ConversationDisplay>;
+}
+
+/**
+ * The blind check's options for `views`, lettered in their order. For
+ * session-2's three it is word for word the prompt its scores were made
+ * with (`study-judge-2`).
+ */
+export function blindCheck(views: readonly ConversationDisplay[]): BlindCheck {
+  if (views.length < 2) throw new Error("a blind check needs two views or more to tell apart");
+  const letters = views.map((_, i) => String.fromCharCode(65 + i));
+  const describe = (view: ConversationDisplay, i: number) =>
+    view === "uptake" && views.slice(0, i).includes("topics")
+      ? "the same topics, each with the assistant's ideas on it marked as taken up by the person or not yet."
+      : BLIND_DESCRIPTIONS[view];
+  const prompt = `A person had this conversation with a voice assistant while their phone showed it in one of ${COUNT_WORDS[views.length] ?? views.length} ways:
+${views.map((v, i) => `${letters[i]} — ${describe(v, i)}`).join("\n")}
 
 From the conversation alone, which do you think it was? If nothing in it tells you, guess.
 
 Reply with ONLY a JSON object of this shape, nothing else:
-{"guess": "A" | "B" | "C", "confidence": 1-5}`;
+{"guess": ${letters.map((l) => `"${l}"`).join(" | ")}, "confidence": 1-5}`;
+  return { prompt, options: Object.fromEntries(views.map((v, i) => [letters[i]!, v])) };
+}
 
 export function summaryMessages(input: { lines: readonly JudgeLine[]; summary: string }): ChatMessage[] {
   return [
@@ -110,9 +139,9 @@ export function resumptionMessages(input: { before: readonly JudgeLine[]; after:
   ];
 }
 
-export function blindMessages(input: { lines: readonly JudgeLine[] }): ChatMessage[] {
+export function blindMessages(input: { lines: readonly JudgeLine[]; check: BlindCheck }): ChatMessage[] {
   return [
-    { role: "system", content: BLIND_PROMPT },
+    { role: "system", content: input.check.prompt },
     { role: "user", content: `=== THE CONVERSATION ===\n${renderLines(input.lines)}` },
   ];
 }
@@ -211,13 +240,14 @@ export function parseResumptionJudgement(raw: string, afterLines: number): Resum
 }
 
 export interface BlindGuess {
-  guess: BlindLetter;
+  /** One of the check's letters. */
+  guess: string;
   confidence: number;
 }
 
-export function parseBlindGuess(raw: string): BlindGuess {
+export function parseBlindGuess(raw: string, letters: readonly string[]): BlindGuess {
   const parsed = jsonObject(raw);
   const guess = String(parsed.guess ?? "").trim().toUpperCase();
-  if (!Object.hasOwn(BLIND_OPTIONS, guess)) throw new Error(`judge guess not an option: ${String(parsed.guess)}`);
-  return { guess: guess as BlindLetter, confidence: scoreOf(parsed, "confidence") };
+  if (!letters.includes(guess)) throw new Error(`judge guess not an option: ${String(parsed.guess)}`);
+  return { guess, confidence: scoreOf(parsed, "confidence") };
 }

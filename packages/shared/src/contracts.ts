@@ -58,8 +58,8 @@ export type CaptureUseCase = z.infer<typeof CaptureUseCase>;
 /**
  * The ways a conversation can be shown on the phone — live, after it, and
  * when it is continued, always the same seven (`apps/web/src/app/record/views`).
- * The display study's session (`/study/session`) compares three of them,
- * between participants (`SESSION_DISPLAYS`).
+ * The display study's session (`/study/session`) compares the ones its setup
+ * names, between participants (`study_design`).
  *
  * - `chat`: every line as it was said, the way a voice assistant's chat shows
  *   a voice conversation — the study's baseline.

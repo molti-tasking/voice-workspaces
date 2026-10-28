@@ -3,17 +3,18 @@ import {
   BlockAnswers,
   ESM_ITEMS,
   GAME_QUIET_MS,
-  SESSION_CELLS,
-  SESSION_DISPLAYS,
-  SESSION_TASK_PAIR,
+  DEFAULT_DESIGN,
+  DesignInput,
   SESSION_TIMINGS,
   SESSION_TASK_IDS,
+  SessionEnroll,
   SessionFinal,
   SessionMoment,
   SessionStep,
   blocksFor,
+  cellCount,
   cellFor,
-  isSessionDisplay,
+  leastFilledCell,
   esmDue,
   esmSlots,
   gameDue,
@@ -21,35 +22,86 @@ import {
   scaledTimings,
 } from "./study-session";
 
-const cells = Array.from({ length: SESSION_CELLS }, (_, k) => cellFor(k));
+const cellsOf = (design: Parameters<typeof cellFor>[0]) =>
+  Array.from({ length: cellCount(design) }, (_, k) => cellFor(design, k));
+const pairs = (design: Parameters<typeof cellFor>[0]) => new Set(cellsOf(design).map((c) => `${c.display}:${c.task}`));
 
-describe("the session's cells", () => {
-  it("compare three views, with the chat as the baseline, over two of the tasks", () => {
-    expect(SESSION_DISPLAYS).toEqual(["chat", "topics", "uptake"]);
-    expect(isSessionDisplay("now")).toBe(false);
-    for (const task of SESSION_TASK_PAIR) expect(SESSION_TASK_IDS).toContain(task);
+describe("a setup's cells", () => {
+  const four = { views: ["chat", "topics", "uptake", "stack"], tasks: ["trip", "birthday"] } as const;
+
+  it("start session-2's setup on the baseline, as its sessions were made", () => {
+    expect(DEFAULT_DESIGN).toEqual({ name: "between", views: ["chat", "topics", "uptake"], tasks: ["trip", "birthday"] });
+    // The cells session-2's invites were made in, before setups could be chosen.
+    expect(cellsOf(DEFAULT_DESIGN)).toEqual([
+      { display: "chat", task: "trip" },
+      { display: "topics", task: "birthday" },
+      { display: "uptake", task: "trip" },
+      { display: "chat", task: "birthday" },
+      { display: "topics", task: "trip" },
+      { display: "uptake", task: "birthday" },
+    ]);
   });
 
-  it("hold every view with every task exactly once", () => {
-    expect(SESSION_CELLS).toBe(6);
-    expect(new Set(cells.map((c) => `${c.display}:${c.task}`)).size).toBe(SESSION_CELLS);
+  it("hold every view with every task exactly once, whatever the counts", () => {
+    for (const design of [DEFAULT_DESIGN, four, { views: ["stack"], tasks: ["trip"] }] as const) {
+      expect(pairs(design).size).toBe(cellCount(design));
+    }
+    // Four views and two tasks share a factor: still every pair, not each view with one task.
+    expect(cellCount(four)).toBe(8);
+    expect(new Set(cellsOf(four).filter((c) => c.display === "stack").map((c) => c.task))).toEqual(new Set(["trip", "birthday"]));
   });
 
-  it("cover the three views in any three sessions in a row, and both tasks in any two", () => {
-    for (let k = 0; k < SESSION_CELLS; k++) {
-      expect(new Set([0, 1, 2].map((i) => cellFor(k + i).display)).size).toBe(3);
-      expect(new Set([0, 1].map((i) => cellFor(k + i).task)).size).toBe(2);
+  it("cover every view in any run as long as the views, and wrap around", () => {
+    for (const design of [DEFAULT_DESIGN, four]) {
+      const n = cellCount(design);
+      for (let k = 0; k < n; k++) {
+        const run = design.views.map((_, i) => cellFor(design, k + i).display);
+        expect(new Set(run).size).toBe(design.views.length);
+      }
+      expect(cellFor(design, n + 1)).toEqual(cellFor(design, 1));
+      expect(cellFor(design, -1)).toEqual(cellFor(design, n - 1));
     }
   });
 
-  it("start on the baseline, and wrap around, so any index is one of the six", () => {
-    expect(cellFor(0)).toEqual({ display: "chat", task: "trip" });
-    expect(cellFor(SESSION_CELLS + 1)).toEqual(cellFor(1));
-    expect(cellFor(-1)).toEqual(cellFor(SESSION_CELLS - 1));
+  it("are one conversation each", () => {
+    expect(blocksFor(DEFAULT_DESIGN, 4)).toEqual([{ position: 0, ...cellFor(DEFAULT_DESIGN, 4) }]);
   });
 
-  it("are one conversation each", () => {
-    expect(blocksFor(4)).toEqual([{ position: 0, ...cellFor(4) }]);
+  it("are filled least first, the lowest on a tie", () => {
+    expect(leastFilledCell([0, 0, 0])).toBe(0);
+    expect(leastFilledCell([1, 0, 0])).toBe(1);
+    expect(leastFilledCell([2, 1, 2, 1])).toBe(1);
+    expect(leastFilledCell([3, 3, 3, 2])).toBe(3);
+  });
+});
+
+describe("DesignInput", () => {
+  it("takes views and tasks in their order, each once, with a plain name", () => {
+    const parsed = DesignInput.parse({ name: "stack-pilot", views: ["stack", "chat"], tasks: ["move"] });
+    expect(parsed).toEqual({ name: "stack-pilot", views: ["stack", "chat"], tasks: ["move"], completionCode: null, note: null });
+    for (const bad of [
+      { name: "Stack Pilot", views: ["chat"], tasks: ["trip"] },
+      { name: "stack", views: [], tasks: ["trip"] },
+      { name: "stack", views: ["chat", "chat"], tasks: ["trip"] },
+      { name: "stack", views: ["mirror"], tasks: ["trip"] },
+      { name: "stack", views: ["chat"], tasks: ["trip"], completionCode: "has space" },
+    ]) {
+      expect(DesignInput.safeParse(bad).success).toBe(false);
+    }
+    for (const task of DesignInput.parse({ name: "all", views: ["chat"], tasks: [...SESSION_TASK_IDS] }).tasks) {
+      expect(SESSION_TASK_IDS).toContain(task);
+    }
+  });
+});
+
+describe("SessionEnroll", () => {
+  it("is an invite's code or Prolific's participant, with consent", () => {
+    expect(SessionEnroll.safeParse({ code: "a".repeat(24), consent: true }).success).toBe(true);
+    expect(
+      SessionEnroll.safeParse({ prolific: { pid: "5f8e0d1c2b3a49586a7b8c9d", studyId: "s1" }, consent: true }).success,
+    ).toBe(true);
+    expect(SessionEnroll.safeParse({ prolific: { pid: "x" }, consent: true }).success).toBe(false);
+    expect(SessionEnroll.safeParse({ code: "a".repeat(24), consent: false }).success).toBe(false);
   });
 });
 

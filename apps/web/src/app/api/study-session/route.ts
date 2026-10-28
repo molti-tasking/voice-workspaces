@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import {
   armBlock,
   blockLinked,
+  findDesign,
+  findSessionByUser,
   finishBlock,
   saveBlockAnswers,
   saveFinal,
@@ -9,6 +11,7 @@ import {
 } from "@voicemural/db/study-session";
 import { SessionStep } from "@voicemural/shared";
 import { currentUserId } from "@/lib/session";
+import { completionFor } from "@/lib/study/session-view";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +25,8 @@ export const dynamic = "force-dynamic";
  *   never carries on with a conversation the server does not count.
  * - `moment`: a prompt, the game or the resumption, on the drive's clock. A
  *   duplicate is fine: the first one stands.
- * - `finished`, `answers`, `final`: each first-one-stands.
+ * - `finished`, `answers`, `final`: each first-one-stands. `final` completes
+ *   the session, and hands a participant from Prolific their completion code.
  *
  * 409 with a reason when a step comes out of turn; the page treats that as
  * "reload and pick up where the server says".
@@ -64,9 +68,11 @@ export async function POST(req: Request) {
     }
     case "final": {
       const result = await saveFinal(userId, step.final);
-      return result === "saved"
-        ? NextResponse.json({ ok: true }, { headers })
-        : NextResponse.json({ error: result }, { status: 409, headers });
+      if (result !== "saved") return NextResponse.json({ error: result }, { status: 409, headers });
+      // A participant from Prolific is handed the code that pays them, now and not before.
+      const state = await findSessionByUser(userId);
+      const completion = state ? completionFor(state.session, await findDesign(state.session.design)) : null;
+      return NextResponse.json({ ok: true, ...(completion ? { completion } : {}) }, { headers });
     }
   }
 }

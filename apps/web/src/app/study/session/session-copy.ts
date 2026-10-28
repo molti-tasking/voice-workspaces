@@ -3,7 +3,8 @@ import type { SessionDisplay } from "@voicemural/shared";
 /**
  * How the brief before the conversation describes its view, in one sentence.
  * The sentences are kept about the same length, so no view is explained
- * better than another — what they learn about each is what they see.
+ * better than another — what they learn about each is what they see. Every
+ * view has one, so a setup can compare any of them (`SESSION_VIEWS`).
  */
 export const DISPLAY_COPY: Record<SessionDisplay, { brief: string }> = {
   chat: {
@@ -14,6 +15,18 @@ export const DISPLAY_COPY: Record<SessionDisplay, { brief: string }> = {
   },
   uptake: {
     brief: "only the topics, each with the assistant's ideas marked as taken up by you or not yet.",
+  },
+  now: {
+    brief: "one line on where the conversation is now, under the topic it is on.",
+  },
+  open: {
+    brief: "the questions the conversation raises, the open ones first; tap one for more.",
+  },
+  recent: {
+    brief: "the last thing said in full, with what came before it shrunk to a word or two.",
+  },
+  stack: {
+    brief: "the topics as a stack, the current one largest, each with what was decided on it.",
   },
 };
 
