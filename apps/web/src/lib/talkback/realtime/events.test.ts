@@ -9,14 +9,15 @@ import { HOLD_MS, RealtimeConversation, heardOf, type FinishedTurn } from "./eve
  */
 
 function harness() {
-  let clock = 1_000_000;
+  vi.setSystemTime(1_000_000);
   const messages: ConversationMessage[] = [];
   const began: string[] = [];
   const heard: [string, string][] = [];
   const finished: FinishedTurn[] = [];
   const speaking: string[] = [];
   const conversation = new RealtimeConversation({
-    now: () => clock,
+    // The faked clock, so time moved on by the timers is time for the pacing too.
+    now: () => Date.now(),
     emit: (m) => messages.push(m),
     began: (id) => began.push(id),
     heard: (who, text) => heard.push([who, text]),
@@ -24,10 +25,7 @@ function harness() {
     agentSpeaking: (on) => speaking.push(`agent:${on}`),
     finished: (t) => finished.push(t),
   });
-  const at = (ms: number) => {
-    clock = 1_000_000 + ms;
-    vi.setSystemTime(clock);
-  };
+  const at = (ms: number) => vi.setSystemTime(1_000_000 + ms);
   const send = (ms: number, type: string, rest: Record<string, unknown> = {}) => {
     at(ms);
     conversation.handle({ type, ...rest });
@@ -118,9 +116,38 @@ describe("RealtimeConversation", () => {
     h.send(0, "input_audio_buffer.committed", { item_id: "item_u1" });
     h.send(10, "response.created", { response: { id: "resp_1" } });
     h.send(300, "response.output_audio_transcript.delta", { response_id: "resp_1", output_index: 0, delta: "Hm?" });
+    h.send(400, "output_audio_buffer.started", { response_id: "resp_1" });
     expect(h.messages).toEqual([]);
     vi.advanceTimersByTime(HOLD_MS);
     expect(h.messages).toEqual([{ type: "agent", id: "resp_1", text: "Hm?" }]);
+  });
+
+  it("shows a reply as its voice reaches it, not as its transcript arrives", () => {
+    const h = harness();
+    h.conversation.expect("opening");
+    h.send(0, "response.created", { response: { id: "resp_1" } });
+    const reply = "Hi! What are you planning today, a trip or something closer to home?";
+    // The whole transcript, long before the voice has said it.
+    h.send(100, "response.output_audio_transcript.done", { response_id: "resp_1", output_index: 0, transcript: reply });
+    expect(h.messages).toEqual([]);
+
+    h.send(500, "output_audio_buffer.started", { response_id: "resp_1" });
+    // Seven ticks of the pacer: 1050 ms of voice.
+    vi.advanceTimersByTime(1050);
+    const early = (h.messages.at(-1) as { text: string }).text;
+    expect(early).toBe(heardOf(reply, 1050));
+    expect(early.length).toBeLessThan(reply.length);
+
+    h.send(5200, "output_audio_buffer.stopped", { response_id: "resp_1" });
+    expect(h.messages.at(-1)).toEqual({ type: "agent", id: "resp_1", text: reply });
+    // Growing word by word, and never the same line twice.
+    const lines = h.messages.map((m) => (m as { text: string }).text);
+    expect(new Set(lines).size).toBe(lines.length);
+    lines.forEach((line, i) => i > 0 && expect(line.startsWith(lines[i - 1]!)).toBe(true));
+    expect(h.began).toEqual(["resp_1"]);
+    expect(h.finished).toEqual([]);
+    h.send(5300, "response.done", { response: { id: "resp_1", status: "completed" } });
+    expect(h.finished[0]).toMatchObject({ trigger: "opening", text: reply, bargedIn: false });
   });
 
   it("credits a reply to the words of the turn it answers, not the turn before", () => {

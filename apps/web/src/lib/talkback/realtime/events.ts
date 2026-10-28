@@ -20,6 +20,14 @@ import type { SparkKind } from "../signals";
  * an answer shown before its question would be filed before it for good. The
  * agent's lines are held until their transcript is in, or for at most
  * `HOLD_MS`.
+ *
+ * THE AGENT'S WORDS AS ITS VOICE REACHES THEM. The provider sends the
+ * transcript of a reply as fast as the model writes it, which is seconds ahead
+ * of the audio playing it, so a line shown as it arrives was finished on
+ * screen while the voice was still on its first sentence. Over WebRTC there
+ * are no word timings, so a reply is shown from the moment its audio starts,
+ * at speaking pace (`CHARS_PER_SEC`, the same estimate a cut-off reply is
+ * shortened by), and in full once its audio stops.
  */
 
 export type RealtimeTrigger = "user_turn" | "opening" | "poke";
@@ -70,8 +78,10 @@ export interface ConversationSink {
 export const HOLD_MS = 4000;
 /** How long after a response is done its audio may still be playing before the turn is closed anyway. */
 const PLAYBACK_GRACE_MS = 30_000;
-/** Speech, in characters a second, for what was heard of a reply cut off. */
+/** Speech, in characters a second: how far a reply's voice has got, shown or cut off. */
 const CHARS_PER_SEC = 15;
+/** How often the line of a reply that is playing catches up with its voice. */
+const PACE_TICK_MS = 150;
 
 interface Response {
   id: string;
@@ -88,6 +98,8 @@ interface Response {
   bargedIn: boolean;
   done: boolean;
   shown: boolean;
+  /** The line as last sent to the screen, so a tick that changes nothing sends nothing. */
+  emitted: string | null;
   respondingToText: string | null;
   asrMs: number | null;
   inputTokens: number | null;
@@ -122,6 +134,7 @@ export class RealtimeConversation {
   private expected: { trigger: RealtimeTrigger; spark: Response["spark"]; atMs: number } | null = null;
   private inProgress: string | null = null;
   private playing: string | null = null;
+  private pacer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
 
   constructor(private readonly sink: ConversationSink) {}
@@ -223,6 +236,7 @@ export class RealtimeConversation {
           bargedIn: false,
           done: false,
           shown: false,
+          emitted: null,
           respondingToText: trigger === "user_turn" ? this.respondingTo() : null,
           asrMs: null,
           inputTokens: null,
@@ -254,6 +268,7 @@ export class RealtimeConversation {
         r.audioStartMs ??= this.sink.now();
         this.playing = r.id;
         this.sink.agentSpeaking(true);
+        this.pace();
         return;
       }
       case "output_audio_buffer.stopped":
@@ -266,8 +281,11 @@ export class RealtimeConversation {
         if (event.type === "output_audio_buffer.cleared" && r.audioStartMs !== null) r.bargedIn = true;
         if (this.playing === r.id) {
           this.playing = null;
+          this.stopPacing();
           this.sink.agentSpeaking(false);
         }
+        // All of it once the voice has said it all; what was heard once cut off.
+        this.showAgent(r);
         this.maybeFinish(r);
         return;
       }
@@ -312,6 +330,7 @@ export class RealtimeConversation {
     if (this.closed) return;
     this.pendingUser = null;
     this.release();
+    this.stopPacing();
     for (const r of this.responses.values()) {
       if (r.audioStartMs !== null && r.audioEndMs === null) r.audioEndMs = this.sink.now();
       r.done = true;
@@ -343,14 +362,45 @@ export class RealtimeConversation {
     if (first && this.pendingUser === id) this.release();
   }
 
-  private showAgent(r: Response): void {
-    const text = this.text(r);
+  /**
+   * Puts the reply on screen as far as its voice has got, or — `final`, once
+   * it is over — as it ends: all of it, or what was heard of it if cut off. A
+   * reply whose audio never started is shown only then, whole.
+   */
+  private showAgent(r: Response, final = false): void {
+    const text = final ? this.heard(r) : this.voiced(r);
     if (!text || (this.holdTimer !== null && r.trigger === "user_turn" && !r.shown)) return;
+    const line = `${r.bargedIn ? "cut" : "said"}:${text}`;
+    if (line === r.emitted) return;
+    r.emitted = line;
     if (!r.shown) {
       r.shown = true;
       this.sink.began(r.id);
     }
-    this.sink.emit({ type: "agent", id: r.id, text: r.bargedIn ? this.heard(r) : text, ...(r.bargedIn ? { interrupted: true } : {}) });
+    this.sink.emit({ type: "agent", id: r.id, text, ...(r.bargedIn ? { interrupted: true } : {}) });
+  }
+
+  /** What of the reply its voice has said by now. */
+  private voiced(r: Response): string {
+    if (r.audioStartMs === null) return "";
+    if (r.audioEndMs !== null) return this.heard(r);
+    return heardOf(this.text(r), this.sink.now() - r.audioStartMs);
+  }
+
+  /** Keeps the playing reply's line up with its voice, until the audio stops. */
+  private pace(): void {
+    if (this.pacer !== null) return;
+    this.pacer = setInterval(() => {
+      const r = this.playing === null ? undefined : this.responses.get(this.playing);
+      if (r) this.showAgent(r);
+      else this.stopPacing();
+    }, PACE_TICK_MS);
+  }
+
+  private stopPacing(): void {
+    if (this.pacer === null) return;
+    clearInterval(this.pacer);
+    this.pacer = null;
   }
 
   private heard(r: Response): string {
@@ -383,8 +433,9 @@ export class RealtimeConversation {
     if (!this.responses.has(r.id)) return;
     this.responses.delete(r.id);
     if (r.graceTimer !== null) clearTimeout(r.graceTimer);
-    // A reply cut off is shown as what was heard, marked.
-    if (r.bargedIn) this.showAgent(r);
+    if (this.playing === r.id) this.stopPacing();
+    // As it ended: all of it, or a reply cut off as what was heard, marked.
+    this.showAgent(r, true);
     const generatedText = this.text(r);
     const text = this.heard(r);
     if (text) this.sink.heard("agent", text);
