@@ -264,6 +264,54 @@ body {
   }
 }
 
+/* Three dots taking turns: a reply is on its way (the state line's "Thinking"). */
+.vm-thinking > span {
+  animation: vm-thinking 1200ms ease-in-out infinite;
+}
+.vm-thinking > span:nth-child(2) {
+  animation-delay: 200ms;
+}
+.vm-thinking > span:nth-child(3) {
+  animation-delay: 400ms;
+}
+@keyframes vm-thinking {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* The end of the words being said, in the speaker's colour (the Stack view). */
+.vm-caret {
+  animation: vm-caret 1s steps(1) infinite;
+}
+@keyframes vm-caret {
+  0%,
+  60% {
+    opacity: 1;
+  }
+  61%,
+  100% {
+    opacity: 0.15;
+  }
+}
+
+/* A search running: a short bar sweeping a track (the Stack view's lookup). */
+.vm-sweep {
+  animation: vm-sweep 1400ms ease-in-out infinite;
+}
+@keyframes vm-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
 /* Someone who has asked for less motion gets a plain cut. */
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-old(root),
@@ -274,6 +322,11 @@ body {
      check the same query and scroll without smoothing. */
   .vm-title,
   .vm-speaking > span {
+    animation: none !important;
+  }
+  .vm-thinking > span,
+  .vm-sweep,
+  .vm-caret {
     animation: none !important;
   }
 }

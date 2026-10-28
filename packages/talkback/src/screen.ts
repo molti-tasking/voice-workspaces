@@ -59,7 +59,7 @@ export interface ConversationScreen {
 }
 
 /** The displays a drive can force (`ConversationDisplay` in @voicemural/shared). */
-export type ShownAs = "chat" | "topics" | "uptake" | "now" | "open" | "recent";
+export type ShownAs = "chat" | "topics" | "uptake" | "now" | "open" | "recent" | "stack";
 
 const NAMED =
   "Topics are named automatically from what is said; you do not name them and cannot move anything between them, but they can rename one, and you then hear it by their name.";
@@ -76,11 +76,12 @@ const SHOWN_AS: Record<ShownAs, string> = {
   open: "the conversation view as the questions this conversation has raised — where, when, how much — the open ones first and the settled ones ticked, written automatically from what was said, not by you.",
   recent:
     "the conversation view shrunk by age: the last turn in its own words, large, at the bottom, under who said it; the turn before it in two words; the three before that in one word each; and above them the name of the current topic. The short words are written automatically, not by you, and a tap opens the current topic with all of its lines.",
+  stack: `the conversation view as a stack of topics: the current topic as the largest bubble at the bottom, with what has been decided on it, the turn before as a short line and the words being said now; the earlier topics above it, each with what was decided, in places they keep. When the conversation goes back to an earlier topic, its bubble moves down into the large one. The decisions and short lines are written automatically, not by you. ${NAMED}`,
 };
 
 /** Unforced, the person may switch the view: said so, without saying which one is open. */
 const SWITCHABLE =
-  "They can switch it to show only the topics, which of your ideas they have taken up, one line on where things stand, the open questions, or only the last turn in full with the ones before shrunk to a word or two; you do not know which one is open.";
+  "They can switch it to show only the topics, which of your ideas they have taken up, one line on where things stand, the open questions, only the last turn in full with the ones before shrunk to a word or two, or the topics as a stack with what was decided on each; you do not know which one is open.";
 
 /**
  * The recorder while it records. It once said "two panels … no other icon or

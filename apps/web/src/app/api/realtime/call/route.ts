@@ -6,6 +6,7 @@ import { LiteLLMError, hasModelFor, mintRealtimeSecret, modelFor, type RealtimeE
 import { resolveStudyCondition } from "@voicemural/shared";
 import { issueTicket } from "@voicemural/shared/realtime-ticket";
 import {
+  LOOKUP_TOOL,
   REALTIME_CONFIG_VERSION,
   STUDY_SCREEN,
   asSttLanguage,
@@ -50,6 +51,15 @@ const Body = z.object({ captureSessionId: z.uuid() });
 const CONTEXT_TICKET_TTL_MS = 3 * 60 * 60 * 1000;
 
 const EAGERNESS: readonly RealtimeEagerness[] = ["low", "medium", "high", "auto"];
+
+/**
+ * `REALTIME_MOCK_SEARCH=on`: the agent can look things up, answered by the
+ * mock search (`/api/realtime/lookup`). For demos and the display study only:
+ * the results are made up.
+ */
+function mockSearch(): boolean {
+  return process.env.REALTIME_MOCK_SEARCH?.trim().toLowerCase() === "on";
+}
 
 /** `REALTIME_EAGERNESS`, or the provider's own default. */
 function eagerness(): RealtimeEagerness {
@@ -102,6 +112,7 @@ export async function POST(req: Request) {
     screen: sessionTask ? STUDY_SCREEN : null,
     language,
     continued,
+    lookup: mockSearch(),
   };
   const composed = sessionTask
     ? composeRealtimeSessionPrompt(sessionTask, background)
@@ -116,6 +127,7 @@ export async function POST(req: Request) {
     // realtime session, at the provider.
     transcribeModel: process.env.REALTIME_TRANSCRIBE_MODEL?.trim() || "gpt-4o-transcribe",
     eagerness: eagerness(),
+    tools: background.lookup ? [LOOKUP_TOOL] : [],
   });
 
   let secret;
@@ -154,6 +166,8 @@ export async function POST(req: Request) {
       // thing it changes on the session, and it has to resend it whole.
       turnDetection: session.audio.input.turn_detection,
       configVersion: REALTIME_CONFIG_VERSION,
+      // The browser runs the search the agent asks for.
+      lookup: background.lookup,
     },
     { headers: { "Cache-Control": "no-store" } },
   );

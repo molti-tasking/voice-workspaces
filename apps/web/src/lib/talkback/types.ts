@@ -46,6 +46,13 @@ export interface TalkbackState {
    */
   memory: "ready" | "unavailable";
   error: string | null;
+  /**
+   * Their turn has ended and a reply is on its way, not yet heard: the state
+   * line's "Thinking". Only the speech-to-speech engine knows; false otherwise.
+   */
+  thinking: boolean;
+  /** The agent is looking something up (`lookup.ts`): "Looking it up". */
+  lookingUp: boolean;
 }
 
 export const OFF: TalkbackState = {
@@ -54,6 +61,8 @@ export const OFF: TalkbackState = {
   userSpeaking: false,
   memory: "ready",
   error: null,
+  thinking: false,
+  lookingUp: false,
 };
 
 export interface TalkbackOptions {

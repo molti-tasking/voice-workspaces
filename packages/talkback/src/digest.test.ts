@@ -44,6 +44,7 @@ describe("the conversation digest", () => {
             { text: "Aarhus for two nights", takenUp: true },
             { text: "Skagen in autumn", takenUp: false },
           ],
+          decision: null,
         },
       ],
       open: [
@@ -103,6 +104,25 @@ describe("the conversation digest", () => {
     expect(parseDigest(raw, [], [8, 9])?.gists).toEqual([
       { seq: 8, two: "train slower, cheaper", one: "train" },
       { seq: 9, two: "Aarhus", one: "Aarhus" },
+    ]);
+  });
+
+  it("keeps a topic's decision short, and null when nothing is decided", () => {
+    const raw =
+      '{"topics": [{"n": 1, "decision": "Sat 9:12 ICE, seats reserved."}, {"n": 2, "decision": null}, {"n": 3, "decision": "  "}]}';
+    expect(parseDigest(raw, [1, 2, 3])?.topics.map((t) => t.decision)).toEqual([
+      "Sat 9:12 ICE, seats reserved",
+      null,
+      null,
+    ]);
+  });
+
+  it("keeps a turn's line beside its two words, when the model wrote one", () => {
+    const raw =
+      '{"now": null, "topics": [], "open": [], "gists": [{"id": 4, "line": "Fish place by the harbour, bookings until six.", "two": "fish place", "one": "fish"}, {"id": 5, "two": "breakfast", "one": "breakfast"}]}';
+    expect(parseDigest(raw, [], [4, 5])?.gists).toEqual([
+      { seq: 4, line: "Fish place by the harbour, bookings until six", two: "fish place", one: "fish" },
+      { seq: 5, two: "breakfast", one: "breakfast" },
     ]);
   });
 });

@@ -225,6 +225,8 @@ export function LiveTalk({
                 floor: connected ? (talk.floor ?? "open") : null,
                 speaking: hearing,
                 listening: !hearing && Boolean(talk.userSpeaking),
+                thinking: talk.thinking,
+                lookingUp: talk.lookingUp,
               }
             : null
         }

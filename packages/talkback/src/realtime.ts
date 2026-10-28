@@ -26,7 +26,8 @@
  * Pure: the browser imports the nudges from here (`@voicemural/talkback/realtime`).
  */
 
-import type { RealtimeEagerness, RealtimeSessionConfig } from "@voicemural/llm";
+import type { RealtimeEagerness, RealtimeFunctionTool, RealtimeSessionConfig } from "@voicemural/llm";
+import { LOOKUP_SECTION, withLookup } from "./lookup";
 import { PROFILE, type ConversationProfile } from "./profile";
 import {
   FLOOR_OPEN_NOTE,
@@ -177,6 +178,8 @@ export interface RealtimeBackground {
   continued?: string | null;
   /** A catalogue code when the drive is pinned to a language; null for auto-detect. */
   language?: string | null;
+  /** It can look things up (`lookup.ts`): the mock search is on for this deployment. */
+  lookup?: boolean;
 }
 
 function backgroundSections(background: RealtimeBackground): string[] {
@@ -190,13 +193,14 @@ function backgroundSections(background: RealtimeBackground): string[] {
   const name = background.language ? LANGUAGE_NAMES[background.language] : undefined;
   if (name) sections.push(`LANGUAGE\nThis conversation is in ${name}. Speak ${name} throughout, unless they switch.`);
   if (background.continued) sections.push(background.continued);
+  if (background.lookup) sections.push(LOOKUP_SECTION);
   return sections;
 }
 
 /** The display study's session agent, for one task. */
 export function composeRealtimeSessionPrompt(task: SessionTask, background: RealtimeBackground = {}): ComposedPrompt {
   return composeSystemPrompt({
-    base: REALTIME_SESSION_PROMPT,
+    base: background.lookup ? withLookup(REALTIME_SESSION_PROMPT) : REALTIME_SESSION_PROMPT,
     profile: SESSION_PROFILE,
     sections: [task.agentSection, ...backgroundSections(background)],
     contract: REALTIME_CONTRACT,
@@ -206,7 +210,7 @@ export function composeRealtimeSessionPrompt(task: SessionTask, background: Real
 /** Everyone else's agent: the field app's companion. */
 export function composeRealtimeFieldPrompt(background: RealtimeBackground = {}): ComposedPrompt {
   return composeSystemPrompt({
-    base: REALTIME_FIELD_PROMPT,
+    base: background.lookup ? withLookup(REALTIME_FIELD_PROMPT) : REALTIME_FIELD_PROMPT,
     profile: REALTIME_FIELD_PROFILE,
     sections: backgroundSections(background),
     contract: REALTIME_CONTRACT,
@@ -279,6 +283,7 @@ export function realtimeSessionConfig({
   language,
   transcribeModel,
   eagerness,
+  tools = [],
 }: {
   model: string;
   instructions: string;
@@ -286,6 +291,8 @@ export function realtimeSessionConfig({
   language: string | null;
   transcribeModel: string;
   eagerness: RealtimeEagerness;
+  /** Functions it may call, run by the browser. */
+  tools?: RealtimeFunctionTool[];
 }): RealtimeSessionConfig {
   return {
     type: "realtime",
@@ -299,5 +306,6 @@ export function realtimeSessionConfig({
       },
       output: { voice },
     },
+    ...(tools.length > 0 ? { tools, tool_choice: "auto" as const } : {}),
   };
 }
