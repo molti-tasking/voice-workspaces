@@ -12,7 +12,6 @@ import { AgentNameProvider } from "../../record/agent-name-context";
 import { ConversationView } from "../../record/views/conversation-view";
 import type { FlowStatus } from "../../record/views/status-line";
 import { useBlockMoments, type BlockMoments } from "./block-moments";
-import { EsmPrompt } from "./interruption";
 import { clock, spokenDuration } from "./session-copy";
 import type { SessionBlockView, SendStep } from "./session-flow";
 import { TicTacToe } from "./tic-tac-toe";
@@ -341,9 +340,6 @@ function Interrupted({
         />
       )}
       {moments.phase === "back" && <ReturnShield />}
-      {moments.prompt && (
-        <EsmPrompt key={moments.prompt.slot.ordinal} item={moments.prompt.slot.item} onAnswer={moments.answerPrompt} />
-      )}
     </>
   );
 }

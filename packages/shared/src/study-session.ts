@@ -18,8 +18,12 @@ import { ProlificPid, ProlificRef } from "./prolific";
  * the database, and safe in the browser.
  */
 
-/** Bump when the questions change enough that answers should not be pooled. */
-export const SESSION_VERSION = "session-2";
+/**
+ * Bump when the questions change enough that answers should not be pooled.
+ * Session-3 (29 Oct 2026): no one-tap prompts during the conversation, so the
+ * ratings after it are the first time they are asked.
+ */
+export const SESSION_VERSION = "session-3";
 
 /**
  * The tasks a session can have, by id. The words — what they read and what the
@@ -169,14 +173,6 @@ export interface SessionTimings {
   gameMinMs: number;
   /** …and the round under way is cut off here. */
   gameCapMs: number;
-  /** The first "how easy is it to follow?", before the game. */
-  esmFollowMs: number;
-  /** The second, this long after they are back from the game. */
-  esmAfterResumeMs: number;
-  /** "How much effort does it take?", late in the conversation. */
-  esmEffortMs: number;
-  /** No two of those closer together than this. */
-  esmSpacingMs: number;
 }
 
 export const SESSION_TIMINGS: SessionTimings = {
@@ -187,10 +183,6 @@ export const SESSION_TIMINGS: SessionTimings = {
   gameLatestMs: 180_000,
   gameMinMs: 60_000,
   gameCapMs: 75_000,
-  esmFollowMs: 105_000,
-  esmAfterResumeMs: 60_000,
-  esmEffortMs: 270_000,
-  esmSpacingMs: 20_000,
 };
 
 /**
@@ -219,90 +211,14 @@ export function gameDue(input: { elapsedMs: number; quietMs: number; timings: Se
 }
 
 /* ---------------------------------------------------------------------------
- * Experience sampling: one tap, during the conversation
- * ------------------------------------------------------------------------- */
-
-/** The questions asked during a conversation, 1 to 7 with one tap. */
-export const ESM_ITEMS = {
-  esm_follow: {
-    question: "Right now, how easy is it to follow the conversation?",
-    low: "Very hard",
-    high: "Very easy",
-  },
-  esm_effort: {
-    question: "Right now, how much effort does keeping up take?",
-    low: "Very little",
-    high: "A great deal",
-  },
-} as const;
-export type EsmItem = keyof typeof ESM_ITEMS;
-
-/** A prompt not answered within this is put away, and stored as unanswered. Not sped up. */
-export const ESM_EXPIRY_MS = 10_000;
-/** It waits for both sides to have been quiet this long, so it never lands mid-sentence. */
-export const ESM_QUIET_MS = 1_000;
-
-export interface EsmSlot {
-  /** Its place in the conversation: the moment's ordinal. */
-  ordinal: number;
-  item: EsmItem;
-  /** When it is due, on the drive's clock; null until it can be known (after the game). */
-  dueMs: number | null;
-}
-
-/**
- * The three prompts of a conversation: how easy it is to follow, before the
- * game and again a minute after it — the contrast the interruption is for —
- * and the effort it takes, late on.
- *
- * Both later ones wait for them to be back. The effort prompt also comes
- * after the second follow one: due at a fixed time, it could land the moment
- * they returned, on top of the resumption being measured.
- */
-export function esmSlots(timings: SessionTimings, resumedAtMs: number | null): EsmSlot[] {
-  const followAgain = resumedAtMs === null ? null : resumedAtMs + timings.esmAfterResumeMs;
-  return [
-    { ordinal: 0, item: "esm_follow", dueMs: timings.esmFollowMs },
-    { ordinal: 1, item: "esm_follow", dueMs: followAgain },
-    {
-      ordinal: 2,
-      item: "esm_effort",
-      dueMs: followAgain === null ? null : Math.max(timings.esmEffortMs, followAgain + timings.esmSpacingMs),
-    },
-  ];
-}
-
-/**
- * The prompt to show now, if any: the earliest one due and not yet shown,
- * in a quiet moment, never while something else is on the screen (`busy`:
- * the game, the question after it), and not too soon after the last one.
- */
-export function esmDue(input: {
-  elapsedMs: number;
-  quietMs: number;
-  busy: boolean;
-  shown: ReadonlySet<number>;
-  lastShownMs: number | null;
-  resumedAtMs: number | null;
-  timings: SessionTimings;
-}): EsmSlot | null {
-  const { elapsedMs, quietMs, busy, shown, lastShownMs, resumedAtMs, timings } = input;
-  if (busy || quietMs < ESM_QUIET_MS) return null;
-  if (lastShownMs !== null && elapsedMs - lastShownMs < timings.esmSpacingMs) return null;
-  const due = esmSlots(timings, resumedAtMs)
-    .filter((s) => !shown.has(s.ordinal) && s.dueMs !== null && s.dueMs <= elapsedMs)
-    .sort((a, b) => a.dueMs! - b.dueMs!);
-  return due[0] ?? null;
-}
-
-/* ---------------------------------------------------------------------------
  * Moments: what happened when, on the drive's clock
  * ------------------------------------------------------------------------- */
 
 /**
  * What a moment is:
  * - `esm`: a one-tap prompt (`item` is its question; `value` 1-7, or null
- *   when it expired).
+ *   when it expired). Session-2's only: since session-3 nothing interrupts
+ *   the conversation but the game, and these are still read from its moments.
  * - `game`: the interruption, from the pause to the end of its last round.
  * - `resume`: back in the conversation, the moment the game ends; answered
  *   at their first words.

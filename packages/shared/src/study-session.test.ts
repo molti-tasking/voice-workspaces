@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   BlockAnswers,
-  ESM_ITEMS,
   GAME_QUIET_MS,
   DEFAULT_DESIGN,
   DesignInput,
@@ -15,8 +14,6 @@ import {
   cellCount,
   cellFor,
   leastFilledCell,
-  esmDue,
-  esmSlots,
   gameDue,
   resumeAt,
   scaledTimings,
@@ -108,7 +105,7 @@ describe("SessionEnroll", () => {
 describe("scaledTimings", () => {
   it("speeds every timing up, within bounds", () => {
     const fast = scaledTimings(10);
-    expect(fast).toMatchObject({ talkMinMs: 24_000, talkCapMs: 42_000, gameEarliestMs: 13_500, esmSpacingMs: 2_000 });
+    expect(fast).toMatchObject({ talkMinMs: 24_000, talkCapMs: 42_000, gameEarliestMs: 13_500, gameMinMs: 6_000 });
     expect(Object.keys(fast)).toEqual(Object.keys(SESSION_TIMINGS));
     expect(scaledTimings(1)).toEqual(SESSION_TIMINGS);
     expect(scaledTimings(0)).toEqual(scaledTimings(1));
@@ -118,7 +115,6 @@ describe("scaledTimings", () => {
 
   it("ends the game, even at its latest, before the conversation's cap", () => {
     const t = SESSION_TIMINGS;
-    expect(t.gameEarliestMs).toBeGreaterThan(t.esmFollowMs);
     expect(t.gameLatestMs + t.gameCapMs).toBeLessThan(t.talkCapMs);
   });
 });
@@ -131,35 +127,6 @@ describe("gameDue", () => {
     expect(gameDue({ elapsedMs: 140_000, quietMs: 800, timings })).toBe(false);
     expect(gameDue({ elapsedMs: 140_000, quietMs: GAME_QUIET_MS, timings })).toBe(true);
     expect(gameDue({ elapsedMs: 180_000, quietMs: 0, timings })).toBe(true);
-  });
-});
-
-describe("esmDue", () => {
-  const timings = SESSION_TIMINGS;
-  const base = { quietMs: 2_000, busy: false, shown: new Set<number>(), lastShownMs: null, resumedAtMs: null, timings };
-
-  it("asks how easy it is to follow before the game, in a quiet moment only", () => {
-    expect(esmDue({ ...base, elapsedMs: 100_000 })).toBeNull();
-    expect(esmDue({ ...base, elapsedMs: 106_000 })).toMatchObject({ ordinal: 0, item: "esm_follow" });
-    expect(esmDue({ ...base, elapsedMs: 106_000, quietMs: 500 })).toBeNull();
-    expect(esmDue({ ...base, elapsedMs: 106_000, busy: true })).toBeNull();
-  });
-
-  it("asks it again a minute after the game, and the effort late on, spaced apart", () => {
-    const shown = new Set([0]);
-    // Nothing later until they are back from the game, the effort included.
-    expect(esmDue({ ...base, shown, elapsedMs: 300_000 })).toBeNull();
-    const after = { ...base, shown, resumedAtMs: 220_000 };
-    expect(esmDue({ ...after, elapsedMs: 280_000 })).toMatchObject({ ordinal: 1, item: "esm_follow" });
-    const both = { ...after, shown: new Set([0, 1]), lastShownMs: 280_000 };
-    expect(esmDue({ ...both, elapsedMs: 290_000 })).toBeNull();
-    expect(esmDue({ ...both, elapsedMs: 300_000 })).toMatchObject({ ordinal: 2, item: "esm_effort" });
-    expect(esmDue({ ...both, shown: new Set([0, 1, 2]), elapsedMs: 400_000 })).toBeNull();
-  });
-
-  it("knows its three prompts' items", () => {
-    expect(esmSlots(timings, null).map((s) => s.item)).toEqual(["esm_follow", "esm_follow", "esm_effort"]);
-    for (const item of Object.keys(ESM_ITEMS)) expect(ESM_ITEMS[item as keyof typeof ESM_ITEMS].question).toMatch(/^Right now/);
   });
 });
 

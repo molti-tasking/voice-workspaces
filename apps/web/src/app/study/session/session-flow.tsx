@@ -355,8 +355,7 @@ function Intro({ timings, onContinue }: { timings: SessionTimings; onContinue: (
         <li>The screen shows the conversation as it goes. Look at it as much or as little as you like.</li>
         <li>
           Once during the conversation, a short game takes over the screen for about a minute. When it ends, you are back
-          in the conversation. Now and then a one-tap question about how it is going appears at the bottom of the
-          screen.
+          in the conversation.
         </li>
         <li>
           You can finish the conversation after {spokenDuration(timings.talkMinMs)}. At{" "}
