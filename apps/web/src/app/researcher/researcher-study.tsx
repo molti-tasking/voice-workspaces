@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import type { ConversationDisplay, SessionTaskId } from "@voicemural/shared";
 import { CopyButton } from "@/components/copy-button";
+import { When } from "@/components/when";
 import type { ResearcherAction } from "@/lib/study/researcher-actions";
 import { VIEW_LABELS } from "../record/view-switch";
 
@@ -86,8 +87,7 @@ function useAction() {
   return { busy, run };
 }
 
-const when = (value: string | null) =>
-  value ? new Date(value).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }) : "—";
+const when = (value: string | null) => (value ? <When date={value} withTime /> : "—");
 
 export function ResearcherStudy({
   designs,
