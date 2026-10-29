@@ -2,6 +2,7 @@
 import { GIST_WORDS, type DigestGist } from "@voicemural/talkback/digest";
 import type { Conversation, Speaker } from "@/lib/talkback/conversation";
 import { turnsInOrder } from "@/lib/talkback/cursor";
+import { spokenPage, type SpokenWord } from "@/lib/talkback/spoken";
 
 /**
  * What the Recent view draws, as data: the conversation shrunk by age.
@@ -47,8 +48,13 @@ export interface RecentWords {
 export interface RecentLadder {
   earlier: RecentWords[];
   previous: RecentWords | null;
-  /** `cut`: the turn is longer than what is shown, which starts mid-turn. */
-  last: (RecentWords & { cut: boolean }) | null;
+  /**
+   * The newest turn: the sentence being said — or of a long one, its run of
+   * `LAST_WORDS` — as a page the next replaces whole (lib/talkback/spoken.ts).
+   * `cut`: earlier words of the turn are not on it. `spoken`: the agent's
+   * voice is still saying it, so its words fade in as they are said.
+   */
+  last: (RecentWords & { cut: boolean; words: SpokenWord[]; spoken: boolean }) | null;
 }
 
 /**
@@ -73,12 +79,14 @@ export function recentLadder(conversation: Conversation, gists: ReadonlyMap<numb
   const before = turns.at(-2);
   let last: RecentLadder["last"] = null;
   if (newest) {
-    const words = newest.text.trim().split(/\s+/);
+    const page = spokenPage(newest.text, newest.voiced, LAST_WORDS);
     last = {
       seq: newest.seq,
       who: newest.who,
-      text: words.slice(-LAST_WORDS).join(" "),
-      cut: words.length > LAST_WORDS,
+      text: page.words.map((w) => w.text).join(" "),
+      cut: page.cut,
+      words: page.words,
+      spoken: newest.voiced !== undefined,
     };
   }
   return {

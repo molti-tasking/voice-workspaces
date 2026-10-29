@@ -84,12 +84,26 @@ describe("the topic stack", () => {
     expect(model.current?.whose).toBe("user");
   });
 
-  it("shows the newest turn's last words, and the turn before as a line", () => {
+  it("shows the newest turn's last page, and the turn before as a line", () => {
+    // One sentence longer than a page: the last page starts inside it.
     const long = Array.from({ length: STACK_LIVE_WORDS + 4 }, (_, i) => `w${i}`).join(" ");
     const model = stackModel(play([...trip, agent("a3", long)]), EMPTY_DIGEST, new Map([[4, { seq: 4, two: "eat?", one: "eat", line: "Somewhere to eat by the harbour" }]]));
-    expect(model.live).toMatchObject({ who: "agent", cut: true });
-    expect(model.live?.words).toHaveLength(STACK_LIVE_WORDS);
+    expect(model.live).toMatchObject({ who: "agent", cut: true, spoken: false });
+    expect(model.live?.words.map((w) => w.text)).toEqual(["w14", "w15", "w16", "w17"]);
     expect(model.previous).toEqual({ seq: 4, who: "user", text: "Somewhere to eat by the harbour", provisional: false });
+  });
+
+  it("holds the sentence being said in place while the voice says it", () => {
+    const text = "The fish place by the pier is good. It opens at six.";
+    const voiced = (upTo: string) => text.indexOf(upTo) + upTo.length;
+    const live = (v: number) => stackModel(play([...trip, { type: "agent", id: "a3", text, voiced: v }]), EMPTY_DIGEST, NONE).live!;
+    const early = live(voiced("place"));
+    expect(early).toMatchObject({ spoken: true, cut: false });
+    expect(early.words.map((w) => w.text).join(" ")).toBe("The fish place by the pier is good.");
+    expect(early.words.filter((w) => w.said)).toHaveLength(3);
+    // The same words, at the same offsets, as more is said: nothing shifts.
+    expect(live(voiced("pier")).words.map((w) => w.start)).toEqual(early.words.map((w) => w.start));
+    expect(live(voiced("It")).words.map((w) => w.text).join(" ")).toBe("It opens at six.");
   });
 
   it("cuts a turn without a line to its first words, as a guess", () => {
@@ -107,7 +121,8 @@ describe("the topic stack", () => {
     const found = applyMessage(asked, { type: "mark", mark: { kind: "lookup", id: "c1", query: "fish restaurant harbour Hamburg", found: "3 results found" } }, 0);
     const answering = stackModel(applyMessage(found, agent("a3", "I found three."), 0), EMPTY_DIGEST, NONE);
     expect(answering.lookup?.found).toBe("3 results found");
-    expect(answering.live).toMatchObject({ who: "agent", words: ["I", "found", "three."] });
+    expect(answering.live).toMatchObject({ who: "agent" });
+    expect(answering.live?.words.map((w) => w.text)).toEqual(["I", "found", "three."]);
 
     const later = stackModel(applyMessage(applyMessage(found, agent("a3", "I found three."), 0), user("u5", "Great."), 0), EMPTY_DIGEST, NONE);
     expect(later.lookup).toBeNull();

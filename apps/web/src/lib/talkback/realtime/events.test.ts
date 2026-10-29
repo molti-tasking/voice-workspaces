@@ -134,16 +134,18 @@ describe("RealtimeConversation", () => {
     h.send(500, "output_audio_buffer.started", { response_id: "resp_1" });
     // Seven ticks of the pacer: 1050 ms of voice.
     vi.advanceTimersByTime(1050);
-    const early = (h.messages.at(-1) as { text: string }).text;
-    expect(early).toBe(heardOf(reply, 1050));
-    expect(early.length).toBeLessThan(reply.length);
+    // The whole reply, so its words can wait in place, and how much the voice has said.
+    const early = h.messages.at(-1) as { text: string; voiced?: number };
+    expect(early.text).toBe(reply);
+    expect(early.voiced).toBe(heardOf(reply, 1050).length);
+    expect(early.voiced).toBeLessThan(reply.length);
 
     h.send(5200, "output_audio_buffer.stopped", { response_id: "resp_1" });
     expect(h.messages.at(-1)).toEqual({ type: "agent", id: "resp_1", text: reply });
-    // Growing word by word, and never the same line twice.
-    const lines = h.messages.map((m) => (m as { text: string }).text);
-    expect(new Set(lines).size).toBe(lines.length);
-    lines.forEach((line, i) => i > 0 && expect(line.startsWith(lines[i - 1]!)).toBe(true));
+    // Said word by word, never back, and never the same message twice.
+    const voiced = h.messages.map((m) => (m as { voiced?: number }).voiced ?? reply.length);
+    expect(new Set(voiced).size).toBe(voiced.length);
+    expect([...voiced].sort((a, b) => a - b)).toEqual(voiced);
     expect(h.began).toEqual(["resp_1"]);
     expect(h.finished).toEqual([]);
     h.send(5300, "response.done", { response: { id: "resp_1", status: "completed" } });

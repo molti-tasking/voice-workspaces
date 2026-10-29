@@ -7,6 +7,7 @@ import type { ConversationDigest, DigestGist } from "@voicemural/talkback/digest
 import type { Conversation, Speaker } from "@/lib/talkback/conversation";
 import { useAgentName } from "../agent-name-context";
 import { settleGists } from "./recent";
+import { SpokenWords } from "./spoken-text";
 import { stackModel, type StackTopic, type Whose } from "./stack";
 
 /**
@@ -37,7 +38,7 @@ const CUE_MS = 200;
 const MOVE_MS = 500;
 const RING_MS = 8000;
 const EASE = "cubic-bezier(.3,0,.1,1)";
-/** The live line's oldest words fade, when the line starts mid-turn. */
+/** The live line's first words fade, when its page starts inside a sentence. */
 const FADES = [0.3, 0.5, 0.75];
 
 const DOT: Record<Whose, string> = {
@@ -281,22 +282,22 @@ export function StackView({
         )}
 
         {live && (
-          <p className="line-clamp-4 flex-1 text-2xl leading-snug font-medium text-fg">
+          <p key={live.seq} className="line-clamp-4 flex-1 text-2xl leading-snug font-medium text-fg">
             <span className="sr-only">{live.who === "user" ? "You:" : `${agent.Name}:`}</span>
-            {live.words.map((word, i) => (
-              <span
-                key={`${live.seq}:${i}`}
-                style={live.cut && i < FADES.length ? { opacity: FADES[i] } : undefined}
-              >
-                {word}{" "}
-              </span>
-            ))}
-            {speaking === live.who && (
-              <span
-                aria-hidden
-                className={`vm-caret ml-0.5 inline-block h-[1.1em] w-[3px] -translate-y-[0.1em] rounded-full align-middle ${CARET[live.who]}`}
-              />
-            )}
+            <SpokenWords
+              words={live.words}
+              animate={live.spoken}
+              style={(i) => (live.cut && i < FADES.length ? { opacity: FADES[i] } : undefined)}
+              // After the last word said, not the end of the page: the rest is waiting, unseen.
+              after={
+                speaking === live.who && (
+                  <span
+                    aria-hidden
+                    className={`vm-caret ml-0.5 inline-block h-[1.1em] w-[3px] -translate-y-[0.1em] rounded-full align-middle ${CARET[live.who]}`}
+                  />
+                )
+              }
+            />
           </p>
         )}
       </section>

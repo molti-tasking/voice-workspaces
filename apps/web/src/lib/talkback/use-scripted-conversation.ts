@@ -1,9 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { createConversationStore, type ConversationMessage, type ConversationStore } from "./conversation";
+import {
+  createConversationStore,
+  type ConversationMessage,
+  type ConversationStore,
+  type Speaker,
+} from "./conversation";
 import { demoSparkQuestion, type DemoStep } from "./demo-conversation";
 import type { DemoVoice } from "./demo-voice";
+import { heardOf } from "./realtime/events";
 import { createSparkLedger, type SparkLedger } from "./spark-ledger";
 import type { SparkRequest } from "./types";
 import type { PokeResult } from "./use-talkback";
@@ -12,6 +18,13 @@ import type { PokeResult } from "./use-talkback";
 const SPARK_REPLY_MS = 900;
 /** With sound, the pause after a spoken line: the line's own length did the waiting. */
 const SPOKEN_GAP_MS = 500;
+/** How often the agent's line being said catches up with its voice, as the realtime engine's does. */
+const SAY_TICK_MS = 150;
+/** Where a line starts: its first word or two already said, so it never shows as an empty bubble. */
+const FIRST_WORDS_MS = 400;
+
+/** A turn's message: the agent's, when it is being said. */
+type AgentLine = Extract<ConversationMessage, { type: Speaker }>;
 
 function spokenLine(message: ConversationMessage): { text: string; who: "user" | "agent" } | null {
   return message.type === "user" || message.type === "agent" ? { text: message.text, who: message.type } : null;
@@ -27,6 +40,10 @@ function spokenLine(message: ConversationMessage): { text: string; who: "user" |
  * With a voice and `sound`, each spoken line is waited out before the next
  * comes, and pausing stops it mid-sentence. `speed` plays the pauses that
  * many times faster. Mount it again (a new `key`) to start over.
+ *
+ * The agent's lines are said as the realtime engine says them: the whole line
+ * at once with how far its voice has got (`voiced`), at the same speaking
+ * pace, so its words fade in where they will stay (lib/talkback/spoken.ts).
  */
 export function useScriptedConversation({
   steps,
@@ -55,6 +72,26 @@ export function useScriptedConversation({
   /** The line being spoken, so play after a pause waits for it to finish. */
   const speaking = useRef<Promise<void> | null>(null);
   const speak = sound && voice !== null;
+  /** The agent's line being said, and how much of its voice has played. */
+  const saying = useRef<{ line: AgentLine; saidMs: number } | null>(null);
+
+  // The line being said catches up with its voice; paused, it waits mid-sentence.
+  useEffect(() => {
+    if (paused) return;
+    const timer = window.setInterval(() => {
+      const now = saying.current;
+      if (!now) return;
+      now.saidMs += SAY_TICK_MS * Math.max(1, speed);
+      const voiced = heardOf(now.line.text, now.saidMs).length;
+      if (voiced >= now.line.text.length) {
+        saying.current = null;
+        store.dispatch(now.line);
+      } else {
+        store.dispatch({ ...now.line, voiced });
+      }
+    }, SAY_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, [paused, speed, store]);
 
   useEffect(() => {
     if (paused || done) return;
@@ -66,7 +103,16 @@ export function useScriptedConversation({
       async () => {
         if (fresh) {
           shown.current = step;
-          store.dispatch(next.message);
+          // Whatever was still being said is said: the next line comes.
+          if (saying.current) store.dispatch(saying.current.line);
+          saying.current = null;
+          if (next.message.type === "agent") {
+            const line = next.message;
+            saying.current = { line, saidMs: FIRST_WORDS_MS };
+            store.dispatch({ ...line, voiced: heardOf(line.text, FIRST_WORDS_MS).length });
+          } else {
+            store.dispatch(next.message);
+          }
           ledger.refresh(store.getSnapshot(), Date.now());
           const line = spokenLine(next.message);
           if (speak && line) speaking.current = voice.speak(line.text, line.who);

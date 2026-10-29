@@ -6,6 +6,7 @@ import type { DigestGist } from "@voicemural/talkback/digest";
 import type { Conversation } from "@/lib/talkback/conversation";
 import { useAgentName } from "../agent-name-context";
 import { recentLadder, settleGists, type RecentWords } from "./recent";
+import { SpokenWords } from "./spoken-text";
 import type { TopicEntry } from "./topics";
 
 /**
@@ -72,7 +73,7 @@ export function RecentView({
         <span className="text-xs text-fg/50">{ladder.last.who === "user" ? "You" : agent.Name}</span>
         <span className="text-3xl leading-tight font-semibold text-balance text-fg">
           {ladder.last.cut ? "… " : ""}
-          {ladder.last.text}
+          <SpokenWords words={ladder.last.words} animate={ladder.last.spoken} />
         </span>
       </span>
     </button>

@@ -55,13 +55,24 @@ describe("the conversation shrunk by age", () => {
     expect(settleGists(first, [{ seq: 5, two: "a", one: "a" }]).size).toBe(2);
   });
 
-  it("shows only the end of a long last turn, and says it was cut", () => {
+  it("shows the last page of a long last turn, and says it was cut", () => {
+    // One sentence of 40 words: pages of LAST_WORDS, the last one shorter.
     const long = Array.from({ length: 40 }, (_, i) => `w${i}`).join(" ");
     const ladder = recentLadder(talk([["agent", long]]), NONE);
     expect(ladder.last?.cut).toBe(true);
-    expect(ladder.last?.text.split(" ")).toHaveLength(LAST_WORDS);
+    expect(ladder.last?.text.split(" ")).toHaveLength(40 % LAST_WORDS);
+    expect(ladder.last?.text.startsWith(`w${40 - (40 % LAST_WORDS)} `)).toBe(true);
     expect(ladder.last?.text.endsWith("w39")).toBe(true);
+    expect(ladder.last?.spoken).toBe(false);
     expect(ladder.previous).toBeNull();
+  });
+
+  it("shows the sentence being said whole while the agent's voice says it", () => {
+    const said = "We could take the train. It is cheaper for four.";
+    const conversation = applyMessage(EMPTY_CONVERSATION, { type: "agent", id: "a1", text: said, voiced: "We could take".length }, 0);
+    const last = recentLadder(conversation, NONE).last!;
+    expect(last).toMatchObject({ text: "We could take the train.", cut: false, spoken: true });
+    expect(last.words.filter((w) => w.said).map((w) => w.text)).toEqual(["We", "could", "take"]);
   });
 
   it("is empty before anything was said", () => {

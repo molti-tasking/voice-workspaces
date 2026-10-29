@@ -47,6 +47,13 @@ export interface Turn {
   who: Speaker;
   /** The whole turn so far: each message replaces the last. */
   text: string;
+  /**
+   * While the agent's voice is still saying it: how many characters of `text`
+   * it has said, so the text can run ahead and the views fade each word in as
+   * it is reached (lib/talkback/spoken.ts). Absent: all of it, which is every
+   * turn but the one being spoken by the realtime engine.
+   */
+  voiced?: number;
   /** The agent was cut off: they talked over it, or locked it. */
   interrupted?: boolean;
   /**
@@ -198,6 +205,8 @@ export type ConversationMessage =
       type: Speaker;
       id: string;
       text: string;
+      /** See `Turn.voiced`. */
+      voiced?: number;
       interrupted?: boolean;
       pauses?: number;
       pausesBefore?: number;
@@ -430,6 +439,7 @@ function applyTurn(
     seq: state.nextSeq,
     who: message.type,
     text: message.text,
+    ...(message.voiced !== undefined && message.voiced < message.text.length ? { voiced: message.voiced } : {}),
     ...(message.interrupted ? { interrupted: true } : {}),
     ...(message.type === "user" && message.pauses ? { pauses: message.pauses } : {}),
     ...(message.type === "user" && message.pausesBefore

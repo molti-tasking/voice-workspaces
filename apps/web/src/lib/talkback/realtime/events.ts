@@ -25,9 +25,11 @@ import type { SparkKind } from "../signals";
  * transcript of a reply as fast as the model writes it, which is seconds ahead
  * of the audio playing it, so a line shown as it arrives was finished on
  * screen while the voice was still on its first sentence. Over WebRTC there
- * are no word timings, so a reply is shown from the moment its audio starts,
- * at speaking pace (`CHARS_PER_SEC`, the same estimate a cut-off reply is
- * shortened by), and in full once its audio stops.
+ * are no word timings, so a reply is shown from the moment its audio starts
+ * with how far the voice has got (`voiced`, at speaking pace: `CHARS_PER_SEC`,
+ * the same estimate a cut-off reply is shortened by), and in full once its
+ * audio stops. The text it is sent with runs ahead, which is what lets the
+ * views keep every word in place (lib/talkback/spoken.ts).
  */
 
 export type RealtimeTrigger = "user_turn" | "opening" | "poke";
@@ -363,28 +365,38 @@ export class RealtimeConversation {
   }
 
   /**
-   * Puts the reply on screen as far as its voice has got, or — `final`, once
-   * it is over — as it ends: all of it, or what was heard of it if cut off. A
-   * reply whose audio never started is shown only then, whole.
+   * Puts the reply on screen from the moment its voice starts: all of its
+   * text so far, with how much of it the voice has said (`voiced`), so the
+   * view can lay the words out where they will stay and fade each in as it is
+   * said. Once over — `final`, or its audio stopped — as it ends: all of it, or
+   * what was heard of it if cut off. A reply whose audio never started is
+   * shown only then, whole.
    */
   private showAgent(r: Response, final = false): void {
-    const text = final ? this.heard(r) : this.voiced(r);
-    if (!text || (this.holdTimer !== null && r.trigger === "user_turn" && !r.shown)) return;
-    const line = `${r.bargedIn ? "cut" : "said"}:${text}`;
+    const over = final || r.audioEndMs !== null;
+    const text = over ? this.heard(r) : this.text(r);
+    const voiced = over ? text.length : this.voiced(r);
+    if (!text || voiced === 0 || (this.holdTimer !== null && r.trigger === "user_turn" && !r.shown)) return;
+    const line = `${r.bargedIn ? "cut" : "said"}:${voiced}:${text}`;
     if (line === r.emitted) return;
     r.emitted = line;
     if (!r.shown) {
       r.shown = true;
       this.sink.began(r.id);
     }
-    this.sink.emit({ type: "agent", id: r.id, text, ...(r.bargedIn ? { interrupted: true } : {}) });
+    this.sink.emit({
+      type: "agent",
+      id: r.id,
+      text,
+      ...(voiced < text.length ? { voiced } : {}),
+      ...(r.bargedIn ? { interrupted: true } : {}),
+    });
   }
 
-  /** What of the reply its voice has said by now. */
-  private voiced(r: Response): string {
-    if (r.audioStartMs === null) return "";
-    if (r.audioEndMs !== null) return this.heard(r);
-    return heardOf(this.text(r), this.sink.now() - r.audioStartMs);
+  /** How many characters of the reply its voice has said by now: whole words, none before it starts. */
+  private voiced(r: Response): number {
+    if (r.audioStartMs === null) return 0;
+    return heardOf(this.text(r), this.sink.now() - r.audioStartMs).length;
   }
 
   /** Keeps the playing reply's line up with its voice, until the audio stops. */

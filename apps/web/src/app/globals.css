@@ -299,6 +299,23 @@ body {
   }
 }
 
+/* A word the agent's voice has just reached, in its place already: it fades
+   in where it was waiting, a little out of focus first, never moving
+   (spoken-text.tsx). */
+.vm-word-in {
+  animation: vm-word-in 320ms ease-out both;
+}
+@keyframes vm-word-in {
+  from {
+    opacity: 0;
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
 /* A search running: a short bar sweeping a track (the Stack view's lookup). */
 .vm-sweep {
   animation: vm-sweep 1400ms ease-in-out infinite;
@@ -326,7 +343,8 @@ body {
   }
   .vm-thinking > span,
   .vm-sweep,
-  .vm-caret {
+  .vm-caret,
+  .vm-word-in {
     animation: none !important;
   }
 }

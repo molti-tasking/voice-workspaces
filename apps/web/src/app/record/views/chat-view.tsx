@@ -8,6 +8,7 @@ import { DraftMarkdown } from "@/components/draft-markdown";
 import type { DraftCue } from "@/lib/display/use-cues";
 import { timeline, type Conversation, type Mark, type Turn } from "@/lib/talkback/conversation";
 import { SPARK_LABELS } from "../spark-chips";
+import { SpokenText } from "./spoken-text";
 
 /**
  * The chat: every line in the order it was said — theirs in a bubble on the
@@ -159,7 +160,8 @@ export function TurnLine({ turn }: { turn: Turn }) {
   }
   return (
     <p className="max-w-[95%] leading-relaxed text-fg/90">
-      {turn.text}
+      {/* While its voice is saying it, each word fades in where it already is. */}
+      <SpokenText text={turn.text} voiced={turn.voiced} />
       {turn.interrupted && <span className="ml-1.5 text-xs text-amber-700 dark:text-amber-300/80">cut off</span>}
     </p>
   );

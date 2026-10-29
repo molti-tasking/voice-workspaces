@@ -2,6 +2,7 @@
 import { GIST_LINE_WORDS, type ConversationDigest, type DigestGist } from "@voicemural/talkback/digest";
 import type { Conversation, Mark, Section, Speaker, Turn } from "@/lib/talkback/conversation";
 import { turnsInOrder } from "@/lib/talkback/cursor";
+import { spokenPage, type SpokenWord } from "@/lib/talkback/spoken";
 
 /**
  * What the Stack view draws, as data: the conversation as a stack of topics.
@@ -27,7 +28,7 @@ import { turnsInOrder } from "@/lib/talkback/cursor";
  * Pure, so the view and its test read the same thing.
  */
 
-/** The most of the newest turn shown: its last words. */
+/** The most of the newest turn shown at once: a page of its sentence. */
 export const STACK_LIVE_WORDS = 14;
 /** Earlier topics shown by name; older ones fold into one bubble. */
 export const STACK_NAMED_SLOTS = 3;
@@ -55,12 +56,19 @@ export interface StackLine {
   provisional: boolean;
 }
 
+/**
+ * The words being said: the sentence they are in — or of a long one, its run
+ * of `STACK_LIVE_WORDS` — as a page that the next replaces whole, so no word
+ * moves while it is read (lib/talkback/spoken.ts).
+ */
 export interface StackLive {
   seq: number;
   who: Speaker;
-  words: string[];
-  /** The turn is longer than what is shown, which starts mid-turn. */
+  words: SpokenWord[];
+  /** The page starts inside a sentence, not at its start. */
   cut: boolean;
+  /** The agent's voice is still saying it: words fade in as they are said. */
+  spoken: boolean;
 }
 
 export interface StackLookup {
@@ -158,8 +166,8 @@ export function stackModel(
 
   let live: StackLive | null = null;
   if (liveTurn) {
-    const words = liveTurn.text.trim().split(/\s+/);
-    live = { seq: liveTurn.seq, who: liveTurn.who, words: words.slice(-STACK_LIVE_WORDS), cut: words.length > STACK_LIVE_WORDS };
+    const page = spokenPage(liveTurn.text, liveTurn.voiced, STACK_LIVE_WORDS);
+    live = { seq: liveTurn.seq, who: liveTurn.who, words: page.words, cut: page.midSentence, spoken: liveTurn.voiced !== undefined };
   }
   const previous =
     previousTurn && currentSection && sectionOf.get(previousTurn.seq) === currentSection.key
