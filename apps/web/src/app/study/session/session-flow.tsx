@@ -41,7 +41,9 @@ export type { SessionBlockView } from "@/lib/study/session-view";
 export type SessionEntry = { code: string } | { prolific: SessionProlific };
 
 /** One step to the server; the reply's body, or null when it did not go through. */
-export type SendStep = (step: SessionStep) => Promise<Record<string, unknown> | null>;
+export type SendStep = (
+  step: SessionStep,
+) => Promise<Record<string, unknown> | null>;
 
 type Step =
   | { at: "consent" }
@@ -93,7 +95,9 @@ export function SessionFlow({
   timings: SessionTimings;
   talkbackEnabled: boolean;
 }) {
-  const [step, setStep] = useState<Step>(() => (resume.at === "brief" ? { at: "mic", then: resume } : stepFor(resume)));
+  const [step, setStep] = useState<Step>(() =>
+    resume.at === "brief" ? { at: "mic", then: resume } : stepFor(resume),
+  );
   const [block, setBlock] = useState(initialBlock);
   const [completion, setCompletion] = useState(initialCompletion);
   const fromProlific = entry !== undefined && "prolific" in entry;
@@ -107,7 +111,12 @@ export function SessionFlow({
         body: JSON.stringify(body),
       }).catch(() => null);
       if (!res?.ok) return null;
-      return ((await res.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
+      return (
+        ((await res.json().catch(() => null)) as Record<
+          string,
+          unknown
+        > | null) ?? {}
+      );
     },
     [mode],
   );
@@ -122,8 +131,9 @@ export function SessionFlow({
     return (
       <StudyFrame title="The conversation is not available in this build">
         <p>
-          Set <code>NEXT_PUBLIC_TALKBACK_ENABLED=true</code> and <code>TALKBACK_ENABLED=true</code>, run the voice
-          container, and rebuild.
+          Set <code>NEXT_PUBLIC_TALKBACK_ENABLED=true</code> and{" "}
+          <code>TALKBACK_ENABLED=true</code>, run the voice container, and
+          rebuild.
         </p>
       </StudyFrame>
     );
@@ -145,11 +155,18 @@ export function SessionFlow({
   }
   if (step.at === "done") {
     return fromProlific ? (
-      <Completion code={completion?.code ?? null} url={completion?.url ?? null} />
+      <Completion
+        code={completion?.code ?? null}
+        url={completion?.url ?? null}
+      />
     ) : (
       <StudyFrame title="Thank you, you are done">
         <p>Your answers are saved. You can close this page.</p>
-        {mode === "demo" && <p className="text-sm text-fg/60">This was the walkthrough: nothing was recorded or saved.</p>}
+        {mode === "demo" && (
+          <p className="text-sm text-fg/60">
+            This was the walkthrough: nothing was recorded or saved.
+          </p>
+        )}
       </StudyFrame>
     );
   }
@@ -165,9 +182,16 @@ export function SessionFlow({
 
   switch (step.at) {
     case "mic":
-      return <MicCheck eyebrow="Before you start" onReady={() => go(stepFor(step.then))} />;
+      return (
+        <MicCheck
+          eyebrow="Before you start"
+          onReady={() => go(stepFor(step.then))}
+        />
+      );
     case "intro":
-      return <Intro timings={timings} onContinue={() => go({ at: "practice" })} />;
+      return (
+        <Intro timings={timings} onContinue={() => go({ at: "practice" })} />
+      );
     case "practice":
       // Once, unhurried, so the first interruption is not also the first time
       // they see the game.
@@ -184,7 +208,12 @@ export function SessionFlow({
     case "brief": {
       const start = () => go({ at: "talk" });
       return mode === "live" ? (
-        <LiveBrief block={block} eyebrow={EYEBROW} send={send} onStart={start} />
+        <LiveBrief
+          block={block}
+          eyebrow={EYEBROW}
+          send={send}
+          onStart={start}
+        />
       ) : (
         <Brief block={block} eyebrow={EYEBROW} ready onStart={start} />
       );
@@ -200,7 +229,12 @@ export function SessionFlow({
           onFailed={() => go({ at: "brief" })}
         />
       ) : (
-        <DemoTalk block={block} eyebrow={EYEBROW} timings={timings} onFinished={onTalkFinished} />
+        <DemoTalk
+          block={block}
+          eyebrow={EYEBROW}
+          timings={timings}
+          onFinished={onTalkFinished}
+        />
       );
     case "answers":
       return (
@@ -209,7 +243,8 @@ export function SessionFlow({
           // Finish waits for the game, so the conversation has had one.
           hadGame
           onSubmit={async (answers) => {
-            if (!(await send({ step: "answers", position, answers }))) return false;
+            if (!(await send({ step: "answers", position, answers })))
+              return false;
             go({ at: "final" });
             return true;
           }}
@@ -222,7 +257,8 @@ export function SessionFlow({
           onSubmit={async (final) => {
             const body = await send({ step: "final", final });
             if (!body) return false;
-            if (body.completion) setCompletion(body.completion as SessionCompletion);
+            if (body.completion)
+              setCompletion(body.completion as SessionCompletion);
             go({ at: "done" });
             return true;
           }}
@@ -252,7 +288,8 @@ function Consent({
   const [error, setError] = useState<string | null>(null);
 
   async function enrol() {
-    if (mode === "demo" || !entry) return onEnrolled({ at: "brief", position: 0 });
+    if (mode === "demo" || !entry)
+      return onEnrolled({ at: "brief", position: 0 });
     setBusy(true);
     setError(null);
     if (!hasAccount) {
@@ -260,7 +297,9 @@ function Consent({
       const { error: guestError } = await signIn.anonymous();
       if (guestError) {
         setBusy(false);
-        return setError("Could not start the study in this browser. Please reload and try again.");
+        return setError(
+          "Could not start the study in this browser. Please reload and try again.",
+        );
       }
     }
     const res = await fetch("/api/study-session/enroll", {
@@ -277,51 +316,63 @@ function Consent({
     if (res?.ok && body?.resume) return onEnrolled(body.resume, body.block);
     switch (body?.error) {
       case "claimed_elsewhere":
-        return setError("This session was already started in another browser. Please carry on there.");
+        return setError(
+          "This session was already started in another browser. Please carry on there.",
+        );
       case "not_a_guest":
-        return setError("You are signed in to this app in this browser. Please open the link in a private window.");
+        return setError(
+          "You are signed in to this app in this browser. Please open the link in a private window.",
+        );
       case "other_session":
         return setError(
           "This browser was already used for another session of this study. Please open the link in a private window.",
         );
       case "closed":
-        return setError("This study is not open right now. Please return it on Prolific, and sorry for the trouble.");
+        return setError(
+          "This study is not open right now. Please return it on Prolific, and sorry for the trouble.",
+        );
       case "unknown":
-        return setError("This link does not work any more. Please ask the researchers for a new one.");
+        return setError(
+          "This link does not work any more. Please ask the researchers for a new one.",
+        );
       default:
         return setError("Something went wrong. Please try again.");
     }
   }
 
   return (
-    <StudyFrame eyebrow="A study at Aarhus University" title="A short conversation with a voice assistant">
+    <StudyFrame title="A short conversation with a voice assistant">
       <p>
-        In this study you talk with an AI voice assistant about an everyday planning problem for about five minutes,
-        and answer a few questions afterwards. It takes about 15 minutes. You need your phone, a quiet place, and
-        ideally headphones.
+        In this study you talk with an AI voice assistant about an everyday
+        planning problem for about five minutes, and answer a few questions
+        afterwards. It takes about 15 minutes. You need your phone, a quiet
+        place, and ideally headphones.
       </p>
       <div className="space-y-3 rounded-2xl border border-line bg-surface p-5 text-[0.95rem]">
         <p className="font-medium">What we record and why</p>
         <ul className="list-disc space-y-1.5 pl-5 text-fg/80">
           <li>
-            Your voice during the conversation is recorded and transcribed automatically. The transcripts, the
-            assistant&apos;s replies, what you write afterwards and how you used the screen are stored for research.
+            Your voice during the conversation is recorded and transcribed
+            automatically. The transcripts, the assistant&apos;s replies, what
+            you write afterwards and how you used the screen are stored for
+            research.
           </li>
           <li>
             {VOICE_ENGINE === "realtime"
               ? "To run the conversation, your voice goes to OpenAI’s speech model, which hears what you say, transcribes it and speaks the assistant’s replies."
               : "To run the conversation, your speech is transcribed by Deepgram, the assistant’s replies are written by an AI model, and its voice is made by ElevenLabs."}{" "}
-            Afterwards, the research team and an AI model hosted at
-            Aarhus University read the transcript and what you wrote, to study how a spoken conversation can be shown
-            on a phone.
+            Afterwards, the research team and an AI model hosted at Aarhus
+            University read the transcript and what you wrote, to study how a
+            spoken conversation can be shown on a phone.
           </li>
           <li>
-            You are known to us only by a code, not by name. Please do not mention your name or other personal details
-            in the conversation. Results are published only in anonymised form.
+            You are known to us only by a code, not by name. Please do not
+            mention your name or other personal details in the conversation.
+            Results are published only in anonymised form.
           </li>
           <li>
-            Taking part is voluntary. You can stop at any time by closing this page, and ask the researchers to delete
-            your data.
+            Taking part is voluntary. You can stop at any time by closing this
+            page, and ask the researchers to delete your data.
           </li>
         </ul>
       </div>
@@ -332,7 +383,9 @@ function Consent({
           onChange={(e) => setAgreed(e.target.checked)}
           className="mt-1 size-5 shrink-0"
         />
-        <span>I have read the above, I am 18 or older, and I agree to take part.</span>
+        <span>
+          I have read the above, I am 18 or older, and I agree to take part.
+        </span>
       </label>
       {error && <ErrorLine>{error}</ErrorLine>}
       <PrimaryButton disabled={!agreed || busy} onClick={() => void enrol()}>
@@ -342,26 +395,45 @@ function Consent({
   );
 }
 
-function Intro({ timings, onContinue }: { timings: SessionTimings; onContinue: () => void }) {
+function Intro({
+  timings,
+  onContinue,
+}: {
+  timings: SessionTimings;
+  onContinue: () => void;
+}) {
   return (
     <StudyFrame eyebrow="Before you start" title="How it works">
       <ul className="list-disc space-y-2 pl-5 text-fg/85">
-        <li>You will have one short conversation with the assistant, about an everyday problem.</li>
-        <li>Hold your phone as you normally would and talk out loud. The assistant answers when you pause.</li>
         <li>
-          The assistant only talks: it cannot look anything up online, so it works from what it knows and what you
-          tell it.
-        </li>
-        <li>The screen shows the conversation as it goes. Look at it as much or as little as you like.</li>
-        <li>
-          Once during the conversation, a short game takes over the screen for about a minute. When it ends, you are back
-          in the conversation.
+          You will have one short conversation with the assistant, about an
+          everyday problem.
         </li>
         <li>
-          You can finish the conversation after {spokenDuration(timings.talkMinMs)}. At{" "}
+          Hold your phone as you normally would and talk out loud. The assistant
+          answers when you pause.
+        </li>
+        <li>
+          The assistant only talks: it cannot look anything up online, so it
+          works from what it knows and what you tell it.
+        </li>
+        <li>
+          The screen shows the conversation as it goes. Look at it as much or as
+          little as you like.
+        </li>
+        <li>
+          Once during the conversation, a short game takes over the screen for
+          about a minute. When it ends, you are back in the conversation.
+        </li>
+        <li>
+          You can finish the conversation after{" "}
+          {spokenDuration(timings.talkMinMs)}. At{" "}
           {spokenDuration(timings.talkCapMs)} it ends by itself.
         </li>
-        <li>Afterwards, you write two or three sentences about it and answer a few quick questions.</li>
+        <li>
+          Afterwards, you write two or three sentences about it and answer a few
+          quick questions.
+        </li>
         <li>Please do not take notes.</li>
       </ul>
       <PrimaryButton onClick={onContinue}>Continue</PrimaryButton>
@@ -391,7 +463,8 @@ function LiveBrief({
   send: SendStep;
   onStart: () => void;
 }) {
-  const { chooseSttLanguage, startRecording, isBusy, floor, setFloor } = useCapture();
+  const { chooseSttLanguage, startRecording, isBusy, floor, setFloor } =
+    useCapture();
   const [armed, setArmed] = useState(false);
   const [failed, setFailed] = useState(false);
 
@@ -423,7 +496,11 @@ function LiveBrief({
       block={block}
       eyebrow={eyebrow}
       ready={armed && !isBusy}
-      error={failed ? "This conversation could not be prepared. Please reload the page." : null}
+      error={
+        failed
+          ? "This conversation could not be prepared. Please reload the page."
+          : null
+      }
       onStart={() => {
         startRecording();
         onStart();
