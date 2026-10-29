@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { SESSION_TASK_IDS } from "@voicemural/shared";
+import { SESSION_TASK_IDS, SESSION_TASK_KIND } from "@voicemural/shared";
 import { PROACTIVITY_STANZAS, PROFILE } from "./profile";
 import {
   DRAFT_OPEN,
@@ -112,5 +112,15 @@ describe("the display study's agent", () => {
     expect(Math.max(...lengths) / Math.min(...lengths)).toBeLessThan(1.25);
     expect(sessionTaskFor("move")).toBe(SESSION_TASKS.move);
     expect(sessionTaskFor("heat")).toBeNull();
+  });
+
+  it("has two kinds of task, and tells the agent to keep several matters apart", () => {
+    const kinds = Object.values(SESSION_TASKS).map((t) => t.kind);
+    expect(kinds.filter((k) => k === "several").length).toBeGreaterThanOrEqual(2);
+    expect(kinds.filter((k) => k === "one").length).toBeGreaterThanOrEqual(2);
+    for (const task of Object.values(SESSION_TASKS)) {
+      expect(task.kind).toBe(SESSION_TASK_KIND[task.id as keyof typeof SESSION_TASK_KIND]);
+      expect(task.agentSection.includes("These are separate matters")).toBe(task.kind === "several");
+    }
   });
 });

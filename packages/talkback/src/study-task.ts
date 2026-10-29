@@ -13,7 +13,7 @@
  * differ. Pure, so the pages and the session route share one copy.
  */
 
-import { isSessionTaskId, type SessionTaskId } from "@voicemural/shared";
+import { SESSION_TASK_KIND, isSessionTaskId, type SessionTaskId, type SessionTaskKind } from "@voicemural/shared";
 
 export interface StudyTask {
   id: string;
@@ -98,12 +98,17 @@ export function studyTaskFor(id: string | null | undefined): StudyTask | null {
  * The display study's tasks (`SESSION_TASK_IDS` in @voicemural/shared), one
  * per session; a setup rotates the ones it names (`study_design.tasks`).
  *
- * MADE TO BE COMPARABLE. Each is an everyday plan nobody needs expertise
- * for, with three parts that become separate topics in about five minutes, a
- * constraint or two that the conversation has to come back to, and room for
- * ideas from both sides. The cells cross the tasks with the views, so a task
- * that is easier than the other costs balance, not validity — but the
- * closer they are, the less noise.
+ * MADE TO BE COMPARABLE. Each is an everyday problem nobody needs expertise
+ * for, with a constraint or two that the conversation has to come back to,
+ * and room for ideas from both sides. The cells cross the tasks with the
+ * views, so a task that is easier than the other costs balance, not validity
+ * — but the closer they are, the less noise.
+ *
+ * TWO KINDS (`SESSION_TASK_KIND`). "one" plans a single thing from three
+ * sides, which become a few topics of the same plan in about five minutes.
+ * "several" is five separate matters that collide in time, so the
+ * conversation names more topics and keeps coming back to earlier ones: what
+ * a long conversation, spread over days, does to the screen.
  *
  * No plan to write, unlike the Prolific task: what they worked out is asked
  * afterwards, in their own words, and a plan on the screen would be a
@@ -119,9 +124,10 @@ export interface SessionTask {
   prompts: readonly string[];
   /** Composed into the agent's system prompt (see `/api/realtime/session`). */
   agentSection: string;
+  kind: SessionTaskKind;
 }
 
-/** Shared by the four: the setting, and what the agent must NOT do for the measures to hold. */
+/** Shared by them all: the setting, and what the agent must NOT do for the measures to hold. */
 const SESSION_SETTING = `THIS CONVERSATION IS PART OF A STUDY
 They are a study participant working through the everyday problem below by talking it over with you, for about five minutes. Let them lead and do the deciding; you bring ideas, knowledge and an honest view.
 
@@ -136,6 +142,13 @@ THE PROBLEM
 ${problem} There is no right answer, and they are not experts.`;
 }
 
+/** For a task of several matters: keep them apart, and let them move between them. */
+function severalSection(problem: string): string {
+  return `${sessionSection(problem)}
+
+These are separate matters, not one plan. Take them one at a time, the one they are on, and keep each its own: do not fold them into one list. They may jump between them and come back to one; follow them there. Point out a clash between two only when it matters for the one they are on.`;
+}
+
 export const SESSION_TASKS = {
   trip: {
     id: "trip",
@@ -147,6 +160,7 @@ export const SESSION_TASKS = {
     agentSection: sessionSection(
       "They and three friends want a weekend away next month, with about 150 euros each for everything, and one of the four does not drive. Where to go, how all four get there, and where to stay are the parts of it.",
     ),
+    kind: SESSION_TASK_KIND.trip,
   },
   birthday: {
     id: "birthday",
@@ -158,6 +172,7 @@ export const SESSION_TASKS = {
     agentSection: sessionSection(
       "A close friend of theirs turns 40 in three weeks, and they are organising a dinner for twelve people, one of them vegan, at about 40 euros a head. Where to hold it, what to serve, and one thing that makes the evening special are the parts of it.",
     ),
+    kind: SESSION_TASK_KIND.birthday,
   },
   move: {
     id: "move",
@@ -169,6 +184,7 @@ export const SESSION_TASKS = {
     agentSection: sessionSection(
       "They are moving to a flat across town in four weeks. They work full time, have no car, and the new flat is on the third floor with no lift. How and when to pack, how their things get there, and what to sort out before the day are the parts of it.",
     ),
+    kind: SESSION_TASK_KIND.move,
   },
   dinners: {
     id: "dinners",
@@ -180,6 +196,31 @@ export const SESSION_TASKS = {
     agentSection: sessionSection(
       "They are planning next week's dinners for a family of four, with two children who are picky eaters, about 70 euros for the whole week, and little time to cook on weekdays. The meals, the shopping, and what to cook ahead are the parts of it.",
     ),
+    kind: SESSION_TASK_KIND.dinners,
+  },
+  week: {
+    id: "week",
+    title: "A packed week",
+    brief:
+      "Next week is packed: a friend needs help moving on Saturday morning, your mother turns 60 that evening and you have no gift, a report is due Monday, your bike has a flat, and a parcel waits at the post office until Thursday. " +
+      "Work out what you do when, and what you drop, by talking it over with the assistant.",
+    prompts: ["What clashes with what?", "What can you hand off or drop?", "What do you do first?"],
+    agentSection: severalSection(
+      "Their next week is packed. A friend needs help moving on Saturday morning; their mother turns 60 on Saturday evening and they have no gift yet; a report is due on Monday; their bike has a flat tyre; and a parcel waits at the post office until Thursday. What to do when, and what to drop or hand off, is the problem.",
+    ),
+    kind: SESSION_TASK_KIND.week,
+  },
+  city: {
+    id: "city",
+    title: "Settling into a new city",
+    brief:
+      "You moved to a new city last week and start a new job on Monday. You still need to register your address, open a bank account, find a doctor, get a phone contract, and meet some people. " +
+      "You have one free afternoon a week. Work out what comes first, by talking it over with the assistant.",
+    prompts: ["What has to come first?", "What fits into one free afternoon?", "How do you meet people?"],
+    agentSection: severalSection(
+      "They moved to a new city last week and start a new job on Monday. They still need to register their address, open a bank account, find a doctor, get a phone contract, and meet some people, with one free afternoon a week. What comes first, and how it all fits, is the problem.",
+    ),
+    kind: SESSION_TASK_KIND.city,
   },
 } as const satisfies Record<SessionTaskId, SessionTask>;
 

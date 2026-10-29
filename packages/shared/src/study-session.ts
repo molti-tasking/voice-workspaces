@@ -29,8 +29,25 @@ export const SESSION_VERSION = "session-3";
  * The tasks a session can have, by id. The words — what they read and what the
  * agent is told — are `SESSION_TASKS` in @voicemural/talkback/study-task.
  */
-export const SESSION_TASK_IDS = ["trip", "birthday", "move", "dinners"] as const;
+export const SESSION_TASK_IDS = ["trip", "birthday", "move", "dinners", "week", "city"] as const;
 export type SessionTaskId = (typeof SESSION_TASK_IDS)[number];
+
+/**
+ * Two kinds of task, so the views can be compared on both: "one" plans one
+ * thing from a few sides (a trip: where, how, where to stay), the way the
+ * pilots did; "several" is a handful of separate matters that collide, the
+ * way a conversation spread over days touches many things, so it brings up
+ * more topics and more returns to them.
+ */
+export type SessionTaskKind = "one" | "several";
+export const SESSION_TASK_KIND: Record<SessionTaskId, SessionTaskKind> = {
+  trip: "one",
+  birthday: "one",
+  move: "one",
+  dinners: "one",
+  week: "several",
+  city: "several",
+};
 
 export function isSessionTaskId(value: unknown): value is SessionTaskId {
   return typeof value === "string" && (SESSION_TASK_IDS as readonly string[]).includes(value);
