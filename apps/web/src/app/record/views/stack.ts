@@ -15,10 +15,15 @@ import { spokenPage, type SpokenWord } from "@/lib/talkback/spoken";
  *   the line from the topic just left does not stand under the one come back;
  * - `lookup`: the search the agent ran for this exchange, when it ran one;
  * - `live`: the newest turn's last words, as they come;
- * - `slots`: the earlier topics, each with its decision, in the order they
+ * - `slots`: every earlier topic, each with its decision, in the order they
  *   first came up. A topic keeps its slot for the rest of the conversation:
  *   while it is the current one again, its slot is a `gap`, so nothing else
  *   on the shelf moves (DG3) and the topic has a place to go back to.
+ *
+ * HOW MANY FIT is the view's business, not the model's: the shelf shows as
+ * many earlier topics as its height holds (`arrangeShelf`), first as full
+ * bubbles, then as smaller ones with their names only, and only past that
+ * groups the oldest into clusters, each a bubble that holds several topics.
  *
  * NO LABELS. Nothing here is a status word ("open", "2nd visit"): the topics
  * carry their decisions, and a return shows in the motion (`stack-view.tsx`).
@@ -31,8 +36,12 @@ import { spokenPage, type SpokenWord } from "@/lib/talkback/spoken";
 
 /** The most of the newest turn shown at once: a page of its sentence. */
 export const STACK_LIVE_WORDS = 14;
-/** Earlier topics shown by name; older ones fold into one bubble. */
-export const STACK_NAMED_SLOTS = 3;
+/** The same on a short screen, where the current topic's bubble is smaller. */
+export const STACK_LIVE_WORDS_TIGHT = 9;
+/** At most this many clusters; past it, clusters merge two into one. */
+export const STACK_MAX_CLUSTERS = 4;
+/** The fewest topics a cluster holds. */
+export const STACK_CLUSTER_MIN = 4;
 /** One side's share of a topic's words for the topic to count as theirs. */
 export const WHOSE_SHARE = 0.65;
 
@@ -81,10 +90,8 @@ export interface StackLookup {
 
 export interface StackModel {
   current: StackTopic | null;
-  /** The slots shown, oldest first, the newest nearest the current topic. */
+  /** Every earlier topic's slot, oldest first, the newest nearest the current topic. */
   slots: StackSlot[];
-  /** The earliest topics, folded into one bubble. */
-  folded: StackTopic[];
   previous: StackLine | null;
   lookup: StackLookup | null;
   live: StackLive | null;
@@ -126,8 +133,19 @@ export function keyLine(text: string): string {
 
 /** A turn as a short line: the model's, or its key sentence until that comes. */
 export function turnLine(turn: Turn, gist: DigestGist | undefined): StackLine {
-  if (gist?.line) return { seq: turn.seq, who: turn.who, text: gist.line, provisional: false };
-  return { seq: turn.seq, who: turn.who, text: keyLine(turn.text), provisional: true };
+  if (gist?.line)
+    return {
+      seq: turn.seq,
+      who: turn.who,
+      text: gist.line,
+      provisional: false,
+    };
+  return {
+    seq: turn.seq,
+    who: turn.who,
+    text: keyLine(turn.text),
+    provisional: true,
+  };
 }
 
 /**
@@ -140,6 +158,7 @@ export function stackModel(
   digest: ConversationDigest,
   gists: ReadonlyMap<number, DigestGist>,
   currentKey: string | null = conversation.current,
+  liveWords: number = STACK_LIVE_WORDS,
 ): StackModel {
   const decisions = new Map(digest.topics.map((t) => [t.ordinal, t.decision ?? null]));
   const topicOf = (section: Section): StackTopic => ({
@@ -158,7 +177,6 @@ export function stackModel(
     if (s !== currentSection) return [{ kind: "topic", topic: topicOf(s) }];
     return (s.visits ?? 1) > 1 ? [{ kind: "gap", topic: topicOf(s) }] : [];
   });
-  const cut = Math.max(0, all.length - STACK_NAMED_SLOTS);
 
   const turns = turnsInOrder(conversation).filter((t) => t.text.trim().length > 0);
   const sectionOf = new Map<number, string>();
@@ -184,7 +202,7 @@ export function stackModel(
 
   let live: StackLive | null = null;
   if (liveTurn) {
-    const page = spokenPage(liveTurn.text, liveTurn.voiced, STACK_LIVE_WORDS);
+    const page = spokenPage(liveTurn.text, liveTurn.voiced, liveWords);
     live = {
       seq: liveTurn.seq,
       who: liveTurn.who,
@@ -200,10 +218,66 @@ export function stackModel(
 
   return {
     current: currentSection ? topicOf(currentSection) : null,
-    slots: all.slice(cut),
-    folded: all.slice(0, cut).flatMap((s) => (s.kind === "topic" ? [s.topic] : [])),
+    slots: all,
     previous,
     lookup: lookup ? { key: lookup.key, query: lookup.query, found: lookup.found } : null,
     live,
   };
+}
+
+/** Several of the oldest topics, shown as one bubble that holds them. */
+export interface StackCluster {
+  /** Stable while its topics stay together: the key of its first topic. */
+  key: string;
+  topics: StackTopic[];
+}
+
+export interface ShelfArrangement {
+  /** The oldest topics, grouped, oldest group first. */
+  clusters: StackCluster[];
+  /** The newest topics, each in its own slot. */
+  slots: StackSlot[];
+}
+
+/**
+ * The shelf with only the newest `named` slots shown one by one and the rest
+ * grouped into clusters.
+ *
+ * CLUSTERS HOLD STILL. A cluster is a run of topics in the order they came
+ * up, counted from the first one, so a topic that joins the clusters joins the
+ * last of them and the others keep their topics. Clusters are
+ * `STACK_CLUSTER_MIN` topics each, doubled (4, 8, 16, …) whenever there would
+ * be more than `maxClusters` (`STACK_MAX_CLUSTERS`, fewer on a shelf too
+ * short for them): then neighbours merge two into one, and a hundred topics
+ * still make at most four bubbles. A topic come back to is in
+ * the large bubble; its slot stays in its cluster, which is where it goes back.
+ */
+export function arrangeShelf(
+  slots: StackSlot[],
+  named: number,
+  maxClusters: number = STACK_MAX_CLUSTERS,
+): ShelfArrangement {
+  const keep = Math.max(0, Math.min(named, slots.length));
+  const older = slots.slice(0, slots.length - keep);
+  const shown = slots.slice(slots.length - keep);
+  if (older.length === 0) return { clusters: [], slots: shown };
+  let size = STACK_CLUSTER_MIN;
+  while (Math.ceil(older.length / size) > Math.max(1, maxClusters)) size *= 2;
+  const clusters: StackCluster[] = [];
+  for (let i = 0; i < older.length; i += size) {
+    const topics = older.slice(i, i + size).map((s) => s.topic);
+    clusters.push({ key: `cluster:${topics[0]!.key}`, topics });
+  }
+  return { clusters, slots: shown };
+}
+
+/**
+ * A cluster's name, short enough for two side by side: the first word of its
+ * first and its last topic, in the order they came up ("Friday – Hotel"). The
+ * circle beside it says how many it holds.
+ */
+export function clusterLabel(topics: StackTopic[]): string {
+  const word = (t: StackTopic | undefined) => t?.title.split(" ")[0] ?? "";
+  if (topics.length <= 1) return word(topics[0]);
+  return `${word(topics[0])} – ${word(topics.at(-1))}`;
 }
