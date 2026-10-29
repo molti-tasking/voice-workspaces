@@ -361,9 +361,9 @@ function Consent({
             {VOICE_ENGINE === "realtime"
               ? "To run the conversation, your voice goes to OpenAI’s speech model, which hears what you say, transcribes it and speaks the assistant’s replies."
               : "To run the conversation, your speech is transcribed by Deepgram, the assistant’s replies are written by an AI model, and its voice is made by ElevenLabs."}{" "}
-            Afterwards, the research team and an AI model hosted at Aarhus
-            University read the transcript and what you wrote, to study how a
-            spoken conversation can be shown on a phone.
+            Afterwards, the research team and an AI model hosted at the
+            researchers&apos; university read the transcript and what you
+            wrote, to study how a spoken conversation can be shown on a phone.
           </li>
           <li>
             You are known to us only by a code, not by name. Please do not

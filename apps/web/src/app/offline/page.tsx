@@ -19,12 +19,15 @@ export const metadata: Metadata = {
  * request or an outage at our end arrives identically. The static copy is
  * therefore true whatever the cause, and `OfflineStatus` — which needs
  * JavaScript, and so cannot be relied on — narrows it where it can.
+ *
+ * No app name: a study participant who loses signal lands here too, and the
+ * study pages never name the app (`/study/session`).
  */
 export default function OfflinePage() {
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center px-6">
       <h1 className="mb-3 text-2xl font-semibold">
-        Can&rsquo;t reach Souffleur
+        Can&rsquo;t reach the app
       </h1>
       <p className="mb-4 text-fg/60">
         The app could not be loaded just now. Usually that is signal — tunnels,

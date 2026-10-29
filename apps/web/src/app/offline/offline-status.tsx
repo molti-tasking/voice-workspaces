@@ -65,9 +65,9 @@ export function OfflineStatus() {
             <>
               Your phone{" "}
               <strong className="font-medium text-fg">does</strong> have a
-              connection, so this is not the signal. Either Souffleur is down
-              for a moment, or something on this network or browser is blocking
-              the site.
+              connection, so this is not the signal. Either the app is down for
+              a moment, or something on this network or browser is blocking the
+              site.
             </>
           ) : (
             <>This phone has no connection at all right now.</>
