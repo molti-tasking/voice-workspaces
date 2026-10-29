@@ -74,7 +74,9 @@ export function PostBlock({
           className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-base leading-relaxed"
         />
         {length > 0 && length < SUMMARY_MIN_CHARS && (
-          <span className="block text-sm text-fg/55">A little more, please.</span>
+          <span role="alert" className="block text-sm font-medium text-red-300">
+            A little more, please.
+          </span>
         )}
       </label>
 

@@ -133,8 +133,13 @@ export function Choice<T extends string | boolean>({
   );
 }
 
+/** What went wrong, or what is missing: red, and read out as it appears. */
 export function ErrorLine({ children }: { children: React.ReactNode }) {
-  return <p className="text-sm text-amber-500">{children}</p>;
+  return (
+    <p role="alert" className="text-sm font-medium text-red-300">
+      {children}
+    </p>
+  );
 }
 
 /**

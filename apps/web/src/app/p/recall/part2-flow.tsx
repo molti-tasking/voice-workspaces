@@ -161,7 +161,8 @@ function FreeRecall({ pid, onDone }: { pid: string; onDone: () => void }) {
         className="w-full rounded-xl border border-line bg-surface p-3 text-base"
         aria-label="Everything you remember"
       />
-      <p className="text-xs text-fg/55">
+      {/* An instruction until they start, a warning once what they wrote is too short. */}
+      <p className={`text-xs ${!long && text.trim() ? "font-medium text-red-300" : "text-fg/55"}`}>
         {long ? `${text.trim().length} characters` : `Please write at least ${FREE_RECALL_MIN_CHARS} characters.`}
       </p>
       {long && (

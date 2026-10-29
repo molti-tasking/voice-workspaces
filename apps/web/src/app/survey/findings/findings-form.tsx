@@ -327,7 +327,13 @@ function SendState({ status, sentBefore }: { status: Status; sentBefore: boolean
   if (status === "error") {
     return <p className="text-sm text-red-300">Could not send. Check the connection and try again.</p>;
   }
-  if (status === "empty") return <p className="text-sm text-fg/60">Answer at least one question first.</p>;
+  if (status === "empty") {
+    return (
+      <p role="alert" className="text-sm font-medium text-red-300">
+        Answer at least one question first.
+      </p>
+    );
+  }
   if (status === "sent" || sentBefore) {
     return (
       <p className="flex items-center gap-1.5 text-sm text-emerald-200">
