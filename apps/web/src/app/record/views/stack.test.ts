@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_DIGEST, type ConversationDigest } from "@voicemural/talkback/digest";
 import { EMPTY_CONVERSATION, applyMessage, type Conversation, type ConversationMessage } from "@/lib/talkback/conversation";
-import { STACK_LIVE_WORDS, STACK_NAMED_SLOTS, stackModel } from "./stack";
+import { STACK_LIVE_WORDS, STACK_NAMED_SLOTS, keyLine, stackModel } from "./stack";
 
 const NONE = new Map();
 
@@ -106,9 +106,19 @@ describe("the topic stack", () => {
     expect(live(voiced("It")).words.map((w) => w.text).join(" ")).toBe("It opens at six.");
   });
 
-  it("cuts a turn without a line to its first words, as a guess", () => {
+  it("cuts a turn without a line to its key sentence, as a guess", () => {
     const model = stackModel(play([...trip, agent("a3", "Okay.")]), EMPTY_DIGEST, NONE);
-    expect(model.previous).toMatchObject({ text: "Where can we eat by the harbour on…", provisional: true });
+    expect(model.previous).toMatchObject({ text: "Where can we eat by the harbour on Saturday?", provisional: true });
+  });
+
+  it("guesses a turn's key sentence: its last question, without the openers", () => {
+    expect(keyLine("Okay, so um the hotel is booked. Can you look up a fish place for Saturday?")).toBe(
+      "Can you look up a fish place for Saturday?",
+    );
+    expect(keyLine("Right. We take the train at nine. And then the ferry.")).toBe("The ferry.");
+    expect(keyLine("Well, so can you look up a hotel for the four of us near Skagen?")).toBe(
+      "Can you look up a hotel for the four of…",
+    );
   });
 
   it("puts a search between their question and the answer", () => {

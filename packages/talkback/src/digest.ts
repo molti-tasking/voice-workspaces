@@ -287,3 +287,59 @@ export function parseDigest(
     gists,
   };
 }
+
+/* ---------------------------------------------------------------------------
+ * One turn, the moment it is over
+ * ------------------------------------------------------------------------- */
+
+const TURN_GIST_PROMPT = `You shrink one line of a spoken conversation between a Person and an Assistant, for a phone screen read at a glance while the conversation goes on. The line was transcribed by machine; expect errors.
+
+Reply with ONLY a JSON object of this shape, nothing else:
+{"line": "...", "two": "...", "one": "..."}
+
+- "line": the line in at most 8 words, as its speaker would put it short: its key point, or for a question the question itself ("Fish place by the harbour, bookings until six", "Is breakfast included?", "Hotel for four near Skagen?"). Keep their own words where you can. No "okay", "so", "um", no "the person asks".
+- "two": the line in TWO words, the concrete thing it said ("hotel Skagen").
+- "one": ONE word, the thing itself ("hotel").
+Words from the line where possible; no full stop.`;
+
+/**
+ * One turn's gist, asked for on its own as soon as the turn is over
+ * (`/api/realtime/gist`), so the line the Stack view shows of the turn just
+ * answered is already a gist, not the first words of what they said — the
+ * conversation digest is written only once the conversation has stood still
+ * for a moment, which is seconds into the answer. The same three shrinkings
+ * the digest writes, by the same rules; the line before it for context only.
+ */
+export function turnGistMessages(input: {
+  who: "user" | "agent";
+  text: string;
+  before?: { who: "user" | "agent"; text: string } | null;
+}): ChatMessage[] {
+  const label = (who: "user" | "agent") => (who === "user" ? "Person" : "Assistant");
+  const context = input.before?.text.trim()
+    ? `The line before it, for context only:\n${label(input.before.who)}: ${input.before.text.trim()}\n\n`
+    : "";
+  return [
+    { role: "system", content: TURN_GIST_PROMPT },
+    { role: "user", content: `${context}The line to shrink:\n${label(input.who)}: ${input.text.trim()}` },
+  ];
+}
+
+/** The reply to `turnGistMessages`, for turn `seq`; null when it gave no usable two words and one. */
+export function parseTurnGist(raw: string, seq: number): DigestGist | null {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const g = parsed as { two?: unknown; one?: unknown; line?: unknown };
+  const two = words(g.two, GIST_WORDS + 1);
+  const one = words(g.one, 1) ?? two?.split(" ")[0] ?? null;
+  const line = words(g.line, GIST_LINE_WORDS + 2);
+  return two && one ? { seq, two, one, ...(line ? { line } : {}) } : null;
+}

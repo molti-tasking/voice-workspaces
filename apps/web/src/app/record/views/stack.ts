@@ -1,4 +1,5 @@
 // The `/digest` subpath, not the package index: the index pulls in server code.
+import { stripFillers } from "@voicemural/shared";
 import { GIST_LINE_WORDS, type ConversationDigest, type DigestGist } from "@voicemural/talkback/digest";
 import type { Conversation, Mark, Section, Speaker, Turn } from "@/lib/talkback/conversation";
 import { turnsInOrder } from "@/lib/talkback/cursor";
@@ -104,12 +105,29 @@ function whose(section: Section): Whose {
   return "both";
 }
 
-/** A turn as a short line: the model's, or its first words until that comes. */
+/** Openers that say nothing at a glance: "Okay, so", "Well", "Right then". */
+const OPENERS = /^(?:(?:okay|ok|so|well|right|alright|all right|yeah|yes|hmm|and|but|now|then|great|cool|sure)\b[,.!]?\s*)+/i;
+
+/**
+ * The part of a turn worth a glance, until the model's gist comes: the last
+ * question it asks — what the answer to it answers — or else its last
+ * sentence, with fillers and openers left out, cut with the same margin the
+ * model's lines are kept to (`GIST_LINE_WORDS` and two).
+ */
+export function keyLine(text: string): string {
+  const sentences = (stripFillers(text).match(/[^.!?…]+[.!?…]*/g) ?? []).map((s) => s.trim().replace(OPENERS, "")).filter(Boolean);
+  const key = sentences.findLast((s) => s.endsWith("?")) ?? sentences.at(-1) ?? text.trim();
+  const words = key.split(/\s+/);
+  const max = GIST_LINE_WORDS + 2;
+  const line = words.slice(0, max).join(" ").replace(/[,;:]$/, "");
+  const shown = words.length > max ? `${line}…` : line;
+  return shown.charAt(0).toUpperCase() + shown.slice(1);
+}
+
+/** A turn as a short line: the model's, or its key sentence until that comes. */
 export function turnLine(turn: Turn, gist: DigestGist | undefined): StackLine {
   if (gist?.line) return { seq: turn.seq, who: turn.who, text: gist.line, provisional: false };
-  const words = turn.text.trim().split(/\s+/);
-  const text = words.slice(0, GIST_LINE_WORDS).join(" ").replace(/[,;:]$/, "");
-  return { seq: turn.seq, who: turn.who, text: words.length > GIST_LINE_WORDS ? `${text}…` : text, provisional: true };
+  return { seq: turn.seq, who: turn.who, text: keyLine(turn.text), provisional: true };
 }
 
 /**

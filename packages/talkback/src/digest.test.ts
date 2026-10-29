@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { DIGEST_GIST_LINES, DIGEST_MAX_CHARS, digestMessages, gistSeqs, parseDigest } from "./digest";
+import {
+  DIGEST_GIST_LINES,
+  DIGEST_MAX_CHARS,
+  digestMessages,
+  gistSeqs,
+  parseDigest,
+  parseTurnGist,
+  turnGistMessages,
+} from "./digest";
 
 describe("the conversation digest", () => {
   it("names the topics by number and marks each line with its topic", () => {
@@ -124,5 +132,36 @@ describe("the conversation digest", () => {
       { seq: 4, line: "Fish place by the harbour, bookings until six", two: "fish place", one: "fish" },
       { seq: 5, two: "breakfast", one: "breakfast" },
     ]);
+  });
+});
+
+describe("one turn's gist", () => {
+  it("asks for the line, two words and one, with the line before as context only", () => {
+    const messages = turnGistMessages({
+      who: "user",
+      text: "Okay, so can you look up a hotel for the four of us near Skagen?",
+      before: { who: "agent", text: "Skagen is lovely in spring." },
+    });
+    expect(messages[0]!.role).toBe("system");
+    expect(messages[0]!.content).toMatch(/at most 8 words/);
+    expect(messages[1]!.content).toBe(
+      "The line before it, for context only:\nAssistant: Skagen is lovely in spring.\n\nThe line to shrink:\nPerson: Okay, so can you look up a hotel for the four of us near Skagen?",
+    );
+    expect(turnGistMessages({ who: "agent", text: "Sure." })[1]!.content).toBe("The line to shrink:\nAssistant: Sure.");
+  });
+
+  it("reads the reply into a gist for the turn, and nothing from a reply without one", () => {
+    expect(parseTurnGist('```json\n{"line": "Hotel for four near Skagen?", "two": "hotel Skagen", "one": "hotel"}\n```', 7)).toEqual({
+      seq: 7,
+      line: "Hotel for four near Skagen?",
+      two: "hotel Skagen",
+      one: "hotel",
+    });
+    expect(parseTurnGist('{"line": "A line far too long to fit the screen at a glance or anywhere at all.", "two": "too long", "one": "long."}', 1)).toMatchObject({
+      line: "A line far too long to fit the screen at",
+      one: "long",
+    });
+    expect(parseTurnGist("no idea", 1)).toBeNull();
+    expect(parseTurnGist('{"line": "Just a line"}', 1)).toBeNull();
   });
 });

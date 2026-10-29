@@ -8,6 +8,7 @@ import type { DraftCue } from "@/lib/display/use-cues";
 import { EMPTY_CONVERSATION, type Conversation, type ConversationStore } from "@/lib/talkback/conversation";
 import { atCursor, cursorLabel, turnsInOrder } from "@/lib/talkback/cursor";
 import { useDigest } from "@/lib/talkback/use-digest";
+import { useTurnGists } from "@/lib/talkback/use-turn-gists";
 import { ChatView } from "./chat-view";
 import { NowView } from "./now-view";
 import { OpenView } from "./open-view";
@@ -80,6 +81,12 @@ export function ConversationView({
     ...(fixedDigest ? { fixed: fixedDigest } : {}),
   });
 
+  // The turn just answered, as a gist while the answer is being said (Stack's line, Recent's words).
+  const turnGists = useTurnGists(full, live && (view === "stack" || view === "recent") ? captureSessionId : null);
+  const gists = useMemo(
+    () => (turnGists.length === 0 ? digest.gists : [...(digest.gists ?? []), ...turnGists]),
+    [digest.gists, turnGists],
+  );
   const topics = useMemo(() => topicEntries(shown, digest), [shown, digest]);
   const zoomed = zoomKey ? (topics.find((t) => t.key === zoomKey) ?? null) : null;
   const titleOf = (ordinal: number) => full.sections.find((s) => s.ordinal === ordinal)?.title ?? null;
@@ -103,11 +110,11 @@ export function ConversationView({
       ) : view === "now" ? (
         <NowView now={digest.now} current={topics.find((t) => t.current) ?? null} onZoom={setZoomKey} />
       ) : view === "recent" ? (
-        <RecentView conversation={shown} gists={digest.gists} topics={topics} onZoom={setZoomKey} />
+        <RecentView conversation={shown} gists={gists} topics={topics} onZoom={setZoomKey} />
       ) : view === "stack" ? (
         <StackView
           conversation={shown}
-          digest={digest}
+          digest={gists === digest.gists ? digest : { ...digest, gists }}
           speaking={cursor !== null ? null : status?.speaking ? "agent" : status?.listening ? "user" : null}
           onZoom={setZoomKey}
           placeholder={placeholder}
