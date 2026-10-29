@@ -3,6 +3,7 @@ import { LiteLLMError } from "./config";
 import {
   mintRealtimeSecret,
   mintTranscriptionSecret,
+  openaiDirectConfig,
   type RealtimeSessionConfig,
   type RealtimeTranscriptionConfig,
 } from "./realtime";
@@ -87,5 +88,40 @@ describe("mintTranscriptionSecret", () => {
     expect(url).toBe("https://litellm.test/realtime/client_secrets");
     expect(JSON.parse(init.body)).toEqual({ model: "openai/gpt-live-transcribe", session });
     expect(secret).toMatchObject({ value: "ek_live", callsUrl: "https://litellm.test/realtime/calls", resolvedModel: null });
+  });
+
+  it("mints at OpenAI itself with its own key, with no routing name", async () => {
+    const fetch = vi.fn().mockResolvedValue(answer({ value: "ek_direct" }));
+    vi.stubGlobal("fetch", fetch);
+    const session: RealtimeTranscriptionConfig = {
+      type: "transcription",
+      audio: { input: { transcription: { model: "gpt-live-transcribe" }, turn_detection: null } },
+    };
+
+    const secret = await mintTranscriptionSecret("gpt-live-transcribe", session, {
+      direct: { baseUrl: "https://api.openai.test/v1", apiKey: "sk-openai" },
+    });
+
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe("https://api.openai.test/v1/realtime/client_secrets");
+    expect(init.headers.Authorization).toBe("Bearer sk-openai");
+    expect(JSON.parse(init.body)).toEqual({ session });
+    expect(secret).toMatchObject({ value: "ek_direct", callsUrl: "https://api.openai.test/v1/realtime/calls" });
+    expect(JSON.stringify(secret)).not.toContain("sk-openai");
+  });
+});
+
+describe("openaiDirectConfig", () => {
+  afterEach(() => {
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_BASE_URL;
+  });
+
+  it("is OpenAI's own API with the key, and nothing without one", () => {
+    expect(openaiDirectConfig()).toBeNull();
+    process.env.OPENAI_API_KEY = " sk-openai ";
+    expect(openaiDirectConfig()).toEqual({ baseUrl: "https://api.openai.com/v1", apiKey: "sk-openai" });
+    process.env.OPENAI_BASE_URL = "https://eu.api.openai.com/v1/";
+    expect(openaiDirectConfig()?.baseUrl).toBe("https://eu.api.openai.com/v1");
   });
 });

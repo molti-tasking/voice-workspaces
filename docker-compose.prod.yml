@@ -95,9 +95,12 @@ services:
       # up by the fast model). Demos and the display study only; off for drives.
       - REALTIME_MOCK_SEARCH=${REALTIME_MOCK_SEARCH:-off}
       # Their words on screen while they say them: a transcription session
-      # beside the call, by the proxy's name (openai/gpt-live-transcribe).
-      # Unset is off: a turn appears once it is transcribed.
+      # beside the call (gpt-live-transcribe). Unset is off: a turn appears
+      # once it is transcribed. Minted at OpenAI with OPENAI_API_KEY — the
+      # CAVI proxy cannot carry a transcription call — and only for this; the
+      # browser gets a one-session secret, never the key.
       - REALTIME_LIVE_TRANSCRIBE_MODEL=${REALTIME_LIVE_TRANSCRIBE_MODEL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - MODEL_CONVERSE=${MODEL_CONVERSE}
       - MODEL_SUMMARISE=${MODEL_SUMMARISE:-}
       # The memory index. Optional — unset keeps recall lexical. Web embeds the

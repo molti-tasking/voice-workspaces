@@ -103,35 +103,59 @@ export async function mintRealtimeSecret(
   session: RealtimeSessionConfig,
   { timeoutMs = 10_000 }: { timeoutMs?: number } = {},
 ): Promise<RealtimeSecret> {
-  return mintSecret(session.model, session, timeoutMs);
+  return mintSecret(litellmConfig(), session.model, session, timeoutMs);
+}
+
+/** OpenAI itself, for what the proxy cannot carry (`openaiDirectConfig`). */
+export interface ProviderConfig {
+  baseUrl: string;
+  apiKey: string;
 }
 
 /**
- * Mint a one-session secret for a transcription-only session, by the proxy's
- * name for its model (`openai/gpt-live-transcribe`); the session names it by
- * the provider's. The browser opens it like a call, on the same calls URL.
+ * OpenAI reached directly, with `OPENAI_API_KEY`: only for the live
+ * transcription, which the proxy cannot carry — LiteLLM forwards the model
+ * onto a transcription call, and OpenAI refuses every transcription call that
+ * names one ("Model … is not supported in transcription mode"; fixed in
+ * LiteLLM for WebSockets on 5 Oct 2026, PR #43854, not for WebRTC calls).
+ * Null without a key. Server only: the browser is handed a one-session secret.
+ */
+export function openaiDirectConfig(): ProviderConfig | null {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) return null;
+  const baseUrl = (process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1").replace(/\/+$/, "");
+  return { baseUrl, apiKey };
+}
+
+/**
+ * Mint a one-session secret for a transcription-only session. Through the
+ * proxy, `model` is its name for the model (`openai/gpt-live-transcribe`),
+ * which it routes on; `direct` mints at OpenAI itself (`openaiDirectConfig`),
+ * which takes the session alone. Either way the session names the model by
+ * the provider's name, and the browser opens it like a call on `callsUrl`.
  */
 export async function mintTranscriptionSecret(
-  proxyModel: string,
+  model: string,
   session: RealtimeTranscriptionConfig,
-  { timeoutMs = 10_000 }: { timeoutMs?: number } = {},
+  { timeoutMs = 10_000, direct = null }: { timeoutMs?: number; direct?: ProviderConfig | null } = {},
 ): Promise<RealtimeSecret> {
-  return mintSecret(proxyModel, session, timeoutMs);
+  return direct ? mintSecret(direct, null, session, timeoutMs) : mintSecret(litellmConfig(), model, session, timeoutMs);
 }
 
 async function mintSecret(
-  model: string,
+  { baseUrl, apiKey }: ProviderConfig,
+  /** The proxy's routing name; null when minting at the provider itself. */
+  model: string | null,
   session: RealtimeSessionConfig | RealtimeTranscriptionConfig,
   timeoutMs: number,
 ): Promise<RealtimeSecret> {
-  const { baseUrl, apiKey } = litellmConfig();
   const endpoint = `${baseUrl}/realtime/client_secrets`;
   const res = await fetch(endpoint, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    // The model twice: the proxy routes on the top-level one, the provider
-    // configures the session from the nested one.
-    body: JSON.stringify({ model, session }),
+    // Through the proxy, the model twice: it routes on the top-level one, the
+    // provider configures the session from the nested one.
+    body: JSON.stringify(model === null ? { session } : { model, session }),
     signal: AbortSignal.timeout(timeoutMs),
     cache: "no-store",
   });

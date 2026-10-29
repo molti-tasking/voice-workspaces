@@ -171,6 +171,20 @@ describeIfDb("POST /api/realtime/call", () => {
         audio: { input: { transcription: { model: "gpt-live-transcribe", language: "da", delay: "low" } } },
       });
 
+      // With OpenAI's own key, minted there: the session alone, and OpenAI's calls URL.
+      process.env.OPENAI_API_KEY = "sk-openai-direct";
+      fetchMock.mockImplementation(async (url: string) =>
+        new Response(JSON.stringify(url.startsWith("https://api.openai.com/") ? { value: "ek_direct" } : minted)),
+      );
+      const direct = await (await post(SESSION_ID)).json();
+      expect(direct.liveTranscription).toEqual({ clientSecret: "ek_direct", callsUrl: "https://api.openai.com/v1/realtime/calls" });
+      const [directUrl, directInit] = fetchMock.mock.calls.find(([url]) => String(url).startsWith("https://api.openai.com/"))!;
+      expect(directUrl).toBe("https://api.openai.com/v1/realtime/client_secrets");
+      expect(directInit.headers.Authorization).toBe("Bearer sk-openai-direct");
+      expect(JSON.parse(directInit.body)).not.toHaveProperty("model");
+      expect(JSON.stringify(direct)).not.toContain("sk-openai-direct");
+      delete process.env.OPENAI_API_KEY;
+
       // The proxy cannot do it: the call is not the worse for it.
       fetchMock.mockImplementation(async (_url: string, init: { body: string }) => {
         const { model } = JSON.parse(init.body) as { model: string };
@@ -183,6 +197,7 @@ describeIfDb("POST /api/realtime/call", () => {
       expect(await without.json()).toMatchObject({ clientSecret: "ek_test", liveTranscription: null });
     } finally {
       delete process.env.REALTIME_LIVE_TRANSCRIBE_MODEL;
+      delete process.env.OPENAI_API_KEY;
     }
   });
 

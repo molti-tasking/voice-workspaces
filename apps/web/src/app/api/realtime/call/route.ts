@@ -8,6 +8,7 @@ import {
   mintRealtimeSecret,
   mintTranscriptionSecret,
   modelFor,
+  openaiDirectConfig,
   type RealtimeEagerness,
 } from "@voicemural/llm";
 import { resolveStudyCondition } from "@voicemural/shared";
@@ -70,10 +71,13 @@ function mockSearch(): boolean {
 }
 
 /**
- * `REALTIME_LIVE_TRANSCRIBE_MODEL`, by the proxy's name
- * (`openai/gpt-live-transcribe`): a transcription session beside the call,
- * so their words are on screen while they say them. Unset is off, and the
- * turn appears once it is transcribed, as before.
+ * `REALTIME_LIVE_TRANSCRIBE_MODEL` (`gpt-live-transcribe`): a transcription
+ * session beside the call, so their words are on screen while they say them.
+ * Unset is off, and the turn appears once it is transcribed, as before.
+ *
+ * Minted at OpenAI itself when `OPENAI_API_KEY` is set — the proxy cannot
+ * carry a transcription call (`openaiDirectConfig`) — else through the proxy
+ * by this name, for the day it can.
  */
 function liveTranscribeModel(): string | null {
   return process.env.REALTIME_LIVE_TRANSCRIBE_MODEL?.trim() || null;
@@ -155,8 +159,9 @@ export async function POST(req: Request) {
     liveModel
       ? mintTranscriptionSecret(
           liveModel,
-          // The provider's name inside the session: the part after the proxy's prefix.
+          // The provider's name inside the session: the part after any proxy prefix.
           liveTranscriptionConfig({ model: liveModel.split("/").at(-1)!, language }),
+          { direct: openaiDirectConfig() },
         )
       : Promise.resolve(null),
   ]);
