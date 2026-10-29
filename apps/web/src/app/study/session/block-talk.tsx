@@ -1,5 +1,6 @@
 "use client";
 
+import { ChevronDown } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SESSION_TIMINGS, type ConversationDisplay, type SessionMoment, type SessionTimings } from "@voicemural/shared";
 import type { ConversationDigest } from "@voicemural/talkback/digest";
@@ -12,7 +13,7 @@ import { AgentNameProvider } from "../../record/agent-name-context";
 import { ConversationView } from "../../record/views/conversation-view";
 import type { FlowStatus } from "../../record/views/status-line";
 import { useBlockMoments, type BlockMoments } from "./block-moments";
-import { clock, spokenDuration } from "./session-copy";
+import { clock } from "./session-copy";
 import type { SessionBlockView, SendStep } from "./session-flow";
 import { TicTacToe } from "./tic-tac-toe";
 
@@ -205,7 +206,6 @@ export function LiveTalk({
       <TalkScreen
         gameDone={moments.phase === "back"}
         hidden={moments.phase === "game"}
-        eyebrow={eyebrow}
         block={block}
         display={display}
         elapsedMs={isRecording ? elapsed : null}
@@ -292,7 +292,6 @@ export function DemoTalk({
       <TalkScreen
         gameDone={moments.phase === "back"}
         hidden={interrupted}
-        eyebrow={eyebrow}
         block={block}
         display={block.display}
         elapsedMs={elapsed}
@@ -363,7 +362,6 @@ function ReturnShield() {
 function noop(): void {}
 
 function TalkScreen({
-  eyebrow,
   block,
   display,
   elapsedMs,
@@ -379,7 +377,6 @@ function TalkScreen({
   captureSessionId,
   fixedDigest,
 }: {
-  eyebrow: string;
   block: SessionBlockView;
   display: ConversationDisplay;
   /** Null until the recording runs. */
@@ -399,59 +396,64 @@ function TalkScreen({
   fixedDigest?: (conversation: Conversation) => ConversationDigest;
 }) {
   const canFinish = elapsedMs !== null && elapsedMs >= timings.talkMinMs && gameDone && !finishing;
-  const hint =
+  // When they can finish says the button itself; a line only for what it cannot say.
+  const finishLabel = finishing
+    ? "Saving…"
+    : elapsedMs !== null && elapsedMs < timings.talkMinMs
+      ? `Finish in ${clock(timings.talkMinMs - elapsedMs)}`
+      : elapsedMs !== null && !gameDone
+        ? "Finish after the game"
+        : "Finish";
+  // Solid once they reach the target: before it, finishing is allowed but not the suggestion.
+  const atTarget = elapsedMs !== null && elapsedMs >= timings.talkTargetMs;
+  const notice =
     elapsedMs === null
       ? "Opening the microphone…"
       : degraded
         ? "The assistant is not reachable right now. Keep talking; it reconnects by itself."
-        : elapsedMs < timings.talkMinMs
-          ? `You can finish after ${spokenDuration(timings.talkMinMs)}.`
-          : !gameDone
-            ? "You can finish after the game."
-            : elapsedMs >= timings.talkTargetMs
-              ? "You can finish whenever you are ready."
-              : `You can finish now, or keep going to about ${spokenDuration(timings.talkTargetMs)}.`;
+        : null;
 
   return (
     <main
       inert={hidden}
       aria-hidden={hidden || undefined}
-      className="no-touch-fuss mx-auto flex h-dvh w-full max-w-2xl flex-col gap-2 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+      className="no-touch-fuss mx-auto flex h-dvh w-full max-w-2xl flex-col gap-2 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
     >
-      <header className="flex shrink-0 items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-medium tracking-wide text-fg/55 uppercase">{eyebrow}</p>
-          <p className="truncate font-semibold">{block.task.title}</p>
-        </div>
-        <div className="flex shrink-0 items-center gap-3">
-          <span className="font-mono text-sm text-fg/60" aria-live="off">
-            {elapsedMs === null ? "…" : clock(elapsedMs)}
-          </span>
+      {/*
+        The study's own bar, apart from what is being tested: a tinted band
+        edge to edge, small type, above the view. The task's name opens the
+        task; the button says when they can finish.
+      */}
+      <header className="-mx-4 shrink-0 border-b border-line bg-fg/[0.05] px-4 py-2 text-sm">
+        <div className="flex items-start justify-between gap-3">
+          <details className="group min-w-0 flex-1">
+            <summary className="flex min-h-9 cursor-pointer list-none items-center gap-1.5 font-semibold text-fg/80 [&::-webkit-details-marker]:hidden">
+              <span className="min-w-0">{block.task.title}</span>
+              <ChevronDown size={15} aria-hidden className="shrink-0 text-fg/50 transition-transform group-open:rotate-180" />
+            </summary>
+            <p className="mt-1 leading-relaxed text-fg/80">{block.task.brief}</p>
+            <ul className="mt-1 mb-1 space-y-0.5 text-fg/60">
+              {block.task.prompts.map((p) => (
+                <li key={p} className="flex gap-1.5">
+                  <span aria-hidden>·</span>
+                  {p}
+                </li>
+              ))}
+            </ul>
+          </details>
           <button
             type="button"
             disabled={!canFinish}
             onClick={onFinish}
-            className="min-h-10 cursor-pointer rounded-xl bg-fg px-4 text-sm font-semibold text-canvas disabled:cursor-not-allowed disabled:opacity-40"
+            className={`min-h-9 shrink-0 cursor-pointer rounded-lg border px-3 text-[13px] font-semibold tabular-nums disabled:cursor-not-allowed disabled:opacity-50 ${
+              atTarget ? "border-fg bg-fg text-canvas" : "border-fg/25 text-fg/75"
+            }`}
           >
-            {finishing ? "Saving…" : "Finish"}
+            {finishLabel}
           </button>
         </div>
+        {notice && <p className="pb-0.5 text-[13px] text-fg/60">{notice}</p>}
       </header>
-
-      {/* The same for every view: the task, folded, one tap away. */}
-      <details className="shrink-0 rounded-xl bg-fg/[0.04] px-3 py-2 text-sm">
-        <summary className="cursor-pointer text-fg/70">The task</summary>
-        <p className="mt-2 leading-relaxed text-fg/85">{block.task.brief}</p>
-        <ul className="mt-1.5 space-y-0.5 text-fg/65">
-          {block.task.prompts.map((p) => (
-            <li key={p} className="flex gap-1.5">
-              <span aria-hidden>·</span>
-              {p}
-            </li>
-          ))}
-        </ul>
-      </details>
-      <p className="shrink-0 text-sm text-fg/55">{hint}</p>
 
       {/* No name for the agent: "Souffleur" is the field app's, and a named system is its researchers' own. */}
       <AgentNameProvider name="the assistant">
