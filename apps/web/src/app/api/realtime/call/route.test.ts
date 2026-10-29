@@ -151,6 +151,41 @@ describeIfDb("POST /api/realtime/call", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("mints their live words beside the call when switched on, and goes ahead without them if refused", async () => {
+    expect((await (await post(SESSION_ID)).json()).liveTranscription).toBeNull();
+
+    process.env.REALTIME_LIVE_TRANSCRIBE_MODEL = "openai/gpt-live-transcribe";
+    try {
+      fetchMock.mockImplementation(async (_url: string, init: { body: string }) => {
+        const { model } = JSON.parse(init.body) as { model: string };
+        return new Response(JSON.stringify(model === "openai/gpt-live-transcribe" ? { value: "ek_live" } : minted));
+      });
+      const body = await (await post(SESSION_ID)).json();
+      expect(body).toMatchObject({
+        clientSecret: "ek_test",
+        liveTranscription: { clientSecret: "ek_live", callsUrl: "https://litellm.test/realtime/calls" },
+      });
+      const live = fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body)).find((b) => b.model === "openai/gpt-live-transcribe");
+      expect(live.session).toMatchObject({
+        type: "transcription",
+        audio: { input: { transcription: { model: "gpt-live-transcribe", language: "da", delay: "low" } } },
+      });
+
+      // The proxy cannot do it: the call is not the worse for it.
+      fetchMock.mockImplementation(async (_url: string, init: { body: string }) => {
+        const { model } = JSON.parse(init.body) as { model: string };
+        return model === "openai/gpt-live-transcribe"
+          ? new Response('{"error":"unknown model"}', { status: 400 })
+          : new Response(JSON.stringify(minted));
+      });
+      const without = await post(SESSION_ID);
+      expect(without.status).toBe(200);
+      expect(await without.json()).toMatchObject({ clientSecret: "ek_test", liveTranscription: null });
+    } finally {
+      delete process.env.REALTIME_LIVE_TRANSCRIBE_MODEL;
+    }
+  });
+
   it("says the call is unavailable when the proxy refuses it", async () => {
     fetchMock.mockResolvedValue(new Response('{"error":"not supported in realtime mode"}', { status: 400 }));
     expect((await post(SESSION_ID)).status).toBe(502);

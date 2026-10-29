@@ -94,6 +94,10 @@ services:
       # "on" gives the speech-to-speech agent a MOCK web search (results made
       # up by the fast model). Demos and the display study only; off for drives.
       - REALTIME_MOCK_SEARCH=${REALTIME_MOCK_SEARCH:-off}
+      # Their words on screen while they say them: a transcription session
+      # beside the call, by the proxy's name (openai/gpt-live-transcribe).
+      # Unset is off: a turn appears once it is transcribed.
+      - REALTIME_LIVE_TRANSCRIBE_MODEL=${REALTIME_LIVE_TRANSCRIBE_MODEL:-}
       - MODEL_CONVERSE=${MODEL_CONVERSE}
       - MODEL_SUMMARISE=${MODEL_SUMMARISE:-}
       # The memory index. Optional — unset keeps recall lexical. Web embeds the

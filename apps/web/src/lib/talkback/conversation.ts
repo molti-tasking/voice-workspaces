@@ -54,6 +54,12 @@ export interface Turn {
    * turn but the one being spoken by the realtime engine.
    */
   voiced?: number;
+  /**
+   * Their words while they are still saying them, from the live
+   * transcription beside the call: a working copy, which the turn's own
+   * transcript replaces once it is in. The views fade each new word in.
+   */
+  live?: boolean;
   /** The agent was cut off: they talked over it, or locked it. */
   interrupted?: boolean;
   /**
@@ -207,6 +213,8 @@ export type ConversationMessage =
       text: string;
       /** See `Turn.voiced`. */
       voiced?: number;
+      /** See `Turn.live`. */
+      live?: boolean;
       interrupted?: boolean;
       pauses?: number;
       pausesBefore?: number;
@@ -440,6 +448,7 @@ function applyTurn(
     who: message.type,
     text: message.text,
     ...(message.voiced !== undefined && message.voiced < message.text.length ? { voiced: message.voiced } : {}),
+    ...(message.live ? { live: true } : {}),
     ...(message.interrupted ? { interrupted: true } : {}),
     ...(message.type === "user" && message.pauses ? { pauses: message.pauses } : {}),
     ...(message.type === "user" && message.pausesBefore

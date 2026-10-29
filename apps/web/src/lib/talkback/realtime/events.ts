@@ -30,6 +30,13 @@ import type { SparkKind } from "../signals";
  * the same estimate a cut-off reply is shortened by), and in full once its
  * audio stops. The text it is sent with runs ahead, which is what lets the
  * views keep every word in place (lib/talkback/spoken.ts).
+ *
+ * THEIR WORDS WHILE THEY SAY THEM come from a second session beside this one
+ * (`caption`): the conversation's own transcript of a turn exists only once
+ * the turn is over. The caption's segments are joined into one live turn,
+ * which the turn's own transcript then replaces in place — the same turn on
+ * screen, its words corrected once — and which counts as their words being
+ * on screen, so a reply is not held back for the transcript.
  */
 
 export type RealtimeTrigger = "user_turn" | "opening" | "poke";
@@ -84,6 +91,8 @@ const PLAYBACK_GRACE_MS = 30_000;
 const CHARS_PER_SEC = 15;
 /** How often the line of a reply that is playing catches up with its voice. */
 const PACE_TICK_MS = 150;
+/** After their turn is committed, a caption arriving this soon is still its tail, not a new turn. */
+const LIVE_TAIL_MS = 2500;
 
 interface Response {
   id: string;
@@ -111,6 +120,16 @@ interface Response {
 
 type Event = { type: string; [key: string]: unknown };
 
+/** Their turn as the live transcription has it: its segments, in order, joined. */
+interface LiveTurn {
+  id: string;
+  segments: string[];
+  text: Map<string, string>;
+  shown: boolean;
+  /** The turn's own transcript is in and has replaced it: captions stop. */
+  final: boolean;
+}
+
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
@@ -137,6 +156,17 @@ export class RealtimeConversation {
   private inProgress: string | null = null;
   private playing: string | null = null;
   private pacer: ReturnType<typeof setInterval> | null = null;
+  /** The live turns, by their id; which live turn each caption segment is in. */
+  private readonly liveTurns = new Map<string, LiveTurn>();
+  private readonly segmentTurn = new Map<string, string>();
+  /** The live turn their speech is in now, and the one their last committed turn is shown as. */
+  private openLive: string | null = null;
+  private lastLive: { id: string; at: number } | null = null;
+  private liveCount = 0;
+  /** They began speaking again since their last turn was committed. */
+  private speakingAgain = false;
+  /** Their turn (the conversation's item) → the live turn it is shown as. */
+  private readonly shownAs = new Map<string, string>();
   private closed = false;
 
   constructor(private readonly sink: ConversationSink) {}
@@ -160,6 +190,7 @@ export class RealtimeConversation {
     if (this.closed) return;
     switch (event.type) {
       case "input_audio_buffer.speech_started":
+        this.speakingAgain = true;
         this.sink.userSpeaking(true);
         return;
       case "input_audio_buffer.speech_stopped":
@@ -171,6 +202,13 @@ export class RealtimeConversation {
         if (!id) return;
         this.committedAtMs = this.stoppedAtMs ?? this.sink.now();
         if (!this.users.has(id)) this.users.set(id, { text: "", shown: false, final: false });
+        // The live words of this turn are this turn: its transcript will replace them where they are.
+        if (this.openLive !== null) {
+          this.shownAs.set(id, this.openLive);
+          this.lastLive = { id: this.openLive, at: this.sink.now() };
+          this.openLive = null;
+        }
+        this.speakingAgain = false;
         this.pendingUser = id;
         this.sink.turnEnded?.();
         return;
@@ -247,7 +285,7 @@ export class RealtimeConversation {
         });
         this.inProgress = id;
         // Their turn is not on screen yet: hold this reply's lines until it is.
-        if (this.pendingUser !== null && trigger === "user_turn" && !this.users.get(this.pendingUser)?.shown) this.arm();
+        if (this.pendingUser !== null && trigger === "user_turn" && !this.onScreen(this.pendingUser)) this.arm();
         return;
       }
       case "response.output_audio_transcript.delta":
@@ -354,14 +392,78 @@ export class RealtimeConversation {
   private showUser(id: string): void {
     const user = this.users.get(id)!;
     if (!user.text) return;
-    const first = !user.shown;
-    if (first) {
-      user.shown = true;
-      this.sink.began(id);
+    const as = this.shownAs.get(id);
+    const live = as === undefined ? undefined : this.liveTurns.get(as);
+    // Its live words stay until its transcript is whole: a partial one would shrink them.
+    if (live?.shown && !user.final) return;
+    const first = !user.shown && !live?.shown;
+    user.shown = true;
+    if (live) {
+      live.shown = true;
+      live.final = user.final;
     }
-    this.sink.emit({ type: "user", id, text: user.text });
+    if (first) this.sink.began(as ?? id);
+    this.sink.emit({ type: "user", id: as ?? id, text: user.text });
     // Once their turn is on screen, a reply to it can follow it there.
     if (first && this.pendingUser === id) this.release();
+  }
+
+  /** Whether their turn is on screen: its own transcript, or its live words. */
+  private onScreen(id: string): boolean {
+    if (this.users.get(id)?.shown) return true;
+    const as = this.shownAs.get(id);
+    return as !== undefined && this.liveTurns.get(as)?.shown === true;
+  }
+
+  /**
+   * An event of the live transcription beside the call: their words while they
+   * are saying them. Each segment its voice detection cut joins the live turn
+   * their speech is in — opened by the first words of a turn, and kept for a
+   * tail that arrives just after the turn was committed — and the joined words
+   * are shown as that turn, marked live, until its own transcript is in.
+   */
+  caption(event: Event): void {
+    if (this.closed) return;
+    const delta = event.type === "conversation.item.input_audio_transcription.delta";
+    if (!delta && event.type !== "conversation.item.input_audio_transcription.completed") return;
+    const segment = str(event.item_id);
+    if (!segment) return;
+    let id = this.segmentTurn.get(segment);
+    if (id === undefined) {
+      id = this.liveTurnFor();
+      this.segmentTurn.set(segment, id);
+      this.liveTurns.get(id)!.segments.push(segment);
+    }
+    const turn = this.liveTurns.get(id)!;
+    if (turn.final) return;
+    const before = turn.text.get(segment) ?? "";
+    turn.text.set(segment, delta ? before + (str(event.delta) ?? "") : (str(event.transcript) ?? before));
+    const text = turn.segments
+      .map((s) => turn.text.get(s)?.trim() ?? "")
+      .filter(Boolean)
+      .join(" ");
+    if (!text) return;
+    if (!turn.shown) {
+      turn.shown = true;
+      this.sink.began(id);
+      // A reply held for their words can follow them now.
+      const held = [...this.shownAs].some(([user, as]) => as === id && user === this.pendingUser);
+      if (held) this.release();
+    }
+    this.sink.emit({ type: "user", id, text, live: true });
+  }
+
+  /** The live turn new words go to: the open one, the tail of the one just committed, or a new one. */
+  private liveTurnFor(): string {
+    if (this.openLive !== null) return this.openLive;
+    const last = this.lastLive;
+    if (last && !this.speakingAgain && this.sink.now() - last.at < LIVE_TAIL_MS && !this.liveTurns.get(last.id)?.final) {
+      return last.id;
+    }
+    const id = `live-${++this.liveCount}`;
+    this.liveTurns.set(id, { id, segments: [], text: new Map(), shown: false, final: false });
+    this.openLive = id;
+    return id;
   }
 
   /**

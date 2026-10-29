@@ -195,6 +195,7 @@ export {
   composeRealtimeSessionPrompt,
   realtimeOpeningNudge,
   realtimeSessionConfig,
+  liveTranscriptionConfig,
   realtimeTurnDetection,
   realtimeVoiceFor,
   type RealtimeBackground,

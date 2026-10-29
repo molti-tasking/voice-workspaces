@@ -178,6 +178,59 @@ describe("RealtimeConversation", () => {
   });
 });
 
+describe("their words while they say them", () => {
+  const caption = (h: ReturnType<typeof harness>, ms: number, type: string, rest: Record<string, unknown>) => {
+    h.at(ms);
+    h.conversation.caption({ type: `conversation.item.input_audio_transcription.${type}`, ...rest });
+  };
+
+  it("shows their words live, then replaces them in place with the turn's own transcript", () => {
+    const h = harness();
+    h.send(0, "input_audio_buffer.speech_started", { item_id: "item_u1" });
+    caption(h, 600, "delta", { item_id: "seg_1", delta: "Can you look" });
+    caption(h, 900, "delta", { item_id: "seg_1", delta: " up a hotel" });
+    expect(h.messages.at(-1)).toEqual({ type: "user", id: "live-1", text: "Can you look up a hotel", live: true });
+    expect(h.began).toEqual(["live-1"]);
+
+    // A pause their voice detection cut in two: one turn still.
+    caption(h, 2200, "delta", { item_id: "seg_2", delta: "for four?" });
+    expect(h.messages.at(-1)).toMatchObject({ id: "live-1", text: "Can you look up a hotel for four?" });
+
+    h.send(3000, "input_audio_buffer.speech_stopped", { item_id: "item_u1" });
+    h.send(3005, "input_audio_buffer.committed", { item_id: "item_u1" });
+    // The answer is not held: their words are on screen.
+    h.send(3010, "response.created", { response: { id: "resp_1" } });
+    h.send(3100, "response.output_audio_transcript.delta", { response_id: "resp_1", output_index: 0, delta: "Sure." });
+    h.send(3300, "output_audio_buffer.started", { response_id: "resp_1" });
+    vi.advanceTimersByTime(600);
+    expect(h.messages.some((m) => m.type === "agent")).toBe(true);
+
+    // A partial transcript of the turn would shrink the live words: it waits.
+    h.send(3400, "conversation.item.input_audio_transcription.delta", { item_id: "item_u1", delta: "Can you" });
+    expect(h.messages.filter((m) => m.type === "user").at(-1)).toMatchObject({ text: "Can you look up a hotel for four?", live: true });
+    h.send(3700, "conversation.item.input_audio_transcription.completed", { item_id: "item_u1", transcript: "Can you look up a hotel for four?" });
+    expect(h.messages.filter((m) => m.type === "user").at(-1)).toEqual({ type: "user", id: "live-1", text: "Can you look up a hotel for four?" });
+    expect(h.began).toEqual(["live-1", "resp_1"]);
+    expect(h.heard).toContainEqual(["user", "Can you look up a hotel for four?"]);
+
+    // Late words of the finished turn change nothing now.
+    caption(h, 3800, "completed", { item_id: "seg_2", transcript: "for four people?" });
+    expect(h.messages.filter((m) => m.type === "user").at(-1)).not.toHaveProperty("live");
+  });
+
+  it("keeps a tail that arrives just after the turn was committed, and starts the next turn anew", () => {
+    const h = harness();
+    caption(h, 500, "delta", { item_id: "seg_1", delta: "Two nights" });
+    h.send(1500, "input_audio_buffer.committed", { item_id: "item_u1" });
+    caption(h, 1800, "delta", { item_id: "seg_2", delta: "in Skagen" });
+    expect(h.messages.at(-1)).toMatchObject({ id: "live-1", text: "Two nights in Skagen", live: true });
+
+    h.send(9000, "input_audio_buffer.speech_started", { item_id: "item_u2" });
+    caption(h, 9400, "delta", { item_id: "seg_3", delta: "And breakfast?" });
+    expect(h.messages.at(-1)).toMatchObject({ id: "live-2", text: "And breakfast?", live: true });
+  });
+});
+
 describe("heardOf", () => {
   it("cuts at a whole word, and keeps everything once the time covers it", () => {
     expect(heardOf("one two three four", 300)).toBe("one");

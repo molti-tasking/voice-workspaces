@@ -7,8 +7,9 @@ import { CopyButton } from "@/components/copy-button";
 import { DraftMarkdown } from "@/components/draft-markdown";
 import type { DraftCue } from "@/lib/display/use-cues";
 import { timeline, type Conversation, type Mark, type Turn } from "@/lib/talkback/conversation";
+import { spokenWords } from "@/lib/talkback/spoken";
 import { SPARK_LABELS } from "../spark-chips";
-import { SpokenText } from "./spoken-text";
+import { SpokenText, SpokenWords } from "./spoken-text";
 
 /**
  * The chat: every line in the order it was said — theirs in a bubble on the
@@ -155,7 +156,10 @@ export function TurnLine({ turn }: { turn: Turn }) {
     // Their fillers are counted, not shown: "um" on a screen reads as a fault.
     const said = stripFillers(turn.text);
     return said ? (
-      <p className="max-w-[85%] self-end rounded-2xl rounded-br-md bg-fg/[0.07] px-4 py-2.5 leading-relaxed">{said}</p>
+      <p className="max-w-[85%] self-end rounded-2xl rounded-br-md bg-fg/[0.07] px-4 py-2.5 leading-relaxed">
+        {/* While they are still saying it, each new word fades in after the last. */}
+        {turn.live ? <SpokenWords words={spokenWords(said)} /> : said}
+      </p>
     ) : null;
   }
   return (

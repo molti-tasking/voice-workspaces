@@ -2,7 +2,14 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { captureSession, eq, getDb } from "@voicemural/db";
 import { findBlockByCaptureSession } from "@voicemural/db/study-session";
-import { LiteLLMError, hasModelFor, mintRealtimeSecret, modelFor, type RealtimeEagerness } from "@voicemural/llm";
+import {
+  LiteLLMError,
+  hasModelFor,
+  mintRealtimeSecret,
+  mintTranscriptionSecret,
+  modelFor,
+  type RealtimeEagerness,
+} from "@voicemural/llm";
 import { resolveStudyCondition } from "@voicemural/shared";
 import { issueTicket } from "@voicemural/shared/realtime-ticket";
 import {
@@ -14,6 +21,7 @@ import {
   composeRealtimeSessionPrompt,
   nextRecordSeqs,
   realtimeOpeningNudge,
+  liveTranscriptionConfig,
   realtimeSessionConfig,
   realtimeVoiceFor,
   renderLocalTime,
@@ -59,6 +67,16 @@ const EAGERNESS: readonly RealtimeEagerness[] = ["low", "medium", "high", "auto"
  */
 function mockSearch(): boolean {
   return process.env.REALTIME_MOCK_SEARCH?.trim().toLowerCase() === "on";
+}
+
+/**
+ * `REALTIME_LIVE_TRANSCRIBE_MODEL`, by the proxy's name
+ * (`openai/gpt-live-transcribe`): a transcription session beside the call,
+ * so their words are on screen while they say them. Unset is off, and the
+ * turn appears once it is transcribed, as before.
+ */
+function liveTranscribeModel(): string | null {
+  return process.env.REALTIME_LIVE_TRANSCRIBE_MODEL?.trim() || null;
 }
 
 /** `REALTIME_EAGERNESS`, or the provider's own default. */
@@ -130,16 +148,33 @@ export async function POST(req: Request) {
     tools: background.lookup ? [LOOKUP_TOOL] : [],
   });
 
-  let secret;
-  try {
-    secret = await mintRealtimeSecret(session);
-  } catch (err) {
+  // The live words' session alongside, never in the way: refused, the call goes ahead without them.
+  const liveModel = liveTranscribeModel();
+  const [call, captions] = await Promise.allSettled([
+    mintRealtimeSecret(session),
+    liveModel
+      ? mintTranscriptionSecret(
+          liveModel,
+          // The provider's name inside the session: the part after the proxy's prefix.
+          liveTranscriptionConfig({ model: liveModel.split("/").at(-1)!, language }),
+        )
+      : Promise.resolve(null),
+  ]);
+  const failed = (what: string, err: unknown) =>
     console.warn(
-      "[realtime] could not mint a call:",
+      `[realtime] could not mint ${what}:`,
       err instanceof LiteLLMError ? `${err.status} ${err.body.slice(0, 300)}` : String(err),
     );
+  if (call.status === "rejected") {
+    failed("a call", call.reason);
     return NextResponse.json({ error: "unavailable" }, { status: 502 });
   }
+  const secret = call.value;
+  if (captions.status === "rejected") failed("the live transcription", captions.reason);
+  const liveTranscription =
+    captions.status === "fulfilled" && captions.value
+      ? { clientSecret: captions.value.value, callsUrl: captions.value.callsUrl }
+      : null;
 
   // Without a ticket the call still works; nothing of it is recorded, and the
   // recorder says so (`memory: "unavailable"`).
@@ -168,6 +203,8 @@ export async function POST(req: Request) {
       configVersion: REALTIME_CONFIG_VERSION,
       // The browser runs the search the agent asks for.
       lookup: background.lookup,
+      // Their words as they say them, from a second session on the same track; null without.
+      liveTranscription,
     },
     { headers: { "Cache-Control": "no-store" } },
   );

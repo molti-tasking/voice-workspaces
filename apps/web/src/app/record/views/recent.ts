@@ -51,8 +51,9 @@ export interface RecentLadder {
   /**
    * The newest turn: the sentence being said — or of a long one, its run of
    * `LAST_WORDS` — as a page the next replaces whole (lib/talkback/spoken.ts).
-   * `cut`: earlier words of the turn are not on it. `spoken`: the agent's
-   * voice is still saying it, so its words fade in as they are said.
+   * `cut`: earlier words of the turn are not on it. `spoken`: it is still
+   * being said — the agent's voice, or their live words — so its words fade
+   * in as they come.
    */
   last: (RecentWords & { cut: boolean; words: SpokenWord[]; spoken: boolean }) | null;
 }
@@ -86,7 +87,7 @@ export function recentLadder(conversation: Conversation, gists: ReadonlyMap<numb
       text: page.words.map((w) => w.text).join(" "),
       cut: page.cut,
       words: page.words,
-      spoken: newest.voiced !== undefined,
+      spoken: newest.voiced !== undefined || newest.live === true,
     };
   }
   return {

@@ -68,7 +68,7 @@ export interface StackLive {
   words: SpokenWord[];
   /** The page starts inside a sentence, not at its start. */
   cut: boolean;
-  /** The agent's voice is still saying it: words fade in as they are said. */
+  /** Still being said — the agent's voice, or their live words: words fade in as they come. */
   spoken: boolean;
 }
 
@@ -185,7 +185,13 @@ export function stackModel(
   let live: StackLive | null = null;
   if (liveTurn) {
     const page = spokenPage(liveTurn.text, liveTurn.voiced, STACK_LIVE_WORDS);
-    live = { seq: liveTurn.seq, who: liveTurn.who, words: page.words, cut: page.midSentence, spoken: liveTurn.voiced !== undefined };
+    live = {
+      seq: liveTurn.seq,
+      who: liveTurn.who,
+      words: page.words,
+      cut: page.midSentence,
+      spoken: liveTurn.voiced !== undefined || liveTurn.live === true,
+    };
   }
   const previous =
     previousTurn && currentSection && sectionOf.get(previousTurn.seq) === currentSection.key

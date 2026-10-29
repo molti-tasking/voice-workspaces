@@ -48,6 +48,20 @@ interface Call extends CallRecords {
   callsUrl: string;
   openingNudge: string | null;
   turnDetection: RealtimeTurnDetection;
+  /** The live transcription's session, beside this one; null when it is off or was refused. */
+  liveTranscription?: { clientSecret: string; callsUrl: string } | null;
+}
+
+/**
+ * The live transcription beside the call: a transcription-only session on the
+ * same track, whose events are their words while they say them
+ * (`RealtimeConversation.caption`). Its own connection, so whatever happens to
+ * it costs the screen its live words and nothing else.
+ */
+interface Captions {
+  pc: RTCPeerConnection;
+  dc: RTCDataChannel;
+  sender: RTCRtpSender;
 }
 
 /** One peer connection to the provider. A reconnect is a new one. */
@@ -59,6 +73,7 @@ interface Connection {
   audio: HTMLAudioElement;
   call: Call;
   conversation: RealtimeConversation;
+  captions: Captions | null;
   /** The floor last asked of the session, and the one it confirmed. */
   askedFloor: Floor | null;
   appliedFloor: Floor | null;
@@ -169,8 +184,60 @@ export function useRealtimeTalkback(options: TalkbackOptions): Talkback {
     let tries = 0;
     let connections = 0;
 
+    function closeCaptions(c: Connection, reason?: string): void {
+      const captions = c.captions;
+      if (!captions) return;
+      c.captions = null;
+      if (reason) console.warn(`[talkback:realtime] live words off — ${reason}`);
+      captions.dc.onmessage = null;
+      captions.pc.onconnectionstatechange = null;
+      try {
+        captions.dc.close();
+        captions.pc.close();
+      } catch (err) {
+        console.warn(`[talkback:realtime] could not close the live words — ${why(err)}`);
+      }
+    }
+
+    /** Their words while they say them, once the call is up. Never retried: the call goes on without. */
+    async function openCaptions(c: Connection): Promise<void> {
+      const live = c.call.liveTranscription;
+      if (!live || c.captions) return;
+      const pc = new RTCPeerConnection();
+      const sender = pc.addTrack(c.track);
+      const dc = pc.createDataChannel("oai-events");
+      const captions: Captions = { pc, dc, sender };
+      c.captions = captions;
+      if (latest.current.paused) await sender.replaceTrack(null);
+      dc.onmessage = (m) => {
+        try {
+          c.conversation.caption(JSON.parse(String(m.data)) as { type: string });
+        } catch {
+          // Not an event: nothing to show.
+        }
+      };
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === "failed") closeCaptions(c, "the connection failed");
+      };
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        const res = await fetch(live.callsUrl, {
+          method: "POST",
+          body: offer.sdp,
+          headers: { Authorization: `Bearer ${live.clientSecret}`, "Content-Type": "application/sdp" },
+        });
+        if (!res.ok) throw new Error(`refused — ${res.status} ${(await res.text()).slice(0, 200)}`);
+        if (disposed || current !== c || c.captions !== captions) return;
+        await pc.setRemoteDescription({ type: "answer", sdp: await res.text() });
+      } catch (err) {
+        if (c.captions === captions) closeCaptions(c, `could not connect — ${why(err)}`);
+      }
+    }
+
     function close(c: Connection): void {
       if (c.disconnectTimer !== null) clearTimeout(c.disconnectTimer);
+      closeCaptions(c);
       c.conversation.close();
       c.dc.onmessage = null;
       c.dc.onclose = null;
@@ -398,6 +465,7 @@ export function useRealtimeTalkback(options: TalkbackOptions): Talkback {
         audio,
         call,
         conversation,
+        captions: null,
         askedFloor: null,
         appliedFloor: null,
         wasPaused: false,
@@ -452,7 +520,10 @@ export function useRealtimeTalkback(options: TalkbackOptions): Talkback {
         await pc.setRemoteDescription({ type: "answer", sdp: await res.text() });
       } catch (err) {
         lost(c, `could not connect — ${why(err)}`);
+        return;
       }
+      // The call is up: their words beside it.
+      void openCaptions(c);
     }
 
     const unsubscribe = subscribeStream((next) => {
@@ -501,6 +572,8 @@ export function useRealtimeTalkback(options: TalkbackOptions): Talkback {
     void c.sender.replaceTrack(paused ? null : c.track).catch((err) => {
       console.warn(`[talkback:realtime] pause not applied — ${why(err)}`);
     });
+    // Nothing they say during the pause is the conversation's, live words included.
+    void c.captions?.sender.replaceTrack(paused ? null : c.track).catch(() => undefined);
     if (paused) {
       c.armed = null;
       if (c.conversation.responding) send(c, { type: "response.cancel" });

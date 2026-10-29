@@ -26,7 +26,12 @@
  * Pure: the browser imports the nudges from here (`@voicemural/talkback/realtime`).
  */
 
-import type { RealtimeEagerness, RealtimeFunctionTool, RealtimeSessionConfig } from "@voicemural/llm";
+import type {
+  RealtimeEagerness,
+  RealtimeFunctionTool,
+  RealtimeSessionConfig,
+  RealtimeTranscriptionConfig,
+} from "@voicemural/llm";
 import { LOOKUP_SECTION, withLookup } from "./lookup";
 import { PROFILE, type ConversationProfile } from "./profile";
 import {
@@ -307,5 +312,34 @@ export function realtimeSessionConfig({
       output: { voice },
     },
     ...(tools.length > 0 ? { tools, tool_choice: "auto" as const } : {}),
+  };
+}
+
+/**
+ * The transcription-only session beside the conversation
+ * (`REALTIME_LIVE_TRANSCRIBE_MODEL`): their words while they are saying them,
+ * for the screen only — the record is still the conversation's own transcript
+ * of the turn, which replaces them once it is in. Same language and noise
+ * reduction as the conversation; its own voice detection cuts the speech into
+ * segments, which the browser joins into their turn
+ * (`RealtimeConversation.caption`). `model` is the provider's name.
+ */
+export function liveTranscriptionConfig({
+  model,
+  language,
+}: {
+  model: string;
+  language: string | null;
+}): RealtimeTranscriptionConfig {
+  return {
+    type: "transcription",
+    audio: {
+      input: {
+        // Low: words on screen soon after they are said, a little context first.
+        transcription: { model, ...(language ? { language } : {}), delay: "low" },
+        noise_reduction: { type: "near_field" },
+        turn_detection: { type: "server_vad" },
+      },
+    },
   };
 }

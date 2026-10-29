@@ -9,6 +9,7 @@ import {
   composeRealtimeSessionPrompt,
   realtimeOpeningNudge,
   realtimeSessionConfig,
+  liveTranscriptionConfig,
   realtimeSparkNudge,
   realtimeVoiceFor,
 } from "./realtime";
@@ -112,5 +113,21 @@ describe("the session", () => {
     expect(new Set(voices).size).toBe(VOICES.length);
     expect(realtimeVoiceFor(null)).toBe(DEFAULT_REALTIME_VOICE);
     expect(realtimeVoiceFor("retired")).toBe(DEFAULT_REALTIME_VOICE);
+  });
+});
+
+describe("liveTranscriptionConfig", () => {
+  it("is a transcription-only session in the conversation's language, writing soon after the words", () => {
+    expect(liveTranscriptionConfig({ model: "gpt-live-transcribe", language: "en" })).toEqual({
+      type: "transcription",
+      audio: {
+        input: {
+          transcription: { model: "gpt-live-transcribe", language: "en", delay: "low" },
+          noise_reduction: { type: "near_field" },
+          turn_detection: { type: "server_vad" },
+        },
+      },
+    });
+    expect(liveTranscriptionConfig({ model: "m", language: null }).audio.input.transcription).toEqual({ model: "m", delay: "low" });
   });
 });

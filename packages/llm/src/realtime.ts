@@ -60,6 +60,27 @@ export interface RealtimeFunctionTool {
 /** How readily the provider ends their turn: `low` waits longest for them to go on. */
 export type RealtimeEagerness = "low" | "medium" | "high" | "auto";
 
+/** How much audio a streaming transcription model hears before it writes: less is sooner, more is surer. */
+export type TranscriptionDelay = "minimal" | "low" | "medium" | "high" | "xhigh";
+
+/**
+ * A transcription-only session (`gpt-live-transcribe`): what they say as
+ * text while they are still saying it, and no voice. The speech-to-speech
+ * session transcribes a turn only once it is over, and its transcription
+ * model cannot stream; the live words come from this one, run beside it on
+ * the same microphone track.
+ */
+export interface RealtimeTranscriptionConfig {
+  type: "transcription";
+  audio: {
+    input: {
+      transcription: { model: string; language?: string; delay?: TranscriptionDelay };
+      noise_reduction?: { type: "near_field" | "far_field" } | null;
+      turn_detection: { type: "server_vad"; silence_duration_ms?: number } | null;
+    };
+  };
+}
+
 export interface RealtimeSecret {
   /** The secret the browser authorises its SDP offer with. */
   value: string;
@@ -82,6 +103,27 @@ export async function mintRealtimeSecret(
   session: RealtimeSessionConfig,
   { timeoutMs = 10_000 }: { timeoutMs?: number } = {},
 ): Promise<RealtimeSecret> {
+  return mintSecret(session.model, session, timeoutMs);
+}
+
+/**
+ * Mint a one-session secret for a transcription-only session, by the proxy's
+ * name for its model (`openai/gpt-live-transcribe`); the session names it by
+ * the provider's. The browser opens it like a call, on the same calls URL.
+ */
+export async function mintTranscriptionSecret(
+  proxyModel: string,
+  session: RealtimeTranscriptionConfig,
+  { timeoutMs = 10_000 }: { timeoutMs?: number } = {},
+): Promise<RealtimeSecret> {
+  return mintSecret(proxyModel, session, timeoutMs);
+}
+
+async function mintSecret(
+  model: string,
+  session: RealtimeSessionConfig | RealtimeTranscriptionConfig,
+  timeoutMs: number,
+): Promise<RealtimeSecret> {
   const { baseUrl, apiKey } = litellmConfig();
   const endpoint = `${baseUrl}/realtime/client_secrets`;
   const res = await fetch(endpoint, {
@@ -89,7 +131,7 @@ export async function mintRealtimeSecret(
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     // The model twice: the proxy routes on the top-level one, the provider
     // configures the session from the nested one.
-    body: JSON.stringify({ model: session.model, session }),
+    body: JSON.stringify({ model, session }),
     signal: AbortSignal.timeout(timeoutMs),
     cache: "no-store",
   });

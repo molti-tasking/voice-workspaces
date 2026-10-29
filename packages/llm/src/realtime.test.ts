@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LiteLLMError } from "./config";
-import { mintRealtimeSecret, type RealtimeSessionConfig } from "./realtime";
+import {
+  mintRealtimeSecret,
+  mintTranscriptionSecret,
+  type RealtimeSessionConfig,
+  type RealtimeTranscriptionConfig,
+} from "./realtime";
 
 const SESSION: RealtimeSessionConfig = {
   type: "realtime",
@@ -59,5 +64,28 @@ describe("mintRealtimeSecret", () => {
   it("refuses an answer that carries no secret", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(answer({ session: {} })));
     await expect(mintRealtimeSecret(SESSION)).rejects.toBeInstanceOf(LiteLLMError);
+  });
+});
+
+describe("mintTranscriptionSecret", () => {
+  it("routes on the proxy's name and configures the session by the provider's", async () => {
+    const fetch = vi.fn().mockResolvedValue(answer({ value: "ek_live", expires_at: 1_793_050_505 }));
+    vi.stubGlobal("fetch", fetch);
+    const session: RealtimeTranscriptionConfig = {
+      type: "transcription",
+      audio: {
+        input: {
+          transcription: { model: "gpt-live-transcribe", language: "en", delay: "low" },
+          turn_detection: { type: "server_vad" },
+        },
+      },
+    };
+
+    const secret = await mintTranscriptionSecret("openai/gpt-live-transcribe", session);
+
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe("https://litellm.test/realtime/client_secrets");
+    expect(JSON.parse(init.body)).toEqual({ model: "openai/gpt-live-transcribe", session });
+    expect(secret).toMatchObject({ value: "ek_live", callsUrl: "https://litellm.test/realtime/calls", resolvedModel: null });
   });
 });
