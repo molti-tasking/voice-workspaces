@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_DIGEST, type ConversationDigest } from "@voicemural/talkback/digest";
 import { EMPTY_CONVERSATION, applyMessage, type Conversation, type ConversationMessage } from "@/lib/talkback/conversation";
-import { STACK_LIVE_WORDS, STACK_NAMED_SLOTS, keyLine, stackModel } from "./stack";
+import {
+  STACK_CLUSTER_MIN,
+  STACK_LIVE_WORDS,
+  STACK_MAX_CLUSTERS,
+  arrangeShelf,
+  clusterLabel,
+  keyLine,
+  stackModel,
+} from "./stack";
 
 const NONE = new Map();
 
@@ -22,6 +30,10 @@ const trip = [
   title("Saturday dinner", 3),
   user("u3", "Where can we eat by the harbour on Saturday?"),
 ];
+
+function topics(n: number): Conversation {
+  return play(Array.from({ length: n }, (_, i) => [title(`Topic ${i + 1}`, i + 1), user(`u${i}`, `About topic ${i + 1}.`)]).flat());
+}
 
 describe("the topic stack", () => {
   it("shows the current topic apart and the earlier ones in the order they came up", () => {
@@ -68,13 +80,39 @@ describe("the topic stack", () => {
     expect(cued.slots.map((s) => s.kind)).toEqual(["topic", "topic"]);
   });
 
-  it("folds the earliest topics into one bubble", () => {
-    const many = play(
-      Array.from({ length: STACK_NAMED_SLOTS + 3 }, (_, i) => [title(`Topic ${i + 1}`, i + 1), user(`u${i}`, `About topic ${i + 1}.`)]).flat(),
-    );
-    const model = stackModel(many, EMPTY_DIGEST, NONE);
-    expect(model.slots).toHaveLength(STACK_NAMED_SLOTS);
-    expect(model.folded.map((t) => t.title)).toEqual(["Topic 1", "Topic 2"]);
+  it("keeps every earlier topic, however many there are", () => {
+    const model = stackModel(topics(9), EMPTY_DIGEST, NONE);
+    expect(model.slots.map((s) => s.topic.title)).toEqual(Array.from({ length: 8 }, (_, i) => `Topic ${i + 1}`));
+  });
+
+  it("shows the newest topics one by one and groups the oldest into clusters", () => {
+    const { slots } = stackModel(topics(9), EMPTY_DIGEST, NONE);
+    const all = arrangeShelf(slots, 99);
+    expect(all.clusters).toEqual([]);
+    expect(all.slots).toHaveLength(8);
+    const some = arrangeShelf(slots, 3);
+    expect(some.slots.map((s) => s.topic.title)).toEqual(["Topic 6", "Topic 7", "Topic 8"]);
+    expect(some.clusters.map((c) => c.topics.map((t) => t.title))).toEqual([
+      ["Topic 1", "Topic 2", "Topic 3", "Topic 4"],
+      ["Topic 5"],
+    ]);
+    expect(clusterLabel(some.clusters[0]!.topics)).toBe("Topic – Topic");
+    expect(arrangeShelf(slots, 0, 1).clusters).toHaveLength(1);
+  });
+
+  it("keeps a cluster's topics together as more topics join, and merges neighbours past the cap", () => {
+    const at = (n: number, named: number) => arrangeShelf(stackModel(topics(n + 1), EMPTY_DIGEST, NONE).slots, named).clusters;
+    const before = at(10, 2).map((c) => c.key);
+    expect(
+      at(11, 2)
+        .map((c) => c.key)
+        .slice(0, before.length),
+    ).toEqual(before);
+    const hundred = at(100, 4);
+    expect(hundred.length).toBeLessThanOrEqual(STACK_MAX_CLUSTERS);
+    expect(hundred.reduce((n, c) => n + c.topics.length, 0)).toBe(96);
+    // Doubling merges neighbours: each larger cluster starts where a smaller one did.
+    expect(hundred[0]!.topics.length % STACK_CLUSTER_MIN).toBe(0);
   });
 
   it("marks a topic as theirs, the agent's or both by who said its words", () => {
