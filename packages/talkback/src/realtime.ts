@@ -320,8 +320,13 @@ export function realtimeSessionConfig({
  * (`REALTIME_LIVE_TRANSCRIBE_MODEL`): their words while they are saying them,
  * for the screen only — the record is still the conversation's own transcript
  * of the turn, which replaces them once it is in. Same language and noise
- * reduction as the conversation; its own voice detection cuts the speech into
- * segments, which the browser joins into their turn
+ * reduction as the conversation.
+ *
+ * NO TURN DETECTION: a streaming model refuses it ("Turn detection is not
+ * supported for this transcription model", gpt-live-transcribe through the
+ * proxy, 29 Oct 2026). It writes as the audio comes and ends a segment only
+ * when it is told to, so the browser commits its buffer where the
+ * conversation's own turn ends, and its segments line up with their turns
  * (`RealtimeConversation.caption`). `model` is the provider's name.
  */
 export function liveTranscriptionConfig({
@@ -338,7 +343,7 @@ export function liveTranscriptionConfig({
         // Low: words on screen soon after they are said, a little context first.
         transcription: { model, ...(language ? { language } : {}), delay: "low" },
         noise_reduction: { type: "near_field" },
-        turn_detection: { type: "server_vad" },
+        turn_detection: null,
       },
     },
   };

@@ -117,14 +117,14 @@ describe("the session", () => {
 });
 
 describe("liveTranscriptionConfig", () => {
-  it("is a transcription-only session in the conversation's language, writing soon after the words", () => {
+  it("is a transcription-only session in the conversation's language, writing soon after the words, with no turn detection of its own", () => {
     expect(liveTranscriptionConfig({ model: "gpt-live-transcribe", language: "en" })).toEqual({
       type: "transcription",
       audio: {
         input: {
           transcription: { model: "gpt-live-transcribe", language: "en", delay: "low" },
           noise_reduction: { type: "near_field" },
-          turn_detection: { type: "server_vad" },
+          turn_detection: null,
         },
       },
     });

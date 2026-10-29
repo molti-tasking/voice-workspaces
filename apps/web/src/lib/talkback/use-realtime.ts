@@ -56,7 +56,8 @@ interface Call extends CallRecords {
  * The live transcription beside the call: a transcription-only session on the
  * same track, whose events are their words while they say them
  * (`RealtimeConversation.caption`). Its own connection, so whatever happens to
- * it costs the screen its live words and nothing else.
+ * it costs the screen its live words and nothing else. It has no turn
+ * detection: its buffer is committed where the call's turn ends (`onEvent`).
  */
 interface Captions {
   pc: RTCPeerConnection;
@@ -297,6 +298,11 @@ export function useRealtimeTalkback(options: TalkbackOptions): Talkback {
 
     function onEvent(c: Connection, event: { type: string; [key: string]: unknown }): void {
       if (current !== c) return;
+      // Their turn is over: so is the live words' segment of it. The streaming
+      // model has no turn detection of its own, and ends a segment only here.
+      if (event.type === "input_audio_buffer.committed" && c.captions?.dc.readyState === "open") {
+        c.captions.dc.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+      }
       if (event.type === "session.updated" && c.askedFloor !== null) {
         const applied = c.askedFloor;
         if (applied === "open" && c.appliedFloor === "locked") send(c, systemNote(REALTIME_UNLOCK_NOTE));
