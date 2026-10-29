@@ -9,7 +9,8 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const OWNER = "test-debug-export-owner";
 const OTHER = "test-debug-export-other";
-const SESSION_ID = "00000000-0000-4000-8000-0000000deb01";
+// This file's own drive id: the debrief test's collided with it when the files ran in parallel.
+const SESSION_ID = "00000000-0000-4000-8000-0000000db901";
 let signedIn = OWNER;
 
 vi.mock("@/lib/session", () => ({ currentUserId: async () => signedIn }));
