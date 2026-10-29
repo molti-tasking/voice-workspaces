@@ -218,6 +218,7 @@ export function SessionFlow({
     case "final":
       return (
         <FinalQuestions
+          fromProlific={fromProlific}
           onSubmit={async (final) => {
             const body = await send({ step: "final", final });
             if (!body) return false;

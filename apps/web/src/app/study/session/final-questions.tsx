@@ -8,8 +8,17 @@ import { Choice, ErrorLine, PrimaryButton, StudyFrame } from "../../p/ui";
  * The end of the session: anything else they would like to say, and whether
  * we may get back to them. No ranking of the views — each participant saw
  * one, and showing them the others would tell them what is being compared.
+ *
+ * A participant from Prolific can only be reached through Prolific's
+ * messages, so they are asked about that; the answer is the same `contact`.
  */
-export function FinalQuestions({ onSubmit }: { onSubmit: (final: SessionFinal) => Promise<boolean> }) {
+export function FinalQuestions({
+  onSubmit,
+  fromProlific = false,
+}: {
+  onSubmit: (final: SessionFinal) => Promise<boolean>;
+  fromProlific?: boolean;
+}) {
   const [more, setMore] = useState("");
   const [contact, setContact] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
@@ -40,7 +49,11 @@ export function FinalQuestions({ onSubmit }: { onSubmit: (final: SessionFinal) =
         />
       </label>
       <Choice
-        question="May we get back to you with a question or two about your answers?"
+        question={
+          fromProlific
+            ? "May we message you on Prolific with a question or two about your answers?"
+            : "May we get back to you with a question or two about your answers?"
+        }
         options={[
           { value: true, label: "Yes" },
           { value: false, label: "No" },
