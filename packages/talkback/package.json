@@ -15,7 +15,8 @@
     "./title": "./src/title.ts",
     "./study-task": "./src/study-task.ts",
     "./eval/study-judge": "./src/eval/study-judge.ts",
-    "./eval/langfuse": "./src/eval/langfuse.ts"
+    "./eval/langfuse": "./src/eval/langfuse.ts",
+    "./langfuse-live": "./src/langfuse-live.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

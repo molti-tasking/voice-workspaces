@@ -94,6 +94,14 @@ services:
       # "on" gives the speech-to-speech agent a MOCK web search (results made
       # up by the fast model). Demos and the display study only; off for drives.
       - REALTIME_MOCK_SEARCH=${REALTIME_MOCK_SEARCH:-off}
+      # Langfuse, for the speech-to-speech engine: with no container in the
+      # path, the web app traces each agent turn as it is recorded
+      # (`langfuse-live.ts`). Same keys and same ethics line as the container's
+      # below; unset is off.
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-${LANGFUSE_HOST:-https://cloud.langfuse.com}}
+      - LANGFUSE_TRACING_ENVIRONMENT=${LANGFUSE_TRACING_ENVIRONMENT:-}
       # Their words on screen while they say them: a transcription session
       # beside the call (gpt-live-transcribe). Unset is off: a turn appears
       # once it is transcribed. Minted at OpenAI with OPENAI_API_KEY — the
