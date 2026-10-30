@@ -9,7 +9,7 @@ import {
   type StudyMoment,
 } from "@voicemural/db/study-session";
 import type { ChatMessage } from "@voicemural/llm";
-import { LEGACY_DESIGN, type SessionDisplay } from "@voicemural/shared";
+import { LEGACY_DESIGN, SESSION_TASK_KIND, isSessionTaskId, type SessionDisplay } from "@voicemural/shared";
 import { keptIndices } from "@voicemural/talkback";
 import {
   STUDY_JUDGE_VERSION,
@@ -156,7 +156,14 @@ export function buildJudgeItems(
     if (lines.all.length === 0) continue;
     const made: Omit<JudgeItem, "id">[] = [];
     if (block.summary) {
-      made.push({ kind: "summary", messages: summaryMessages({ lines: lines.all, summary: scrubViewWords(block.summary) }) });
+      made.push({
+        kind: "summary",
+        messages: summaryMessages({
+          lines: lines.all,
+          summary: scrubViewWords(block.summary),
+          reflection: isSessionTaskId(block.task) && SESSION_TASK_KIND[block.task] === "reflect",
+        }),
+      });
     }
     if (lines.after.length > 0) {
       made.push({

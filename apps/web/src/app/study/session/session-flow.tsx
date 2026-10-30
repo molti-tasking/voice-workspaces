@@ -359,9 +359,9 @@ function Consent({
   return (
     <StudyFrame title="A short conversation with a voice assistant">
       <p>
-        In this study you talk with an AI voice assistant about an everyday
-        planning problem for about five minutes, and answer a few questions
-        afterwards. It takes about 15 minutes. You need your phone, a quiet
+        In this study you talk with an AI voice assistant for about five
+        minutes, either planning something or looking back on a week, and
+        answer a few questions afterwards. It takes about 15 minutes. You need your phone, a quiet
         place, and ideally headphones.
       </p>
       <div className="space-y-3 rounded-2xl border border-line bg-surface p-5 text-[0.95rem]">
@@ -382,8 +382,10 @@ function Consent({
             wrote, to study how a spoken conversation can be shown on a phone.
           </li>
           <li>
-            You are known to us only by a code, not by name. Please do not
-            mention your name or other personal details in the conversation.
+            You are known to us only by a code, not by name. Some
+            conversations are about your own plans or your own week: talk only
+            about what you are comfortable sharing, and do not mention your
+            name, other people&apos;s names or other identifying details.
             Results are published only in anonymised form.
           </li>
           <li>

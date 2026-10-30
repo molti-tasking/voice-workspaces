@@ -149,6 +149,32 @@ function severalSection(problem: string): string {
 These are separate matters, not one plan. Take them one at a time, the one they are on, and keep each its own: do not fold them into one list. They may jump between them and come back to one; follow them there. Point out a clash between two only when it matters for the one they are on.`;
 }
 
+/**
+ * For a task about their own life: they choose what to talk about, and the
+ * agent never asks for anything that identifies anyone.
+ */
+const OWN_LIFE = `
+THEIR OWN LIFE
+This is about their own life, and they choose what to share. Let them say what it is; do not guess or pry. Never ask for names, places of work, addresses or anything else that identifies them or anyone else; if they give such details, do not repeat them.`;
+
+/**
+ * Reflection, not planning: what changes from the agent the planning tasks
+ * have. It overrides HOW TO TALK and the study setting's "you bring ideas",
+ * because a reflection is theirs to reach; an agent that solves their week
+ * for them would be measuring its own advice.
+ */
+function reflectSection(problem: string): string {
+  return `${sessionSection(problem)}
+
+THIS IS REFLECTION, NOT PLANNING
+This overrides "bring your own ideas" and "have opinions" above: help them think about what happened and what it means to them, not solve it for them.
+- Mostly ask and mirror: one open question at a time, and their own words back when that helps them go further.
+- Give your own view or advice only when they ask for it, and then briefly.
+- Do not push them towards decisions or a plan. A conclusion is theirs to reach; if they arrive at something they would do differently, that is enough.
+- Be kind and matter-of-fact about what went badly: do not talk them out of it, and do not diagnose them.
+- If they bring up something distressing (health, grief, a crisis), acknowledge it briefly, do not probe, and let them steer elsewhere.`;
+}
+
 export const SESSION_TASKS = {
   trip: {
     id: "trip",
@@ -221,6 +247,44 @@ export const SESSION_TASKS = {
       "They moved to a new city last week and start a new job on Monday. They still need to register their address, open a bank account, find a doctor, get a phone contract, and meet some people, with one free afternoon a week. What comes first, and how it all fits, is the problem.",
     ),
     kind: SESSION_TASK_KIND.city,
+  },
+  ownplan: {
+    id: "ownplan",
+    title: "Something you need to plan",
+    brief:
+      "Think of something you actually need to plan in the next few weeks: a trip, an event, a move, or a busy stretch at work or at home. Pick something you are happy to talk about. " +
+      "Work out what has to happen and what you do first, by talking it over with the assistant.",
+    prompts: ["What is it, and what has to happen?", "What is the hard part?", "What do you do first?"],
+    agentSection:
+      sessionSection(
+        "They will tell you about something real they need to plan in the next few weeks — a trip, an event, a move, a busy stretch. What has to happen, the hard part, and what to do first are the parts of it.",
+      ) + OWN_LIFE,
+    kind: SESSION_TASK_KIND.ownplan,
+  },
+  givenweek: {
+    id: "givenweek",
+    title: "Looking back on a hard week",
+    brief:
+      "Imagine this was your week: you missed a deadline because a colleague was late, snapped at a close friend and have not called back, and skipped every workout. On Friday you helped a neighbour carry a sofa, which felt good. " +
+      "Look back on it as if it were yours, by talking it over with the assistant.",
+    prompts: ["What stands out about this week?", "What went well, and what did not?", "What would you do differently next week?"],
+    agentSection: reflectSection(
+      "They are looking back on a past week as if it were theirs: they missed a deadline at work because a colleague sent their part late; they snapped at a close friend on the phone and have not called back; they skipped every workout they had planned; and on Friday they helped a neighbour carry a sofa upstairs, which felt good. What went well, what did not, and what they would do differently is the reflection. It is made up: they may fill in details as they like.",
+    ),
+    kind: SESSION_TASK_KIND.givenweek,
+  },
+  ownweek: {
+    id: "ownweek",
+    title: "Looking back on your week",
+    brief:
+      "Look back on your past week. Pick a few things that happened, at work, at home or with other people, that you are happy to talk about. " +
+      "Think through what went well, what did not, and what you would do differently next week, by talking it over with the assistant.",
+    prompts: ["What stood out this week?", "What went well, and what did not?", "What would you do differently next week?"],
+    agentSection:
+      reflectSection(
+        "They are looking back on their own past week: what stood out, what went well and what did not, and what they would do differently next week is the reflection.",
+      ) + OWN_LIFE,
+    kind: SESSION_TASK_KIND.ownweek,
   },
 } as const satisfies Record<SessionTaskId, SessionTask>;
 
