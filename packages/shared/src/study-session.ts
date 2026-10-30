@@ -33,17 +33,29 @@ export const SESSION_VERSION = "session-4";
  * The tasks a session can have, by id. The words — what they read and what the
  * agent is told — are `SESSION_TASKS` in @voicemural/talkback/study-task.
  */
-export const SESSION_TASK_IDS = ["trip", "birthday", "move", "dinners", "week", "city"] as const;
+export const SESSION_TASK_IDS = [
+  "trip",
+  "birthday",
+  "move",
+  "dinners",
+  "week",
+  "city",
+  "ownplan",
+  "givenweek",
+  "ownweek",
+] as const;
 export type SessionTaskId = (typeof SESSION_TASK_IDS)[number];
 
 /**
- * Two kinds of task, so the views can be compared on both: "one" plans one
- * thing from a few sides (a trip: where, how, where to stay), the way the
- * pilots did; "several" is a handful of separate matters that collide, the
- * way a conversation spread over days touches many things, so it brings up
- * more topics and more returns to them.
+ * Three kinds of task, so the views can be compared on more than one: "one"
+ * plans one thing from a few sides (a trip: where, how, where to stay), the
+ * way the pilots did; "several" is a handful of separate matters that
+ * collide, the way a conversation spread over days touches many things, so it
+ * brings up more topics and more returns to them; "reflect" looks back on a
+ * week, open-ended, with few decisions to reach (added after Prolific pilot
+ * run 1, 30 Oct 2026, for planning vs. reflection).
  */
-export type SessionTaskKind = "one" | "several";
+export type SessionTaskKind = "one" | "several" | "reflect";
 export const SESSION_TASK_KIND: Record<SessionTaskId, SessionTaskKind> = {
   trip: "one",
   birthday: "one",
@@ -51,6 +63,27 @@ export const SESSION_TASK_KIND: Record<SessionTaskId, SessionTaskKind> = {
   dinners: "one",
   week: "several",
   city: "several",
+  ownplan: "one",
+  givenweek: "reflect",
+  ownweek: "reflect",
+};
+
+/**
+ * Whether a task is about the participant's own life ("own") or a situation
+ * given to them ("given"). Crossed with planning vs. reflection: `trip` and
+ * `ownplan` plan, `givenweek` and `ownweek` reflect.
+ */
+export type SessionTaskSource = "given" | "own";
+export const SESSION_TASK_SOURCE: Record<SessionTaskId, SessionTaskSource> = {
+  trip: "given",
+  birthday: "given",
+  move: "given",
+  dinners: "given",
+  week: "given",
+  city: "given",
+  ownplan: "own",
+  givenweek: "given",
+  ownweek: "own",
 };
 
 export function isSessionTaskId(value: unknown): value is SessionTaskId {

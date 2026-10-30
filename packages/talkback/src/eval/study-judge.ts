@@ -16,8 +16,12 @@
 import type { ChatMessage } from "@voicemural/llm";
 import type { ConversationDisplay } from "@voicemural/shared";
 
-/** Bump when a rubric changes enough that scores should not be pooled. */
-export const STUDY_JUDGE_VERSION = "study-judge-2";
+/**
+ * Bump when a rubric changes enough that scores should not be pooled.
+ * study-judge-3 (30 Oct 2026): reflection tasks get their own summary rubric
+ * (`REFLECTION_SUMMARY_PROMPT`); the planning one is unchanged, word for word.
+ */
+export const STUDY_JUDGE_VERSION = "study-judge-3";
 
 export interface JudgeLine {
   who: "Person" | "Assistant";
@@ -53,6 +57,27 @@ export const SUMMARY_PROMPT = `You are scoring how well a person summarised a co
    specificity — whether it names the actual choices (places, amounts, days) rather than generalities.
 
 Do not reward length, polish or spelling: a short summary with the key points right scores high.
+
+Reply with ONLY a JSON object of this shape, nothing else:
+{"key_points": [{"point": "…", "in_summary": "present" | "partial" | "absent"}], "invented": 0, "coverage": 1-5, "accuracy": 1-5, "specificity": 1-5, "reason": "one sentence"}`;
+
+/**
+ * The summary rubric for a reflection task (`kind: "reflect"`). A reflection
+ * reaches few decisions, so the planning rubric's "decisions reached, options
+ * still open" would score a good summary of one as empty. Same scale and the
+ * same JSON shape, so the two read into one table; compare them within a kind.
+ */
+export const REFLECTION_SUMMARY_PROMPT = `You are scoring how well a person summarised a conversation they had just had with a voice assistant, in which they looked back on a week. You will see the conversation, transcribed by machine (expect errors), and the summary the person wrote straight afterwards, from memory, without seeing the conversation.
+
+1. List the key points of the conversation: what happened that they talked about, what they made of it (what went well, what did not, and why), and anything they said they would do differently — usually three to eight. A point counts whoever raised it.
+2. For each, say whether the summary has it: "present", "partial" (mentioned, but vague or incomplete) or "absent".
+3. Count "invented": points in the summary that contradict the conversation or were never said in it.
+4. Score from 1 (poor) to 5 (excellent):
+   coverage — how much of what mattered is in the summary;
+   accuracy — whether what the summary says matches the conversation;
+   specificity — whether it names the actual events, reasons and intentions rather than generalities.
+
+Do not reward length, polish or spelling: a short summary with the key points right scores high. Do not judge the person or their week, only the summary.
 
 Reply with ONLY a JSON object of this shape, nothing else:
 {"key_points": [{"point": "…", "in_summary": "present" | "partial" | "absent"}], "invented": 0, "coverage": 1-5, "accuracy": 1-5, "specificity": 1-5, "reason": "one sentence"}`;
@@ -114,9 +139,14 @@ Reply with ONLY a JSON object of this shape, nothing else:
   return { prompt, options: Object.fromEntries(views.map((v, i) => [letters[i]!, v])) };
 }
 
-export function summaryMessages(input: { lines: readonly JudgeLine[]; summary: string }): ChatMessage[] {
+/** `reflection` picks the reflection rubric; planning tasks leave it off. */
+export function summaryMessages(input: {
+  lines: readonly JudgeLine[];
+  summary: string;
+  reflection?: boolean;
+}): ChatMessage[] {
   return [
-    { role: "system", content: SUMMARY_PROMPT },
+    { role: "system", content: input.reflection ? REFLECTION_SUMMARY_PROMPT : SUMMARY_PROMPT },
     {
       role: "user",
       content: `=== THE CONVERSATION ===\n${renderLines(input.lines)}\n\n=== THEIR SUMMARY ===\n${input.summary}`,

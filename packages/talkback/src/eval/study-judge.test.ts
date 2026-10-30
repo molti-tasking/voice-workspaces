@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   BLIND_DESCRIPTIONS,
   RESUMPTION_PROMPT,
+  REFLECTION_SUMMARY_PROMPT,
   SUMMARY_PROMPT,
   blindCheck,
   blindMessages,
@@ -69,6 +70,13 @@ Reply with ONLY a JSON object of this shape, nothing else:
     const lines = [{ who: "Person" as const, text: "Train." }];
     const summary = summaryMessages({ lines, summary: "We took the train." });
     expect(summary[0]).toEqual({ role: "system", content: SUMMARY_PROMPT });
+    const reflection = summaryMessages({ lines, summary: "A hard week.", reflection: true });
+    expect(reflection[0]).toEqual({ role: "system", content: REFLECTION_SUMMARY_PROMPT });
+    expect(REFLECTION_SUMMARY_PROMPT).toMatch(/would do differently/);
+    // Same JSON shape, so both rubrics read into one table.
+    expect(REFLECTION_SUMMARY_PROMPT.slice(REFLECTION_SUMMARY_PROMPT.indexOf("Reply with"))).toBe(
+      SUMMARY_PROMPT.slice(SUMMARY_PROMPT.indexOf("Reply with")),
+    );
     expect(summary[1]!.content).toContain("=== THEIR SUMMARY ===\nWe took the train.");
     const resumption = resumptionMessages({ before: lines, after: lines });
     expect(resumption[1]!.content).not.toContain("THEIR NOTE");

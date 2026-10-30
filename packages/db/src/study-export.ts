@@ -1,5 +1,5 @@
 import { inArray } from "drizzle-orm";
-import { SessionFinal } from "@voicemural/shared";
+import { SESSION_TASK_KIND, SESSION_TASK_SOURCE, SessionFinal, isSessionTaskId } from "@voicemural/shared";
 import { captureSession } from "./schema";
 import {
   listSessions,
@@ -281,6 +281,11 @@ export async function buildSessionExport(options: { text?: boolean; design?: str
       position: block.position,
       display: block.display,
       task: block.task,
+      // Planning vs. reflection and given vs. their own life, for the analysis
+      // to group by without a lookup table of its own. Null for an id no
+      // longer in the catalogue.
+      task_kind: isSessionTaskId(block.task) ? SESSION_TASK_KIND[block.task] : null,
+      task_source: isSessionTaskId(block.task) ? SESSION_TASK_SOURCE[block.task] : null,
       attempts: block.attempts,
     };
     const tail: Row = {

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { SESSION_TASK_IDS, SESSION_TASK_KIND } from "@voicemural/shared";
+import { SESSION_TASK_IDS, SESSION_TASK_KIND, SESSION_TASK_SOURCE } from "@voicemural/shared";
 import { PROACTIVITY_STANZAS, PROFILE } from "./profile";
 import {
   DRAFT_OPEN,
@@ -112,6 +112,24 @@ describe("the display study's agent", () => {
     expect(Math.max(...lengths) / Math.min(...lengths)).toBeLessThan(1.25);
     expect(sessionTaskFor("move")).toBe(SESSION_TASKS.move);
     expect(sessionTaskFor("heat")).toBeNull();
+  });
+
+  it("crosses planning and reflection with a given situation and their own life", () => {
+    expect([SESSION_TASK_KIND.trip, SESSION_TASK_SOURCE.trip]).toEqual(["one", "given"]);
+    expect([SESSION_TASK_KIND.ownplan, SESSION_TASK_SOURCE.ownplan]).toEqual(["one", "own"]);
+    expect([SESSION_TASK_KIND.givenweek, SESSION_TASK_SOURCE.givenweek]).toEqual(["reflect", "given"]);
+    expect([SESSION_TASK_KIND.ownweek, SESSION_TASK_SOURCE.ownweek]).toEqual(["reflect", "own"]);
+  });
+
+  it("tells the agent to ask and mirror in a reflection, and not to pry into their own life", () => {
+    for (const task of Object.values(SESSION_TASKS)) {
+      const reflect = task.kind === "reflect";
+      expect(task.agentSection.includes("THIS IS REFLECTION, NOT PLANNING")).toBe(reflect);
+      if (reflect) expect(task.agentSection).toMatch(/Mostly ask and mirror/);
+      const own = SESSION_TASK_SOURCE[task.id as keyof typeof SESSION_TASK_SOURCE] === "own";
+      expect(task.agentSection.includes("THEIR OWN LIFE")).toBe(own);
+      if (own) expect(task.agentSection).toMatch(/Never ask for names/);
+    }
   });
 
   it("has two kinds of task, and tells the agent to keep several matters apart", () => {
