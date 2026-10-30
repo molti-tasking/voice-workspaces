@@ -22,8 +22,12 @@ import { ProlificPid, ProlificRef } from "./prolific";
  * Bump when the questions change enough that answers should not be pooled.
  * Session-3 (29 Oct 2026): no one-tap prompts during the conversation, so the
  * ratings after it are the first time they are asked.
+ * Session-4 (30 Oct 2026, after Prolific pilot run 1): the microphone is
+ * muted during the game, the game waits for the agent to finish (up to
+ * `GAME_GRACE_MS` past its deadline), and first words after it are an onset.
+ * Resumption lags are not comparable with session-3's.
  */
-export const SESSION_VERSION = "session-3";
+export const SESSION_VERSION = "session-4";
 
 /**
  * The tasks a session can have, by id. The words — what they read and what the
@@ -220,10 +224,26 @@ export function scaledTimings(fast: number): SessionTimings {
  */
 export const GAME_QUIET_MS = 1_500;
 
-/** Whether the game should interrupt now: a quiet moment once it may, or the deadline. */
+/**
+ * Past the deadline the game still waits for the agent to finish what it is
+ * saying, but for a shorter quiet and only this long. Pilot run 1 (30 Oct
+ * 2026): a game forced at the deadline cut the agent off mid-sentence (P02),
+ * and its sentence was never said; this is the grace that lets it finish.
+ */
+export const GAME_GRACE_MS = 30_000;
+/** The quiet that is enough once the deadline has passed. */
+export const GAME_LATE_QUIET_MS = 500;
+
+/**
+ * Whether the game should interrupt now: a quiet moment once it may; past the
+ * deadline, any short quiet; and past the grace, at once. `quietMs` counts
+ * from the last moment either side was speaking or the agent was working out
+ * a reply, so the game never lands on a reply that is about to start.
+ */
 export function gameDue(input: { elapsedMs: number; quietMs: number; timings: SessionTimings }): boolean {
   const { elapsedMs, quietMs, timings } = input;
-  if (elapsedMs >= timings.gameLatestMs) return true;
+  if (elapsedMs >= timings.gameLatestMs + GAME_GRACE_MS) return true;
+  if (elapsedMs >= timings.gameLatestMs) return quietMs >= GAME_LATE_QUIET_MS;
   return elapsedMs >= timings.gameEarliestMs && quietMs >= GAME_QUIET_MS;
 }
 

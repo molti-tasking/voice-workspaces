@@ -68,6 +68,20 @@ export interface AnalyticsEventMap {
   unfinished_session_closed: { capture_session_id: string };
 
   /**
+   * The display study's interruption, on the drive's clock (`offset_ms`), so
+   * PostHog can line the game up with taps and replays. The study's own
+   * record is still `study_moment`; these are for the analytics side only.
+   * Added after pilot run 1 (30 Oct 2026), where the game could only be
+   * placed in a replay by working back from the export.
+   */
+  study_game_started: { capture_session_id: string | null; offset_ms: number };
+  study_game_ended: { capture_session_id: string | null; offset_ms: number; game_ms: number; rounds: number };
+  /** Their first words after the game, as an onset (`block-moments.ts`). */
+  study_resumed: { capture_session_id: string | null; offset_ms: number; resume_lag_ms: number };
+  /** Opened on a device that is not a phone; the session does not go on there. */
+  study_not_a_phone: { pointer_coarse: boolean; screen_short_side: number };
+
+  /**
    * One per drain-loop completion, not per chunk.
    *
    * Per-chunk would be ~6 events a minute of near-zero information; per-session

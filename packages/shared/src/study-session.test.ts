@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   BlockAnswers,
+  GAME_GRACE_MS,
+  GAME_LATE_QUIET_MS,
   GAME_QUIET_MS,
   DEFAULT_DESIGN,
   DesignInput,
@@ -115,18 +117,24 @@ describe("scaledTimings", () => {
 
   it("ends the game, even at its latest, before the conversation's cap", () => {
     const t = SESSION_TIMINGS;
-    expect(t.gameLatestMs + t.gameCapMs).toBeLessThan(t.talkCapMs);
+    expect(t.gameLatestMs + GAME_GRACE_MS + t.gameCapMs).toBeLessThan(t.talkCapMs);
   });
 });
 
 describe("gameDue", () => {
   const timings = SESSION_TIMINGS;
 
-  it("waits for a quiet moment once it may come, and comes at the deadline regardless", () => {
+  it("waits for a quiet moment once it may come", () => {
     expect(gameDue({ elapsedMs: 100_000, quietMs: 10_000, timings })).toBe(false);
     expect(gameDue({ elapsedMs: 140_000, quietMs: 800, timings })).toBe(false);
     expect(gameDue({ elapsedMs: 140_000, quietMs: GAME_QUIET_MS, timings })).toBe(true);
-    expect(gameDue({ elapsedMs: 180_000, quietMs: 0, timings })).toBe(true);
+  });
+
+  it("past the deadline, lets the agent finish its sentence, and comes after the grace regardless", () => {
+    // Pilot run 1, P02: forced at 180 s, it cut the agent off mid-sentence.
+    expect(gameDue({ elapsedMs: 180_000, quietMs: 0, timings })).toBe(false);
+    expect(gameDue({ elapsedMs: 185_000, quietMs: GAME_LATE_QUIET_MS, timings })).toBe(true);
+    expect(gameDue({ elapsedMs: 180_000 + GAME_GRACE_MS, quietMs: 0, timings })).toBe(true);
   });
 });
 

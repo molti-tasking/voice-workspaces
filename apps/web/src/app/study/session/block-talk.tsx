@@ -24,8 +24,9 @@ import { TicTacToe } from "./tic-tac-toe";
  * sparks. Every control the views do not all have would be a difference
  * between them that is not the view.
  *
- * Once, between 2:15 and 3:00, a game interrupts it (`block-moments.ts`):
- * the agent is paused and the game covers the screen; when it ends, the
+ * Once, between 2:15 and 3:00 (later only to let the agent finish), a game
+ * interrupts it (`block-moments.ts`): the agent and the microphone are paused
+ * and the game covers the screen; when it ends, the
  * conversation is back at once, with nothing in between. One-tap prompts
  * come in quiet moments. Finish waits for the game.
  *
@@ -99,10 +100,12 @@ export function LiveTalk({
     active: isRecording && !stopping && !unlinked,
     clock: driveClock,
     userSpeaking: Boolean(talk.userSpeaking),
-    agentSpeaking: hearing,
+    // Working out a reply counts: the game must not land on one about to start.
+    agentSpeaking: hearing || talk.thinking,
     timings,
     record: keep,
     pauseAgent,
+    analytics: { captureSessionId: rec.currentSessionId },
   });
   const { flush } = moments;
 
@@ -332,7 +335,7 @@ function Interrupted({
         <TicTacToe
           eyebrow={eyebrow}
           title="A quick game"
-          note="The conversation is paused. Play until the bar is full."
+          note="The conversation and the microphone are paused. Play until the bar is full."
           minMs={timings.gameMinMs}
           capMs={timings.gameCapMs}
           onDone={moments.gameDone}

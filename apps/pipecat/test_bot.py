@@ -3376,7 +3376,9 @@ def test_the_pause_note_is_word_for_word_prompt_ts():
     assert bot.PAUSE_RESUME_NOTE == (
         "(They stepped away from the conversation for a minute and are back now. Do not recap, "
         "summarise or remind them where things stood, and do not speak first: wait for them, and "
-        "respond only to what they say next.)"
+        "respond only to what they say next. If they ask you to go on or continue, or ask where "
+        "you were, that wants a reply: finish the point you were making when they left, in one "
+        "sentence.)"
     )
 
 

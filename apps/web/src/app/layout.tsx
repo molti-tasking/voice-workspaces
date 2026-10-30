@@ -44,6 +44,11 @@ export const metadata: Metadata = {
   // Times, session lengths and offsets read as phone numbers to iOS, which
   // then renders them as call links inside the transcript.
   formatDetection: { telephone: false, date: false, address: false },
+  // No machine translation of the page. Chrome's translate rewrites the DOM
+  // under React, and in Prolific pilot run 1 (30 Oct 2026) two participants
+  // saw the study's screens and its topic headlines in machine Arabic while
+  // the conversation itself ran in English. With `translate="no"` below.
+  other: { google: "notranslate" },
   appleWebApp: {
     capable: true,
     title: SITE.name,
@@ -77,7 +82,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     // `data-nav` picks the direction the sheet moves; see globals.css. Defaulted
     // here so the first navigation already has one.
     <ViewTransitions>
-      <html lang="en" data-nav="forward">
+      <html lang="en" translate="no" data-nav="forward">
       <body className="min-h-dvh antialiased">
         <NavDirectionTracker />
         <NavHistoryTracker />

@@ -36,6 +36,9 @@ const AUDIO_BITS_PER_SECOND = 32_000;
  * never hang on it.
  */
 const FINAL_CHUNK_WAIT_MS = 3_000;
+/** How many times ending a drive tells the server, and how far apart. */
+const END_TRIES = 3;
+const END_RETRY_MS = 1_000;
 
 const MIME_CANDIDATES = [
   "audio/webm;codecs=opus", // Chrome, Edge, Android
@@ -572,15 +575,22 @@ export function useRecorder() {
         // even if this event never leaves the phone.
         chunks_pending: pendingUploadsRef.current,
       });
-      try {
-        await fetch(`/api/capture-sessions/${meta.captureSessionId}/end`, {
+      // Best-effort, but tried a few times and with `keepalive`, so it
+      // survives the page moving on. Pilot run 1 (30 Oct 2026): an iPhone's
+      // Finish never reached here, and the sweep closed the drive 20 minutes
+      // later, which is what its length then said. The worker's sweep still
+      // closes anything this misses.
+      for (let attempt = 0; attempt < END_TRIES; attempt++) {
+        const ok = await fetch(`/api/capture-sessions/${meta.captureSessionId}/end`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: "{}",
-        });
-      } catch {
-        // Best-effort. The worker's sweep closes sessions that go quiet, so a
-        // failed call here never strands a session.
+          keepalive: true,
+        })
+          .then((res) => res.ok || res.status < 500)
+          .catch(() => false);
+        if (ok) break;
+        await new Promise((resolve) => setTimeout(resolve, END_RETRY_MS));
       }
       await clearOpenSession(meta.captureSessionId);
     }
@@ -632,5 +642,19 @@ export function useRecorder() {
     kickUploader();
   }, [patch, state.resumable]);
 
-  return { ...state, start, stop, dismissResumable, chunkMs: CHUNK_MS };
+  /**
+   * Mute or unmute the microphone without ending the drive: the tracks stay
+   * open (no permission prompt, no new chunk boundary) and carry silence.
+   * For the display study's interruption, where pilot run 1 (30 Oct 2026)
+   * recorded people talking through the game and timed a sentence begun
+   * under it as their resumption. Talk-back reads the same tracks, so it
+   * hears the same silence. A no-op when nothing is recording.
+   */
+  const setMuted = useCallback((muted: boolean) => {
+    streamRef.current?.getAudioTracks().forEach((t) => {
+      t.enabled = !muted;
+    });
+  }, []);
+
+  return { ...state, start, stop, setMuted, dismissResumable, chunkMs: CHUNK_MS };
 }
