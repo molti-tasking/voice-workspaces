@@ -84,6 +84,7 @@ export function SessionFlow({
   completion: initialCompletion = null,
   timings,
   talkbackEnabled,
+  conversationLogged = false,
 }: {
   mode: "live" | "demo";
   /** How it was opened; absent in the walkthrough. */
@@ -96,6 +97,8 @@ export function SessionFlow({
   completion?: SessionCompletion | null;
   timings: SessionTimings;
   talkbackEnabled: boolean;
+  /** Langfuse keys are set on the server, so the consent says the agent's turns are logged there. */
+  conversationLogged?: boolean;
 }) {
   const [step, setStep] = useState<Step>(() =>
     resume.at === "brief" ? { at: "mic", then: resume } : stepFor(resume),
@@ -161,6 +164,7 @@ export function SessionFlow({
         mode={mode}
         entry={entry}
         hasAccount={hasAccount}
+        conversationLogged={conversationLogged}
         onEnrolled={(at, assigned) => {
           if (assigned) setBlock(assigned);
           // The walkthrough has no microphone to check.
@@ -288,15 +292,26 @@ const EYEBROW = "Your conversation";
 
 /* ------------------------------------------------------------------------- */
 
+/**
+ * Whether the consent names PostHog, and where it is hosted: from the build's
+ * own PostHog settings, so the text says what this deployment does. Session
+ * replays mask every input (`maskAllInputs`), not the text on screen.
+ */
+const SCREEN_ANALYTICS = Boolean(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN?.trim());
+const SCREEN_ANALYTICS_EU = /(^|\/\/|\.)eu\./.test(process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "");
+
 function Consent({
   mode,
   entry,
   hasAccount,
+  conversationLogged,
   onEnrolled,
 }: {
   mode: "live" | "demo";
   entry?: SessionEntry;
   hasAccount: boolean;
+  /** Langfuse is configured on the server: the agent's turns are traced (`langfuse-live.ts`). */
+  conversationLogged: boolean;
   onEnrolled: (resume: SessionResume, block?: SessionBlockView) => void;
 }) {
   const [agreed, setAgreed] = useState(false);
@@ -361,8 +376,8 @@ function Consent({
       <p>
         In this study you talk with an AI voice assistant for about five
         minutes, either planning something or looking back on a week, and
-        answer a few questions afterwards. It takes about 15 minutes. You need your phone, a quiet
-        place, and ideally headphones.
+        answer a few questions afterwards. It takes about 15 minutes. You need
+        your phone, a quiet place, and ideally headphones.
       </p>
       <div className="space-y-3 rounded-2xl border border-line bg-surface p-5 text-[0.95rem]">
         <p className="font-medium">What we record and why</p>
@@ -381,6 +396,22 @@ function Consent({
             researchers&apos; university read the transcript and what you
             wrote, to study how a spoken conversation can be shown on a phone.
           </li>
+          {conversationLogged && (
+            <li>
+              To check how the assistant behaves, each of its replies and what
+              you said just before it are also logged in Langfuse, a monitoring
+              service the research team uses.
+            </li>
+          )}
+          {SCREEN_ANALYTICS && (
+            <li>
+              How you use the screen is recorded with PostHog, an analytics
+              service{SCREEN_ANALYTICS_EU ? " hosted in the EU" : ""}: your taps
+              and a recording of the screen, which can include the words of the
+              conversation shown on it. Anything you type is hidden from the
+              recording.
+            </li>
+          )}
           <li>
             You are known to us only by a code, not by name. Some
             conversations are about your own plans or your own week: talk only

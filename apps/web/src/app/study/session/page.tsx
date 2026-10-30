@@ -65,6 +65,8 @@ function pilotIds(): string[] {
 type Viewer = Awaited<ReturnType<typeof currentUser>>;
 
 const talkbackEnabled = () => process.env.NEXT_PUBLIC_TALKBACK_ENABLED === "true";
+/** Whether the agent's turns go to Langfuse (`langfuse-live.ts`), for the consent to say so. */
+const conversationLogged = () => Boolean(process.env.LANGFUSE_PUBLIC_KEY && process.env.LANGFUSE_SECRET_KEY);
 
 /**
  * The display study's session (`session-flow.tsx`). Standalone, like the
@@ -162,6 +164,7 @@ async function invitePage(raw: string | undefined, user: Viewer, timings: Sessio
       block={blockView(state.blocks[0]!)}
       timings={timings}
       talkbackEnabled={talkbackEnabled()}
+      conversationLogged={conversationLogged()}
     />
   );
 }
@@ -194,6 +197,7 @@ async function prolificPage(params: Search, user: Viewer, timings: SessionTiming
         completion={completionFor(state.session, await findDesign(state.session.design))}
         timings={timings}
         talkbackEnabled={talkbackEnabled()}
+        conversationLogged={conversationLogged()}
       />
     );
   }
@@ -226,6 +230,7 @@ async function prolificPage(params: Search, user: Viewer, timings: SessionTiming
       block={state ? blockView(state.blocks[0]!) : null}
       timings={timings}
       talkbackEnabled={talkbackEnabled()}
+      conversationLogged={conversationLogged()}
     />
   );
 }
