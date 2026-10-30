@@ -202,8 +202,13 @@ import { PROACTIVITY_STANZAS, PROFILE, type ConversationProfile } from "./profil
  * WHEN THEY READ SOMETHING OUT (`READING_SECTION`, shared with the study
  * persona) says a text being read is nobody's question to answer, overriding
  * the rules that made each sentence look like one.
+ *
+ * talkback-25 answers Prolific pilot run 1 (30 Oct 2026): back from the
+ * display study's game, "I'll continue." met silence and the conversation
+ * ended there. `PAUSE_RESUME_NOTE` now says being asked to go on wants a
+ * reply: the point it was making, in one sentence.
  */
-export const TALKBACK_CONFIG_VERSION = "talkback-24";
+export const TALKBACK_CONFIG_VERSION = "talkback-25";
 
 /*
  * Sections shared with the Prolific study's persona (`study-agent.ts`), which
@@ -530,11 +535,14 @@ export const FLOOR_OPEN_NOTE = `(They have unlocked you: you may reply again fro
  * Put in front of the model when the display study's interruption ends: the
  * person was taken away to play a game for a minute (`Floor` in bot.py,
  * "pause"). How they pick the conversation up again is the measure, so the
- * agent must neither recap where things stood nor speak first.
+ * agent must neither recap where things stood nor speak first. But when
+ * they ask it to go on, that is their pick-up and wants an answer: in pilot
+ * run 1 (30 Oct 2026) "I'll continue." after the game met silence (P08),
+ * and the conversation ended there.
  *
  * MIRRORED IN `bot.py` as `PAUSE_RESUME_NOTE`.
  */
-export const PAUSE_RESUME_NOTE = `(They stepped away from the conversation for a minute and are back now. Do not recap, summarise or remind them where things stood, and do not speak first: wait for them, and respond only to what they say next.)`;
+export const PAUSE_RESUME_NOTE = `(They stepped away from the conversation for a minute and are back now. Do not recap, summarise or remind them where things stood, and do not speak first: wait for them, and respond only to what they say next. If they ask you to go on or continue, or ask where you were, that wants a reply: finish the point you were making when they left, in one sentence.)`;
 
 /* ---------------------------------------------------------------------------
  * Sparks: a question about one subject, pulled by the person

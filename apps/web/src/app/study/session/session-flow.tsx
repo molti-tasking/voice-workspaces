@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type {
   SessionCompletion,
   SessionProlific,
@@ -9,7 +9,9 @@ import type {
   SessionTimings,
 } from "@voicemural/shared";
 import { useCapture } from "@/components/capture-provider";
+import { capture } from "@/lib/analytics/client";
 import { signIn } from "@/lib/auth-client";
+import { isPhone, readDeviceTraits } from "@/lib/study/device";
 import type { SessionBlockView } from "@/lib/study/session-view";
 import { VOICE_ENGINE } from "@/lib/talkback/use-talkback";
 import { MicCheck } from "../../p/mic-check";
@@ -121,11 +123,25 @@ export function SessionFlow({
     [mode],
   );
 
+  // Phones only (`device.ts`): null until the browser has been asked.
+  const phone = useSyncExternalStore(noSubscription, onAPhone, () => null);
+  const refused = mode === "live" && phone === false && step.at !== "done";
+  useEffect(() => {
+    if (!refused) return;
+    const traits = readDeviceTraits();
+    capture("study_not_a_phone", {
+      pointer_coarse: traits?.pointerCoarse ?? false,
+      screen_short_side: traits?.screenShortSide ?? 0,
+    });
+  }, [refused]);
+
   const go = useCallback((next: Step) => {
     setStep(next);
     window.scrollTo({ top: 0 });
   }, []);
   const onTalkFinished = useCallback(() => go({ at: "answers" }), [go]);
+
+  if (refused) return <NotAPhone />;
 
   if (mode === "live" && !talkbackEnabled) {
     return (
@@ -539,6 +555,34 @@ function Brief({
       <PrimaryButton disabled={!ready} onClick={onStart}>
         Start the conversation
       </PrimaryButton>
+    </StudyFrame>
+  );
+}
+
+function noSubscription(): () => void {
+  return () => {};
+}
+
+/** A boolean, so the snapshot is stable between reads. */
+function onAPhone(): boolean | null {
+  const traits = readDeviceTraits();
+  return traits === null ? null : isPhone(traits);
+}
+
+/**
+ * Opened on a desktop or a tablet. Nothing has been recorded yet; the same
+ * link on their phone starts the session there.
+ */
+function NotAPhone() {
+  const link = useSyncExternalStore(noSubscription, () => window.location.href, () => null);
+  return (
+    <StudyFrame title="Please open this study on your phone">
+      <p>
+        This study is about using a phone while you talk, so it only runs on a
+        smartphone. Nothing has been recorded.
+      </p>
+      <p>Open the same link on your phone to take part:</p>
+      {link && <p className="break-all rounded-lg bg-fg/[0.05] px-3 py-2 font-mono text-sm">{link}</p>}
     </StudyFrame>
   );
 }

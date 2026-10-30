@@ -115,6 +115,19 @@ export function subjectAt(visits: readonly SubjectVisitRow[], atMs: number): num
 const wordCount = (text: string) => (text.trim() ? text.trim().split(/\s+/).length : 0);
 const seconds = (ms: number | null) => (ms === null ? null : Math.round(ms / 100) / 10);
 
+/**
+ * When the conversation ended: the earlier of the drive closing and the block
+ * being finished. A phone whose Finish never reached `/end` leaves the drive
+ * open until the worker's idle sweep closes it, many minutes later — in
+ * Prolific pilot run 1 (30 Oct 2026) a 4-minute conversation measured 24.
+ * Finish is recorded by the study's own route, which does not depend on it.
+ */
+export function conversationEnd(driveEndedAt: Date | null, blockFinishedAt: Date | null): Date | null {
+  if (driveEndedAt === null) return blockFinishedAt;
+  if (blockFinishedAt === null) return driveEndedAt;
+  return driveEndedAt.getTime() <= blockFinishedAt.getTime() ? driveEndedAt : blockFinishedAt;
+}
+
 export interface BlockInput {
   startedAt: Date;
   /** When the drive ended, or null if it never closed. */
@@ -298,7 +311,13 @@ export async function buildSessionExport(options: { text?: boolean; design?: str
       ...head,
       capture_session_id: block.captureSessionId,
       started_at: iso(drive.startedAt),
-      ...blockMeasures({ startedAt: drive.startedAt, endedAt: drive.endedAt, lines, visits, moments: mine }),
+      ...blockMeasures({
+        startedAt: drive.startedAt,
+        endedAt: conversationEnd(drive.endedAt, block.finishedAt),
+        lines,
+        visits,
+        moments: mine,
+      }),
       ...tail,
     });
     for (const m of mine) {

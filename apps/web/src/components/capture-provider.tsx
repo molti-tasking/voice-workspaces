@@ -142,8 +142,9 @@ export interface CaptureContextValue {
 
   /**
    * The display study's interruption: the agent is silenced and stops
-   * listening while the recording goes on (`pause` in bot.py). For the
-   * running drive only — the next one always starts unpaused.
+   * listening, and the microphone is muted while the recording goes on
+   * (`pause` in bot.py, `setMuted` in use-recorder). For the running drive
+   * only — the next one always starts unpaused.
    */
   agentPaused: boolean;
   pauseAgent: (paused: boolean) => void;
@@ -236,6 +237,12 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
     paused: false,
   });
   const agentPaused = pause.paused && pause.sessionId === recorder.currentSessionId;
+  // The microphone goes quiet with the agent: what is said during the
+  // interruption is neither heard by the agent nor kept in the ledger.
+  const { setMuted } = recorder;
+  useEffect(() => {
+    setMuted(agentPaused);
+  }, [agentPaused, setMuted]);
   const pauseAgent = useCallback(
     (paused: boolean) => setPause({ sessionId: recorder.currentSessionId, paused }),
     [recorder.currentSessionId],

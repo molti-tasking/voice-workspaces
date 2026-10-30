@@ -2528,11 +2528,14 @@ FLOOR_OPEN_NOTE = (
 # Mirrors PAUSE_RESUME_NOTE in packages/talkback/src/prompt.ts — change one,
 # change both. Put in front of the model when the display study's interruption
 # ends (`Floor`, "pause"): how they pick the conversation up again is what the
-# study measures, so the agent must neither recap nor speak first.
+# study measures, so the agent must neither recap nor speak first — but being
+# asked to go on is their pick-up and is answered (pilot run 1, P08).
 PAUSE_RESUME_NOTE = (
     "(They stepped away from the conversation for a minute and are back now. Do "
     "not recap, summarise or remind them where things stood, and do not speak "
-    "first: wait for them, and respond only to what they say next.)"
+    "first: wait for them, and respond only to what they say next. If they ask "
+    "you to go on or continue, or ask where you were, that wants a reply: finish "
+    "the point you were making when they left, in one sentence.)"
 )
 
 # --- Sparks: a question about one subject, pulled by the person --------------

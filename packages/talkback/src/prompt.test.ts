@@ -323,10 +323,10 @@ describe("the floor: Lock, Normal and Poke (talkback-20), which bot.py mirrors",
     expect(FLOOR_OPEN_NOTE).toMatch(/Do not work back through what they said while you were locked/);
   });
 
-  it("keeps the agent from recapping, or speaking first, after the display study's pause", () => {
+  it("keeps the agent from recapping, or speaking first, after the display study's pause, but answers being asked to go on", () => {
     // Pinned word for word: bot.py's test pins the same text.
     expect(PAUSE_RESUME_NOTE).toBe(
-      "(They stepped away from the conversation for a minute and are back now. Do not recap, summarise or remind them where things stood, and do not speak first: wait for them, and respond only to what they say next.)",
+      "(They stepped away from the conversation for a minute and are back now. Do not recap, summarise or remind them where things stood, and do not speak first: wait for them, and respond only to what they say next. If they ask you to go on or continue, or ask where you were, that wants a reply: finish the point you were making when they left, in one sentence.)",
     );
   });
 
@@ -467,8 +467,9 @@ describe("being read a text (talkback-24)", () => {
     expect(STUDY_SYSTEM_PROMPT).toContain(READING_SECTION);
   });
 
-  it("is talkback-24", () => {
-    expect(TALKBACK_CONFIG_VERSION).toBe("talkback-24");
+  it("is followed by talkback-25, which answers being asked to go on after the pause", () => {
+    expect(TALKBACK_CONFIG_VERSION).toBe("talkback-25");
+    expect(PAUSE_RESUME_NOTE).toMatch(/If they ask you to go on or continue/);
   });
 });
 

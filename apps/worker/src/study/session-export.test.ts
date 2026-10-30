@@ -16,7 +16,7 @@ const schema = await import("@voicemural/db/schema");
 const { isDatabaseReachable } = await import("@voicemural/db/testing");
 const { recordSubjectVisit } = await import("@voicemural/db/subjects");
 const sessions = await import("@voicemural/db/study-session");
-const { blockMeasures, buildSessionExport, pauseWindow, subjectAt } = await import("./session-export");
+const { blockMeasures, buildSessionExport, conversationEnd, pauseWindow, subjectAt } = await import("./session-export");
 
 const T0 = new Date("2026-10-21T10:00:00Z");
 
@@ -86,6 +86,19 @@ describe("the interruption and the subjects", () => {
     expect(subjectAt(VISITS, 100_000)).toBe(2);
     expect(subjectAt(VISITS, 9_999_999)).toBe(2);
     expect(subjectAt([], 1_000)).toBeNull();
+  });
+});
+
+describe("conversationEnd", () => {
+  it("is the earlier of the drive closing and Finish, so a missed /end does not stretch it", () => {
+    const finished = new Date("2026-10-30T16:53:38Z");
+    // Pilot run 1, P08: the idle sweep closed the drive 20 minutes after Finish.
+    const swept = new Date("2026-10-30T17:13:42Z");
+    expect(conversationEnd(swept, finished)).toEqual(finished);
+    expect(conversationEnd(finished, swept)).toEqual(finished);
+    expect(conversationEnd(null, finished)).toEqual(finished);
+    expect(conversationEnd(swept, null)).toEqual(swept);
+    expect(conversationEnd(null, null)).toBeNull();
   });
 });
 
