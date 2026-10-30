@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import { recordAgentTurn } from "@voicemural/talkback";
+import { traceRealtimeTurn } from "@voicemural/talkback/langfuse-live";
 import { resolveLiveSession } from "@/lib/talkback/live-session";
 
 export const runtime = "nodejs";
@@ -123,6 +124,17 @@ export async function POST(req: Request) {
     error: turn.error?.slice(0, MAX_ERROR_CHARS),
     captureSessionId: payload.captureSessionId,
     userId: payload.userId,
+  });
+
+  // Into Langfuse, when it is configured: the speech-to-speech engine has no
+  // container to trace it, so this is where its turns are seen. Never fails
+  // the request (`langfuse-live.ts`).
+  traceRealtimeTurn({
+    ...turn,
+    text: turn.text.slice(0, MAX_TURN_CHARS),
+    respondingToText: turn.respondingToText?.slice(0, MAX_CONTEXT_CHARS),
+    error: turn.error?.slice(0, MAX_ERROR_CHARS),
+    captureSessionId: payload.captureSessionId,
   });
 
   // The id goes back so the container can post the turn's decision pointing at
