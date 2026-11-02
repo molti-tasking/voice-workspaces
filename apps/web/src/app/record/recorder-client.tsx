@@ -33,7 +33,14 @@ import type { AskTopic } from "./views/topic-sheet";
  * and after it. Only what is in the frame changes: before the first drive the
  * empty conversation holds one enormous target to START, with the voice and
  * language to start with; from then on it is the conversation, live and then
- * ended, until the next drive replaces it.
+ * ended.
+ *
+ * RECORD AGAIN CARRIES ON (3 Nov 2026). After Stop the conversation stays on
+ * screen, and Record picks it up where it was left (`continueRecording`): the
+ * next drive opens with it on screen, the agent is told what was said, and it
+ * is stored as its continuation. Starting again from an empty screen threw
+ * away the thing just built. A conversation of its own is "New conversation"
+ * in the menu, or a fresh visit to this page.
  *
  * THE STUDY'S COLUMN. The Stack was tuned for it: its topics alternate left
  * and right inside the column, and in a window five times as wide they drift
@@ -156,10 +163,14 @@ export function RecorderClient({
             <ViewSwitch view={chosen} />
           )}
           {rec.display === null && (
-            <MoreMenu view={chosen} canChooseView={hasConversation} />
+            <MoreMenu
+              view={chosen}
+              canChooseView={hasConversation}
+              {...(ended ? { onNewConversation: startRecording } : {})}
+            />
           )}
-          {/* Stop, then Record for the next one: one button that changes
-              rather than moves. Stop is one tap, no confirmation, but small,
+          {/* Stop, then Record to carry on: one button that changes rather
+              than moves. Stop is one tap, no confirmation, but small,
               so a stray hand in a cradle is unlikely to find it; the ring says
               the agent is talking, wherever the eye is. Before the first drive
               the start is the large target below instead. */}
@@ -177,12 +188,12 @@ export function RecorderClient({
             >
               <Square size={16} fill="currentColor" aria-hidden />
             </button>
-          ) : hasConversation ? (
+          ) : conversationId !== null ? (
             <button
               type="button"
-              onClick={startRecording}
+              onClick={() => continueRecording(conversationId)}
               disabled={isBusy}
-              aria-label="Start a new recording"
+              aria-label="Record, continuing this conversation"
               className="grid size-11 shrink-0 cursor-pointer place-items-center rounded-full bg-[var(--color-idle)] text-white transition-transform active:scale-95 disabled:opacity-50"
             >
               <Mic size={18} aria-hidden />

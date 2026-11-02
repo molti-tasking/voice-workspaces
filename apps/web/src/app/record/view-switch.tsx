@@ -96,16 +96,21 @@ export function ViewSwitch({ view }: { view: ConversationDisplay }) {
 /**
  * The button at the top right: the other views, and the pages that used to
  * be tabs (past conversations, and the older workspace, board and timeline),
- * which are no longer the way through the app but are still there.
+ * which are no longer the way through the app but are still there. After a
+ * drive it also starts a conversation of its own, since Record on the
+ * recorder carries on the one on screen.
  */
 export function MoreMenu({
   view,
   canChooseView = true,
   links = MORE_LINKS,
+  onNewConversation,
 }: {
   view: ConversationDisplay;
   canChooseView?: boolean;
   links?: readonly { href: string; label: string }[];
+  /** Start a drive that is not a continuation; absent, the menu offers none. */
+  onNewConversation?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const monitorOn = useMonitorOn();
@@ -143,6 +148,22 @@ export function MoreMenu({
           role="menu"
           className="absolute top-full right-0 z-50 mt-1 w-56 overflow-hidden rounded-2xl border border-line bg-surface py-1 text-sm shadow-lg"
         >
+          {onNewConversation && (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  onNewConversation();
+                }}
+                className="flex min-h-10 w-full cursor-pointer items-center px-3 text-left font-medium text-fg hover:bg-fg/[0.06]"
+              >
+                New conversation
+              </button>
+              <div className="my-1 border-t border-line" />
+            </>
+          )}
           {canChooseView && (
             <>
               <p className="px-3 pt-2 pb-1 text-xs font-medium tracking-wide text-fg/50 uppercase">Other views</p>
