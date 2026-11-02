@@ -3,12 +3,23 @@
 import { Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { SparkSelection } from "@voicemural/shared";
-import { EMPTY_CONVERSATION, type ConversationStore } from "@/lib/talkback/conversation";
-import { whyNoSparks, type NoSparksReason, type Spark, type SparkKind } from "@/lib/talkback/signals";
-import { EMPTY_LEDGER, sparkKey, type SparkLedger } from "@/lib/talkback/spark-ledger";
+import {
+  EMPTY_CONVERSATION,
+  type ConversationStore,
+} from "@/lib/talkback/conversation";
+import {
+  whyNoSparks,
+  type NoSparksReason,
+  type Spark,
+  type SparkKind,
+} from "@/lib/talkback/signals";
+import {
+  EMPTY_LEDGER,
+  sparkKey,
+  type SparkLedger,
+} from "@/lib/talkback/spark-ledger";
 import type { SparkRequest } from "@/lib/talkback/types";
 import type { PokeResult } from "@/lib/talkback/use-talkback";
-import { POKE_NOTES } from "./floor-controls";
 
 /**
  * The sparks on offer: at most three short questions about the subjects of
@@ -69,12 +80,21 @@ export async function pullSpark(
   },
 ): Promise<PokeResult | null> {
   const question = ledger.getSnapshot().questions.get(sparkKey(spark));
-  const result = await onPull({ kind: spark.kind, ordinal: spark.ordinal, ...(question ? { question } : {}) });
+  const result = await onPull({
+    kind: spark.kind,
+    ordinal: spark.ordinal,
+    ...(question ? { question } : {}),
+  });
   if (result === "fired" || result === "armed") {
     ledger.notePulled(spark);
     store.dispatch({
       type: "mark",
-      mark: { kind: "spark", ordinal: spark.ordinal, spark: spark.kind, ...(question ? { question } : {}) },
+      mark: {
+        kind: "spark",
+        ordinal: spark.ordinal,
+        spark: spark.kind,
+        ...(question ? { question } : {}),
+      },
     });
   }
   return result;
@@ -82,6 +102,16 @@ export async function pullSpark(
 
 /** How long what became of a pull stays under the chips. */
 const NOTE_MS = 2500;
+
+/** What became of a pull, said under the chips for a moment. */
+const POKE_NOTES: Record<PokeResult, string> = {
+  fired: "Poked",
+  // They were mid-sentence: the agent answers when they finish.
+  armed: "After you finish",
+  running: "Coming",
+  speaking: "It is already talking",
+  ended: "The drive has ended",
+};
 
 export function SparkChips({
   store,
@@ -111,7 +141,11 @@ export function SparkChips({
   );
   // Worked out above the router, where the container is also told about it
   // (`capture-provider.tsx`): what is here is what can be asked for out loud.
-  const spent = useSyncExternalStore(ledger.subscribe, ledger.getSnapshot, () => EMPTY_LEDGER);
+  const spent = useSyncExternalStore(
+    ledger.subscribe,
+    ledger.getSnapshot,
+    () => EMPTY_LEDGER,
+  );
   const sparks = spent.offered;
   const [note, setNote] = useState<string | null>(null);
   const [pulling, setPulling] = useState(false);
@@ -120,7 +154,9 @@ export function SparkChips({
   const asked = useMemo(
     () =>
       [...spent.pulled].flatMap(([ordinal, kind]) => {
-        const title = conversation.sections.find((s) => s.ordinal === ordinal)?.title;
+        const title = conversation.sections.find(
+          (s) => s.ordinal === ordinal,
+        )?.title;
         return title ? [{ ordinal, kind, title }] : [];
       }),
     [conversation, spent.pulled],
@@ -137,10 +173,13 @@ export function SparkChips({
     return () => window.clearTimeout(timer);
   }, [note]);
 
-  if (sparks.length === 0 && asked.length === 0 && !note && !explainEmpty) return null;
+  if (sparks.length === 0 && asked.length === 0 && !note && !explainEmpty)
+    return null;
   const none =
     explainEmpty && sparks.length === 0
-      ? NO_SPARKS[whyNoSparks(conversation, new Set(spent.pulled.keys()), selection)]
+      ? NO_SPARKS[
+          whyNoSparks(conversation, new Set(spent.pulled.keys()), selection)
+        ]
       : null;
 
   async function pull(spark: Spark) {
@@ -154,7 +193,11 @@ export function SparkChips({
   }
 
   return (
-    <div className="ph-no-capture relative shrink-0" role="group" aria-label="Sparks">
+    <div
+      className="ph-no-capture relative shrink-0"
+      role="group"
+      aria-label="Sparks"
+    >
       <ul className="flex gap-2 overflow-x-auto pb-0.5">
         {none && (
           <li className="flex min-h-11 min-w-0 shrink-0 basis-[min(22rem,90%)] items-center gap-1.5 text-sm text-fg/60">
@@ -167,38 +210,51 @@ export function SparkChips({
           // until then, or if none comes.
           const question = spent.questions.get(sparkKey(spark));
           return (
-          <li key={`${spark.ordinal}:${spark.kind}`} className="min-w-0 shrink-0 basis-[min(18rem,85%)]">
-            <button
-              type="button"
-              onClick={() => void pull(spark)}
-              disabled={!connected || speaking || pulling}
-              className={[
-                "flex min-h-11 w-full cursor-pointer flex-col items-start gap-0.5 rounded-2xl px-3 py-2 text-left",
-                // The page's own text colour on a faint amber wash, so it reads
-                // in both themes; amber was the text colour once, and on the
-                // light theme it all but vanished.
-                "border border-amber-500/45 bg-amber-500/10 text-fg transition-[transform,background-color]",
-                "hover:bg-amber-500/20",
-                "active:scale-95 disabled:cursor-default disabled:opacity-40",
-              ].join(" ")}
+            <li
+              key={`${spark.ordinal}:${spark.kind}`}
+              className="min-w-0 shrink-0 basis-[min(18rem,85%)]"
             >
-              <span className="flex w-full min-w-0 items-start gap-1.5 text-sm font-medium">
-                <Sparkles size={14} aria-hidden className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-300" />
-                <span className={question ? "line-clamp-2" : "truncate"}>
-                  {question ?? SPARK_LABELS[spark.kind]}
+              <button
+                type="button"
+                onClick={() => void pull(spark)}
+                disabled={!connected || speaking || pulling}
+                className={[
+                  "flex min-h-11 w-full cursor-pointer flex-col items-start gap-0.5 rounded-2xl px-3 py-2 text-left",
+                  // The page's own text colour on a faint amber wash, so it reads
+                  // in both themes; amber was the text colour once, and on the
+                  // light theme it all but vanished.
+                  "border border-amber-500/45 bg-amber-500/10 text-fg transition-[transform,background-color]",
+                  "hover:bg-amber-500/20",
+                  "active:scale-95 disabled:cursor-default disabled:opacity-40",
+                ].join(" ")}
+              >
+                <span className="flex w-full min-w-0 items-start gap-1.5 text-sm font-medium">
+                  <Sparkles
+                    size={14}
+                    aria-hidden
+                    className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-300"
+                  />
+                  <span className={question ? "line-clamp-2" : "truncate"}>
+                    {question ?? SPARK_LABELS[spark.kind]}
+                  </span>
                 </span>
-              </span>
-              <span className="w-full truncate text-xs text-fg/70">
-                {spark.title} · {question ? SPARK_LABELS[spark.kind] : spark.reason}
-              </span>
-            </button>
-          </li>
+                <span className="w-full truncate text-xs text-fg/70">
+                  {spark.title} ·{" "}
+                  {question ? SPARK_LABELS[spark.kind] : spark.reason}
+                </span>
+              </button>
+            </li>
           );
         })}
         {asked.map((spark) => (
-          <li key={`asked:${spark.ordinal}`} className="min-w-0 shrink-0 basis-[min(12rem,60%)]">
+          <li
+            key={`asked:${spark.ordinal}`}
+            className="min-w-0 shrink-0 basis-[min(12rem,60%)]"
+          >
             <span className="flex min-h-11 w-full flex-col justify-center gap-0.5 rounded-2xl border border-line px-3 py-2 text-fg/55">
-              <span className="truncate text-sm">{SPARK_LABELS[spark.kind]}</span>
+              <span className="truncate text-sm">
+                {SPARK_LABELS[spark.kind]}
+              </span>
               <span className="truncate text-xs">{spark.title} · asked</span>
             </span>
           </li>

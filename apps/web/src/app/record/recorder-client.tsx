@@ -16,9 +16,13 @@ import {
 } from "@/components/capture-settings";
 import { RecordingBadge } from "@/components/recording-badge";
 import { aiHealthProblem, useAiHealth } from "@/lib/ai-health";
-import { FloorControls } from "./floor-controls";
 import { PostDriveItems } from "./study-items";
-import { MoreMenu, ViewSwitch, useMonitorOn, useRecordView } from "./view-switch";
+import {
+  MoreMenu,
+  ViewSwitch,
+  useMonitorOn,
+  useRecordView,
+} from "./view-switch";
 import { ConversationView } from "./views/conversation-view";
 import type { AskTopic } from "./views/topic-sheet";
 
@@ -91,7 +95,11 @@ export function RecorderClient({
   const ask: AskTopic = async (ordinal, question, kind) => {
     const result = await poke({ kind, ordinal, question });
     const taken = result === "fired" || result === "armed";
-    if (taken) conversation.dispatch({ type: "mark", mark: { kind: "spark", ordinal, spark: kind, question } });
+    if (taken)
+      conversation.dispatch({
+        type: "mark",
+        mark: { kind: "spark", ordinal, spark: kind, question },
+      });
     return taken;
   };
   // Whether the AI proxy answers (`/api/health/ai`): a pill when it does not,
@@ -106,7 +114,8 @@ export function RecorderClient({
   // The ratings, once per drive: shown over the finished conversation until
   // Done, and not again for the same drive.
   const [ratedFor, setRatedFor] = useState<string | null>(null);
-  const askRatings = ended && rec.lastSessionId !== null && ratedFor !== rec.lastSessionId;
+  const askRatings =
+    ended && rec.lastSessionId !== null && ratedFor !== rec.lastSessionId;
 
   const topBar = (
     // Clear of the status bar: in a standalone PWA the stop sat under the clock.
@@ -144,8 +153,12 @@ export function RecorderClient({
           {/* The two views, one tap apart, and everything else behind the
               menu (2 Nov 2026). Not on a drive whose study condition fixes
               the view: there is nothing to choose and nowhere to wander off. */}
-          {hasConversation && rec.display === null && <ViewSwitch view={chosen} />}
-          {rec.display === null && <MoreMenu view={chosen} canChooseView={hasConversation} />}
+          {hasConversation && rec.display === null && (
+            <ViewSwitch view={chosen} />
+          )}
+          {rec.display === null && (
+            <MoreMenu view={chosen} canChooseView={hasConversation} />
+          )}
           {/* One tap, no confirmation, as the big button was — but small, so a
               stray hand in a cradle is unlikely to find it. The ring says the
               agent is talking, wherever the eye is. */}
@@ -178,7 +191,11 @@ export function RecorderClient({
         <div className="flex w-full flex-col items-center gap-8">
           <button
             type="button"
-            onClick={() => (continueFrom ? continueRecording(continueFrom.id) : startRecording())}
+            onClick={() =>
+              continueFrom
+                ? continueRecording(continueFrom.id)
+                : startRecording()
+            }
             disabled={isBusy}
             className={[
               "relative flex size-56 cursor-pointer items-center justify-center rounded-full text-2xl font-medium",
@@ -194,12 +211,17 @@ export function RecorderClient({
               // now that second showed an ellipsis on a disabled button — which
               // reads as "it did not hear me" and invites a second tap.
               <span className="text-fg/60">
-                {rec.status === "requesting" ? "Opening the microphone…" : "Saving…"}
+                {rec.status === "requesting"
+                  ? "Opening the microphone…"
+                  : "Saving…"}
               </span>
             ) : continueFrom ? (
               <>
                 Picks up &ldquo;{continueFrom.title}&rdquo; where it was left.{" "}
-                <Link href="/record" className="underline underline-offset-2 hover:text-fg">
+                <Link
+                  href="/record"
+                  className="underline underline-offset-2 hover:text-fg"
+                >
                   Start a new one instead
                 </Link>
               </>
@@ -218,7 +240,9 @@ export function RecorderClient({
           {aiProblem && (
             <Notice tone="warn" title="The AI server is not available">
               <div className="space-y-2">
-                <p>A conversation would get no answers right now. {aiProblem}</p>
+                <p>
+                  A conversation would get no answers right now. {aiProblem}
+                </p>
                 <Link
                   href="/record/demo"
                   className="inline-block rounded bg-fg/10 px-3 py-1.5 font-medium text-fg hover:bg-fg/20"
@@ -285,7 +309,9 @@ export function RecorderClient({
         // once there is time to read them.
         onRename={renameSubject}
         monitor={monitorOn}
-        {...(TALKBACK_ENABLED && isRecording && connected ? { onAsk: ask } : {})}
+        {...(TALKBACK_ENABLED && isRecording && connected
+          ? { onAsk: ask }
+          : {})}
         className={isRecording ? "min-h-0 flex-1" : "h-[65dvh] shrink-0"}
       />
 
@@ -320,17 +346,6 @@ export function RecorderClient({
           </div>
         )}
       </div>
-
-      {TALKBACK_ENABLED && isRecording && (
-        <FloorControls
-          floor={floor}
-          applied={talk.floor}
-          connected={connected}
-          speaking={hearing}
-          onFloor={setFloor}
-          onPoke={poke}
-        />
-      )}
     </main>
   );
 }
@@ -411,7 +426,9 @@ function Ratings({
   return (
     <section className="mx-auto w-full max-w-2xl shrink-0 rounded-3xl border border-line bg-surface p-5 shadow-sm sm:p-6">
       <header className="mb-4">
-        <h2 className="text-lg font-semibold tracking-tight text-fg">How did that go?</h2>
+        <h2 className="text-lg font-semibold tracking-tight text-fg">
+          How did that go?
+        </h2>
         <p className="mt-0.5 text-sm text-fg/60">
           The recording has stopped. One tap each, or skip any.
         </p>
@@ -470,7 +487,15 @@ function StatusPills({
   );
 }
 
-function Pill({ label, tone, title }: { label: string; tone: "ok" | "warn"; title?: string }) {
+function Pill({
+  label,
+  tone,
+  title,
+}: {
+  label: string;
+  tone: "ok" | "warn";
+  title?: string;
+}) {
   return (
     // Shrinks to an ellipsis rather than overflowing: wrapping only helps
     // when there are several pills, and one pill wider than the space left

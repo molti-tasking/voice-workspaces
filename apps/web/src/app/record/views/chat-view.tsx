@@ -68,8 +68,7 @@ export function ChatView({
     lastTop.current = el.scrollTop;
   }, [follow, items, drafts]);
 
-  // Not live — a stored conversation, or one scrolled back in time: open at
-  // its end, where the time bar points.
+  // Not live — a stored conversation: open at its end.
   useLayoutEffect(() => {
     const el = scroller.current;
     if (live || !el) return;

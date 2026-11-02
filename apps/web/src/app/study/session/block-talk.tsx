@@ -468,9 +468,6 @@ function TalkScreen({
           captureSessionId={captureSessionId}
           {...(fixedDigest ? { fixedDigest } : {})}
           placeholder={live ? "Talk whenever you are ready." : undefined}
-          // Not in the study: going back in time is a control only some
-          // conversations would use, and the resumption is what is measured.
-          timeBar={false}
           className="min-h-0 flex-1"
         />
       </AgentNameProvider>

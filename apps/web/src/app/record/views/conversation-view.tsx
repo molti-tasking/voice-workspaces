@@ -7,8 +7,11 @@ import type { TopicComprehension } from "@voicemural/talkback/comprehension";
 import type { ConversationDigest } from "@voicemural/talkback/digest";
 import type { DraftCue } from "@/lib/display/use-cues";
 import { needsRethink } from "@/lib/talkback/comprehension-monitor";
-import { EMPTY_CONVERSATION, type Conversation, type ConversationStore } from "@/lib/talkback/conversation";
-import { atCursor, cursorLabel, turnsInOrder } from "@/lib/talkback/cursor";
+import {
+  EMPTY_CONVERSATION,
+  type Conversation,
+  type ConversationStore,
+} from "@/lib/talkback/conversation";
 import { useComprehension } from "@/lib/talkback/use-comprehension";
 import { useDigest } from "@/lib/talkback/use-digest";
 import { useTurnGists } from "@/lib/talkback/use-turn-gists";
@@ -18,7 +21,6 @@ import { OpenView } from "./open-view";
 import { RecentView } from "./recent-view";
 import { StackView } from "./stack-view";
 import { StatusLine, type FlowStatus } from "./status-line";
-import { TimeBar } from "./time-bar";
 import { TopicLineView } from "./topic-line-view";
 import { TopicSheet, type AskTopic } from "./topic-sheet";
 import { questionEntries, topicEntries } from "./topics";
@@ -31,10 +33,8 @@ import { questionEntries, topicEntries } from "./topics";
  * the container's messages, a script, or storage replayed (`replay.ts`).
  *
  * WHAT EVERY VIEW SHARES, it gets here, so a view is only how it draws:
- * - the conversation at the cursor (`atCursor`): the time bar takes every view
- *   back in time the same way;
- * - the digest for that point (`useDigest`), asked for only by views that
- *   read it — the chat never spends a model call;
+ * - the digest (`useDigest`), asked for only by views that read it — the
+ *   chat never spends a model call;
  * - zooming into a topic (`TopicSheet`), with rename and keep;
  * - the status line, the same under every view;
  * - the comprehension monitor (DRAFT, `use-comprehension.ts`), when `monitor`
@@ -51,7 +51,6 @@ export function ConversationView({
   placeholder,
   onRename,
   keepable = false,
-  timeBar = true,
   monitor = false,
   fixedComprehension,
   onAsk,
@@ -73,57 +72,69 @@ export function ConversationView({
   onRename?: (ordinal: number, title: string) => boolean;
   /** A zoomed topic offers Keep (`sparkSelection: chosen`). */
   keepable?: boolean;
-  /** Offer going back in time. */
-  timeBar?: boolean;
   /** Run the comprehension monitor (draft). */
   monitor?: boolean;
   /** What the monitor would find, worked out locally, for a conversation with no AI behind it. */
-  fixedComprehension?: (conversation: Conversation) => ReadonlyMap<number, TopicComprehension>;
+  fixedComprehension?: (
+    conversation: Conversation,
+  ) => ReadonlyMap<number, TopicComprehension>;
   /** Live only: hand a question about a topic to the agent. */
   onAsk?: AskTopic;
   className?: string;
 }) {
-  const full = useSyncExternalStore(store.subscribe, store.getSnapshot, () => EMPTY_CONVERSATION);
-  const [cursor, setCursor] = useState<number | null>(null);
-  const shown = useMemo(() => atCursor(full, cursor), [full, cursor]);
-  const turns = useMemo(() => turnsInOrder(full), [full]);
+  const conversation = useSyncExternalStore(
+    store.subscribe,
+    store.getSnapshot,
+    () => EMPTY_CONVERSATION,
+  );
 
   const [zoomKey, setZoomKey] = useState<string | null>(null);
   const reads = view !== "chat" || zoomKey !== null;
-  const { digest, pending } = useDigest(shown, {
+  const { digest, pending } = useDigest(conversation, {
     captureSessionId: reads ? captureSessionId : null,
     ...(fixedDigest ? { fixed: fixedDigest } : {}),
   });
 
   // The turn just answered, as a gist while the answer is being said (Stack's line, Recent's words).
-  const turnGists = useTurnGists(full, live && (view === "stack" || view === "recent") ? captureSessionId : null);
+  const turnGists = useTurnGists(
+    conversation,
+    live && (view === "stack" || view === "recent") ? captureSessionId : null,
+  );
   const gists = useMemo(
-    () => (turnGists.length === 0 ? digest.gists : [...(digest.gists ?? []), ...turnGists]),
+    () =>
+      turnGists.length === 0
+        ? digest.gists
+        : [...(digest.gists ?? []), ...turnGists],
     [digest.gists, turnGists],
   );
-  const topics = useMemo(() => topicEntries(shown, digest), [shown, digest]);
-  const zoomed = zoomKey ? (topics.find((t) => t.key === zoomKey) ?? null) : null;
-  const monitored = useComprehension(full, captureSessionId, {
+  const topics = useMemo(() => topicEntries(conversation, digest), [conversation, digest]);
+  const zoomed = zoomKey
+    ? (topics.find((t) => t.key === zoomKey) ?? null)
+    : null;
+  const monitored = useComprehension(conversation, captureSessionId, {
     live,
     focus: zoomed?.ordinal ?? null,
     enabled: monitor && !fixedComprehension,
   });
   const comprehension = useMemo(
-    () => (fixedComprehension ? fixedComprehension(shown) : monitored),
-    [fixedComprehension, shown, monitored],
+    () => (fixedComprehension ? fixedComprehension(conversation) : monitored),
+    [fixedComprehension, conversation, monitored],
   );
   const rethink = useMemo(
     () =>
       new Set(
-        full.sections.flatMap((s) =>
-          s.ordinal !== undefined && needsRethink(comprehension.get(s.ordinal)) ? [s.key] : [],
+        conversation.sections.flatMap((s) =>
+          s.ordinal !== undefined && needsRethink(comprehension.get(s.ordinal))
+            ? [s.key]
+            : [],
         ),
       ),
-    [full.sections, comprehension],
+    [conversation.sections, comprehension],
   );
-  const titleOf = (ordinal: number) => full.sections.find((s) => s.ordinal === ordinal)?.title ?? null;
+  const titleOf = (ordinal: number) =>
+    conversation.sections.find((s) => s.ordinal === ordinal)?.title ?? null;
   const zoomOrdinal = (ordinal: number) => {
-    const key = shown.sections.find((s) => s.ordinal === ordinal)?.key;
+    const key = conversation.sections.find((s) => s.ordinal === ordinal)?.key;
     if (key) setZoomKey(key);
   };
 
@@ -131,29 +142,47 @@ export function ConversationView({
     <div className={`relative flex min-h-0 flex-col ${className}`}>
       {view === "chat" ? (
         <ChatView
-          conversation={shown}
-          follow={live && cursor === null}
+          conversation={conversation}
+          follow={live}
           drafts={drafts}
           placeholder={placeholder}
           titleOf={titleOf}
         />
       ) : view === "topics" || view === "uptake" ? (
-        <TopicLineView topics={topics} uptake={view === "uptake"} onZoom={setZoomKey} />
+        <TopicLineView
+          topics={topics}
+          uptake={view === "uptake"}
+          onZoom={setZoomKey}
+        />
       ) : view === "now" ? (
-        <NowView now={digest.now} current={topics.find((t) => t.current) ?? null} onZoom={setZoomKey} />
+        <NowView
+          now={digest.now}
+          current={topics.find((t) => t.current) ?? null}
+          onZoom={setZoomKey}
+        />
       ) : view === "recent" ? (
-        <RecentView conversation={shown} gists={gists} topics={topics} onZoom={setZoomKey} />
+        <RecentView
+          conversation={conversation}
+          gists={gists}
+          topics={topics}
+          onZoom={setZoomKey}
+        />
       ) : view === "stack" ? (
         <StackView
-          conversation={shown}
+          conversation={conversation}
           digest={gists === digest.gists ? digest : { ...digest, gists }}
-          speaking={cursor !== null ? null : status?.speaking ? "agent" : status?.listening ? "user" : null}
+          speaking={
+            status?.speaking ? "agent" : status?.listening ? "user" : null
+          }
           onZoom={setZoomKey}
           placeholder={placeholder}
           rethink={rethink}
         />
       ) : (
-        <OpenView questions={questionEntries(shown, digest)} onZoom={zoomOrdinal} />
+        <OpenView
+          questions={questionEntries(conversation, digest)}
+          onZoom={zoomOrdinal}
+        />
       )}
 
       {zoomed && (
@@ -162,21 +191,22 @@ export function ConversationView({
           pending={pending}
           onClose={() => setZoomKey(null)}
           captureSessionId={captureSessionId}
-          comprehension={zoomed.ordinal !== null ? comprehension.get(zoomed.ordinal) : undefined}
+          comprehension={
+            zoomed.ordinal !== null
+              ? comprehension.get(zoomed.ordinal)
+              : undefined
+          }
           onAsk={onAsk}
           {...(onRename ? { onRename } : {})}
-          {...(keepable ? { onKeep: (ordinal, kept) => store.dispatch({ type: "keep", ordinal, kept, via: "tap" }) } : {})}
+          {...(keepable
+            ? {
+                onKeep: (ordinal, kept) =>
+                  store.dispatch({ type: "keep", ordinal, kept, via: "tap" }),
+              }
+            : {})}
         />
       )}
 
-      {timeBar && turns.length > 1 && (
-        <TimeBar
-          turns={turns}
-          cursor={cursor}
-          label={cursor === null ? null : cursorLabel(full, cursor)}
-          onCursor={setCursor}
-        />
-      )}
       {status && <StatusLine status={status} />}
     </div>
   );
