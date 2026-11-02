@@ -1,9 +1,8 @@
 "use client";
 
-import { Square } from "lucide-react";
+import { Mic, Square } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
-import { formatOffset } from "@voicemural/shared";
+import { useEffect } from "react";
 // The `/profile` subpath, NOT the package index: the index re-exports
 // retrieval.ts, which imports @voicemural/db, and that drags the Postgres
 // driver into the browser bundle. profile.ts is pure by construction.
@@ -16,7 +15,6 @@ import {
 } from "@/components/capture-settings";
 import { RecordingBadge } from "@/components/recording-badge";
 import { aiHealthProblem, useAiHealth } from "@/lib/ai-health";
-import { PostDriveItems } from "./study-items";
 import {
   MoreMenu,
   ViewSwitch,
@@ -27,34 +25,30 @@ import { ConversationView } from "./views/conversation-view";
 import type { AskTopic } from "./views/topic-sheet";
 
 /**
- * The recorder screen.
+ * The recorder screen: the display study's talk screen (`block-talk.tsx`),
+ * made the everyday one (2 Nov 2026).
  *
- * Before a drive: one enormous target to START, and the voice and language to
- * start with.
+ * ONE FRAME, WHETHER THEY TALK OR NOT. The same column as the study's, a slim
+ * bar at the top and the conversation under it, before a drive, during one
+ * and after it. Only what is in the frame changes: before the first drive the
+ * empty conversation holds one enormous target to START, with the voice and
+ * language to start with; from then on it is the conversation, live and then
+ * ended, until the next drive replaces it.
  *
- * DURING ONE, TURN-TAKING AND NOTHING ELSE. The study has moved to who holds
- * the floor, so the screen is the conversation — shown the way they chose
- * (`ConversationView`: the chat, the topics, uptake, now or open) — and
- * exactly three things to do about it: Lock (only
- * they speak), Normal (the agent may talk back) and Poke (one turn from the
- * agent, now). Plus Stop, which has to be here. The sparks row went on 27
- * Oct 2026: one more thing to read beside the conversation. The cue panel and the transcript link are gone from this
- * screen, and the dock with them while a drive runs: every one of them was a
- * reason to look away from the turns. A draft the agent writes is a line in
- * the conversation, where it was written (talkback-23); it was off this
- * screen entirely, and the agent's "it's on this recording's page" was heard
- * as this page, which showed nothing.
+ * THE STUDY'S COLUMN. The Stack was tuned for it: its topics alternate left
+ * and right inside the column, and in a window five times as wide they drift
+ * to opposite edges and the current topic's bubble stretches across all of it.
  *
- * THE WHOLE SCREEN, NOT A PAGE. While recording the layout is the height of
- * the viewport, with the conversation scrolling inside it, so the controls never
- * scroll away from a thumb and the header never scrolls away from a glance.
+ * NOTHING BESIDE THE CONVERSATION. The bar holds the view switch, the menu,
+ * and Record or Stop, which is one button in one place: where the study's
+ * Finish was. The dock stays off this screen, so the conversation has the
+ * height to the bottom edge. Lock and Poke, the time bar and the ratings
+ * after a drive went with the move: each one a reason to look away from the
+ * turns, and none of them in the screen the study tested.
  *
- * THE CONVERSATION OUTLIVES THE DRIVE. Stop used to take everything off the
- * screen at once, at the moment there was time to read it. Once a drive has
- * started, this screen is that conversation until the next one replaces it:
- * live, then ended, with three ratings over it until they tap Done.
- * The next drive starts from the dock's record button, which comes back on
- * this screen once nothing is running (6 Oct 2026).
+ * THE WHOLE SCREEN, NOT A PAGE: the height of the viewport, with the
+ * conversation scrolling inside it, so the bar never scrolls away from a
+ * glance.
  */
 export function RecorderClient({
   continueFrom = null,
@@ -106,30 +100,35 @@ export function RecorderClient({
   // and before a drive the reason and a way to see the screens anyway.
   const aiProblem = aiHealthProblem(useAiHealth());
 
-  // Setup until the first drive of this page load; the conversation from then
-  // on. `ended` is that conversation once nothing is capturing any more.
+  // No Lock on this screen any more, so a drive here starts with the floor
+  // open, as the study's do (`session-flow.tsx`): a Lock remembered from
+  // before would leave the agent silent with nothing on screen to lift it.
+  useEffect(() => {
+    if (floor !== "open") setFloor("open");
+  }, [floor, setFloor]);
+
+  // The start until the first drive of this page load; the conversation from
+  // then on. `ended` is that conversation once nothing is capturing any more.
   const hasConversation = conversationId !== null;
   const ended = hasConversation && !isRecording;
 
-  // The ratings, once per drive: shown over the finished conversation until
-  // Done, and not again for the same drive.
-  const [ratedFor, setRatedFor] = useState<string | null>(null);
-  const askRatings =
-    ended && rec.lastSessionId !== null && ratedFor !== rec.lastSessionId;
-
-  const topBar = (
-    // Clear of the status bar: in a standalone PWA the stop sat under the clock.
-    <div className="vm-safe-top flex w-full shrink-0 justify-center pb-2">
-      <header className="flex w-full items-center justify-between gap-2 text-sm text-fg/65">
+  return (
+    <main className="no-touch-fuss mx-auto flex h-dvh w-full max-w-2xl flex-col gap-2 overflow-hidden px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      {/*
+        The bar, as the study's: a tinted band edge to edge, small type, above
+        the conversation. Clear of the status bar in a standalone PWA, where
+        the stop once sat under the clock.
+      */}
+      <header className="-mx-4 flex shrink-0 items-center justify-between gap-1.5 border-b border-line bg-fg/[0.05] px-4 pt-[max(0.5rem,env(safe-area-inset-top))] pb-2 text-sm text-fg/65">
         {/* PRESENT OR ABSENT, never a shade of something. See `RecordingBadge`. */}
         {isRecording ? (
           <RecordingBadge elapsedMs={rec.elapsedMs} />
         ) : ended ? (
           // Words, not a muted badge: the badge is present or absent, and its
           // absence alone does not say the conversation below is over.
-          <span className="text-fg/60">
+          <span className="shrink-0 text-fg/60">
             {rec.status === "requesting"
-              ? "Opening the microphone…"
+              ? "Starting…"
               : rec.status === "stopping"
                 ? "Saving…"
                 : "Ended"}
@@ -141,12 +140,12 @@ export function RecorderClient({
             off the right edge (7 Oct 2026), and during a drive it is the only
             stop there is. So the pills may shrink and wrap, and only the badge
             and the stop refuse to. */}
-        <div className="flex min-w-0 items-center justify-end gap-2">
+        <div className="flex min-w-0 items-center justify-end gap-1.5">
           <StatusPills
             ai={aiProblem}
             pending={rec.pendingUploads}
             uploading={rec.uploading}
-            recording={isRecording}
+            ended={ended}
             talkback={TALKBACK_ENABLED && isRecording ? talk.status : null}
             memory={TALKBACK_ENABLED && isRecording ? talk.memory : null}
           />
@@ -159,10 +158,12 @@ export function RecorderClient({
           {rec.display === null && (
             <MoreMenu view={chosen} canChooseView={hasConversation} />
           )}
-          {/* One tap, no confirmation, as the big button was — but small, so a
-              stray hand in a cradle is unlikely to find it. The ring says the
-              agent is talking, wherever the eye is. */}
-          {isRecording && (
+          {/* Stop, then Record for the next one: one button that changes
+              rather than moves. Stop is one tap, no confirmation, but small,
+              so a stray hand in a cradle is unlikely to find it; the ring says
+              the agent is talking, wherever the eye is. Before the first drive
+              the start is the large target below instead. */}
+          {isRecording ? (
             <button
               type="button"
               onClick={stopRecording}
@@ -176,19 +177,55 @@ export function RecorderClient({
             >
               <Square size={16} fill="currentColor" aria-hidden />
             </button>
-          )}
+          ) : hasConversation ? (
+            <button
+              type="button"
+              onClick={startRecording}
+              disabled={isBusy}
+              aria-label="Start a new recording"
+              className="grid size-11 shrink-0 cursor-pointer place-items-center rounded-full bg-[var(--color-idle)] text-white transition-transform active:scale-95 disabled:opacity-50"
+            >
+              <Mic size={18} aria-hidden />
+            </button>
+          ) : null}
         </div>
       </header>
-    </div>
-  );
 
-  if (!hasConversation) {
-    return (
-      // `pb-40` clears the dock, which is on this screen before a drive.
-      <main className="no-touch-fuss flex min-h-dvh flex-col items-center justify-between px-6 pb-40">
-        <div className="w-full max-w-md">{topBar}</div>
-
-        <div className="flex w-full flex-col items-center gap-8">
+      {hasConversation ? (
+        <ConversationView
+          // Keyed by the drive: the next one starts from nothing rather than
+          // inheriting the last one's scroll position and zoom.
+          key={conversationId}
+          view={view}
+          store={conversation}
+          status={
+            TALKBACK_ENABLED && isRecording
+              ? {
+                  floor: connected ? (talk.floor ?? floor) : null,
+                  // The agent first: its own voice can reach the microphone.
+                  speaking: hearing,
+                  listening: !hearing && talk.userSpeaking,
+                  thinking: talk.thinking,
+                  lookingUp: talk.lookingUp,
+                }
+              : null
+          }
+          live={isRecording}
+          captureSessionId={conversationId}
+          // "It is listening" is true only while it is.
+          placeholder={isRecording ? PROFILE.hint : undefined}
+          drafts={cues.drafts}
+          // During the drive and after it: tidying the topics is a thing to do
+          // once there is time to read them.
+          onRename={renameSubject}
+          monitor={monitorOn}
+          {...(TALKBACK_ENABLED && isRecording && connected
+            ? { onAsk: ask }
+            : {})}
+          className="min-h-0 flex-1"
+        />
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-8 overflow-y-auto py-4">
           <button
             type="button"
             onClick={() =>
@@ -198,7 +235,7 @@ export function RecorderClient({
             }
             disabled={isBusy}
             className={[
-              "relative flex size-56 cursor-pointer items-center justify-center rounded-full text-2xl font-medium",
+              "relative flex size-56 shrink-0 cursor-pointer items-center justify-center rounded-full text-2xl font-medium",
               "bg-surface text-fg ring-1 ring-line transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
             ].join(" ")}
           >
@@ -235,116 +272,25 @@ export function RecorderClient({
           {/* Pilot builds only, and pilot accounts only. See `ConditionToggles`. */}
           <ConditionToggles />
         </div>
-
-        <footer className="w-full max-w-md space-y-3 text-sm">
-          {aiProblem && (
-            <Notice tone="warn" title="The AI server is not available">
-              <div className="space-y-2">
-                <p>
-                  A conversation would get no answers right now. {aiProblem}
-                </p>
-                <Link
-                  href="/record/demo"
-                  className="inline-block rounded bg-fg/10 px-3 py-1.5 font-medium text-fg hover:bg-fg/20"
-                >
-                  Try a simulated conversation
-                </Link>
-              </div>
-            </Notice>
-          )}
-          <Notices />
-        </footer>
-      </main>
-    );
-  }
-
-  return (
-    <main
-      className={[
-        // One centred column, and everything in it edge to edge with
-        // everything else: the conversation, its headlines and the
-        // controls (20 Oct 2026). The whole window was too wide to read.
-        "no-touch-fuss mx-auto flex w-full max-w-5xl flex-col gap-3 px-4",
-        // While recording: exactly the screen, the conversation scrolling inside it, and
-        // no dock (app-dock-client.tsx) — the controls sit where it was. After
-        // it, an ordinary page above the dock again.
-        isRecording
-          ? "h-dvh overflow-hidden pb-[max(0.75rem,env(safe-area-inset-bottom))]"
-          : "min-h-dvh pb-40",
-      ].join(" ")}
-    >
-      {topBar}
-
-      {askRatings && (
-        <Ratings
-          captureSessionId={rec.lastSessionId}
-          onDone={() => setRatedFor(rec.lastSessionId)}
-        />
       )}
 
-      <ConversationView
-        // Keyed by the drive: the next one starts from nothing rather than
-        // inheriting the last one's scroll position, cursor and zoom.
-        key={conversationId}
-        view={view}
-        store={conversation}
-        status={
-          TALKBACK_ENABLED && isRecording
-            ? {
-                floor: connected ? (talk.floor ?? floor) : null,
-                // The agent first: its own voice can reach the microphone.
-                speaking: hearing,
-                listening: !hearing && talk.userSpeaking,
-                thinking: talk.thinking,
-                lookingUp: talk.lookingUp,
-              }
-            : null
-        }
-        live={isRecording}
-        captureSessionId={conversationId}
-        // "It is listening" is true only while it is.
-        placeholder={isRecording ? PROFILE.hint : undefined}
-        drafts={cues.drafts}
-        // During the drive and after it: tidying the topics is a thing to do
-        // once there is time to read them.
-        onRename={renameSubject}
-        monitor={monitorOn}
-        {...(TALKBACK_ENABLED && isRecording && connected
-          ? { onAsk: ask }
-          : {})}
-        className={isRecording ? "min-h-0 flex-1" : "h-[65dvh] shrink-0"}
-      />
-
       <div className="shrink-0 space-y-3 text-sm">
-        <Notices />
-        {ended && rec.lastSessionId && (
-          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
-            <p className="mb-1 font-medium text-emerald-100">
-              Saved {formatOffset(rec.lastSessionMs)}
-            </p>
-            <p className="mb-3 text-fg/60">
-              {rec.pendingUploads > 0
-                ? `${rec.pendingUploads} chunk${rec.pendingUploads === 1 ? "" : "s"} still uploading. The transcript fills in as they land.`
-                : "Transcription runs in the background; the transcript fills in as it goes."}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => continueRecording(rec.lastSessionId!)}
-                disabled={isBusy}
-                className="cursor-pointer rounded bg-fg px-3 py-1.5 font-medium text-canvas hover:bg-fg/90 disabled:opacity-50"
-              >
-                Continue
-              </button>
+        {aiProblem && !hasConversation && (
+          <Notice tone="warn" title="The AI server is not available">
+            <div className="space-y-2">
+              <p>
+                A conversation would get no answers right now. {aiProblem}
+              </p>
               <Link
-                href={`/sessions/${rec.lastSessionId}`}
+                href="/record/demo"
                 className="inline-block rounded bg-fg/10 px-3 py-1.5 font-medium text-fg hover:bg-fg/20"
               >
-                Open the conversation
+                Try a simulated conversation
               </Link>
             </div>
-          </div>
+          </Notice>
         )}
+        <Notices />
       </div>
     </main>
   );
@@ -403,53 +349,11 @@ function Notices() {
   );
 }
 
-/**
- * Three ratings after a drive, with the microphone already closed.
- *
- * THEY USED TO BE A DEBRIEF. Stop kept recording for a window in which the
- * participant answered questions out loud — three, then one — with scales
- * under them. It ran past the bottom of a phone, and on 14 Oct 2026 the person
- * answered the scales aloud ("Give it a 4") into a recording that was waiting
- * for something else. Taps need no microphone, so Stop now ends the recording
- * and this asks over the finished conversation.
- *
- * Skippable by design: each tap is saved as it is made, Done only closes the
- * card, and a drive left unrated is a missing cell, not a broken one.
- */
-function Ratings({
-  captureSessionId,
-  onDone,
-}: {
-  captureSessionId: string | null;
-  onDone: () => void;
-}) {
-  return (
-    <section className="mx-auto w-full max-w-2xl shrink-0 rounded-3xl border border-line bg-surface p-5 shadow-sm sm:p-6">
-      <header className="mb-4">
-        <h2 className="text-lg font-semibold tracking-tight text-fg">
-          How did that go?
-        </h2>
-        <p className="mt-0.5 text-sm text-fg/60">
-          The recording has stopped. One tap each, or skip any.
-        </p>
-      </header>
-      <PostDriveItems captureSessionId={captureSessionId} />
-      <button
-        type="button"
-        onClick={onDone}
-        className="mt-5 w-full cursor-pointer rounded-2xl bg-fg px-4 py-3 text-base font-semibold text-canvas transition-transform active:scale-[0.98]"
-      >
-        Done
-      </button>
-    </section>
-  );
-}
-
 function StatusPills({
   ai,
   pending,
   uploading,
-  recording,
+  ended,
   talkback,
   memory,
 }: {
@@ -457,13 +361,24 @@ function StatusPills({
   ai: string | null;
   pending: number;
   uploading: boolean;
-  recording: boolean;
+  /** A drive has ended on this screen: what "synced" is about. */
+  ended: boolean;
   talkback: string | null;
   memory: "ready" | "unavailable" | null;
 }) {
+  // Nothing at all when there is nothing to say: an empty group still takes a
+  // gap in the bar, and at 360px the bar has none to spare.
+  const any =
+    ai !== null ||
+    talkback === "degraded" ||
+    talkback === "connecting" ||
+    memory === "unavailable" ||
+    pending > 0 ||
+    ended;
+  if (!any) return null;
   return (
     // Shrinks and wraps, so a warning never pushes the stop off the screen.
-    <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 text-xs">
+    <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 overflow-hidden text-xs">
       {/* Only worth showing when it is NOT working. A healthy socket needs no
           pill: the panels filling with what is said is the evidence, and a car
           dashboard should not carry an indicator for every subsystem that is
@@ -482,7 +397,7 @@ function StatusPills({
           tone="warn"
         />
       )}
-      {pending === 0 && !recording && <Pill label="synced" tone="ok" />}
+      {pending === 0 && ended && <Pill label="synced" tone="ok" />}
     </div>
   );
 }

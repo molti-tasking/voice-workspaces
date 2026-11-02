@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { captureSession, eq, getDb } from "@voicemural/db";
 import { conversationChain } from "@voicemural/db/conversation";
-import { AppDock } from "@/components/app-dock";
 import { currentUser } from "@/lib/session";
 import { RecorderClient } from "./recorder-client";
 
@@ -32,23 +31,17 @@ export default async function RecordPage({ searchParams }: { searchParams: Promi
         .where(eq(captureSession.id, last))
         .limit(1)
     : [];
+  // No dock here: Record and Stop are in the screen's own bar (`recorder-client.tsx`).
   return (
-    <>
-      <RecorderClient
-        continueFrom={
-          last && meta
-            ? {
-                id: last,
-                title:
-                  meta.title ?? meta.startedAt.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }),
-              }
-            : null
-        }
-      />
-      {/* The dock is here so a drive can be left without being stopped — that
-          is the whole reason capture was hoisted above the router. It renders
-          its navigation only on this route; the transport is the big button. */}
-      <AppDock />
-    </>
+    <RecorderClient
+      continueFrom={
+        last && meta
+          ? {
+              id: last,
+              title: meta.title ?? meta.startedAt.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }),
+            }
+          : null
+      }
+    />
   );
 }

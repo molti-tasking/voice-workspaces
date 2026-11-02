@@ -6,12 +6,15 @@ Written 2 Nov 2026, when the app was consolidated onto one screen. Dates come fr
 
 **One screen: the conversation on `/record`.** A signed-in home page goes straight there.
 
-- **Stack** is the default view. **Transcript** (the `chat` display) is the only other one on the switch at the top right.
+- **The display study's talk screen, made the everyday one.** The same `max-w-2xl` column as `block-talk.tsx`, a slim tinted bar at the top and the conversation filling the rest. The frame is the same before, during and after a drive: before the first one, the empty conversation holds the large Record target with voice and language; from then on it is the conversation.
+- **The bar** holds the recording badge (or "Ended"), the warning pills, the view switch, the `⋯` menu, and one round button at the right end: Stop during a drive and Record after it, in the place the study's Finish was.
+- **Stack** is the default view. **Transcript** (the `chat` display) is the only other one on the switch.
 - **The `⋯` menu** beside the switch holds:
   - the five study views (Topics, Uptake, Now, Open, Recent);
   - the *Rethink checks* toggle (draft);
   - links to Past conversations and to the older Workspace, Board and Timeline pages.
-- **The dock** is just the record button.
+- **No dock on `/record`.** It stays on the other pages, where it is the record button that opens `/record`.
+- **Gone from the screen:** Lock / Normal / Poke (a drive on `/record` always starts with the floor open), the time bar, the ratings after a drive, and the "Saved" panel.
 - **Tapping a topic** opens its sheet. The sheet has:
   - the conversation's own points on the topic;
   - the assistant's ideas, each marked taken up or not;
@@ -36,6 +39,7 @@ Written 2 Nov 2026, when the app was consolidated onto one screen. Dates come fr
 | 28–29 Oct | Stack, from the design canvas: live words at the bottom, the current topic, and earlier topics on a shelf, with a return as the only motion. | The topic-stack design (project doc `related-work-topic-stack.md`). |
 | 30–31 Oct | Prolific run 2 compares Chat and Stack. | The main study for the paper. |
 | 2 Nov | Consolidation: Stack plus Transcript on one screen, with the workspace inside the topic sheet. Comprehension monitor drafted. | This document. |
+| 2 Nov | The study's talk screen as the frame of `/record`: its column, a slim bar with Record/Stop, the same before, during and after a drive. Lock/Poke, the time bar, the post-drive ratings and the dock left the screen. | At the desktop width the Stack's topics drifted to opposite edges; the screen changed shape between talking and not; too many boxes after a drive. |
 
 ## What was kept but not developed
 

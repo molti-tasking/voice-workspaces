@@ -69,7 +69,7 @@ function DemoRun({
     "grid size-11 cursor-pointer place-items-center rounded-full bg-fg/10 text-fg/80 hover:bg-fg/20";
 
   return (
-    <main className="no-touch-fuss mx-auto flex h-dvh w-full max-w-5xl flex-col gap-3 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    <main className="no-touch-fuss mx-auto flex h-dvh w-full max-w-2xl flex-col gap-3 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       <header className="flex shrink-0 items-center justify-between gap-2">
         <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 font-mono text-xs text-amber-800 dark:text-amber-300">
           Simulated

@@ -82,7 +82,7 @@ export function ViewSwitch({ view }: { view: ConversationDisplay }) {
           aria-pressed={view === id}
           onClick={() => chooseView(id)}
           className={[
-            "min-h-9 cursor-pointer rounded-full px-3 text-[13px] transition-colors",
+            "min-h-9 cursor-pointer rounded-full px-2.5 text-[13px] transition-colors sm:px-3",
             view === id ? "bg-surface font-semibold text-fg shadow-sm" : "text-fg/65 hover:text-fg",
           ].join(" ")}
         >
@@ -134,7 +134,7 @@ export function MoreMenu({
         aria-expanded={open}
         aria-haspopup="menu"
         onClick={() => setOpen((v) => !v)}
-        className="grid size-9 cursor-pointer place-items-center rounded-full text-fg/65 hover:bg-fg/[0.08] hover:text-fg"
+        className="grid h-9 w-8 cursor-pointer place-items-center rounded-full text-fg/65 hover:bg-fg/[0.08] hover:text-fg"
       >
         <Ellipsis size={18} aria-hidden />
       </button>

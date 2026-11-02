@@ -35,7 +35,7 @@ export function RecordingBadge({ elapsedMs }: { elapsedMs: number }) {
       role="status"
       aria-live="polite"
       className={[
-        "flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium",
+        "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1.5 text-sm font-medium sm:gap-2 sm:px-3",
         "bg-red-500/15 text-red-100 ring-1 ring-red-400/40",
       ].join(" ")}
     >
@@ -46,7 +46,11 @@ export function RecordingBadge({ elapsedMs }: { elapsedMs: number }) {
       {/* The elapsed time is inside the badge rather than beside it: two
           numbers that mean "how long" in two places is one too many, and this
           is the one that is always on screen. */}
-      <span>Recording</span>
+      {/* On a phone the word gives way to the view switch beside it (2 Nov
+          2026): the bar is the study's one row, and with the word the row
+          overflowed onto the switch. The pulsing dot and the running clock,
+          with Stop at the row's other end, still say it. */}
+      <span className="max-sm:sr-only">Recording</span>
       <span className="font-mono tabular-nums opacity-70">{formatOffset(elapsedMs)}</span>
     </div>
   );

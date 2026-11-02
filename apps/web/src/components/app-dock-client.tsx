@@ -5,7 +5,6 @@ import {
   Mic,
   Square,
 } from "lucide-react";
-import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { formatOffset } from "@voicemural/shared";
 import { TALKBACK_ENABLED, useCapture } from "./capture-provider";
@@ -17,8 +16,8 @@ import { Link, useDirectedPush } from "./nav-link";
  * How long an armed stop stays armed, in ms.
  *
  * The dock's record button is 72px in the corner of a page someone is reading,
- * not the 224px target on `/record` that is meant to be hit without looking —
- * so here, and only here, stopping takes two taps. A drive cut short by a
+ * not a target on the conversation screen that is meant to be found without
+ * looking — so here, and only here, stopping takes two taps. A drive cut short by a
  * mis-tap is not a cosmetic bug: the ledger is the study's measurement record,
  * and the minutes after the mis-tap do not exist anywhere else. The second tap
  * is the deliberate one; if it does not come, the recording carries on.
@@ -26,7 +25,7 @@ import { Link, useDirectedPush } from "./nav-link";
 const STOP_ARM_MS = 4_000;
 
 /**
- * The dock: the record button, on every signed-in page.
+ * The dock: the record button, on every signed-in page but the conversation.
  *
  * IT WAS A TAB BAR (Workspace, Board or Conversations, and the record button
  * between them). Since 2 Nov 2026 the app is one screen, the conversation on
@@ -34,16 +33,15 @@ const STOP_ARM_MS = 4_000;
  * right (`MoreMenu`), so the dock is only what starts and stops a drive:
  * capture outlives a client navigation (`capture-provider.tsx`), so a page
  * reached from that menu can still start one, and starting one goes to the
- * conversation.
+ * conversation. `/record` itself has no dock: its Record and Stop are in its
+ * own bar, in the same place whether a drive runs or not.
  */
 export function AppDockClient() {
-  const pathname = usePathname();
   const push = useDirectedPush();
   const {
     isRecording,
     isBusy,
     recorder,
-    conversationId,
     startRecording,
     stopRecording,
   } = useCapture();
@@ -55,22 +53,10 @@ export function AppDockClient() {
   const dockRef = useRef<HTMLDivElement>(null);
 
   // Derived, not stored: an arm only means anything while something is
-  // running, so a drive that ends by any other route — the big button on
+  // running, so a drive that ends by any other route — the stop on
   // `/record`, a failed chunk, the tab being closed and reopened — disarms the
   // dock without needing an effect to notice.
   const armed = capturing && armedAt !== null;
-
-  // `/record` is the full-screen recorder: its own 224px button is the
-  // transport, and a second one in the dock would be two controls for one
-  // action. The tabs stay, because leaving the recorder mid-drive is the
-  // whole point of hoisting capture out of the page.
-  //
-  // EXCEPT ONCE A DRIVE HAS ENDED. The screen then keeps the finished
-  // conversation instead of putting its big button back, so it has no start
-  // control of its own, and this one — with its chevron for voice and
-  // language — is how the next drive begins, in one tap (6 Oct 2026).
-  const onRecorder = pathname.startsWith("/record");
-  const showRecord = !onRecorder || (!capturing && conversationId !== null);
 
   // An armed stop is a promise about the next few seconds, so it has to expire
   // on its own — otherwise a dock armed an hour ago stops the drive on the
@@ -97,13 +83,6 @@ export function AppDockClient() {
     };
   }, [sheetOpen]);
 
-  // NO DOCK ON THE RECORDER WHILE A DRIVE RUNS. That screen is the turns and
-  // who may take them — Lock, Normal, Poke and Stop — and its controls sit
-  // where the dock would. Every other control was a reason to look away from
-  // the conversation. Back once nothing is capturing, because that is how the
-  // next drive starts. After the hooks, which must run either way.
-  if (onRecorder && capturing) return null;
-
   return (
     <div
       className="vm-dock pointer-events-none fixed inset-x-0 bottom-0 z-40 flex flex-col items-center bg-gradient-to-t from-[var(--color-canvas)] via-[var(--color-canvas)]/55 to-transparent px-4 pt-14"
@@ -118,34 +97,32 @@ export function AppDockClient() {
           aria-label="Main"
           className="vm-glass flex items-end gap-1 rounded-[1.75rem] p-1.5"
         >
-          {showRecord && (
-            <RecordControl
-              isRecording={capturing}
-              isBusy={isBusy}
-              armed={armed}
-              elapsedMs={recorder.elapsedMs}
-              sheetOpen={sheetOpen}
-              onToggleSheet={() => setSheetOpen((v) => !v)}
-              onPress={() => {
-                if (!capturing) {
-                  startRecording();
-                  // A new drive opens in the conversation view, wherever it
-                  // was started: starting one from the workspace used to leave
-                  // the person there, not seeing that anything had begun.
-                  // Straight away rather than once the microphone is open, so
-                  // the second that takes is spent on the right screen.
-                  if (!onRecorder) push("/record");
-                  return;
-                }
-                if (!armed) {
-                  setArmedAt(Date.now());
-                  return;
-                }
-                setArmedAt(null);
-                stopRecording();
-              }}
-            />
-          )}
+          <RecordControl
+            isRecording={capturing}
+            isBusy={isBusy}
+            armed={armed}
+            elapsedMs={recorder.elapsedMs}
+            sheetOpen={sheetOpen}
+            onToggleSheet={() => setSheetOpen((v) => !v)}
+            onPress={() => {
+              if (!capturing) {
+                startRecording();
+                // A new drive opens in the conversation view, wherever it
+                // was started: starting one from the workspace used to leave
+                // the person there, not seeing that anything had begun.
+                // Straight away rather than once the microphone is open, so
+                // the second that takes is spent on the right screen.
+                push("/record");
+                return;
+              }
+              if (!armed) {
+                setArmedAt(Date.now());
+                return;
+              }
+              setArmedAt(null);
+              stopRecording();
+            }}
+          />
 
         </nav>
       </div>
