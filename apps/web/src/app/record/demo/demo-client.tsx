@@ -3,10 +3,11 @@
 import { Pause, Play, RotateCcw, Volume2, VolumeX } from "lucide-react";
 import Link from "next/link";
 import { useState, useSyncExternalStore } from "react";
+import { demoComprehension } from "@/lib/talkback/demo-comprehension";
 import { DEMO_STEPS, demoDigest } from "@/lib/talkback/demo-conversation";
 import { createDemoVoice } from "@/lib/talkback/demo-voice";
 import { useScriptedConversation } from "@/lib/talkback/use-scripted-conversation";
-import { ViewSwitch, useRecordView } from "../view-switch";
+import { MoreMenu, ViewSwitch, useRecordView } from "../view-switch";
 import { ConversationView } from "../views/conversation-view";
 
 /** Whether this browser can speak: false on the server, so the first render agrees with it. */
@@ -108,7 +109,10 @@ function DemoRun({
         </Link>
       </p>
 
-      <ViewSwitch view={view} />
+      <div className="flex shrink-0 items-center justify-end gap-1">
+        <ViewSwitch view={view} />
+        <MoreMenu view={view} links={[]} />
+      </div>
 
       <ConversationView
         view={view}
@@ -117,6 +121,7 @@ function DemoRun({
         captureSessionId={null}
         // No AI behind it: the digest is scripted with the conversation.
         fixedDigest={demoDigest}
+        fixedComprehension={demoComprehension}
         className="min-h-0 flex-1"
       />
 

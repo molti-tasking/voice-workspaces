@@ -1,7 +1,7 @@
 "use client";
 
-import { Search } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Search, Sparkle } from "lucide-react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 // The `/digest` subpath, not the package index: the index pulls in server code.
 import type { ConversationDigest, DigestGist } from "@voicemural/talkback/digest";
 import type { Conversation, Speaker } from "@/lib/talkback/conversation";
@@ -92,15 +92,35 @@ function reducedMotion(): boolean {
   return typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 }
 
+/**
+ * The topics the comprehension monitor (DRAFT, `use-comprehension.ts`) found
+ * something to rethink on: a small spark after the name, and nothing else.
+ * Retinal only, never a motion — position is reserved for returns.
+ */
+const Rethink = createContext<ReadonlySet<string>>(new Set());
+
+function RethinkMark({ topicKey, size = 13 }: { topicKey: string; size?: number }) {
+  if (!useContext(Rethink).has(topicKey)) return null;
+  return (
+    <>
+      <Sparkle size={size} aria-hidden className="shrink-0 fill-current text-amber-600 dark:text-amber-300" />
+      <span className="sr-only">(something to rethink)</span>
+    </>
+  );
+}
+
 export function StackView({
   conversation,
   digest,
   speaking,
   onZoom,
   placeholder,
+  rethink = NO_KEYS,
 }: {
   conversation: Conversation;
   digest: ConversationDigest;
+  /** Topics with something to rethink, by key. */
+  rethink?: ReadonlySet<string>;
   /** Who is talking this second, for the caret; null for nobody. */
   speaking: Speaker | null;
   onZoom: (key: string) => void;
@@ -333,6 +353,7 @@ export function StackView({
     ringed: ringKey === slot.topic.key,
   });
   return (
+    <Rethink.Provider value={rethink}>
     <div ref={root} className="ph-no-capture flex min-h-0 flex-1 flex-col gap-3 pt-2" aria-live="off">
       {/* Pushed down by `mt-auto` rather than `justify-end`, so a shelf that overflows still scrolls to its top. */}
       <div
@@ -394,6 +415,7 @@ export function StackView({
               >
                 {model.current.title}
               </span>
+              <RethinkMark topicKey={model.current.key} size={tight ? 14 : 16} />
             </span>
             {model.current.decision && (
               <span
@@ -465,8 +487,11 @@ export function StackView({
         )}
       </section>
     </div>
+    </Rethink.Provider>
   );
 }
+
+const NO_KEYS: ReadonlySet<string> = new Set();
 
 /** Left and right in turn, by the order topics first came up, so a topic never changes sides. */
 function side(topic: StackTopic): string {
@@ -544,6 +569,7 @@ function SlotBubble({
       <span className="flex items-center gap-2 text-[17px] leading-snug font-semibold">
         <Dot whose={topic.whose} />
         <span className="min-w-0 truncate">{topic.title}</span>
+        <RethinkMark topicKey={topic.key} />
       </span>
       {topic.decision && <span className="pl-[1.125rem] text-sm leading-snug text-fg/65">{topic.decision}</span>}
     </button>
@@ -573,6 +599,7 @@ function Pill({
     >
       <Dot whose={topic.whose} size="size-2" />
       <span className="min-w-0 truncate">{topic.title}</span>
+      <RethinkMark topicKey={topic.key} size={12} />
     </button>
   );
 }

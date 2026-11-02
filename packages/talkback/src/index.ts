@@ -211,3 +211,15 @@ export {
   parseMockSearch,
   type LookupResult,
 } from "./lookup";
+export {
+  CHECK_KINDS,
+  cleanCheckQuestion,
+  comprehensionMessages,
+  parseComprehension,
+  type CheckKind,
+  type ComprehensionCheck,
+  type ComprehensionEvidence,
+  type ComprehensionIdea,
+  type ComprehensionLine,
+  type TopicComprehension,
+} from "./comprehension";

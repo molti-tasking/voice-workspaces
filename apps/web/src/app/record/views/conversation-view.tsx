@@ -3,10 +3,13 @@
 import { useMemo, useState, useSyncExternalStore } from "react";
 import type { ConversationDisplay } from "@voicemural/shared";
 // The `/digest` subpath, not the package index: the index pulls in server code.
+import type { TopicComprehension } from "@voicemural/talkback/comprehension";
 import type { ConversationDigest } from "@voicemural/talkback/digest";
 import type { DraftCue } from "@/lib/display/use-cues";
+import { needsRethink } from "@/lib/talkback/comprehension-monitor";
 import { EMPTY_CONVERSATION, type Conversation, type ConversationStore } from "@/lib/talkback/conversation";
 import { atCursor, cursorLabel, turnsInOrder } from "@/lib/talkback/cursor";
+import { useComprehension } from "@/lib/talkback/use-comprehension";
 import { useDigest } from "@/lib/talkback/use-digest";
 import { useTurnGists } from "@/lib/talkback/use-turn-gists";
 import { ChatView } from "./chat-view";
@@ -17,7 +20,7 @@ import { StackView } from "./stack-view";
 import { StatusLine, type FlowStatus } from "./status-line";
 import { TimeBar } from "./time-bar";
 import { TopicLineView } from "./topic-line-view";
-import { TopicSheet } from "./topic-sheet";
+import { TopicSheet, type AskTopic } from "./topic-sheet";
 import { questionEntries, topicEntries } from "./topics";
 
 /**
@@ -33,7 +36,9 @@ import { questionEntries, topicEntries } from "./topics";
  * - the digest for that point (`useDigest`), asked for only by views that
  *   read it — the chat never spends a model call;
  * - zooming into a topic (`TopicSheet`), with rename and keep;
- * - the status line, the same under every view.
+ * - the status line, the same under every view;
+ * - the comprehension monitor (DRAFT, `use-comprehension.ts`), when `monitor`
+ *   is on: in the background while live, for the zoomed topic otherwise.
  */
 export function ConversationView({
   view,
@@ -47,6 +52,9 @@ export function ConversationView({
   onRename,
   keepable = false,
   timeBar = true,
+  monitor = false,
+  fixedComprehension,
+  onAsk,
   className = "",
 }: {
   view: ConversationDisplay;
@@ -67,6 +75,12 @@ export function ConversationView({
   keepable?: boolean;
   /** Offer going back in time. */
   timeBar?: boolean;
+  /** Run the comprehension monitor (draft). */
+  monitor?: boolean;
+  /** What the monitor would find, worked out locally, for a conversation with no AI behind it. */
+  fixedComprehension?: (conversation: Conversation) => ReadonlyMap<number, TopicComprehension>;
+  /** Live only: hand a question about a topic to the agent. */
+  onAsk?: AskTopic;
   className?: string;
 }) {
   const full = useSyncExternalStore(store.subscribe, store.getSnapshot, () => EMPTY_CONVERSATION);
@@ -89,6 +103,24 @@ export function ConversationView({
   );
   const topics = useMemo(() => topicEntries(shown, digest), [shown, digest]);
   const zoomed = zoomKey ? (topics.find((t) => t.key === zoomKey) ?? null) : null;
+  const monitored = useComprehension(full, captureSessionId, {
+    live,
+    focus: zoomed?.ordinal ?? null,
+    enabled: monitor && !fixedComprehension,
+  });
+  const comprehension = useMemo(
+    () => (fixedComprehension ? fixedComprehension(shown) : monitored),
+    [fixedComprehension, shown, monitored],
+  );
+  const rethink = useMemo(
+    () =>
+      new Set(
+        full.sections.flatMap((s) =>
+          s.ordinal !== undefined && needsRethink(comprehension.get(s.ordinal)) ? [s.key] : [],
+        ),
+      ),
+    [full.sections, comprehension],
+  );
   const titleOf = (ordinal: number) => full.sections.find((s) => s.ordinal === ordinal)?.title ?? null;
   const zoomOrdinal = (ordinal: number) => {
     const key = shown.sections.find((s) => s.ordinal === ordinal)?.key;
@@ -118,6 +150,7 @@ export function ConversationView({
           speaking={cursor !== null ? null : status?.speaking ? "agent" : status?.listening ? "user" : null}
           onZoom={setZoomKey}
           placeholder={placeholder}
+          rethink={rethink}
         />
       ) : (
         <OpenView questions={questionEntries(shown, digest)} onZoom={zoomOrdinal} />
@@ -128,6 +161,9 @@ export function ConversationView({
           topic={zoomed}
           pending={pending}
           onClose={() => setZoomKey(null)}
+          captureSessionId={captureSessionId}
+          comprehension={zoomed.ordinal !== null ? comprehension.get(zoomed.ordinal) : undefined}
+          onAsk={onAsk}
           {...(onRename ? { onRename } : {})}
           {...(keepable ? { onKeep: (ordinal, kept) => store.dispatch({ type: "keep", ordinal, kept, via: "tap" }) } : {})}
         />

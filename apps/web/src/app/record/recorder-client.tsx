@@ -18,8 +18,9 @@ import { RecordingBadge } from "@/components/recording-badge";
 import { aiHealthProblem, useAiHealth } from "@/lib/ai-health";
 import { FloorControls } from "./floor-controls";
 import { PostDriveItems } from "./study-items";
-import { ViewSwitch, useRecordView } from "./view-switch";
+import { MoreMenu, ViewSwitch, useMonitorOn, useRecordView } from "./view-switch";
 import { ConversationView } from "./views/conversation-view";
+import type { AskTopic } from "./views/topic-sheet";
 
 /**
  * The recorder screen.
@@ -83,6 +84,16 @@ export function RecorderClient({
   // study does, and then there is no choice to offer.
   const chosen = useRecordView();
   const view = rec.display ?? chosen;
+  // The comprehension monitor (draft): never on a study drive.
+  const monitorOn = useMonitorOn() && rec.display === null;
+  // A question from a topic's sheet, handed to the agent to ask back: a poke
+  // that carries it, marked in the conversation as a pulled spark is.
+  const ask: AskTopic = async (ordinal, question, kind) => {
+    const result = await poke({ kind, ordinal, question });
+    const taken = result === "fired" || result === "armed";
+    if (taken) conversation.dispatch({ type: "mark", mark: { kind: "spark", ordinal, spark: kind, question } });
+    return taken;
+  };
   // Whether the AI proxy answers (`/api/health/ai`): a pill when it does not,
   // and before a drive the reason and a way to see the screens anyway.
   const aiProblem = aiHealthProblem(useAiHealth());
@@ -130,6 +141,11 @@ export function RecorderClient({
             talkback={TALKBACK_ENABLED && isRecording ? talk.status : null}
             memory={TALKBACK_ENABLED && isRecording ? talk.memory : null}
           />
+          {/* The two views, one tap apart, and everything else behind the
+              menu (2 Nov 2026). Not on a drive whose study condition fixes
+              the view: there is nothing to choose and nowhere to wander off. */}
+          {hasConversation && rec.display === null && <ViewSwitch view={chosen} />}
+          {rec.display === null && <MoreMenu view={chosen} canChooseView={hasConversation} />}
           {/* One tap, no confirmation, as the big button was — but small, so a
               stray hand in a cradle is unlikely to find it. The ring says the
               agent is talking, wherever the eye is. */}
@@ -242,8 +258,6 @@ export function RecorderClient({
         />
       )}
 
-      {rec.display === null && <ViewSwitch view={chosen} />}
-
       <ConversationView
         // Keyed by the drive: the next one starts from nothing rather than
         // inheriting the last one's scroll position, cursor and zoom.
@@ -270,6 +284,8 @@ export function RecorderClient({
         // During the drive and after it: tidying the topics is a thing to do
         // once there is time to read them.
         onRename={renameSubject}
+        monitor={monitorOn}
+        {...(TALKBACK_ENABLED && isRecording && connected ? { onAsk: ask } : {})}
         className={isRecording ? "min-h-0 flex-1" : "h-[65dvh] shrink-0"}
       />
 

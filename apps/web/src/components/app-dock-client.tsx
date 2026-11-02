@@ -2,12 +2,8 @@
 
 import {
   ChevronUp,
-  LayoutGrid,
-  MessagesSquare,
   Mic,
   Square,
-  SquareKanban,
-  type LucideIcon,
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -29,43 +25,18 @@ import { Link, useDirectedPush } from "./nav-link";
  */
 const STOP_ARM_MS = 4_000;
 
-interface Tab {
-  href: string;
-  label: string;
-  Icon: LucideIcon;
-}
-
-const WORKSPACE: Tab = { href: "/workspace", label: "Workspace", Icon: LayoutGrid };
-const BOARD: Tab = { href: "/board", label: "Board", Icon: SquareKanban };
-/* Conversations, not Timeline, since 7 Oct 2026: "the tool does not allow me
- * to view my past transcripts easily". Timeline reads every drive end to end;
- * Conversations is where a past one is FOUND — named and searchable — and
- * finding one is what this slot is for. Timeline stays in the menu. */
-const CONVERSATIONS: Tab = { href: "/conversations", label: "Conversations", Icon: MessagesSquare };
-
 /**
- * The dock: two surfaces and the record button, on every signed-in page.
+ * The dock: the record button, on every signed-in page.
  *
- * Replaces the per-page header navs, which had drifted into five different
- * link sets, and the `TimelineActions` bar that only the timeline had. The
- * reason it is worth having everywhere is the recorder above it: capture now
- * outlives a client navigation (see `capture-provider.tsx`), so "ready to
- * record" is a property of the app rather than of one route, and the control
- * that starts and stops a drive should be too.
- *
- * Only three destinations, because a tab bar is a claim about what the app is
- * for. The workspace and the board are the two folds of the op log a
- * participant works IN; everything else — the timeline, the trajectory, the
- * repertoire — is a way of reading the corpus afterwards, and those live in
- * the overflow menu at the top right.
- *
- * The board is gated per participant on `user.board_enabled_at` (the study has
- * a before and an after), so it cannot be the permanent right-hand tab. When
- * it is off, the timeline takes that slot rather than leaving the dock
- * lopsided — it is also in the menu, and one duplicated link is cheaper than a
- * bar whose shape changes meaning between study phases.
+ * IT WAS A TAB BAR (Workspace, Board or Conversations, and the record button
+ * between them). Since 2 Nov 2026 the app is one screen, the conversation on
+ * `/record`, and the pages that were tabs are behind the menu at its top
+ * right (`MoreMenu`), so the dock is only what starts and stops a drive:
+ * capture outlives a client navigation (`capture-provider.tsx`), so a page
+ * reached from that menu can still start one, and starting one goes to the
+ * conversation.
  */
-export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
+export function AppDockClient() {
   const pathname = usePathname();
   const push = useDirectedPush();
   const {
@@ -126,8 +97,6 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
     };
   }, [sheetOpen]);
 
-  const right = boardEnabled ? BOARD : CONVERSATIONS;
-
   // NO DOCK ON THE RECORDER WHILE A DRIVE RUNS. That screen is the turns and
   // who may take them — Lock, Normal, Poke and Stop — and its controls sit
   // where the dock would. Every other control was a reason to look away from
@@ -149,8 +118,6 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
           aria-label="Main"
           className="vm-glass flex items-end gap-1 rounded-[1.75rem] p-1.5"
         >
-          <DockTab tab={WORKSPACE} active={pathname.startsWith(WORKSPACE.href)} />
-
           {showRecord && (
             <RecordControl
               isRecording={capturing}
@@ -180,43 +147,9 @@ export function AppDockClient({ boardEnabled }: { boardEnabled: boolean }) {
             />
           )}
 
-          {/* ON A PHONE THE BOARD IS NOT A TAB. The pilot read it as "just a
-              kind of log" and said "I don't need another view": on a narrow
-              screen its five columns stack into one long list of the same
-              tasks the workspace already shows, and the workspace can now move
-              them. From `md` up, where the columns sit side by side and mean
-              something, it is back. */}
-          {right === BOARD ? (
-            <>
-              <DockTab tab={BOARD} active={pathname.startsWith(BOARD.href)} className="hidden md:flex" />
-              <DockTab tab={CONVERSATIONS} active={pathname.startsWith(CONVERSATIONS.href)} className="md:hidden" />
-            </>
-          ) : (
-            <DockTab tab={right} active={pathname.startsWith(right.href)} />
-          )}
         </nav>
       </div>
     </div>
-  );
-}
-
-function DockTab({ tab, active, className = "flex" }: { tab: Tab; active: boolean; className?: string }) {
-  const { Icon, href, label } = tab;
-  return (
-    <Link
-      href={href}
-      aria-current={active ? "page" : undefined}
-      className={[
-        className,
-        "w-[5.5rem] flex-col items-center gap-1 rounded-[1.375rem] px-2 py-2.5 transition-colors",
-        active
-          ? "bg-fg/10 text-fg"
-          : "text-fg/60 hover:bg-fg/5 hover:text-fg/80",
-      ].join(" ")}
-    >
-      <Icon size={20} aria-hidden />
-      <span className="text-[0.6875rem] leading-none font-medium">{label}</span>
-    </Link>
   );
 }
 

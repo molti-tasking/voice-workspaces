@@ -44,7 +44,9 @@ export default async function HomePage({
   // shows (28 Sep 2026: "too many different screens"). It stays only where it
   // has something the timeline does not: a failed sign-in to explain, or a
   // guest's recordings to keep by signing in.
-  if (!error && !canUpgrade) redirect("/timeline");
+  // Since 2 Nov 2026 the app is one screen, the conversation (`/record`), so
+  // that is where a signed-in home page goes.
+  if (!error && !canUpgrade) redirect("/record");
 
   const sessions = await listSessionsWithStats(user.id);
 

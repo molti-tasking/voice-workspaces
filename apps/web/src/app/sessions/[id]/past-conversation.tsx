@@ -6,7 +6,7 @@ import { useState } from "react";
 import type { DraftCue } from "@/lib/display/use-cues";
 import { EMPTY_CONVERSATION, type ConversationStore } from "@/lib/talkback/conversation";
 import { replayConversation, type DriveRecord } from "@/lib/talkback/replay";
-import { ViewSwitch, useRecordView } from "../../record/view-switch";
+import { MoreMenu, ViewSwitch, useMonitorOn, useRecordView } from "../../record/view-switch";
 import { ConversationView } from "../../record/views/conversation-view";
 
 /**
@@ -29,6 +29,7 @@ export function PastConversation({
   drafts: DraftCue[];
 }) {
   const view = useRecordView();
+  const monitor = useMonitorOn();
   const [store] = useState(() => frozenStore(drives));
 
   return (
@@ -49,13 +50,17 @@ export function PastConversation({
           Recording details
         </Link>
       </div>
-      <ViewSwitch view={view} />
+      <div className="flex items-center justify-end gap-1">
+        <ViewSwitch view={view} />
+        <MoreMenu view={view} />
+      </div>
       <ConversationView
         view={view}
         store={store}
         live={false}
         captureSessionId={lastDriveId}
         drafts={drafts}
+        monitor={monitor}
         placeholder="Nothing was transcribed in this conversation yet."
         className="h-[62dvh] min-h-96"
       />
