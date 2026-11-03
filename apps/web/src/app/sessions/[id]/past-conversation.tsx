@@ -4,8 +4,7 @@ import { Play } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import type { DraftCue } from "@/lib/display/use-cues";
-import { EMPTY_CONVERSATION, type ConversationStore } from "@/lib/talkback/conversation";
-import { replayConversation, type DriveRecord } from "@/lib/talkback/replay";
+import { frozenConversationStore, type DriveRecord } from "@/lib/talkback/replay";
 import { MoreMenu, ViewSwitch, useMonitorOn, useRecordView } from "../../record/view-switch";
 import { ConversationView } from "../../record/views/conversation-view";
 
@@ -30,7 +29,7 @@ export function PastConversation({
 }) {
   const view = useRecordView();
   const monitor = useMonitorOn();
-  const [store] = useState(() => frozenStore(drives));
+  const [store] = useState(() => frozenConversationStore(drives));
 
   return (
     <div className="flex flex-col gap-3">
@@ -68,13 +67,3 @@ export function PastConversation({
   );
 }
 
-/** A store holding one conversation that never changes. */
-function frozenStore(drives: DriveRecord[]): ConversationStore {
-  const state = drives.length > 0 ? replayConversation(drives) : EMPTY_CONVERSATION;
-  return {
-    subscribe: () => () => undefined,
-    getSnapshot: () => state,
-    // A record: the page offers nothing that would change it.
-    dispatch: () => undefined,
-  };
-}

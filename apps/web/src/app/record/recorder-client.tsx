@@ -2,7 +2,7 @@
 
 import { Mic, Square } from "lucide-react";
 import Link from "next/link";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 // The `/profile` subpath, NOT the package index: the index re-exports
 // retrieval.ts, which imports @voicemural/db, and that drags the Postgres
 // driver into the browser bundle. profile.ts is pure by construction.
@@ -15,6 +15,7 @@ import {
 } from "@/components/capture-settings";
 import { RecordingBadge } from "@/components/recording-badge";
 import { aiHealthProblem, useAiHealth } from "@/lib/ai-health";
+import { frozenConversationStore, type DriveRecord } from "@/lib/talkback/replay";
 import {
   MoreMenu,
   ViewSwitch,
@@ -30,17 +31,16 @@ import type { AskTopic } from "./views/topic-sheet";
  *
  * ONE FRAME, WHETHER THEY TALK OR NOT. The same column as the study's, a slim
  * bar at the top and the conversation under it, before a drive, during one
- * and after it. Only what is in the frame changes: before the first drive the
- * empty conversation holds one enormous target to START, with the voice and
- * language to start with; from then on it is the conversation, live and then
- * ended.
+ * and after it. Only what is in the frame changes.
  *
- * RECORD AGAIN CARRIES ON (3 Nov 2026). After Stop the conversation stays on
- * screen, and Record picks it up where it was left (`continueRecording`): the
- * next drive opens with it on screen, the agent is told what was said, and it
- * is stored as its continuation. Starting again from an empty screen threw
- * away the thing just built. A conversation of its own is "New conversation"
- * in the menu, or a fresh visit to this page.
+ * ONE CONVERSATION THAT KEEPS GROWING (3 Nov 2026). There is no clean slate:
+ * the screen opens on their conversation as it was left (`past`, read on the
+ * server), and Record carries it on (`continueRecording`): the drive opens
+ * with it on screen, the agent is told what was said, and it is stored as its
+ * continuation. Stop leaves it on screen, and Record carries it on again.
+ * Only someone who has never talked sees an empty screen, with one enormous
+ * target to START and the voice and language to start with; from then on
+ * those two are in the menu.
  *
  * THE STUDY'S COLUMN. The Stack was tuned for it: its topics alternate left
  * and right inside the column, and in a window five times as wide they drift
@@ -58,11 +58,11 @@ import type { AskTopic } from "./views/topic-sheet";
  * glance.
  */
 export function RecorderClient({
-  continueFrom = null,
+  past,
 }: {
-  /** Opened from a past conversation's Continue: the drive it picks up, and its name. */
-  continueFrom?: { id: string; title: string } | null;
-} = {}) {
+  /** Their conversation as stored, to open on: its latest drive, which Record continues. Null before their first. */
+  past: { lastDriveId: string; drives: DriveRecord[] } | null;
+}) {
   // The recorder itself lives above the router (see capture-provider.tsx), so a
   // drive survives walking over to the board and back. This screen is the full
   // view onto it, not its owner.
@@ -114,10 +114,16 @@ export function RecorderClient({
     if (floor !== "open") setFloor("open");
   }, [floor, setFloor]);
 
-  // The start until the first drive of this page load; the conversation from
-  // then on. `ended` is that conversation once nothing is capturing any more.
-  const hasConversation = conversationId !== null;
+  // What is on screen: the drive of this page load once there is one, and
+  // until then the stored conversation, which never changes on screen.
+  const [pastStore] = useState(() => (past ? frozenConversationStore(past.drives) : null));
+  const live = conversationId !== null;
+  const onScreen = conversationId ?? past?.lastDriveId ?? null;
+  const hasConversation = onScreen !== null;
+  // Nothing capturing, with the conversation on screen.
   const ended = hasConversation && !isRecording;
+  // Voice and language, which before a first drive sit on the empty screen.
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   return (
     <main className="no-touch-fuss mx-auto flex h-dvh w-full max-w-2xl flex-col gap-2 overflow-hidden px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
@@ -166,7 +172,7 @@ export function RecorderClient({
             <MoreMenu
               view={chosen}
               canChooseView={hasConversation}
-              {...(ended ? { onNewConversation: startRecording } : {})}
+              {...(ended ? { onSettings: () => setSettingsOpen((open) => !open) } : {})}
             />
           )}
           {/* Stop, then Record to carry on: one button that changes rather
@@ -188,10 +194,10 @@ export function RecorderClient({
             >
               <Square size={16} fill="currentColor" aria-hidden />
             </button>
-          ) : conversationId !== null ? (
+          ) : onScreen !== null ? (
             <button
               type="button"
-              onClick={() => continueRecording(conversationId)}
+              onClick={() => continueRecording(onScreen)}
               disabled={isBusy}
               aria-label="Record, continuing this conversation"
               className="grid size-11 shrink-0 cursor-pointer place-items-center rounded-full bg-[var(--color-idle)] text-white transition-transform active:scale-95 disabled:opacity-50"
@@ -202,10 +208,29 @@ export function RecorderClient({
         </div>
       </header>
 
-      {hasConversation ? (
+      {settingsOpen && ended && (
+        <section
+          aria-label="Voice and language"
+          className="flex shrink-0 flex-col items-center gap-3 rounded-2xl border border-line bg-surface px-3 py-4"
+        >
+          <VoicePicker />
+          <LanguagePicker />
+          {/* Pilot builds only, and pilot accounts only. See `ConditionToggles`. */}
+          <ConditionToggles />
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(false)}
+            className="min-h-9 cursor-pointer rounded-full px-4 text-sm font-medium text-fg/70 hover:bg-fg/[0.06] hover:text-fg"
+          >
+            Done
+          </button>
+        </section>
+      )}
+
+      {live ? (
         <ConversationView
-          // Keyed by the drive: the next one starts from nothing rather than
-          // inheriting the last one's scroll position and zoom.
+          // Keyed by the drive: each drive's store is new, seeded with the
+          // conversation it carries on (capture-provider.tsx).
           key={conversationId}
           view={view}
           store={conversation}
@@ -235,22 +260,29 @@ export function RecorderClient({
             : {})}
           className="min-h-0 flex-1"
         />
+      ) : pastStore && past ? (
+        // The conversation as it was left, until Record carries it on.
+        <ConversationView
+          key="past"
+          view={view}
+          store={pastStore}
+          live={false}
+          captureSessionId={past.lastDriveId}
+          monitor={monitorOn}
+          className="min-h-0 flex-1"
+        />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-8 overflow-y-auto py-4">
           <button
             type="button"
-            onClick={() =>
-              continueFrom
-                ? continueRecording(continueFrom.id)
-                : startRecording()
-            }
+            onClick={startRecording}
             disabled={isBusy}
             className={[
               "relative flex size-56 shrink-0 cursor-pointer items-center justify-center rounded-full text-2xl font-medium",
               "bg-surface text-fg ring-1 ring-line transition-transform active:scale-95 disabled:opacity-50 sm:size-64",
             ].join(" ")}
           >
-            {isBusy ? "…" : continueFrom ? "Continue" : "Record"}
+            {isBusy ? "…" : "Record"}
           </button>
 
           <p className="min-h-5 max-w-xs text-center text-sm text-fg/60">
@@ -263,16 +295,6 @@ export function RecorderClient({
                   ? "Opening the microphone…"
                   : "Saving…"}
               </span>
-            ) : continueFrom ? (
-              <>
-                Picks up &ldquo;{continueFrom.title}&rdquo; where it was left.{" "}
-                <Link
-                  href="/record"
-                  className="underline underline-offset-2 hover:text-fg"
-                >
-                  Start a new one instead
-                </Link>
-              </>
             ) : (
               "Tap to start. Say whatever you are working on."
             )}
@@ -284,6 +306,7 @@ export function RecorderClient({
           <ConditionToggles />
         </div>
       )}
+
 
       <div className="shrink-0 space-y-3 text-sm">
         {aiProblem && !hasConversation && (

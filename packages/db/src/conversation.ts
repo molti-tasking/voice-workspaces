@@ -1,5 +1,5 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
-import { captureSession, driveSubject, subjectSignal } from "./schema";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { captureSession, driveSubject, studyBlock, subjectSignal } from "./schema";
 import { loadDriveLines, loadSubjectVisits, type DriveLine, type SubjectVisitRow } from "./study-session";
 import { getDb } from "./index";
 
@@ -24,8 +24,28 @@ export interface ConversationDrive {
   subjects: { ordinal: number; settled: boolean | null; kept: boolean }[];
 }
 
-/** At most this many drives in one chain: a guard against a cycle, not a limit anyone reaches. */
+/**
+ * At most this many drives in one chain: a guard against a cycle, and, since
+ * the recorder carries one conversation on for good (3 Nov 2026), the window
+ * it shows: read from its latest drive, the chain is the latest this many.
+ */
 const MAX_CHAIN = 50;
+
+/**
+ * The drive the recorder opens on: the person's latest, unless it was a
+ * display study block's, which belongs to the study and not to their own
+ * conversation. Null before their first drive.
+ */
+export async function latestConversationDrive(userId: string): Promise<string | null> {
+  const [row] = await getDb()
+    .select({ id: captureSession.id })
+    .from(captureSession)
+    .leftJoin(studyBlock, eq(studyBlock.captureSessionId, captureSession.id))
+    .where(and(eq(captureSession.userId, userId), isNull(studyBlock.captureSessionId)))
+    .orderBy(desc(captureSession.startedAt))
+    .limit(1);
+  return row?.id ?? null;
+}
 
 /**
  * The ids of the chain `captureSessionId` is part of, first drive first.

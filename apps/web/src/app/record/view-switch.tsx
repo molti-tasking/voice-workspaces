@@ -96,21 +96,21 @@ export function ViewSwitch({ view }: { view: ConversationDisplay }) {
 /**
  * The button at the top right: the other views, and the pages that used to
  * be tabs (past conversations, and the older workspace, board and timeline),
- * which are no longer the way through the app but are still there. After a
- * drive it also starts a conversation of its own, since Record on the
- * recorder carries on the one on screen.
+ * which are no longer the way through the app but are still there. On the
+ * recorder, while nothing records, also the voice and language: they sat on
+ * its empty screen, which only someone who has never talked still sees.
  */
 export function MoreMenu({
   view,
   canChooseView = true,
   links = MORE_LINKS,
-  onNewConversation,
+  onSettings,
 }: {
   view: ConversationDisplay;
   canChooseView?: boolean;
   links?: readonly { href: string; label: string }[];
-  /** Start a drive that is not a continuation; absent, the menu offers none. */
-  onNewConversation?: () => void;
+  /** Open the voice and language; absent, the menu offers neither. */
+  onSettings?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const monitorOn = useMonitorOn();
@@ -148,18 +148,18 @@ export function MoreMenu({
           role="menu"
           className="absolute top-full right-0 z-50 mt-1 w-56 overflow-hidden rounded-2xl border border-line bg-surface py-1 text-sm shadow-lg"
         >
-          {onNewConversation && (
+          {onSettings && (
             <>
               <button
                 type="button"
                 role="menuitem"
                 onClick={() => {
                   setOpen(false);
-                  onNewConversation();
+                  onSettings();
                 }}
-                className="flex min-h-10 w-full cursor-pointer items-center px-3 text-left font-medium text-fg hover:bg-fg/[0.06]"
+                className="flex min-h-10 w-full cursor-pointer items-center px-3 text-left text-fg/80 hover:bg-fg/[0.06] hover:text-fg"
               >
-                New conversation
+                Voice and language
               </button>
               <div className="my-1 border-t border-line" />
             </>

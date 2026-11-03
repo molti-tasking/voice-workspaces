@@ -3,7 +3,7 @@ config({ path: new URL("../../../.env", import.meta.url).pathname, quiet: true }
 
 import { inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { conversationChain, loadConversation } from "./conversation";
+import { conversationChain, latestConversationDrive, loadConversation } from "./conversation";
 import { agentTurn, captureSession, driveSubject, driveSubjectSegment, subjectSignal, user } from "./schema";
 import { isDatabaseReachable } from "./testing";
 import { closeDb, getDb } from "./index";
@@ -43,6 +43,12 @@ describeIfDb("a conversation and the drives that continued it", () => {
   afterAll(async () => {
     await clean();
     await closeDb();
+  });
+
+  it("opens the recorder on the person's latest drive, never someone else's", async () => {
+    expect(await latestConversationDrive("test-cv-a")).toBe(D3);
+    expect(await latestConversationDrive("test-cv-b")).toBe(OTHER);
+    expect(await latestConversationDrive("test-cv-nobody")).toBeNull();
   });
 
   it("is one chain from its first drive to its latest, whichever drive is asked for", async () => {

@@ -3,6 +3,7 @@ import {
   applyMessage,
   type Conversation,
   type ConversationMessage,
+  type ConversationStore,
 } from "./conversation";
 
 /**
@@ -160,4 +161,19 @@ export function seedMessages(conversation: Conversation): ConversationMessage[] 
   }
   if (turns.length > 0) messages.push({ type: "mark", mark: { kind: "continued" } });
   return messages;
+}
+
+/**
+ * A stored conversation as a store that never changes, so the views read it
+ * as they read a live one: a past conversation's page, and the recorder before
+ * Record carries it on.
+ */
+export function frozenConversationStore(drives: readonly DriveRecord[]): ConversationStore {
+  const state = drives.length > 0 ? replayConversation(drives) : EMPTY_CONVERSATION;
+  return {
+    subscribe: () => () => undefined,
+    getSnapshot: () => state,
+    // A record: nothing on the screen may change it.
+    dispatch: () => undefined,
+  };
 }
