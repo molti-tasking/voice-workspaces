@@ -3,6 +3,7 @@
 import {
   PipecatClient,
   RTVIEvent,
+  type BotTTSTextData,
   type Participant,
 } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
@@ -10,7 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { earcon } from "@/lib/recorder/earcon";
 import type { Floor } from "@/lib/recorder/floor-store";
 import { subscribeStream } from "@/lib/recorder/mic-bus";
-import { parseServerMessage } from "./conversation";
+import { parseServerMessage, type ConversationMessage } from "./conversation";
 import {
   OFF,
   type PokeResult,
@@ -19,6 +20,7 @@ import {
   type TalkbackOptions,
   type TalkbackState,
 } from "./types";
+import { VoicePace } from "./voice-pace";
 
 /**
  * How long a floor or poke request waits for the container's answer. Both are
@@ -212,6 +214,13 @@ export function usePipecatTalkback(options: TalkbackOptions): Talkback {
       const ice = await icePromise;
       if (disposed) return;
 
+      // The agent's words kept to its voice (`voice-pace.ts`): the container
+      // sends a reply as the model writes it, seconds ahead of the voice.
+      const pace = new VoicePace();
+      const show = (message: ConversationMessage | null) => {
+        if (message) latest.current.onMessage(message);
+      };
+
       const next = new PipecatClient({
         transport: new SmallWebRTCTransport({
           /* THE BROWSER NEEDS STUN TOO, and forgetting it fails in a way that
@@ -252,7 +261,10 @@ export function usePipecatTalkback(options: TalkbackOptions): Talkback {
         enableCam: false,
         callbacks: {
           onBotStartedSpeaking: () => patch({ status: "speaking" }),
-          onBotStoppedSpeaking: () => patch({ status: "listening" }),
+          onBotStoppedSpeaking: () => {
+            patch({ status: "listening" });
+            show(pace.stopped());
+          },
           onDisconnected: () => {
             if (!disposed)
               patch({ status: "degraded", error: "connection lost", userSpeaking: false });
@@ -287,8 +299,16 @@ export function usePipecatTalkback(options: TalkbackOptions): Talkback {
           return;
         }
         const message = parseServerMessage(data);
-        if (message) latest.current.onMessage(message);
+        if (!message) return;
+        if (message.type === "agent") return show(pace.agent(message));
+        // Their turn comes after whatever of the agent's is still held.
+        if (message.type === "user") show(pace.user());
+        latest.current.onMessage(message);
       });
+
+      // Each word of the agent's as its voice says it: Pipecat sends it from
+      // the output transport, timed by the TTS, as the audio plays.
+      next.on(RTVIEvent.BotTtsText, (data: BotTTSTextData) => show(pace.word(data.text)));
 
       next.on(
         RTVIEvent.TrackStarted,
