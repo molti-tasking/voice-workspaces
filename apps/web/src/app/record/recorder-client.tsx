@@ -81,6 +81,7 @@ export function RecorderClient({
     startRecording,
     continueRecording,
     stopRecording,
+    reportConversationScreen,
   } = useCapture();
   const hearing = talk.status === "speaking";
   const connected = talk.status === "listening" || talk.status === "speaking";
@@ -106,6 +107,15 @@ export function RecorderClient({
   // Whether the AI proxy answers (`/api/health/ai`): a pill when it does not,
   // and before a drive the reason and a way to see the screens anyway.
   const aiProblem = aiHealthProblem(useAiHealth());
+
+  // What is on this screen, for the agent's line on it: the view, and the
+  // topic whose sheet is open. Cleared on the way out, so another page is
+  // never described as this one.
+  const [openTopic, setOpenTopic] = useState<string | null>(null);
+  useEffect(() => {
+    reportConversationScreen({ view, topic: openTopic });
+  }, [reportConversationScreen, view, openTopic]);
+  useEffect(() => () => reportConversationScreen(null), [reportConversationScreen]);
 
   // No Lock on this screen any more, so a drive here starts with the floor
   // open, as the study's do (`session-flow.tsx`): a Lock remembered from
@@ -258,6 +268,7 @@ export function RecorderClient({
           {...(TALKBACK_ENABLED && isRecording && connected
             ? { onAsk: ask }
             : {})}
+          onOpenTopic={setOpenTopic}
           className="min-h-0 flex-1"
         />
       ) : pastStore && past ? (

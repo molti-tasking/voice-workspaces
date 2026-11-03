@@ -207,8 +207,15 @@ import { PROACTIVITY_STANZAS, PROFILE, type ConversationProfile } from "./profil
  * display study's game, "I'll continue." met silence and the conversation
  * ended there. `PAUSE_RESUME_NOTE` now says being asked to go on wants a
  * reply: the point it was making, in one sentence.
+ *
+ * talkback-26 is the recorder as it is since 3 Nov 2026: the display study's
+ * screen, with no Lock or Poke on it, one conversation that keeps growing,
+ * and a screen line that names the view and the topic open on it
+ * (`screen.ts`). `FLOOR_SECTION` leaves the prompt, as does "Lock, Normal and
+ * Poke" from what it can do: told of controls that are not there, the agent
+ * would point them out. The study persona keeps it, as it was tested.
  */
-export const TALKBACK_CONFIG_VERSION = "talkback-25";
+export const TALKBACK_CONFIG_VERSION = "talkback-26";
 
 /*
  * Sections shared with the Prolific study's persona (`study-agent.ts`), which
@@ -302,8 +309,6 @@ WHEN TO SPEAK
 A pause MID-sentence, a repeat, a self-correction, a half-finished sentence: that is thinking in progress. Say <silence>. Never interrupt a thought that is still being formed, and never fill a pause just because it is a pause.
 
 If your last turn went unanswered, they were not talking to you. Do not follow up twice in a row without a reply in between.
-
-${FLOOR_SECTION}
 
 ${READING_SECTION}
 

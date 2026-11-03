@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { recordScreen } from "@voicemural/db/display";
+import { CONVERSATION_DISPLAYS } from "@voicemural/shared";
 import { SCREENS } from "@voicemural/talkback";
 import { currentUserId } from "@/lib/session";
 
@@ -9,6 +10,9 @@ export const runtime = "nodejs";
 const Body = z.object({
   captureSessionId: z.uuid(),
   screen: z.enum(SCREENS),
+  // On the conversation screen: how it is shown, and the topic whose sheet is open.
+  view: z.enum(CONVERSATION_DISPLAYS).nullish(),
+  topic: z.string().trim().min(1).max(200).nullish(),
 });
 
 /**
@@ -17,8 +21,10 @@ const Body = z.object({
  * Session-authorised, unlike the container's routes: it is the person's own
  * browser, and ownership of the drive is checked in `recordScreen`. Only a
  * coarse name from `SCREENS` is accepted — never a URL, which could carry a
- * query the study has no business keeping. `/api/realtime/context` reads the
- * latest back for the agent. See `capture_screen`.
+ * query the study has no business keeping — and on the conversation screen
+ * the view it is shown in and the title of an open topic, so the agent can
+ * say what is on it. `/api/realtime/context` reads the latest back for the
+ * agent. See `capture_screen`.
  */
 export async function POST(req: Request) {
   const userId = await currentUserId(req);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { APP_MAP, SCREENS, STUDY_SCREEN, renderScreen, screenFor } from "./screen";
+import { APP_MAP, SCREENS, STUDY_SCREEN, isShownAs, renderScreen, screenFor } from "./screen";
 
 describe("screen", () => {
   it("names a route coarsely, never passing a raw URL on", () => {
@@ -22,48 +22,71 @@ describe("screen", () => {
 
   it("always says where past transcripts are, so it never guesses", () => {
     // "You can see the transcript of our last session in the conversation
-    // view" — which shows nothing from earlier drives (28 Sep 2026).
-    // Conversations since 7 Oct 2026, where drives are named and searchable.
-    for (const s of [...SCREENS, null]) expect(renderScreen(s)).toMatch(/Conversations \(every past recording/);
-    expect(renderScreen("conversation")).toMatch(/nothing from earlier drives/);
+    // view" — which then showed nothing from earlier drives (28 Sep 2026).
+    // Past conversations since 7 Oct 2026, where drives are named and searchable.
+    for (const s of [...SCREENS, null]) expect(renderScreen(s)).toMatch(/Past conversations \(every past recording/);
+    // Since 3 Nov 2026 the conversation view does carry the earlier recordings.
+    expect(renderScreen("conversation")).toMatch(/what they said in earlier recordings is on it above this one/);
   });
 
-  it("says the recorder leads nowhere while it records, and where the way out is", () => {
+  it("names everything on the recorder, and where the way out is, exactly", () => {
     // 14 Oct 2026: told the conversation view had no dock while the map said
     // "the dock at the bottom", the agent invented a menu at the top right and
-    // an icon next to Stop, and kept on after four corrections.
+    // an icon next to Stop, and kept on after four corrections. There is a
+    // menu at the top right now, so the line and the map both say so.
     const line = renderScreen("conversation");
-    expect(line).toMatch(/no dock, no menu, no other icon or button/);
-    expect(line).toMatch(/those places open once they stop the recording/);
-    expect(line).toMatch(/never point them at a button there/);
+    expect(line).toMatch(/a switch between Stack and Transcript, a ⋯ menu/);
+    expect(line).toMatch(/Stop, which becomes Record once they stop/);
+    expect(line).toMatch(/no dock and no other button/);
+    expect(line).toMatch(/the ⋯ menu at the top right leads to them, during a recording too/);
+    expect(line).not.toMatch(/Lock|Poke|Normal/);
+  });
+
+  it("says a recording whose view is forced has no menu, and the map agrees", () => {
+    const line = renderScreen("conversation", { display: "chat" });
+    expect(line).toMatch(/no switch and no menu/);
+    expect(line).toMatch(/those places open once they stop it/);
+    expect(line).not.toMatch(/leads to them, during a recording too/);
   });
 
   it("says the topic headings are not the agent's to name or rearrange", () => {
     // 14 Oct 2026: "I'll make sure to keep … as separate topics", said about
     // panel sections it has no control over.
-    expect(renderScreen("conversation")).toMatch(/named automatically.*cannot move anything between them/);
+    expect(renderScreen("conversation", { view: "stack" })).toMatch(/named automatically.*cannot move anything between them/);
   });
 
-  it("says a draft is a line in the conversation, never 'this recording's page'", () => {
+  it("says where a draft shows: the Transcript, never the Stack or 'this recording's page'", () => {
     // 20 Oct 2026: "It's in your workspace and on this recording's page",
     // said to somebody looking at the recorder, which showed no drafts.
-    const line = renderScreen("conversation");
-    expect(line).toMatch(/A draft you write shows in it as a line with its title/);
-    expect(line).not.toMatch(/this recording's page/);
+    const transcript = renderScreen("conversation", { view: "chat" });
+    expect(transcript).toMatch(/A draft you write shows in it as a line with its title/);
+    expect(transcript).not.toMatch(/this recording's page/);
+    // The Stack shows no drafts, so it says where they are instead.
+    expect(renderScreen("conversation", { view: "stack" })).toMatch(/Drafts do not show in this view: they are in Transcript/);
     for (const s of [...SCREENS, null]) {
-      expect(renderScreen(s)).toMatch(/A draft from the drive running now is a line in the conversation view/);
+      expect(renderScreen(s)).toMatch(/A draft from the drive running now is a line in the conversation view's Transcript/);
     }
   });
 
-  it("describes the conversation as the chat it opens on, and says it can be switched", () => {
-    const line = renderScreen("conversation");
-    expect(line).toMatch(/as a chat: every line of this drive in the order it was said/);
-    expect(line).toMatch(/you do not know which one is open/);
-    expect(line).not.toMatch(/two panels/);
+  it("names the view that is open when the screen said, and says it does not know when it did not", () => {
+    expect(renderScreen("conversation", { view: "stack" })).toMatch(/as a stack of topics \("Stack" on their switch/);
+    expect(renderScreen("conversation", { view: "chat" })).toMatch(/as a transcript \("Transcript" on their switch\)/);
+    const unknown = renderScreen("conversation");
+    expect(unknown).toMatch(/opens as a stack of topics/);
+    expect(unknown).toMatch(/you do not know which one is open now/);
+    expect(isShownAs("stack")).toBe(true);
+    expect(isShownAs("board")).toBe(false);
+    expect(isShownAs("toString")).toBe(false);
+  });
+
+  it("names the topic whose sheet is open, and only then", () => {
+    expect(renderScreen("conversation", { view: "stack", topic: "Getting there" })).toMatch(/Open now: the sheet of the topic "Getting there"/);
+    expect(renderScreen("conversation", { view: "stack" })).not.toMatch(/Open now/);
+    expect(renderScreen("conversation")).toMatch(/A tap on a topic opens its sheet/);
   });
 
   it("says they can rename a topic, and the agent cannot", () => {
-    const line = renderScreen("conversation");
+    const line = renderScreen("conversation", { view: "chat" });
     expect(line).toMatch(/you do not name them/);
     expect(line).toMatch(/they can rename one, and you then hear it by their name/);
   });
@@ -86,8 +109,8 @@ describe("screen", () => {
 
   it("describes the display a drive forces, and only what that display has", () => {
     const chat = renderScreen("conversation", { display: "chat", sparks: false });
-    expect(chat).toMatch(/as a chat/);
-    expect(chat).not.toMatch(/row of sparks|Keep|switch it/);
+    expect(chat).toMatch(/as a transcript/);
+    expect(chat).not.toMatch(/row of sparks|Keep|which one is open now/);
     const topics = renderScreen("conversation", { display: "topics", sparks: false });
     expect(topics).toMatch(/line of topics rather than words/);
     expect(topics).toMatch(/written automatically from what was said, not by you/);

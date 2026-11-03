@@ -97,7 +97,7 @@ export {
   voicesForPicker,
   type VoiceProfile,
 } from "./voice";
-export { SCREENS, STUDY_SCREEN, isScreen, renderScreen, screenFor, type Screen } from "./screen";
+export { SCREENS, STUDY_SCREEN, isScreen, isShownAs, renderScreen, screenFor, type Screen } from "./screen";
 export { capabilitiesSection, type DriveCapabilities } from "./capabilities";
 export { isTimeZone, localDate, renderLocalTime, timeZoneOf } from "./clock";
 export { RECENT_DRIVES_SHOWN, renderRecentDrives, type RecentDrive } from "./recent-drives";

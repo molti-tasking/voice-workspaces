@@ -11,6 +11,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import type { ConversationDisplay } from "@voicemural/shared";
 // The `/screen` subpath, not the package index — see capture-settings.tsx.
 // The `/profile` subpath for the same reason: the index drags in the database.
 import { PROFILE } from "@voicemural/talkback/profile";
@@ -158,6 +159,18 @@ export interface CaptureContextValue {
    */
   continueRecording: (fromCaptureSessionId: string) => void;
   stopRecording: () => void;
+  /**
+   * What the conversation screen shows, for the agent's line on the screen:
+   * how it is shown and the topic whose sheet is open. The recorder sets it
+   * while it is mounted and clears it on the way out.
+   */
+  reportConversationScreen: (shown: ConversationScreenReport | null) => void;
+}
+
+export interface ConversationScreenReport {
+  view: ConversationDisplay;
+  /** The title of the topic whose sheet is open; null when none is. */
+  topic: string | null;
 }
 
 const CaptureContext = createContext<CaptureContextValue | null>(null);
@@ -380,21 +393,25 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
   }, [cues.drafts, conversation]);
 
   // Which screen they have open, reported on every navigation during a drive
-  // so the agent can stop describing screens it cannot see. Fire and forget:
-  // a missed report means the agent is told the screen is not known, which is
-  // what it was before this existed.
+  // so the agent can stop describing screens it cannot see — and on the
+  // conversation screen, how it is shown and which topic is open, reported
+  // whenever either changes (3 Nov 2026). Fire and forget: a missed report
+  // means the agent is told less, which is what it was before this existed.
   const pathname = usePathname();
   const screen = screenFor(pathname);
   const sessionId = recorder.currentSessionId;
+  const [shown, reportConversationScreen] = useState<ConversationScreenReport | null>(null);
+  const view = screen === "conversation" ? (shown?.view ?? null) : null;
+  const topic = screen === "conversation" ? (shown?.topic ?? null) : null;
   useEffect(() => {
     if (!isRecording || !sessionId) return;
     void fetch("/api/realtime/screen", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ captureSessionId: sessionId, screen }),
+      body: JSON.stringify({ captureSessionId: sessionId, screen, view, topic }),
       keepalive: true,
     }).catch(() => undefined);
-  }, [isRecording, sessionId, screen]);
+  }, [isRecording, sessionId, screen, view, topic]);
 
   const { start, stop } = recorder;
 
@@ -524,6 +541,7 @@ export function CaptureProvider({ children }: { children: React.ReactNode }) {
       startRecording,
       continueRecording,
       stopRecording,
+      reportConversationScreen,
     }),
     [
       recorder,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ConversationDisplay } from "@voicemural/shared";
 // The `/digest` subpath, not the package index: the index pulls in server code.
 import type { TopicComprehension } from "@voicemural/talkback/comprehension";
@@ -54,6 +54,7 @@ export function ConversationView({
   monitor = false,
   fixedComprehension,
   onAsk,
+  onOpenTopic,
   className = "",
 }: {
   view: ConversationDisplay;
@@ -80,6 +81,8 @@ export function ConversationView({
   ) => ReadonlyMap<number, TopicComprehension>;
   /** Live only: hand a question about a topic to the agent. */
   onAsk?: AskTopic;
+  /** The title of the topic whose sheet is open, whenever it changes; null once none is. */
+  onOpenTopic?: (title: string | null) => void;
   className?: string;
 }) {
   const conversation = useSyncExternalStore(
@@ -111,6 +114,10 @@ export function ConversationView({
   const zoomed = zoomKey
     ? (topics.find((t) => t.key === zoomKey) ?? null)
     : null;
+  const openTitle = zoomed?.title ?? null;
+  useEffect(() => {
+    onOpenTopic?.(openTitle);
+  }, [onOpenTopic, openTitle]);
   const monitored = useComprehension(conversation, captureSessionId, {
     live,
     focus: zoomed?.ordinal ?? null,

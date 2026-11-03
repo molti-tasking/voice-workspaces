@@ -36,7 +36,6 @@ import { LOOKUP_SECTION, withLookup } from "./lookup";
 import { PROFILE, type ConversationProfile } from "./profile";
 import {
   FLOOR_OPEN_NOTE,
-  FLOOR_SECTION,
   HEARING_SECTION,
   OPENING_NUDGE,
   PAUSE_RESUME_NOTE,
@@ -57,8 +56,12 @@ import type { SessionTask } from "./study-task";
 /**
  * On every `agent_turn` this engine writes, in place of `TALKBACK_CONFIG_VERSION`,
  * so an analysis can always tell the two engines' turns apart.
+ *
+ * realtime-2 (3 Nov 2026): the field prompt no longer tells the agent they
+ * can Lock or Poke it, as the recorder has neither on screen any more
+ * (talkback-26). The study's session prompt is unchanged.
  */
-export const REALTIME_CONFIG_VERSION = "realtime-1";
+export const REALTIME_CONFIG_VERSION = "realtime-2";
 
 /** `text` with `from` replaced by `to`, or an error naming what was not found. */
 function replaced(text: string, from: string, to: string): string {
@@ -119,8 +122,6 @@ WHEN TO SPEAK
 - When they are stuck — circling the same point, "I don't know" — offer one small push.
 - When they are mid-sentence, trailing off or still forming a thought, say nothing more than "Mm." and let them go on. Never fill a pause just because it is a pause.
 - Never say again what you have just said, and never ask a question two turns running.
-
-${FLOOR_SECTION}
 
 ${REALTIME_READING_SECTION}
 

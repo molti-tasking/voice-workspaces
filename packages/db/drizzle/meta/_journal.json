@@ -232,6 +232,13 @@
       "when": 1793227925374,
       "tag": "0032_study_design",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1793663624762,
+      "tag": "0033_screen_view",
+      "breakpoints": true
     }
   ]
 }

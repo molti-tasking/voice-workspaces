@@ -6,6 +6,7 @@ import {
   ANSWER_ACKNOWLEDGEMENTS,
   ANSWER_RETRY_NUDGE,
   FLOOR_OPEN_NOTE,
+  FLOOR_SECTION,
   PAUSE_RESUME_NOTE,
   OPENING_NUDGE,
   OUTPUT_CONTRACT,
@@ -300,13 +301,16 @@ describe("the drive of 29 Sep 2026", () => {
 });
 
 describe("the floor: Lock, Normal and Poke (talkback-20), which bot.py mirrors", () => {
-  it("tells the model what a run of unanswered lines means", () => {
-    // Under Lock the model sees line after line of theirs with no reply in
-    // between. Without this it reads the gap as its own failure to answer.
-    expect(SYSTEM_PROMPT).toMatch(/WHEN THEY LOCK OR POKE YOU/);
-    // Not the study's jargon: "the floor is entirely yours" (14 Oct 2026).
+  it("keeps Lock and Poke out of the field prompt once the screen has neither (talkback-26)", () => {
+    // Told of controls that are not on the screen, the agent points them out.
+    // The study persona keeps the section, as it was tested.
+    expect(SYSTEM_PROMPT).not.toMatch(/WHEN THEY LOCK OR POKE YOU/);
+    expect(SYSTEM_PROMPT).not.toMatch(/\bLock\b/);
+    // Not the study's jargon either: "the floor is entirely yours" (14 Oct 2026).
     expect(SYSTEM_PROMPT).not.toMatch(/\bfloor\b/i);
-    expect(SYSTEM_PROMPT).toMatch(/is the lock, not you ignoring them/);
+    // Should Lock come back, the section still says what a run of
+    // unanswered lines means: the lock, not the agent ignoring them.
+    expect(FLOOR_SECTION).toMatch(/is the lock, not you ignoring them/);
   });
 
   it("never lets a poke be met with silence", () => {
@@ -468,8 +472,11 @@ describe("being read a text (talkback-24)", () => {
   });
 
   it("is followed by talkback-25, which answers being asked to go on after the pause", () => {
-    expect(TALKBACK_CONFIG_VERSION).toBe("talkback-25");
     expect(PAUSE_RESUME_NOTE).toMatch(/If they ask you to go on or continue/);
+  });
+
+  it("is followed by talkback-26, the recorder without Lock or Poke", () => {
+    expect(TALKBACK_CONFIG_VERSION).toBe("talkback-26");
   });
 });
 

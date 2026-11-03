@@ -32,10 +32,14 @@ describe("the study's agent", () => {
   });
 
   it("handles the floor, the sparks and the transcription with the field agent's own words", () => {
-    for (const section of [FLOOR_SECTION, SPARK_SECTION, HEARING_SECTION]) {
+    for (const section of [SPARK_SECTION, HEARING_SECTION]) {
       expect(SYSTEM_PROMPT).toContain(section);
       expect(composed.prompt).toContain(section);
     }
+    // Lock and Poke left the field agent with the recorder's controls
+    // (talkback-26); the study's agent keeps the section, as it was tested.
+    expect(composed.prompt).toContain(FLOOR_SECTION);
+    expect(SYSTEM_PROMPT).not.toContain(FLOOR_SECTION);
   });
 
   it("is a conversational assistant at a desk, not a companion in a car", () => {

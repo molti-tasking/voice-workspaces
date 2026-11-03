@@ -14,6 +14,7 @@ import { verifyTicket } from "@voicemural/shared/realtime-ticket";
 import {
   STUDY_SCREEN,
   buildTurnContext,
+  isShownAs,
   renderLocalTime,
   renderScreen,
   timeZoneOf,
@@ -147,11 +148,14 @@ export async function POST(req: Request) {
   ]);
 
   // What the conversation view has on it on this drive. No sparks row and no
-  // Keep: both left the screen on 27 Oct 2026. Frozen with the drive.
+  // Keep: both left the screen on 27 Oct 2026. Frozen with the drive, but for
+  // the view they chose and the topic they opened, which the screen reports.
   const condition = resolveStudyCondition(rows[0]?.studyCondition).condition;
+  const chosenView = isShownAs(screen?.view) ? screen.view : null;
   const onScreen = {
-    // A display the drive forces (the display study); otherwise their choice.
-    ...(condition.display !== "choice" ? { display: condition.display } : {}),
+    // A display the drive forces (a pilot's condition); otherwise their choice.
+    ...(condition.display !== "choice" ? { display: condition.display } : chosenView ? { view: chosenView } : {}),
+    ...(screen?.topic ? { topic: screen.topic } : {}),
   };
 
   return NextResponse.json(
@@ -178,7 +182,7 @@ export async function POST(req: Request) {
       drafts: drafts.text,
       pending,
       settled,
-      screen: block ? STUDY_SCREEN : renderScreen(screen, onScreen),
+      screen: block ? STUDY_SCREEN : renderScreen(screen?.screen, onScreen),
       // `now` is the date and time where they are, rendered as their words
       // arrive (`renderLocalTime`). The agent had no clock at all and guessed
       // one — see clock.ts.

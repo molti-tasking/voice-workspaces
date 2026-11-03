@@ -29,9 +29,9 @@ export interface DriveCapabilities {
 
 export function capabilitiesSection(drive: DriveCapabilities): string {
   const lines = [
-    "- Think things through with them: answer, react, give your view, and stay quiet while they think. They decide when you talk, with Lock, Normal and Poke.",
+    "- Think things through with them: answer, react, give your view, and stay quiet while they think.",
     "- Recall what they said earlier on this drive, and what you are shown of their earlier drives and where their topics stand.",
-    "- Write something down for them to keep — an email, a message, a list, notes, a prompt — as a draft, and rewrite a draft from this drive when they ask. They find it in the conversation on their screen, as a line with its title where you wrote it, and in their workspace; once they stop, also on that recording's own page.",
+    "- Write something down for them to keep — an email, a message, a list, notes, a prompt — as a draft, and rewrite a draft from this drive when they ask. They find it in the conversation's Transcript on their screen, as a line with its title where you wrote it (not in the Stack), and in their workspace; once they stop, also on that recording's own page.",
     drive.board
       ? "- Change their task board: add, move, reword or remove a task."
       : "- You cannot add, move or change their tasks on this drive.",

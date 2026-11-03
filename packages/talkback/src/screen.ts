@@ -51,15 +51,23 @@ export interface ConversationScreen {
   /** They choose what to keep: Keep on each topic. */
   keep?: boolean;
   /**
-   * How the conversation is shown, when the drive forces it (the display
-   * study, `study_condition.display`). Absent: the person's own choice, which
-   * is described as the chat, the view it opens on, and the switch.
+   * How the conversation is shown, when the drive forces it (a pilot's
+   * condition, `study_condition.display`): no switch and no menu then.
    */
   display?: ShownAs;
+  /** How it is shown by their own choice, as the screen reported it (3 Nov 2026); absent when not known. */
+  view?: ShownAs;
+  /** The title of the topic whose sheet is open over the conversation; absent when none is. */
+  topic?: string;
 }
 
 /** The displays a drive can force (`ConversationDisplay` in @voicemural/shared). */
 export type ShownAs = "chat" | "topics" | "uptake" | "now" | "open" | "recent" | "stack";
+
+/** A view as the screen reported it, checked before it is described. */
+export function isShownAs(value: unknown): value is ShownAs {
+  return typeof value === "string" && Object.hasOwn(SHOWN_AS, value);
+}
 
 const NAMED =
   "Topics are named automatically from what is said; you do not name them and cannot move anything between them, but they can rename one, and you then hear it by their name.";
@@ -69,37 +77,45 @@ const TOPIC_LINE =
 
 /** The conversation itself, as each view shows it. */
 const SHOWN_AS: Record<ShownAs, string> = {
-  chat: `the conversation view as a chat: every line of this drive in the order it was said — their words in bubbles on the right, yours as text on the left. A draft you write shows in it as a line with its title, where you wrote it; a tap opens its text with a Copy button. ${NAMED}`,
+  chat: `the conversation view as a transcript ("Transcript" on their switch): every line of the conversation in the order it was said — their words in bubbles on the right, yours as text on the left. A draft you write shows in it as a line with its title, where you wrote it; a tap opens its text with a Copy button. ${NAMED}`,
   topics: `${TOPIC_LINE} ${NAMED}`,
   uptake: `${TOPIC_LINE} Each topic also has one small circle per idea you suggested on it: filled once they have taken it up in their own words, hollow until then — judged automatically, not by you. ${NAMED}`,
   now: "the conversation view as one line saying where the conversation is now, under the name of the current topic, written automatically from what was said, not by you.",
   open: "the conversation view as the questions this conversation has raised — where, when, how much — the open ones first and the settled ones ticked, written automatically from what was said, not by you.",
   recent:
     "the conversation view shrunk by age: the last turn in its own words, large, at the bottom, under who said it; the turn before it in two words; the three before that in one word each; and above them the name of the current topic. The short words are written automatically, not by you, and a tap opens the current topic with all of its lines.",
-  stack: `the conversation view as a stack of topics: the current topic as the largest bubble at the bottom, with what has been decided on it, the turn before as a short line and the words being said now; the earlier topics above it, each with what was decided, in places they keep. When the conversation goes back to an earlier topic, its bubble moves down into the large one. The decisions and short lines are written automatically, not by you. ${NAMED}`,
+  stack: `the conversation view as a stack of topics ("Stack" on their switch, the view it opens on): the current topic as the largest bubble at the bottom, with what has been decided on it, the turn before as a short line and the words being said now, appearing as they are said; the earlier topics above it, each with what was decided, in places they keep. When the conversation goes back to an earlier topic, its bubble moves down into the large one. The decisions and short lines are written automatically, not by you. Drafts do not show in this view: they are in Transcript, one tap away on the switch, and in Workspace. ${NAMED}`,
 };
 
-/** Unforced, the person may switch the view: said so, without saying which one is open. */
-const SWITCHABLE =
-  "They can switch it to show only the topics, which of your ideas they have taken up, one line on where things stand, the open questions, only the last turn in full with the ones before shrunk to a word or two, or the topics as a stack with what was decided on each; you do not know which one is open.";
+/** Their view when the screen has not said which: the one it opens on, and that they may have switched. */
+const UNKNOWN_VIEW =
+  "the conversation view, which opens as a stack of topics with what was decided on each and can be switched to the full transcript or another view; you do not know which one is open now.";
 
 /**
- * The recorder while it records. It once said "two panels … no other icon or
- * button" while the screen also had spark chips and Keep, and "Drafts are not
- * shown here; they are kept on this recording's page", which the agent
- * repeated to somebody looking at this screen as "it's on this recording's
- * page".
+ * The recorder. It once said "two panels … no other icon or button" while the
+ * screen also had spark chips and Keep, and "Drafts are not shown here; they
+ * are kept on this recording's page", which the agent repeated to somebody
+ * looking at this screen as "it's on this recording's page". Since 3 Nov
+ * 2026 it is the display study's screen made the everyday one, and the line
+ * says which view is open and which topic, as the screen reports them: the
+ * same things, in the same words, as they see.
  */
 function conversationDescription(drive: ConversationScreen): string {
-  const shown = drive.display ?? "chat";
+  const forced = drive.display;
+  const view = forced ?? drive.view;
   return [
-    SHOWN_AS[shown],
-    drive.display === undefined ? SWITCHABLE : null,
+    view ? SHOWN_AS[view] : UNKNOWN_VIEW,
+    forced
+      ? "At the top, a slim bar with the recording badge and its clock, and Stop at its right end; on this recording there is no switch and no menu."
+      : "At the top, a slim bar: the recording badge and its clock, a switch between Stack and Transcript, a ⋯ menu with the other views (Topics, Uptake, Now, Open, Recent) and the way to Past conversations, Workspace, Board and Timeline, and at its right end Stop, which becomes Record once they stop.",
+    "It is one conversation that keeps growing: what they said in earlier recordings is on it above this one, and Record after Stop carries it on.",
+    "A tap on a topic opens its sheet over the conversation: what was said on it, your ideas on it marked taken up or not, what their workspace holds on it from every recording (tasks, claims, open questions, facts), and Ask me, which hands you a question about it to ask them back.",
+    drive.topic ? `Open now: the sheet of the topic "${drive.topic}".` : null,
     drive.sparks
-      ? "Above the controls is a row of sparks: up to three short questions about their subjects for them to tap, or, when there are none, one line saying why."
+      ? "Under the conversation is a row of sparks: up to three short questions about their subjects for them to tap, or, when there are none, one line saying why."
       : null,
     drive.keep ? "They can keep a topic they want to hold in their own head: by saying \"keep this one\", or with Keep on a topic they open." : null,
-    "Three controls at the bottom: Lock (only they speak, and you are not asked to reply), Normal (you may talk back) and Poke (they want one turn from you now), and Stop at the top right. That is everything on it while it records: no dock, no menu, no other icon or button, and nothing that leads to another screen. It shows nothing from earlier drives",
+    "That is everything on it: no dock and no other button. Never point them at anything else on this screen",
   ]
     .filter(Boolean)
     .join(" ");
@@ -121,26 +137,37 @@ const DESCRIPTIONS: Record<Exclude<Screen, "conversation">, string> = {
 /**
  * Where things are, whichever screen is open.
  *
- * NOT FROM THE CONVERSATION VIEW, while it records (talkback-20). That screen
- * lost its dock, so this map said "the dock at the bottom" while the screen's
- * own line said there was no dock — and on 14 Oct 2026 the agent resolved the
- * contradiction by inventing: Workspace "in the menu at the top right", then
- * "the icon next to the stop button", told four times running that neither
- * exists. So the map now says where the way out is, and the conversation view
- * says it has none.
+ * WHERE THE WAY OUT IS, EXACTLY (talkback-20). On 14 Oct 2026 the map said
+ * "the dock at the bottom" while the conversation view's own line said it had
+ * none, and the agent resolved the contradiction by inventing: Workspace "in
+ * the menu at the top right", then "the icon next to the stop button", told
+ * four times running that neither existed. Since 2 Nov 2026 there IS a menu
+ * at the top right of the conversation view, during a recording too, so the
+ * map says so; a recording whose view is forced has none, and the map then
+ * says the places open once they stop (`appMap(false)`).
  *
  * On 28 Sep 2026, asked "how can I see my last discussion?", the agent said
- * the transcript was in the conversation view — which shows nothing from
- * earlier drives. It knew the current screen and nothing about the others, so
- * it guessed. This is the whole map, in the words of the dock.
+ * the transcript was in the conversation view — which then showed nothing
+ * from earlier drives. It knew the current screen and nothing about the
+ * others, so it guessed. This is the whole map, in the words of the menu.
  *
- * Conversations replaced Timeline as the place to send someone looking for a
- * past drive (7 Oct 2026: "the tool does not allow me to view my past
- * transcripts easily"): drives now have names and can be searched. Timeline
+ * Past conversations replaced Timeline as the place to send someone looking
+ * for a past drive (7 Oct 2026: "the tool does not allow me to view my past
+ * transcripts easily"): drives have names and can be searched. Timeline
  * stays, in the menu, for reading everything end to end.
  */
-export const APP_MAP =
-  "WHERE THINGS ARE: Workspace (their topics, tasks and filed drafts) and Conversations (every past recording, newest first, named by what it was about, with a search over everything they said; each opens that recording's page, with its transcript and drafts). A draft from the drive running now is a line in the conversation view, where it was written, and on its topic in Workspace; once they stop, it is also on that recording's page. Timeline reads every transcript end to end. On every other screen the dock at the bottom leads to Workspace and Conversations, and on a wide screen Conversations and Timeline are in the menu at the top right. The conversation view is the recorder itself, and while it records it has no dock and no menu: those places open once they stop the recording. From the conversation view, say exactly that and never point them at a button there. Point them there by those names; there is no other place to look.";
+function appMap(menu: boolean): string {
+  return [
+    "WHERE THINGS ARE: Workspace (their topics, tasks and filed drafts) and Past conversations (every past recording, newest first, named by what it was about, with a search over everything they said; each opens that recording's page, with its transcript and drafts).",
+    "A draft from the drive running now is a line in the conversation view's Transcript, where it was written, and on its topic in Workspace; once they stop, it is also on that recording's page. Timeline reads every transcript end to end.",
+    menu
+      ? "On the conversation view the ⋯ menu at the top right leads to them, during a recording too; on the other pages, the menu at the top, and the record button at the bottom leads back to the conversation."
+      : "On this recording the conversation view has no menu: those places open once they stop it, from the ⋯ menu at its top right.",
+    "Point them there by those names; there is no other place to look.",
+  ].join(" ");
+}
+
+export const APP_MAP = appMap(true);
 
 /**
  * The display study's conversation page (`/study/session`), as one line —
@@ -164,5 +191,6 @@ export function renderScreen(
     return `WHICH SCREEN: not known. Do not describe what is on their screen or tell them where to tap.\n${APP_MAP}`;
   }
   const description = screen === "conversation" ? conversationDescription(drive) : DESCRIPTIONS[screen];
-  return `WHICH SCREEN: they have ${description} open.\n${APP_MAP}`;
+  const map = screen === "conversation" && drive.display ? appMap(false) : APP_MAP;
+  return `WHICH SCREEN: they have ${description} open.\n${map}`;
 }

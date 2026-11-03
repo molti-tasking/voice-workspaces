@@ -1682,6 +1682,14 @@ export const captureScreen = pgTable(
       .references(() => captureSession.id, { onDelete: "cascade" }),
     /** A coarse name from `SCREENS` in the web app, never a raw URL. */
     screen: text("screen").notNull(),
+    /**
+     * On the conversation screen, how it is shown (`ConversationDisplay`):
+     * the person's choice, so the agent can say what is on it (3 Nov 2026).
+     * Null elsewhere, and on rows from before.
+     */
+    view: text("view"),
+    /** On the conversation screen, the title of the topic whose sheet is open; null when none is. */
+    topic: text("topic"),
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("capture_screen_session_idx").on(t.captureSessionId, t.at)],

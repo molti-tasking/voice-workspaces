@@ -176,6 +176,9 @@ export async function recordScreen(input: {
   captureSessionId: string;
   userId: string;
   screen: string;
+  /** On the conversation screen: how it is shown, and the topic whose sheet is open. */
+  view?: string | null;
+  topic?: string | null;
 }): Promise<boolean> {
   const db = getDb();
   const [owned] = await db
@@ -185,22 +188,32 @@ export async function recordScreen(input: {
     .limit(1);
   if (!owned) return false;
 
+  const view = input.view ?? null;
+  const topic = input.topic ?? null;
   const latest = await currentScreen(input.captureSessionId);
-  if (latest === input.screen) return true;
+  if (latest && latest.screen === input.screen && latest.view === view && latest.topic === topic) return true;
   await db.insert(captureScreen).values({
     captureSessionId: input.captureSessionId,
     screen: input.screen,
+    view,
+    topic,
   });
   return true;
 }
 
-/** The screen the person most recently had open during this drive, or null. */
-export async function currentScreen(captureSessionId: string): Promise<string | null> {
+export interface ScreenState {
+  screen: string;
+  view: string | null;
+  topic: string | null;
+}
+
+/** What the person most recently had open during this drive, or null. */
+export async function currentScreen(captureSessionId: string): Promise<ScreenState | null> {
   const [row] = await getDb()
-    .select({ screen: captureScreen.screen })
+    .select({ screen: captureScreen.screen, view: captureScreen.view, topic: captureScreen.topic })
     .from(captureScreen)
     .where(eq(captureScreen.captureSessionId, captureSessionId))
     .orderBy(desc(captureScreen.at))
     .limit(1);
-  return row?.screen ?? null;
+  return row ?? null;
 }
