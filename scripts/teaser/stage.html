@@ -1,0 +1,184 @@
+<!doctype html>
+<!--
+  The teaser's frame: the phone, the captions beside it, the call and the
+  title cards. Layout and look are the variables in :root.
+
+  Open this file in a browser while the dev server runs to see the layout
+  with the live demo in the phone. The demo's own controls show in that
+  preview; the film hides them.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Souffleur teaser</title>
+<style>
+:root {
+  /* Colours */
+  --bg: #efeee9;
+  --fg: #16181d;
+  --muted: #6b6f78;
+  --accent: #d0602e;
+  --sans: system-ui, -apple-system, "SF Pro Text", sans-serif;
+
+  /* The frame (the video size; film.mjs sets these from storyboard.mjs) */
+  --frame-w: 1920px;
+  --frame-h: 1080px;
+
+  /* The phone: top-left corner, and a scale for the whole device */
+  --phone-left: 330px;
+  --phone-top: 96px;
+  --phone-scale: 1;
+
+  /* The captions: left edge, width, and type sizes */
+  --caption-left: 880px;
+  --caption-width: 860px;
+  --kicker-size: 17px;
+  --title-size: 60px;
+  --text-size: 29px;
+
+  /* The title cards */
+  --card-title-size: 96px;
+  --card-line-size: 34px;
+}
+
+html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
+#frame {
+  position: relative; width: var(--frame-w); height: var(--frame-h); overflow: hidden;
+  background: var(--bg); color: var(--fg); font-family: var(--sans); -webkit-font-smoothing: antialiased;
+  transform-origin: 0 0;
+}
+
+.device { position: absolute; left: var(--phone-left); top: var(--phone-top); transform: scale(var(--phone-scale)); transform-origin: 0 0; }
+.label {
+  height: 52px; text-align: center; font: 600 15px var(--sans); letter-spacing: .14em;
+  text-transform: uppercase; color: var(--muted); transition: opacity .35s;
+  position: absolute; top: -52px; left: 0; right: 0;
+}
+.phone {
+  width: 412px; height: 884px; border-radius: 66px; background: #0c0d10; padding: 12px; box-sizing: border-box;
+  box-shadow: 0 50px 90px rgba(20, 20, 30, .20), 0 10px 24px rgba(20, 20, 30, .12);
+}
+.screen { position: relative; width: 100%; height: 100%; border-radius: 54px; overflow: hidden; background: #fbfbfa; }
+.status {
+  position: absolute; top: 0; left: 0; right: 0; height: 50px; display: flex; align-items: center;
+  justify-content: space-between; padding: 4px 34px 0; box-sizing: border-box; font: 600 16px var(--sans);
+  z-index: 5; color: #111;
+}
+.status .bars { display: flex; gap: 2px; align-items: flex-end; }
+.status .bars i { width: 3px; background: #111; border-radius: 1px; }
+.status .battery { width: 24px; height: 11px; border: 1.5px solid #111; border-radius: 3.5px; padding: 1.5px; box-sizing: border-box; }
+.status .battery i { display: block; height: 100%; width: 80%; background: #111; border-radius: 1.5px; }
+.island { position: absolute; top: 11px; left: 50%; transform: translateX(-50%); width: 118px; height: 34px; border-radius: 20px; background: #000; z-index: 6; }
+.home { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); width: 134px; height: 5px; border-radius: 3px; background: #111; z-index: 6; opacity: .85; }
+iframe { position: absolute; top: 50px; left: 0; width: 100%; height: calc(100% - 50px); border: 0; background: #fbfbfa; }
+
+.cap { position: absolute; left: var(--caption-left); width: var(--caption-width); top: 50%; transform: translateY(-50%); }
+.cap > div { transition: opacity .35s ease, transform .45s cubic-bezier(.2, .7, .2, 1); }
+.cap > div.out { opacity: 0; transform: translateY(12px); }
+.cap .k { font: 600 var(--kicker-size) var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); margin-bottom: 18px; min-height: 20px; }
+.cap h1 { font-size: var(--title-size); line-height: 1.06; font-weight: 700; letter-spacing: -.025em; margin: 0; }
+.cap p { font-size: var(--text-size); line-height: 1.38; color: var(--muted); margin: 26px 0 0; max-width: 760px; }
+
+.card {
+  position: absolute; inset: 0; z-index: 50; background: var(--bg); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; transition: opacity .7s ease;
+}
+.card h1 { font-size: var(--card-title-size); letter-spacing: -.035em; margin: 0; }
+.card p { font-size: var(--card-line-size); color: var(--muted); margin: 18px 0 0; }
+.card .dots { display: flex; gap: 14px; margin-bottom: 34px; }
+.card .dots i { width: 18px; height: 18px; border-radius: 50%; }
+
+.call {
+  position: absolute; inset: 0; z-index: 20; background: linear-gradient(#3a4250, #1b1f27); color: #fff;
+  display: flex; flex-direction: column; align-items: center; padding-top: 150px; box-sizing: border-box;
+  transform: translateY(100%); transition: transform .5s cubic-bezier(.3, .7, .2, 1);
+}
+.call.in { transform: none; }
+.call .av { width: 110px; height: 110px; border-radius: 50%; background: #8b93a3; display: grid; place-items: center; font: 600 46px var(--sans); }
+.call .who { font: 500 36px var(--sans); margin-top: 22px; }
+.call .sub { font-size: 18px; opacity: .7; margin-top: 8px; }
+.call .btns { position: absolute; bottom: 110px; left: 0; right: 0; display: flex; justify-content: space-around; }
+.call .btns i { width: 76px; height: 76px; border-radius: 50%; }
+</style>
+</head>
+<body>
+<div id="frame">
+  <div class="device">
+    <div class="label" id="label">Chat transcript</div>
+    <div class="phone"><div class="screen">
+      <div class="status">
+        <span>9:41</span>
+        <span style="display:flex;gap:6px;align-items:center">
+          <span class="bars"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i><i style="height:11px"></i></span>
+          <span class="battery"><i></i></span>
+        </span>
+      </div>
+      <div class="island"></div>
+      <iframe id="app"></iframe>
+      <div class="call" id="call">
+        <div class="av" id="call-initial">M</div><div class="who" id="call-name">Mum</div><div class="sub" id="call-sub">mobile</div>
+        <div class="btns"><i style="background:#eb4b3f"></i><i style="background:#35c759"></i></div>
+      </div>
+      <div class="home"></div>
+    </div></div>
+  </div>
+
+  <div class="cap"><div id="cap" class="out"><div class="k" id="k"></div><h1 id="h"></h1><p id="p"></p></div></div>
+
+  <div class="card" id="card">
+    <div class="dots"><i style="background:#e8622c"></i><i style="background:#2f6fe0"></i></div>
+    <h1 id="card-name">Souffleur</h1><p id="card-line">A glanceable display for mobile voice conversations</p>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Swap the caption beside the phone: fade out, change, fade in. */
+window.cap = async ({ kicker = "", title = "", text = "" }) => {
+  $("cap").classList.add("out");
+  await pause(360);
+  $("k").textContent = kicker;
+  $("h").textContent = title;
+  $("p").textContent = text;
+  $("cap").classList.remove("out");
+};
+window.label = async (text) => {
+  $("label").style.opacity = 0;
+  await pause(360);
+  $("label").textContent = text;
+  $("label").style.opacity = 1;
+};
+window.card = ({ name, line }, shown) => {
+  $("card-name").textContent = name;
+  $("card-line").textContent = line;
+  $("card").style.opacity = shown ? 1 : 0;
+};
+window.caller = ({ initial, name, sub }) => {
+  $("call-initial").textContent = initial;
+  $("call-name").textContent = name;
+  $("call-sub").textContent = sub;
+};
+window.call = (on) => $("call").classList.toggle("in", on);
+
+// Opened straight from disk: a layout preview, scaled to the window, with the
+// live demo in the phone and a sample caption.
+if (location.protocol === "file:") {
+  const fit = () => {
+    const f = $("frame"), s = Math.min(innerWidth / f.offsetWidth, innerHeight / f.offsetHeight);
+    f.style.transform = `scale(${s})`;
+  };
+  fit();
+  addEventListener("resize", fit);
+  $("app").src = "http://localhost:3000/record/demo";
+  $("card").style.opacity = 0;
+  window.cap({
+    kicker: "Today",
+    title: "The screen shows a chat transcript.",
+    text: "After a few minutes, it is a column of text you cannot take in at a glance.",
+  });
+}
+</script>
+</body>
+</html>
