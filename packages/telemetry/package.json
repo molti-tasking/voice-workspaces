@@ -14,7 +14,7 @@
   "dependencies": {
     "@voicemural/llm": "workspace:*",
     "@voicemural/shared": "workspace:*",
-    "posthog-node": "^5.48.1"
+    "posthog-node": "^5.63.0"
   },
   "devDependencies": {
     "vitest": "4.1.10",
