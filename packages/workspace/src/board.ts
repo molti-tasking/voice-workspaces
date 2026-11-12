@@ -64,6 +64,14 @@ export interface BoardCard {
   history: TaskTransition[];
   /** Drives recorded since the card last moved, not counting the one that moved it. */
   staleSessions: number;
+  /** When the card was first added: the root of its revision chain. */
+  createdAt: Date;
+  /**
+   * When the card last changed — a move or a reworded text alike, since both
+   * are a revise that makes a new head block. Equal to `createdAt` on a card
+   * nothing has touched since it was added.
+   */
+  updatedAt: Date;
 }
 
 /** A capture session as it appears in the ledger, for "sessions since" counts. */
@@ -215,6 +223,8 @@ export function foldBoard(ops: readonly StoredOp[], opts: { asOf?: Date } = {}):
         lastTransition: last,
         history,
         staleSessions: sessionsAfter(sessions, last),
+        createdAt: state.allBlocks.get(cardId)?.occurredAt ?? history[0]?.at ?? block.occurredAt,
+        updatedAt: block.occurredAt,
       });
     }
   }

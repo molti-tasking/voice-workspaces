@@ -10,12 +10,13 @@ import { cardHref } from "./brief-view";
  * card, and all of which would be serialised into the RSC payload on every
  * render. So the fold stays on the server and this crosses instead.
  *
- * The date arrives PRE-FORMATTED for the same reason it always was: rendering
- * `toLocaleDateString` in a client component runs it twice, once on the server
- * during SSR and once in the browser, and the two disagree whenever their
- * timezones do — a hydration mismatch on a page whose whole job is to be
- * trusted. Formatting here keeps the behaviour identical to the server
- * component this replaced.
+ * Dates cross as ISO strings, not formatted text. Formatting in a client
+ * component during SSR runs it twice, once on the server and once in the
+ * browser, and the two disagree whenever their timezones do — a hydration
+ * mismatch on a page whose whole job is to be trusted. Formatting on the
+ * server instead would print the server's zone, which is wrong once the card
+ * shows a time of day. `<When>` resolves both: empty during hydration, then
+ * the reader's own zone.
  */
 export interface CardView {
   /** Root of the revision chain: stable across moves, and the React key. */
@@ -27,17 +28,18 @@ export interface CardView {
   topicTitle: string;
   /** Icon NAME, resolved through `topicIcon` in the browser. */
   topicIcon: string;
-  /** Already formatted. See the note above. */
-  said: string;
+  /** When the card was first added, as an ISO instant. See the note above. */
+  createdAt: string;
+  /** When it last moved or was reworded, as an ISO instant. */
+  updatedAt: string;
   spanCount: number;
   /** How the card got to this column, in the person's terms. Null when silent. */
   marker: string | null;
   /**
    * Where the card's brief lives, already built.
    *
-   * A string rather than the pieces to build one from, for the same reason
-   * `said` is pre-formatted: it keeps the payload small and the `asOf` cursor
-   * — which the browser has no other way of knowing about — is resolved once,
+   * A string rather than the pieces to build one from: it keeps the payload
+   * small and the `asOf` cursor — which the browser has no other way of knowing about — is resolved once,
    * on the server, instead of being re-derived per card.
    */
   href: string;
@@ -55,10 +57,8 @@ export function toCardView(
     state: card.state,
     topicTitle: card.topic.title,
     topicIcon: card.topic.icon,
-    said: card.block.occurredAt.toLocaleDateString(undefined, {
-      day: "numeric",
-      month: "short",
-    }),
+    createdAt: card.createdAt.toISOString(),
+    updatedAt: card.updatedAt.toISOString(),
     spanCount: card.block.spans.length,
     marker: markerFor(card, outcome),
     href: cardHref(card.cardId, opts.asOf),

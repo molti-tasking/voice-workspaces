@@ -4,6 +4,7 @@ import { draggable } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import { useEffect, useRef, useState } from "react";
 import { topicIcon } from "@/app/workspace/icons";
 import { Link } from "@/components/nav-link";
+import { When } from "@/components/when";
 import type { CardView } from "./card-view";
 import type { DragData } from "./drag";
 
@@ -87,8 +88,21 @@ export function BoardCard({
       <p className="text-sm leading-snug">{card.text}</p>
 
       <p className="mt-1.5 text-xs text-fg/50">
-        said {card.said} · {card.spanCount} utterance
-        {card.spanCount === 1 ? "" : "s"}
+        {card.spanCount} utterance{card.spanCount === 1 ? "" : "s"}
+      </p>
+
+      {/*
+        Exact times rather than "untouched for N drives" alone: a drive count
+        says how many chances there were to change it, not when. "changed" is
+        left out while it would only repeat "added".
+      */}
+      <p className="mt-0.5 text-xs text-fg/50">
+        added <When date={card.createdAt} withTime />
+        {card.updatedAt !== card.createdAt && (
+          <>
+            {" "}· changed <When date={card.updatedAt} withTime />
+          </>
+        )}
       </p>
 
       {card.marker && (

@@ -87,6 +87,23 @@ describe("foldBoard", () => {
     expect(board.transitions.every((t) => t.cardId === "b1")).toBe(true);
   });
 
+  it("dates a card by when it was added and when it last changed", () => {
+    const ops = [
+      ...base(),
+      op(D2, move("b2", "b1", "doing"), { captureSessionId: "s2" }),
+      // A reword is a change too, though the card does not move.
+      op(D3, move("b3", "b2", "doing", undefined, "Email William and Sarah."), { captureSessionId: "s3" }),
+    ];
+    const card = foldBoard(ops).cards[0];
+    expect(card?.createdAt).toEqual(D1);
+    expect(card?.updatedAt).toEqual(D3);
+    expect(card?.lastTransition.at).toEqual(D2);
+
+    const untouched = foldBoard(base()).cards[0];
+    expect(untouched?.createdAt).toEqual(D1);
+    expect(untouched?.updatedAt).toEqual(D1);
+  });
+
   it("counts the drives since a card last moved, not counting the one that moved it", () => {
     const ops = [
       ...base(),

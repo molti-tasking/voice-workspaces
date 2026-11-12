@@ -14,6 +14,7 @@ import type { BoardCard, JudgedTransition, TaskTransition } from "@voicemural/wo
 import { markerFor, toCardView } from "./card-view";
 
 const AT = new Date("2026-09-14T08:00:00Z");
+const LATER = new Date("2026-09-16T17:30:00Z");
 
 function transition(over: Partial<TaskTransition> = {}): TaskTransition {
   return {
@@ -35,6 +36,8 @@ function card(over: Partial<BoardCard> = {}): BoardCard {
     cardId: "card-1",
     state: "done",
     staleSessions: 0,
+    createdAt: AT,
+    updatedAt: AT,
     lastTransition: last,
     history: over.history ?? [last],
     block: {
@@ -164,9 +167,10 @@ describe("toCardView", () => {
     expect(view.blockId).toBe("block-1");
   });
 
-  it("formats the date and leaves nothing unserialisable to cross to the client", () => {
-    const view = toCardView(card());
-    expect(typeof view.said).toBe("string");
+  it("carries the dates as ISO strings and nothing unserialisable to the client", () => {
+    const view = toCardView(card({ createdAt: AT, updatedAt: LATER }));
+    expect(view.createdAt).toBe(AT.toISOString());
+    expect(view.updatedAt).toBe(LATER.toISOString());
     expect(view.spanCount).toBe(1);
     // Round-trips through JSON unchanged: no Dates, no class instances, and
     // none of the fold's history.
