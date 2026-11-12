@@ -13,7 +13,7 @@
  * instead of guessed from a sensor.
  *
  * WHAT IS LEFT is the middle of the old range. A screen exists — drafts and
- * the board are on it, and the welcome page's examples promise that — but the
+ * their tasks are on it, and the welcome page's examples promise that — but the
  * agent is told to assume it is not being looked at. Replies stay short
  * because every word is spoken. Unprompted turns are allowed but not eager.
  *

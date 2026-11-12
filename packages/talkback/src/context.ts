@@ -54,13 +54,13 @@ export interface TurnContext {
   passages: ContextPassage[];
   threads: ContextThread[];
   /**
-   * What they have said they would do, and where each of those stands.
+   * What they have said they would do, and where each of those stands —
+   * grouped by topic, the topics in the order the conversation reaches them.
    *
    * The third arm, and the concrete one. `threads` is prose distilled from past
    * sessions and `passages` are quotes; this is the live fold of the op log, so
    * it is the only part of the turn that can answer "what should I do next"
-   * with something the person could actually go and do. See board-context.ts
-   * for why it is sight-only.
+   * with something the person could actually go and do. See board-context.ts.
    */
   board: BoardContext;
   /**
@@ -102,6 +102,12 @@ export async function buildTurnContext(
      */
     board?: boolean;
     /**
+     * The title of the topic whose sheet is open on their screen, if any —
+     * a promise, so the screen read runs alongside the searches. Its tasks are
+     * listed first; then the topics this drive has talked about.
+     */
+    openTopic?: Promise<string | null | undefined> | string | null;
+    /**
      * Whether to search their earlier drives. Off for the display study's
      * blocks: on one account the four follow each other, and the second must
      * not be handed what was said in the first.
@@ -115,7 +121,7 @@ export async function buildTurnContext(
   // Postgres, so it costs one query rather than a model call, and running it
   // alongside the two searches keeps it off the turn's critical path. The
   // drafts are one indexed read of this drive's own rows.
-  const [lexical, memory, ops, drafts] = await Promise.all([
+  const [lexical, memory, ops, drafts, openTopic] = await Promise.all([
     searchEarlier ? searchTranscripts(userId, said, { excludeSessionId: captureSessionId }) : Promise.resolve([]),
     searchEarlier
       ? recallFromMemory(userId, said, { excludeSessionId: captureSessionId })
@@ -125,6 +131,8 @@ export async function buildTurnContext(
      * new one instead of a revision, which is the behaviour before this
      * existed; an agent that does not answer at all is a dead turn. */
     loadSessionDrafts(captureSessionId).catch(() => []),
+    // Fails open to no sheet: the tasks are still grouped by this drive's topics.
+    Promise.resolve(options.openTopic).catch(() => null),
   ]);
 
   const merged = mergePassages(lexical, memory.passages);
@@ -148,7 +156,7 @@ export async function buildTurnContext(
   return {
     passages,
     threads,
-    board: showBoard ? buildBoardContext(ops) : { text: null, shown: 0, total: 0 },
+    board: showBoard ? buildBoardContext(ops, { openTopic, captureSessionId }) : { text: null, shown: 0, total: 0 },
     drafts: buildDraftContext(drafts),
   };
 }

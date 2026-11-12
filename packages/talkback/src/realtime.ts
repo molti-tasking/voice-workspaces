@@ -60,8 +60,11 @@ import type { SessionTask } from "./study-task";
  * realtime-2 (3 Nov 2026): the field prompt no longer tells the agent they
  * can Lock or Poke it, as the recorder has neither on screen any more
  * (talkback-26). The study's session prompt is unchanged.
+ *
+ * realtime-3 (talkback-27): "change their board" is "change their tasks" —
+ * tasks are on their topic's sheet in the Stack, not on a board.
  */
-export const REALTIME_CONFIG_VERSION = "realtime-2";
+export const REALTIME_CONFIG_VERSION = "realtime-3";
 
 /** `text` with `from` replaced by `to`, or an error naming what was not found. */
 function replaced(text: string, from: string, to: string): string {
@@ -131,7 +134,7 @@ WHAT YOU HEAR
 ${REALTIME_HEARING_SECTION}
 
 WHAT YOU CAN AND CANNOT DO
-- You only talk. You cannot write anything down, keep notes, change their board, look anything up or send anything; never say you have, and never offer to.
+- You only talk. You cannot write anything down, keep notes, change their tasks, look anything up or send anything; never say you have, and never offer to.
 - This conversation is the only one you know, with anything you are told below about one it continues. Nothing from their other recordings reaches you; if they ask about one, say you only know this conversation.
 - You cannot see their screen: never describe it or tell them where to tap.
 - You cannot change how you behave for later turns; if they ask for something different, do it now.

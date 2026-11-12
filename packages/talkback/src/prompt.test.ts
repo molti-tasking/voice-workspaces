@@ -4,6 +4,7 @@ import { capabilitiesSection } from "./capabilities";
 import { PROACTIVITY_STANZAS, PROFILE } from "./profile";
 import {
   ANSWER_ACKNOWLEDGEMENTS,
+  BOARD_EDITING,
   ANSWER_RETRY_NUDGE,
   FLOOR_OPEN_NOTE,
   FLOOR_SECTION,
@@ -420,7 +421,7 @@ describe("what it can do, and where its drafts are (talkback-23)", () => {
   it("lists what is true for the drive it is in", () => {
     const all = capabilitiesSection(drive);
     expect(all).toMatch(/^WHAT YOU CAN DO ON THIS DRIVE\n/);
-    expect(all).toMatch(/Change their task board/);
+    expect(all).toMatch(/Change their tasks/);
     expect(all).toMatch(/Look things up on the web/);
     expect(all).toMatch(/a spark comes only for a subject they keep/);
     expect(all).toMatch(/never just "I can't"/);
@@ -429,7 +430,7 @@ describe("what it can do, and where its drafts are (talkback-23)", () => {
     expect(bare).toMatch(/You cannot add, move or change their tasks/);
     expect(bare).toMatch(/You cannot look anything up on the web/);
     expect(bare).toMatch(/This drive has no sparks/);
-    expect(bare).not.toMatch(/Change their task board|Look things up|SPARKS ON OFFER/);
+    expect(bare).not.toMatch(/Change their tasks|Look things up|SPARKS ON OFFER/);
 
     expect(capabilitiesSection({ ...drive, sparkSelection: "suggested" })).toMatch(
       /the screen picks the subjects itself/,
@@ -475,8 +476,14 @@ describe("being read a text (talkback-24)", () => {
     expect(PAUSE_RESUME_NOTE).toMatch(/If they ask you to go on or continue/);
   });
 
-  it("is followed by talkback-26, the recorder without Lock or Poke", () => {
-    expect(TALKBACK_CONFIG_VERSION).toBe("talkback-26");
+  it("is followed by talkback-27, their tasks by topic as the Stack shows them", () => {
+    expect(TALKBACK_CONFIG_VERSION).toBe("talkback-27");
+    expect(SYSTEM_PROMPT).toContain("THEIR TASKS, BY TOPIC");
+    // No board left to point at: no columns, cards or drags in what it is told.
+    for (const text of [SYSTEM_PROMPT, BOARD_EDITING]) {
+      expect(text).not.toMatch(/task board|a drag|the board/i);
+    }
+    expect(BOARD_EDITING).toMatch(/"This", "that one" and "here" mean the topic being talked about/);
   });
 });
 

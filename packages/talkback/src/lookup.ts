@@ -50,8 +50,8 @@ You can look things up with ${LOOKUP_TOOL_NAME}. Use it when they ask for someth
 /** The passages that say it cannot look anything up, and what each says instead. */
 const CANNOT_LOOK_UP: readonly [from: string, to: string][] = [
   [
-    "You only talk. You cannot write anything down, keep notes, change their board, look anything up or send anything;",
-    "You only talk, and look things up. You cannot write anything down, keep notes, change their board or send anything;",
+    "You only talk. You cannot write anything down, keep notes, change their tasks, look anything up or send anything;",
+    "You only talk, and look things up. You cannot write anything down, keep notes, change their tasks or send anything;",
   ],
   [
     "- You cannot look anything up. When you do not know something, say so.",

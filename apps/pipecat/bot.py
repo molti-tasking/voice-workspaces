@@ -2135,7 +2135,7 @@ class Recall(FrameProcessor):
                 body.get("threads") or [],
                 body.get("pending"),
                 # Pre-rendered by `buildBoardContext`, not assembled here: the
-                # column order, the staleness wording and the prompt budget are
+                # topic order, the staleness wording and the prompt budget are
                 # one decision, and splitting it across two languages is how the
                 # two would drift.
                 body.get("board"),
@@ -2175,9 +2175,9 @@ class Recall(FrameProcessor):
         offered = self._sparks() if self._sparks is not None else None
         if offered:
             sections.append(offered)
-        # THE BOARD FIRST, ahead even of where things stand. It is the most
-        # concrete thing in the turn — what they committed to, and which column
-        # each of those sits in — and it is the only section that can answer
+        # THEIR TASKS FIRST, ahead even of where things stand. It is the most
+        # concrete thing in the turn — what they committed to, on which topic,
+        # and in what state — and it is the only section that can answer
         # "what should I do next" with something they could go and do. Threads
         # are prose about it; passages are quotes underneath that.
         if board:
@@ -4351,16 +4351,16 @@ def _partial_tail(text: str, token: str) -> str:
 
 
 class BoardTools:
-    """The agent's hands on the task board: tool calls, carried to the web app.
+    """The agent's hands on their tasks: tool calls, carried to the web app.
 
     DUMB ON PURPOSE. The tools, their schemas and what each call means all live
     in TypeScript (packages/talkback/src/board-tools.ts, and the planner the
     board page also uses). This registers whatever `/api/realtime/session` sent
     and posts each call back to `/api/realtime/board` verbatim, so there is one
-    definition of "move this card" and it is not in Python.
+    definition of "mark this task done" and it is not in Python.
 
     The result goes back to the model as the tool's answer, and the agent
-    speaks from it — so a failure is returned as words ("the board could not
+    speaks from it — so a failure is returned as words ("their tasks could not
     be reached; nothing was changed") rather than raised, or the model would
     have nothing to say and might claim the change anyway.
 
@@ -4408,7 +4408,7 @@ class BoardTools:
                 error = str(result.get("error") or "refused")
         except Exception as err:
             error = str(err)
-            result = {"ok": False, "error": "The board could not be reached. Nothing was changed."}
+            result = {"ok": False, "error": "Their tasks could not be reached. Nothing was changed."}
         latency_ms = int((time.monotonic() - started) * 1000)
         logger.info(f"[board] {name} -> {'ok' if result.get('ok') else 'refused'} in {latency_ms}ms")
         if self._recorder is not None:
@@ -4417,7 +4417,7 @@ class BoardTools:
 
     def _post(self, payload: dict) -> dict:
         if not self._ticket:
-            return {"ok": False, "error": "No board is connected to this drive. Nothing was changed."}
+            return {"ok": False, "error": "Their tasks are not connected to this drive. Nothing was changed."}
         req = urllib.request.Request(
             f"{WEB_URL}/api/realtime/board",
             method="POST",
@@ -4428,7 +4428,7 @@ class BoardTools:
             with urllib.request.urlopen(req, timeout=5) as res:
                 return json.loads(res.read() or b"{}")
         except urllib.error.HTTPError as err:
-            return {"ok": False, "error": f"The board refused the request ({err.code}). Nothing was changed."}
+            return {"ok": False, "error": f"The task change was refused ({err.code}). Nothing was changed."}
 
 
 class SearchingSound(BaseAudioMixer):
@@ -5573,7 +5573,7 @@ def build_pipeline(
     # sits on a live audio stream and never sends a single request.
     vad = VADProcessor(vad_analyzer=silero())
 
-    # The tools, only where the session offered them — board tools for a person
+    # The tools, only where the session offered them — task tools for a person
     # whose board is on, the web search where an instance is configured — on a
     # connection with a ticket to act with. The prompt the session composed
     # says the same, so the model is never told it has hands it does not have.

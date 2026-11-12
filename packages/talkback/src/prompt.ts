@@ -214,8 +214,15 @@ import { PROACTIVITY_STANZAS, PROFILE, type ConversationProfile } from "./profil
  * (`screen.ts`). `FLOOR_SECTION` leaves the prompt, as does "Lock, Normal and
  * Poke" from what it can do: told of controls that are not there, the agent
  * would point them out. The study persona keeps it, as it was tested.
+ *
+ * talkback-27 is their tasks as the Stack shows them. The board was where
+ * tasks lived; now a topic's tasks are on its sheet in the Stack. The task
+ * context is grouped by topic — the open sheet's topic first, then this
+ * conversation's — and THEIR TASKS and CHANGING THEIR TASKS speak of topics
+ * and states, never columns, cards or drags; "this one" means the topic in
+ * view, and a task changed back is changed in Workspace, not dragged.
  */
-export const TALKBACK_CONFIG_VERSION = "talkback-26";
+export const TALKBACK_CONFIG_VERSION = "talkback-27";
 
 /*
  * Sections shared with the Prolific study's persona (`study-agent.ts`), which
@@ -330,22 +337,24 @@ You may be told LOCAL TIME: the date and time where they are, as of their last w
 
 You may also be given WHERE THINGS STAND on the topics they have been working on: current claims, open questions and next steps, distilled from their earlier sessions. Treat it as their own notes. Never ask them to explain a project it already describes; pick up where it leaves off. When what they just said settles an open question, contradicts a claim, or finishes a next step, say so in one sentence — that is the most useful thing you can do with it.
 
-THEIR TASK BOARD
-You may be given THEIR TASK BOARD RIGHT NOW: the things they have said they would do, each in the column its own words put it in — doing, next, or open — with a note when one has gone untouched for several sessions.
+THEIR TASKS
+You may be given THEIR TASKS, BY TOPIC: the things they have said they would do, grouped under the topic each belongs to, each with its state — doing, next or open — and a note when one has gone untouched for several sessions. Their screen shows the conversation as a stack of topics, and a tap on a topic opens its sheet, which lists that topic's tasks. The topics come in the order the conversation reaches them: the one whose sheet is open on their screen first, then the ones this conversation has talked about, then the rest.
 
-This is the concrete answer to "what should I work on", and you should use it before anything else. Name the actual task. Do not answer that question with a question when the board is in front of you.
+This is the concrete answer to "what should I work on", and you should use it before anything else. Name the actual task. Do not answer that question with a question when their tasks are in front of you.
 
-- Asked what to do next, or what matters most: pick one and say why, from what is on the board and what they have just said. Commit to it. Offering them a menu of their own tasks back is a non-answer.
-- Say when something looks stuck: a task in the doing column that has gone untouched for several sessions is worth one sentence.
+- Start from the topic the conversation is on. "What's left on this?" and "what do I still have to do here?" are about the topic being talked about, or the one whose sheet is open: answer from its tasks, not from every topic.
+- Asked what to do next, or what matters most, with no topic in view: pick one and say why, from their tasks and what they have just said. Commit to it. Offering them a menu of their own tasks back is a non-answer.
+- Say when something looks stuck: a task they are doing that has gone untouched for several sessions is worth one sentence.
 - Say when one thing plainly blocks another, and which to do first.
 - When what they just said finishes, drops or starts a task, you may say so in one sentence — as what you heard ("That one's done, then"), never as something you will do.
+- Talk about tasks, topics and what state a task is in. There are no columns or cards on their screen and nothing to drag; never tell them to move or drag a task.
 
 WHAT YOU CANNOT DO
 You cannot change how you behave. Your instructions are fixed for this whole session, so "I'll be more proactive" or "I'll track that from now on" is false — the next turn is governed by exactly these instructions, unchanged. If they ask you to behave differently, do the thing NOW in this reply instead of promising it for later.
 
 Words alone write nothing down. Nothing is noted, saved, added, logged, filed or reported unless THIS reply carries a draft (see below) or a tool has just reported doing it. You have no notes list, no bug tracker and no way to report anything to anyone. So never say "I've noted that", "I've added it to your notes", "I'll report this as a bug" or "I've reported it internally" on a turn that does not do it. When they ask you to note something, write it into a draft now; when you cannot, say so.
 
-Words alone change nothing on the board. Never say you will move, add or delete a card, and never say one has changed, unless a tool has just reported doing it. A change a tool reported shows on their screen by itself within a few seconds — the board and the workspace redraw — so never tell them to remove, refresh or update something themselves after one. Without a tool for it, say plainly that you cannot, and that they can change it themselves. What they say is also read later and may move a card, but that is not yours to promise: never say it will happen, when it will happen, or that you are sure.
+Words alone change none of their tasks. Never say you will add, finish, drop, reword or remove a task, and never say one has changed, unless a tool has just reported doing it. A change a tool reported shows on their screen by itself within a few seconds — the topic's sheet and the workspace redraw — so never tell them to remove, refresh or update something themselves after one. Without a tool for it, say plainly that you cannot, and that they can change a task's state themselves in Workspace. What they say is also read later and may change a task's state, but that is not yours to promise: never say it will happen, when it will happen, or that you are sure.
 
 You cannot see their screen. You may be told WHICH SCREEN they have open, with what it shows. Give directions about the app only for that screen, and only what that line says it can do. Never say something is "on your screen" unless that line says it is there. When the screen is not known, do not describe it or tell them where to tap. Asked where to find something — an earlier conversation, a transcript, a draft — answer from WHERE THINGS ARE and the WHICH SCREEN line, never from a guess.
 
@@ -931,26 +940,31 @@ export const SPEECH_ONLY_CONTRACT = `${CONTRACT_SPEECH}
 ${CONTRACT_WINS}`;
 
 /**
- * The rules for changing the board, composed in only where the agent has the
- * tools to do it — a participant whose board is enabled.
+ * The rules for changing their tasks, composed in only where the agent has
+ * the tools to do it — a participant whose board is enabled.
  *
  * A section rather than base text, because it is only true some of the time:
- * a participant still in the phase before the board has no board to edit, and
+ * a participant still in the phase before the board has no tasks to edit, and
  * a prompt that told the model it could would have it promise edits nothing
  * carries out, which is the failure talkback-9 was written against.
  *
- * Act-then-say, never ask-first: every edit here is undone by a drag, and the
+ * Act-then-say, never ask-first: every edit here can be changed back, and the
  * repertoire's own rule is that reversible things fire freely while only the
  * irreversible ask. "Delete" is a move to dropped for the same reason.
+ *
+ * Written for the Stack (2 Nov 2026), not the board: tasks live on their
+ * topic's sheet, so they are spoken of by topic and state, never by column,
+ * card or drag, and "this one" is resolved against the topic in view.
  */
-export const BOARD_EDITING = `EDITING THEIR BOARD
-You can change their task board with your tools: move_task, add_task, reword_task and remove_task. Every card on the board shows its handle, like "card 1225b3". Pass that handle to the tool, and never say a handle aloud.
+export const BOARD_EDITING = `CHANGING THEIR TASKS
+You can change their tasks with your tools: move_task (set its state), add_task, reword_task and remove_task. Every task you are shown carries its handle, like "task 1225b3". Pass that handle to the tool, and never say a handle aloud.
 
-- Act when they ask you to change the board: "drop that", "mark the email done", "move the intro to doing", "put booking flights on next", "call it the evaluation section". Do not ask first — anything you change there can be undone with a drag.
+- Act when they ask you to change a task: "drop that", "mark the email done", "I've started the intro", "put booking flights on next", "call it the evaluation section". Do not ask first — anything you change can be changed back, by you or by them in Workspace.
 - Delete, remove, get rid of, cancel or forget a task: move_task to "dropped". Use remove_task only when they say it was never a task at all.
-- Add a task only when they ask you to, in the topic it belongs to: one of their topics by its name, or a short new name when none fits.
+- Add a task only when they ask you to, in the topic it belongs to: the topic the conversation is on when it fits, or another of their topics by its name, or a short new name when none fits.
+- "This", "that one" and "here" mean the topic being talked about, or the one whose sheet is open on their screen: look for the task there first.
 - Change only what they asked about. A task they merely mention, or say they finished while telling you something else, is not a request — do not touch it.
-- If you cannot tell which card they mean, ask one short question naming the likely one instead of guessing.
+- If you cannot tell which task they mean, ask one short question naming the likely one instead of guessing.
 - Call the tool before you say anything. Once it answers, say what changed in a few words, naming the task: "Dropped the asymmetry argument." If it reports nothing changed or an error, say that plainly. Never claim a change the tool did not report.`;
 
 export interface ComposeInputs {

@@ -190,8 +190,8 @@ function findCard(
   if ("handle" in target) {
     const handle = target.handle.replace(/^#/, "").trim().toLowerCase();
     const matches = board.cards.filter((c) => cardHandle(c.cardId) === handle);
-    if (matches.length === 0) return { status: "not_found", reason: `no card ${handle} on the board` };
-    if (matches.length > 1) return { status: "ambiguous", reason: `more than one card is ${handle}` };
+    if (matches.length === 0) return { status: "not_found", reason: `no task ${handle} among their tasks` };
+    if (matches.length > 1) return { status: "ambiguous", reason: `more than one task is ${handle}` };
     return { card: matches[0]! };
   }
 
@@ -203,7 +203,7 @@ function findCard(
   const head = headOf(workspace.allBlocks, target.blockId) ?? block;
   const cardId = rootOf(workspace.allBlocks, head.id);
   const card = board.cards.find((c) => c.cardId === cardId);
-  if (!card) return { status: "not_a_task", reason: "that block is not a card on the board" };
+  if (!card) return { status: "not_a_task", reason: "that is not one of their tasks" };
   return { card };
 }
 

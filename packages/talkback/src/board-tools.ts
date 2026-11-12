@@ -1,5 +1,11 @@
 /**
- * The tools that let the talk-back agent change the person's task board.
+ * The tools that let the talk-back agent change the person's tasks.
+ *
+ * Tasks used to live on a board of columns; since the Stack (2 Nov 2026) a
+ * topic's tasks are on its sheet, each with its state. The descriptions say
+ * "state", not "column", so the model talks the way the screen looks. The
+ * argument names (`card`, `column`) stay: they are the wire format the route,
+ * the container and recorded evals all read.
  *
  * DEFINED HERE, NOT IN THE CONTAINER, for the reason the prompt is: there must
  * be one copy. `/api/realtime/session` hands these schemas to bot.py, which
@@ -9,10 +15,11 @@
  * A tool renamed in Python and not here would be a tool the agent calls and
  * nothing answers.
  *
- * Four tools, one per edit the board page can also make or the extractor can
- * make from speech: move a card, add one, reword one, and say one was never a
- * task. "Delete" is deliberately a MOVE to `dropped`, not a removal — the card
- * stays visible, a drag undoes it, and "decided not to" stays data.
+ * Four tools, one per edit the person can also make or the extractor can
+ * make from speech: set a task's state, add one, reword one, and say one was
+ * never a task. "Delete" is deliberately a MOVE to `dropped`, not a removal —
+ * the task stays on its topic, struck through, it can be changed back, and
+ * "decided not to" stays data.
  *
  * Pure: schemas and a parser. No I/O.
  */
@@ -35,7 +42,7 @@ export interface ToolDefinition {
 
 const CARD = {
   type: "string" as const,
-  description: 'The card\'s handle from the board, e.g. "1225b3".',
+  description: 'The task\'s handle, as it is shown beside the task (without "task "), e.g. "1225b3".',
 };
 
 export const BOARD_TOOLS: ToolDefinition[] = [
@@ -44,12 +51,12 @@ export const BOARD_TOOLS: ToolDefinition[] = [
     function: {
       name: "move_task",
       description:
-        'Move a task to another column. Use "done" when they finished it, "doing" when they started it, "next" or "open" to reprioritise, and "dropped" when they want it deleted, removed, cancelled or forgotten.',
+        'Set a task\'s state. Use "done" when they finished it, "doing" when they started it, "next" or "open" to reprioritise, and "dropped" when they want it deleted, removed, cancelled or forgotten.',
       parameters: {
         type: "object",
         properties: {
           card: CARD,
-          column: { type: "string", enum: TASK_STATES, description: "The column to move it to." },
+          column: { type: "string", enum: TASK_STATES, description: "The state to set it to." },
         },
         required: ["card", "column"],
       },
@@ -60,16 +67,17 @@ export const BOARD_TOOLS: ToolDefinition[] = [
     function: {
       name: "add_task",
       description:
-        "Add a task they have asked you to put on the board. Short, in their words, phrased as something to do.",
+        "Add a task they have asked you to note, on its topic. Short, in their words, phrased as something to do.",
       parameters: {
         type: "object",
         properties: {
           text: { type: "string", description: 'The task, e.g. "Book the flights to Stanford."' },
           topic: {
             type: "string",
-            description: "The topic it belongs to: one of their topics by name, or a short new name if none fits.",
+            description:
+              "The topic it belongs to: the one the conversation is on when it fits, else one of their topics by name, or a short new name if none fits.",
           },
-          column: { type: "string", enum: TASK_STATES, description: 'Where it starts. "open" unless they say.' },
+          column: { type: "string", enum: TASK_STATES, description: 'The state it starts in. "open" unless they say.' },
         },
         required: ["text", "topic"],
       },
@@ -79,7 +87,7 @@ export const BOARD_TOOLS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "reword_task",
-      description: "Change what a task says, keeping its column. Only when they ask for different wording.",
+      description: "Change what a task says, keeping its state. Only when they ask for different wording.",
       parameters: {
         type: "object",
         properties: {
@@ -95,7 +103,7 @@ export const BOARD_TOOLS: ToolDefinition[] = [
     function: {
       name: "remove_task",
       description:
-        'Take a card off the board because it was never a task at all. NOT for deleting a task they have decided against — that is move_task to "dropped".',
+        'Take a task off its topic because it was never a task at all. NOT for deleting a task they have decided against — that is move_task to "dropped".',
       parameters: {
         type: "object",
         properties: { card: CARD },

@@ -258,10 +258,10 @@ describe("the turn messages, which mirror bot.py", () => {
     const block = composeContextBlock({
       now: "LOCAL TIME: Wednesday, 7 October 2026, 10:00 (Europe/Copenhagen).",
       screen: "WHICH SCREEN: they have the workspace open.",
-      board: "Their task board right now:\n- [doing] ethics form",
+      board: "Their tasks, by topic:\n- [doing] ethics form",
     })!;
     expect(block.indexOf("LOCAL TIME:")).toBe(0);
-    expect(block.indexOf("WHICH SCREEN")).toBeLessThan(block.indexOf("Their task board right now:"));
+    expect(block.indexOf("WHICH SCREEN")).toBeLessThan(block.indexOf("Their tasks, by topic:"));
   });
 
   it("list the sparks on offer right after the screen, in the text bot.py renders", () => {
@@ -271,10 +271,10 @@ describe("the turn messages, which mirror bot.py", () => {
         { kind: "decide", subject: "Budget" },
         { kind: "revisit", subject: "Pilot date" },
       ],
-      board: "Their task board right now:\n- [doing] ethics form",
+      board: "Their tasks, by topic:\n- [doing] ethics form",
     })!;
     expect(block.indexOf("WHICH SCREEN")).toBeLessThan(block.indexOf("SPARKS ON OFFER"));
-    expect(block.indexOf("SPARKS ON OFFER")).toBeLessThan(block.indexOf("Their task board"));
+    expect(block.indexOf("SPARKS ON OFFER")).toBeLessThan(block.indexOf("Their tasks, by topic"));
     // Pinned on both sides: `test_bot.py` has the same text.
     expect(block).toContain(
       "SPARKS ON OFFER — theirs to pull. Ask the first only if they ask you for one:\n" +
@@ -296,10 +296,10 @@ describe("the turn messages, which mirror bot.py", () => {
 
   it("put the board ahead of everything, as Recall._compose does", () => {
     const block = composeContextBlock({
-      board: "Their task board right now:\n- [doing] ethics form",
+      board: "Their tasks, by topic:\n- [doing] ethics form",
       threads: [{ text: "Topic: Field study" }],
     })!;
-    expect(block.indexOf("Their task board right now:")).toBe(0);
+    expect(block.indexOf("Their tasks, by topic:")).toBe(0);
     expect(block.indexOf("[doing] ethics form")).toBeLessThan(block.indexOf("Where things stand"));
   });
 

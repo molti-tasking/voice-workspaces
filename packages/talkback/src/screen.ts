@@ -125,7 +125,7 @@ const DESCRIPTIONS: Record<Exclude<Screen, "conversation">, string> = {
   workspace:
     "the workspace: the topics touched in the last two weeks as cards, older ones folded into one closed section below, each with its open questions, tasks, notes and the drafts filed on it. It redraws by itself within seconds when a tool changes something. They can archive an item or change a task's state there; nothing is dragged",
   board:
-    "the task board: their tasks in the columns open, next, doing, done and dropped. Cards are dragged between columns",
+    "the older task board: their tasks in the columns open, next, doing, done and dropped. Cards are dragged between columns there, and only there; everywhere else a task is shown on its topic",
   timeline:
     "the timeline: every recording's transcript, oldest first, with a link from each to that recording's own page",
   conversations:
@@ -158,7 +158,7 @@ const DESCRIPTIONS: Record<Exclude<Screen, "conversation">, string> = {
  */
 function appMap(menu: boolean): string {
   return [
-    "WHERE THINGS ARE: Workspace (their topics, tasks and filed drafts) and Past conversations (every past recording, newest first, named by what it was about, with a search over everything they said; each opens that recording's page, with its transcript and drafts).",
+    "WHERE THINGS ARE: a topic's tasks are on its sheet in the conversation view, with their state — a tap on the topic opens it. Workspace (their topics, tasks and filed drafts; the place to change a task's state) and Past conversations (every past recording, newest first, named by what it was about, with a search over everything they said; each opens that recording's page, with its transcript and drafts).",
     "A draft from the drive running now is a line in the conversation view's Transcript, where it was written, and on its topic in Workspace; once they stop, it is also on that recording's page. Timeline reads every transcript end to end.",
     menu
       ? "On the conversation view the ⋯ menu at the top right leads to them, during a recording too; on the other pages, the menu at the top, and the record button at the bottom leads back to the conversation."

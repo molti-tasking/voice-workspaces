@@ -2394,12 +2394,12 @@ def test_compose_puts_drafts_after_the_quotes_and_before_the_drive():
         [{"when": "yesterday", "text": "call Niklas"}],
         None,
         [{"text": "Topic: Field study"}],
-        "Their task board right now:\n- [doing] Write the method section",
+        "Their tasks, by topic:\n- [doing] Write the method section",
         'Drafts you have written on this drive, and which you can still see:\ndraft 3f9a2c "Email" (v1.0, written by you)',
     )
 
     order = [
-        block.index("Their task board right now:"),
+        block.index("Their tasks, by topic:"),
         block.index("Where things stand"),
         block.index("From their past recordings:"),
         block.index("Drafts you have written"),
@@ -2411,8 +2411,8 @@ def test_compose_puts_drafts_after_the_quotes_and_before_the_drive():
 def test_compose_leads_with_the_screen_they_have_open():
     recall = a_recall(summary="- Decision: go voice-first")
     recall._screen = "WHICH SCREEN: they have the workspace open."
-    block = recall._compose([], None, [], "Their task board right now:\n- [doing] X", None)
-    assert block.index("WHICH SCREEN") < block.index("Their task board right now:")
+    block = recall._compose([], None, [], "Their tasks, by topic:\n- [doing] X", None)
+    assert block.index("WHICH SCREEN") < block.index("Their tasks, by topic:")
 
 
 def test_compose_leads_with_the_local_time_then_the_screen():
@@ -2464,7 +2464,7 @@ def test_recall_composes_the_block_from_what_the_route_returned(monkeypatch):
         [{"when": "yesterday", "text": "call Niklas"}],
         [{"text": "Topic: Field study"}],
         None,
-        "Their task board right now:\n- [doing] Write the method section",
+        "Their tasks, by topic:\n- [doing] Write the method section",
         None,
         'Drafts you have written on this drive, and which you can still see:\ndraft 3f9a2c "Email" (v1.0, written by you)',
     )
@@ -4263,8 +4263,8 @@ def test_recall_lists_the_sparks_on_offer_right_after_the_screen():
         sparks=lambda: bot.render_sparks_on_offer([("unsure", "Budget")]),
     )
     recall._screen = "WHICH SCREEN: they have the recorder open."
-    block = recall._compose([], None, None, "Their task board right now:\n- [doing] ethics form")
-    assert block.index("WHICH SCREEN") < block.index("SPARKS ON OFFER") < block.index("Their task board")
+    block = recall._compose([], None, None, "Their tasks, by topic:\n- [doing] ethics form")
+    assert block.index("WHICH SCREEN") < block.index("SPARKS ON OFFER") < block.index("Their tasks, by topic")
 
 
 def test_recall_lists_nothing_when_nothing_is_on_offer():

@@ -131,15 +131,18 @@ export async function POST(req: Request) {
   // every view. Fails open to an ordinary drive.
   const block = await findBlockByCaptureSession(payload.captureSessionId).catch(() => null);
   const boardOn = !block && (await boardEnabledAt(payload.userId).catch(() => null)) !== null;
+  // Fails open to "not known", which is itself an instruction not to describe
+  // the screen. Read once, for two readers: the screen line, and the order of
+  // their tasks — the topic whose sheet is open comes first.
+  const screenRead = currentScreen(payload.captureSessionId).catch(() => null);
   const [{ passages, threads, board, drafts }, { settled, pending }, screen, continued] = await Promise.all([
     buildTurnContext(payload.userId, payload.captureSessionId, parsed.data.said, {
       board: boardOn,
       memory: !block,
+      openTopic: screenRead.then((s) => s?.topic ?? null),
     }),
     settleThenReadPending(payload.captureSessionId, parsed.data.said, parsed.data.answering),
-    // Fails open to "not known", which is itself an instruction not to
-    // describe the screen.
-    currentScreen(payload.captureSessionId).catch(() => null),
+    screenRead,
     // A drive that continues a past conversation: what was said in it. Fails
     // open to a drive that starts afresh.
     rows[0]?.continuesId
@@ -161,10 +164,12 @@ export async function POST(req: Request) {
   return NextResponse.json(
     // `threads` is where things stand on the topics this turn touches, from
     // the memory index; empty without MODEL_EMBED. `board` is the live fold of
-    // the task board — the only part of the turn that answers "what should I do
-    // next" with something actionable. `drafts` is what the agent has already
+    // their tasks, grouped by topic as the Stack's topic sheets show them, the
+    // open sheet's topic and this conversation's topics first — the only part
+    // of the turn that answers "what should I do next" with something
+    // actionable. (The key keeps its old name: the container reads it.) `drafts` is what the agent has already
     // written down on THIS drive, with the handles that let it revise one
-    // instead of writing a second. The container orders them: board first, then
+    // instead of writing a second. The container orders them: tasks first, then
     // threads, then quotes, then drafts, then the running summary.
     //
     // Both `board` and `drafts` are PRE-RENDERED here rather than assembled in

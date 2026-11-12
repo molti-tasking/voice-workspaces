@@ -158,7 +158,7 @@ describeIfDb("POST /api/realtime/board", () => {
   it("refuses an unknown card in words the agent can say, and writes nothing", async () => {
     const body = await (await call("move_task", { card: "ffffff", column: "done" })).json();
     expect(body.ok).toBe(false);
-    expect(body.error).toMatch(/no card ffffff.*Nothing was changed/);
+    expect(body.error).toMatch(/no task ffffff.*Nothing was changed/);
     expect(await loadUserOps(USER_ID)).toHaveLength(0);
   });
 

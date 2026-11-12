@@ -23,16 +23,29 @@ import type { EvalContext } from "./messages";
 export type TurnExpectation = "silent" | "speak" | "either";
 
 /**
- * A board as `buildBoardContext` renders it, with the handles the tools take.
- * Written out rather than folded from ops: the case must show exactly what the
- * model saw, and a change to the rendering should be a visible edit here.
+ * Their tasks as `buildBoardContext` renders them, with the handles the tools
+ * take: by topic, as the Stack's topic sheets show them. Written out rather
+ * than folded from ops: the case must show exactly what the model saw, and a
+ * change to the rendering should be a visible edit here.
  */
 const BOARD = [
-  "Their task board right now:",
-  "- [next] Write up the asymmetry argument. (card 1225b3 · Voice paper)",
-  "- [next] Email William about the start date. (card 9b04e1 · Research stay)",
-  "- [open] Build the evaluation system. (card 7a31c0 · Voice paper)",
-  "Their topics: Voice paper · Research stay",
+  "Their tasks, by topic — each topic's sheet in the Stack lists these under Tasks:",
+  "Voice paper (talked about in this conversation):",
+  "- [next] Write up the asymmetry argument. (task 1225b3)",
+  "- [open] Build the evaluation system. (task 7a31c0)",
+  "Research stay:",
+  "- [next] Email William about the start date. (task 9b04e1)",
+].join("\n");
+
+/** The same tasks with the Research stay sheet open on their screen: its topic first. */
+const BOARD_SHEET_OPEN = [
+  "Their tasks, by topic — each topic's sheet in the Stack lists these under Tasks:",
+  "Research stay (its sheet is open on their screen):",
+  "- [next] Email William about the start date. (task 9b04e1)",
+  "- [open] Book the flights to Stanford. (task 4d2f19)",
+  "Voice paper (talked about in this conversation):",
+  "- [next] Write up the asymmetry argument. (task 1225b3)",
+  "- [open] Build the evaluation system. (task 7a31c0)",
 ].join("\n");
 
 export interface EvalCase {
@@ -480,7 +493,7 @@ export const CASES: EvalCase[] = [
   },
   {
     id: "board-add-task",
-    about: "Asked to put a task on the board, the agent adds it, in the topic it belongs to.",
+    about: "Asked to note a task, the agent adds it, in the topic it belongs to.",
     context: { board: BOARD },
     said: "Put booking the flights to Stanford on next, for the research stay.",
     expect: {
@@ -511,6 +524,32 @@ export const CASES: EvalCase[] = [
     context: { board: BOARD },
     said: "Reading the Mark paper yesterday changed how I see the asymmetry argument, the interruption cost is the real point.",
     expect: { turn: "either", toolCall: null },
+  },
+  // --- Their tasks in the Stack (talkback-27) --------------------------------
+  {
+    id: "stack-whats-left-here",
+    about: "With a topic's sheet open, \"what's left here\" is answered from that topic's tasks, not every topic.",
+    context: { board: BOARD_SHEET_OPEN, screen: renderScreen("conversation", { view: "stack", topic: "Research stay" }) },
+    said: "Okay, what's still left to do here?",
+    expect: {
+      turn: "speak",
+      mustMention: ["william|start date", "flight"],
+      mustNotMention: ["asymmetry", "evaluation system", "column", "drag"],
+    },
+  },
+  {
+    id: "stack-this-one-done",
+    about: "\"This one\" is resolved against the topic in view.",
+    context: { board: BOARD_SHEET_OPEN, screen: renderScreen("conversation", { view: "stack", topic: "Research stay" }) },
+    said: "The flights are booked, so tick that one off.",
+    expect: { turn: "either", toolCall: { name: "move_task", args: { card: "^4d2f19$", column: "^done$" } } },
+  },
+  {
+    id: "stack-no-drag-advice",
+    about: "Asked how to change a task themselves, it does not send them to drag a card.",
+    context: { board: BOARD, screen: renderScreen("conversation", { view: "stack" }) },
+    said: "How do I mark a task as done myself?",
+    expect: { turn: "speak", mustMention: ["workspace"], mustNotMention: ["drag", "column"] },
   },
   {
     id: "paste-a-file",
@@ -935,7 +974,7 @@ export const CASES: EvalCase[] = [
    * and "I can't". The person's own words. */
   {
     id: "what-can-you-do-board",
-    about: "Asked what it can do, it names drafts and the board in a few words, from the list for this drive.",
+    about: "Asked what it can do, it names drafts and their tasks in a few words, from the list for this drive.",
     context: { board: BOARD, screen: renderScreen("conversation") },
     sections: [capabilitiesSection({ board: true, webSearch: false, sparks: false, sparkSelection: "suggested" })],
     said: "Can you still take notes? What are your capabilities? What can you do for me?",

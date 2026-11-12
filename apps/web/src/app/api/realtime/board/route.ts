@@ -116,7 +116,7 @@ export async function POST(req: Request) {
         return {
           ok: true as const,
           changed: false,
-          note: "That task is already on the board; nothing was added.",
+          note: "That task is already among their tasks; nothing was added.",
           ...said(plan.card),
         };
     }
